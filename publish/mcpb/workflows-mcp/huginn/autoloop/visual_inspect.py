@@ -24,6 +24,8 @@ import logging
 import re
 from typing import Any
 
+from huginn.autoloop._facade import EngineFacade
+
 
 def _to_pixel_box(
     x1: int, y1: int, x2: int, y2: int, w: int, h: int
@@ -35,7 +37,6 @@ def _to_pixel_box(
         int(x2 / 999 * w),
         int(y2 / 999 * h),
     )
-
 
 def _apply_zoom_consistency(
     img: Any,
@@ -64,9 +65,7 @@ def _apply_zoom_consistency(
         action_result["low_confidence"] = True
         action_result["note"] += f" (low consistency: {corr:.2f})"
 
-
 logger = logging.getLogger(__name__)
-
 
 def _histogram_correlation(img_bytes1: bytes, img_bytes2: bytes) -> float:
     """A3: 两次 crop 的直方图相关性. 1.0=完全一致, <0.8=不一致.
@@ -89,7 +88,6 @@ def _histogram_correlation(img_bytes1: bytes, img_bytes2: bytes) -> float:
     except Exception:  # 防御: 检视失败返回零证据分
         logger.debug("best-effort op failed", exc_info=True)
         return 0.0
-
 
 def _parse_point_primitives(visual_ctx: str) -> list[dict[str, Any]]:
     """解析 visual_ctx 里的 <point> 原语 (变体 1-3 双坐标 + 变体 5 单坐标)."""
@@ -129,14 +127,12 @@ def _parse_point_primitives(visual_ctx: str) -> list[dict[str, Any]]:
         )
     return primitives
 
-
 def _nearest_context_line(visual_ctx: str, coord_str: str) -> str | None:
     """找包含指定 point 原语的上下文行 (截断 200 字符)."""
     for line in visual_ctx.split("\n"):
         if coord_str in line:
             return line.strip()[:200]
     return None
-
 
 def _parse_visual_section_line(
     line: str,
@@ -181,7 +177,6 @@ def _parse_visual_section_line(
             features.append(f"{sec_name}.anomalies={anom_count}")
     return sec, features
 
-
 def _visual_section_summary(sec: dict[str, Any]) -> str:
     """拼单段 summary 行: 名称 + trend / range / 异常数."""
     sec_name = sec["name"]
@@ -193,7 +188,6 @@ def _visual_section_summary(sec: dict[str, Any]) -> str:
     if "anomaly_count" in sec and sec["anomaly_count"] > 0:
         parts.append(f"{sec['anomaly_count']} anomalies")
     return ", ".join(parts)
-
 
 async def _invoke_image_tool(
     img_tool: Any,
@@ -231,7 +225,6 @@ async def _invoke_image_tool(
             if tmp is not None:
                 _os.unlink(tmp)
 
-
 async def _image_tool_annotation(
     engine: VisualInspect, description: str, visual_base64: str
 ) -> tuple[list[str], dict[str, Any] | None]:
@@ -262,7 +255,6 @@ async def _image_tool_annotation(
         features.append(f"tool_annotation_failed: {e}")
     return features, tool_output
 
-
 def _compare_visual_diff(visual_ctx: str) -> dict[str, Any]:
     """文本级差分: 解析 visual_ctx 里的峰值 / 最小值 / 异常计数."""
     import re
@@ -284,7 +276,6 @@ def _compare_visual_diff(visual_ctx: str) -> dict[str, Any]:
         )
     return diff
 
-
 def _compare_target(description: str) -> str | None:
     """检查描述里有没有指定比较对象 (e.g. "compare band 3 and band 5")."""
     import re
@@ -298,34 +289,12 @@ def _compare_target(description: str) -> str | None:
         return None
     return f"{compare_match.group(1).strip()} vs {compare_match.group(2).strip()}"
 
-
-class VisualInspect:
+class VisualInspect(EngineFacade):
     """visual_inspect 方法族协作对象.
 
     未定义的私有字段读经 __getattr__ 转发到 self.engine — 方法读到引擎状态。
     写默认落实例 (本方法族不写引擎缓存), 测试继承子类也可自设字段.
     """
-
-    def __init__(self, engine: Any) -> None:
-        object.__setattr__(self, "engine", engine)
-
-    def __getattr__(self, name: str) -> Any:
-        if name.startswith("_"):
-            # 用 object.__getattribute__ 直达 engine 实例属性, 避免 engine==self 时
-            # 递归触发本 __getattr__ (mock/selfcheck 场景 engine 指向自身).
-            return object.__getattribute__(self.engine, name)
-        raise AttributeError(name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name == "engine":
-            object.__setattr__(self, name, value)
-            return
-        # engine==self (测试 mock / selfcheck 场景) 时直写实例 dict, 避免转发递归;
-        # 否则转发到引擎, 让"清除陈旧 _last_visual_base64"等写回引擎保持一致.
-        if self.engine is self:
-            object.__setattr__(self, name, value)
-            return
-        setattr(self.engine, name, value)
 
     async def _call_image_analysis_tool(
         self,
@@ -751,9 +720,7 @@ class VisualInspect:
             note_parts.append("Comparison recorded (no quantitative data to diff)")
         return {"note": "; ".join(note_parts), "diff": diff}
 
-
 # ── self-check ─────────────────────────────────────────────────
-
 
 def _selfcheck_histogram() -> None:
     """_histogram_correlation: 相同图 → 1.0, 极端差异图 → <0.8 (验证阈值)."""
@@ -778,7 +745,6 @@ def _selfcheck_histogram() -> None:
     )
     print(f"1. histogram_correlation: same={same:.3f}, diff={diff:.3f} OK")
 
-
 def _build_mock_engine() -> VisualInspect:
     """构造 selfcheck 用 mock engine (上半黑下半白, +5px 跨界时直方图剧变)."""
     import base64 as b64
@@ -802,7 +768,6 @@ def _build_mock_engine() -> VisualInspect:
 
     return _MockEngine()
 
-
 def _selfcheck_zoom_stable(engine: VisualInspect) -> None:
     """zoom 同色区: consistency_score 存在, 不触发 low_confidence."""
     import asyncio
@@ -821,7 +786,6 @@ def _selfcheck_zoom_stable(engine: VisualInspect) -> None:
         f"同色区不应标 low_confidence: {zoom_action}"
     )
     print(f"2a. zoom stable region: corr={zoom_action['consistency_score']:.3f} OK")
-
 
 def _selfcheck_zoom_unstable(engine: VisualInspect) -> None:
     """zoom 跨黑白边界: 相关性 <0.8 时必须标 low_confidence."""
@@ -849,7 +813,6 @@ def _selfcheck_zoom_unstable(engine: VisualInspect) -> None:
             f"(未触发 low_confidence, 偏移量太小可接受)"
         )
 
-
 def _selfcheck_zoom(engine: VisualInspect) -> None:
     """zoom + consistency_check=True/False 三路一致性断言."""
     import asyncio
@@ -868,7 +831,6 @@ def _selfcheck_zoom(engine: VisualInspect) -> None:
     )
     print("3. consistency_check=False → no consistency_score OK")
 
-
 def _selfcheck() -> None:
     """A3 selfcheck: histogram correlation + zoom re-ask consistency.
 
@@ -883,7 +845,6 @@ def _selfcheck() -> None:
     _selfcheck_zoom(engine)
 
     print("visual_inspect A3 selfcheck OK")
-
 
 if __name__ == "__main__":
     _selfcheck()

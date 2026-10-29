@@ -16,6 +16,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from huginn.core_types import HandleType, ToolContext, ToolResult, ValidationResult
+from huginn.env_access import env_str
 from huginn.hpc.client import HPCConfig
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.validation.handle_validator import HandleValidator
@@ -266,10 +267,10 @@ class JobTool(HuginnTool):
 
     def _get_hpc_config(self, args: JobToolInput) -> HPCConfig:
         """Build HPCConfig from tool args and env vars."""
-        host = args.hpc_host or os.environ.get("HPC_HOST")
-        username = args.hpc_username or os.environ.get("HPC_USERNAME")
+        host = args.hpc_host or env_str("HPC_HOST") or None
+        username = args.hpc_username or env_str("HPC_USERNAME") or None
         scheduler = args.hpc_scheduler or os.environ.get("HPC_SCHEDULER", "slurm")
-        key_path = args.hpc_key_path or os.environ.get("HPC_KEY_PATH")
+        key_path = args.hpc_key_path or env_str("HPC_KEY_PATH") or None
 
         if not host:
             raise ValueError(

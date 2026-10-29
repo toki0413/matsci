@@ -337,11 +337,20 @@ def _coerce_dict_shape(raw: Any) -> tuple[Any, str]:
     return raw, ""
 
 
-def _coerce_container_shape(raw: Any, container: type) -> tuple[Any, str]:
+def _coerce_container_shape(
+    raw: Any, container: type, elem_args: tuple[Any, ...] = ()
+) -> tuple[Any, str]:
     """list/tuple/set/frozenset: 字符串反序列化 + 容器间形状互换."""
     if isinstance(raw, str):
         parsed = _jsonish(raw)
         if parsed is _NO_PARSE or not isinstance(parsed, list | tuple | set | frozenset):
+            # 非 JSON 的普通字符串 → argv 形态. 模型给 bash_tool 传
+            # "python3 run.py"（字符串）是极常见形状: 严格校验直接拒绝时, 每
+            # 次都要烧掉一整轮让模型自己改成数组 (ws31/ws32 实测 8 次).
+            # 只做 **无 shell 元字符** 的 argv 切分: 带 &&/|/;/重定向的字符串
+            # 语义是 shell 脚本, 不是 argv, 原样交给严格校验报错, 不猜语义.
+            if container is list and _is_str_container(elem_args):
+                return _split_argv(raw)
             return raw, ""
         value = parsed if container is list else container(parsed)
         return value, f"str→{container.__name__} (JSON 反序列化)"
@@ -352,6 +361,53 @@ def _coerce_container_shape(raw: Any, container: type) -> tuple[Any, str]:
     if container in (set, frozenset) and isinstance(raw, list):
         return container(raw), f"list→{container.__name__}"
     return raw, ""
+
+
+_SHELL_META = frozenset("|&;<>$`\n(){}*?[]~\\")
+
+
+def _is_str_container(elem_args: tuple[Any, ...]) -> bool:
+    """list[str] 类容器 (元素注解是 str, 无注解时保守视为 str)."""
+    return not elem_args or elem_args[0] is str
+
+
+def _split_argv(raw: str) -> tuple[Any, str]:
+    """普通命令行字符串 → argv 列表 (只切"无未引号 shell 元字符"的简单命令)."""
+    import shlex
+
+    if not raw.strip() or _has_unquoted_meta(raw):
+        return raw, ""
+    try:
+        parts = shlex.split(raw)
+    except ValueError:
+        return raw, ""
+    if not parts:
+        return raw, ""
+    return parts, "str→list (argv 切分)"
+
+
+def _has_unquoted_meta(raw: str) -> bool:
+    """是否含**未加引号**的 shell 元字符 (引号内的 ( ) * 等是普通字符)."""
+    quote = ""
+    i = 0
+    n = len(raw)
+    while i < n:
+        ch = raw[i]
+        if quote:
+            if ch == "\\" and quote == '"':
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+        elif ch in ("'", '"'):
+            quote = ch
+        elif ch == "\\":
+            i += 2
+            continue
+        elif ch in _SHELL_META:
+            return True
+        i += 1
+    return False
 
 
 def _coerce_str_scalar(raw: str, annotation: Any) -> tuple[Any, str]:
@@ -389,7 +445,7 @@ def _coerce_for_annotation(raw: Any, annotation: Any) -> tuple[Any, str]:
         return _coerce_dict_shape(raw)
 
     if origin in (list, tuple, set, frozenset):
-        return _coerce_container_shape(raw, origin)
+        return _coerce_container_shape(raw, origin, get_args(annotation))
 
     if isinstance(raw, str):
         return _coerce_str_scalar(raw, annotation)

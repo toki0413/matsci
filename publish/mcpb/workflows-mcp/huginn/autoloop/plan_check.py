@@ -32,19 +32,19 @@ import re
 from collections import Counter
 from typing import Any
 
+from huginn.autoloop._facade import EngineFacade
 from huginn.autoloop.signals import routing_surprise
 from huginn.memory.longterm import load_stable_principles
+from huginn.utils.json_extract import extract_json_text
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
-
 
 def _get_math_signals():
     """Delayed import to avoid circular dependency (engine imports PlanCheck)."""
     from huginn.autoloop.engine import _MATH_SIGNALS
 
     return _MATH_SIGNALS
-
 
 # planner 提示教的 MODE 候选基线. 不要在源码里把它改成 f-string 占位符:
 # contract_audit 的 workflow 面用正则静态解析本文件里 "MODE:" 后的候选枚举
@@ -68,7 +68,6 @@ _PLAN_OPTIONAL_FIELDS: tuple[tuple[str, str], ...] = (
     ("formula", "plan_formula"),
     ("files", "target_files"),
 )
-
 
 # ---------------------------------------------------------------------------
 # plan prompt 拼接片段 (_build_plan_prompt 外提; 文本内容与拼接顺序逐字节不变)
@@ -114,7 +113,6 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
 SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BEFORE execution. List the given input params and the formula you will apply, e.g. "a=3; b=4; formula=RMS(a,b)". CRITICAL: only plan-time known GIVENS and the operation — NEVER write the predicted output value here. Leaking the answer here corrupts the surprise signal.>
 """
 
-
 def _pc_task_prompt(
     hypothesis: str, context: dict[str, Any], extra_mode_lines: str
 ) -> str:
@@ -133,7 +131,6 @@ Choose ONE mode and describe the plan:
 {extra_mode_lines}
 """
 
-
 def _pc_plan_body(
     hypothesis: str, context: dict[str, Any], extra_mode_lines: str
 ) -> str:
@@ -145,7 +142,6 @@ def _pc_plan_body(
         + _PC_ALIGNMENT_GATE_PROMPT
         + _PC_OUTPUT_FORMAT_PROMPT
     )
-
 
 def _pc_retrieval_blocks(
     pc: Any, hypothesis: str
@@ -183,7 +179,6 @@ def _pc_retrieval_blocks(
         )
     return kb_block, kg_block, mem_block, pm_block, metacog_block, principles_block
 
-
 def _pc_world_model_block(pc: Any, hypothesis: str) -> str:
     """P1 Task 5: world model 预测注入 (懒路, toggle HUGINN_WORLD_MODEL)."""
     block = pc._build_world_model_block(hypothesis)
@@ -191,14 +186,12 @@ def _pc_world_model_block(pc: Any, hypothesis: str) -> str:
         block = f"\n### World Model Prediction (analogy-based)\n{block}"
     return block
 
-
 def _pc_visual_block(pc: Any) -> str:
     """视觉基元注入 (同 hypothesize)."""
     block = getattr(pc, "_last_visual_context", "")
     if block:
         block = f"\n### Visual Primitives (from last tool output)\n{block}\n"
     return block
-
 
 def _pc_math_block(pc: Any, hypothesis: str, context: dict[str, Any]) -> str:
     """条件化 math_block (同 hypothesize)."""
@@ -212,7 +205,6 @@ def _pc_math_block(pc: Any, hypothesis: str, context: dict[str, Any]) -> str:
         if not related_chain and any(s in hyp_blob for s in _get_math_signals())
         else ""
     )
-
 
 def _pc_learning_blocks(pc: Any, hypothesis: str) -> tuple[str, str]:
     """evolution 学到的 skills + prompt patches 提示行."""
@@ -243,7 +235,6 @@ def _pc_learning_blocks(pc: Any, hypothesis: str) -> tuple[str, str]:
             exc_info=True,
         )
     return skill_hints, patch_hints
-
 
 def _pc_composite_block(hypothesis: str) -> str:
     """条件化 composite skills 列表 (仿真/计算类 hypothesis 才注入)."""
@@ -293,7 +284,6 @@ def _pc_composite_block(hypothesis: str) -> str:
             logger.debug("composite skill lookup failed", exc_info=True)
     return composite_block
 
-
 def _pc_pipeline_block(pc: Any) -> str:
     """Pipeline 建议: 基于 provenance 规则推荐下一步工具."""
     # 42 条领域规则, 零 LLM 调用. 让 plan 知道"这类任务通常下一步是 X".
@@ -325,7 +315,6 @@ def _pc_pipeline_block(pc: Any) -> str:
             "best-effort op failed", exc_info=True
         )  # pipeline 是 advisory, 失败不阻塞
     return pipeline_block
-
 
 # 场景关键词表 (快路径). 顺序即优先级: dft > md > workflow, 之后按 mode 判
 # skill, 再 fem; 自动发现的关键词 (_scene_tag_extra_keywords) 走最后.
@@ -374,7 +363,6 @@ _PC_STOPWORDS = frozenset(
     }
 )
 
-
 def _match_scene_keywords(
     desc: str, table: tuple[tuple[str, tuple[str, ...]], ...]
 ) -> str | None:
@@ -384,7 +372,6 @@ def _match_scene_keywords(
             return label
     return None
 
-
 def _collect_other_scene_descs(history: Any) -> list[str]:
     """收集 scene='other' 的 plan descriptions (小写)."""
     out: list[str] = []
@@ -393,7 +380,6 @@ def _collect_other_scene_descs(history: Any) -> list[str]:
         if c.get("scene_tag") == "other" and snapshot.get("description"):
             out.append(snapshot["description"].lower())
     return out
-
 
 def _count_plan_ngrams(descs: list[str]) -> tuple[Counter[str], Counter[str]]:
     """unigram (>=4 chars, 去停用词) + bigram 词频."""
@@ -410,7 +396,6 @@ def _count_plan_ngrams(descs: list[str]) -> tuple[Counter[str], Counter[str]]:
             bigram_counts[f"{words[i]} {words[i + 1]}"] += 1
     return word_counts, bigram_counts
 
-
 def _apply_discovered_tags(
     target: dict[str, set[str]], counts: Counter[str], limit: int
 ) -> None:
@@ -421,12 +406,10 @@ def _apply_discovered_tags(
         label = f"auto_{gram.replace(' ', '_')}"
         target.setdefault(label, set()).add(gram)
 
-
 # 抓 "<number> <unit>" 量, e.g. "210 GPa" / "1.5e3 kg/m3"
 _DIM_QUANTITY_RE = re.compile(
     r"([+-]?\d+\.?\d*(?:[eE][+-]?\d+)?)\s+([A-Za-z][A-Za-z0-9/\^\-\*\.\(\)]+)"
 )
-
 
 def _dimensional_text(plan: Any, hypothesis: str) -> str:
     """拼 plan + hypothesis 文本 (取 description/prediction 字段)."""
@@ -436,7 +419,6 @@ def _dimensional_text(plan: Any, hypothesis: str) -> str:
         if isinstance(v, str) and v:
             parts.append(v)
     return "\n".join(parts)
-
 
 def _dimensional_line_warning(validator: Any, line: str) -> str | None:
     """单行等式量纲校验; 不可解析或量纲一致时返回 None."""
@@ -460,7 +442,6 @@ def _dimensional_line_warning(validator: Any, line: str) -> str | None:
         f"dimensional inconsistency: '{line.strip()[:80]}' "
         f"LHS={result.lhs_dimensions} RHS={result.rhs_dimensions}"
     )
-
 
 def _pcp_render_prompt(
     hypothesis: str,
@@ -499,6 +480,14 @@ PREDICTION: {plan.get("expected_prediction", "N/A")}
 - 是否重复了"同场景历史失败"里列出的坑
 - 量纲预检查有警告时, 把它列入 risks
 
+# 判定边界 (硬性, 误判会卡死整个循环)
+- DESCRIPTION 是**计划文本**, 不是源码. 代码/脚本在 execute 阶段才写出.
+  **不得**因为 DESCRIPTION 里没有导入语句、可运行源码、print 语句、完整函数体
+  而判 invalid —— ws35 实测此误判导致 13 连拒、循环空转.
+- 只有以下情况才判 invalid: 计划与 hypothesis 不对齐 (测的不是同一个量)、
+  缺必要前置步骤、PREDICTION 不可验证、方法在本环境不可执行.
+- 判 invalid 必须能在 missing_steps 里给出**可执行**的补充项; 给不出来就判 valid.
+
 输出 JSON (不要其他文本):
 {{
   "is_valid": true 或 false,
@@ -508,22 +497,13 @@ PREDICTION: {plan.get("expected_prediction", "N/A")}
   "risks": ["潜在风险"]
 }}"""
 
-
 def _extract_json_object(text: str) -> tuple[str, str]:
-    """括号配平法抓第一个完整 JSON 对象; 返回 (对象文本, 错误原因)."""
-    start = text.find("{")
-    if start < 0:
-        return "", "no json, skip"
-    depth = 0
-    for i, ch in enumerate(text[start:], start=start):
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : i + 1], ""
-    return "", "no closing brace, skip"
+    """括号配平法抓第一个完整 JSON 对象; 返回 (对象文本, 错误原因).
 
+    薄封装: 实现见 huginn/utils/json_extract.py, 这里保留原二元组契约.
+    """
+    blob, err = extract_json_text(text, prefer="first", openers=("{",))
+    return blob, f"{err}, skip" if err else ""
 
 def _rp_render_prompt(
     plan: dict[str, Any],
@@ -557,78 +537,12 @@ DESCRIPTION: <brief description>
 SKILL: <composite skill name, only if MODE is skill>
 PREDICTION: <预期结果, 用于后续 validate 对比>"""
 
-
-class PlanCheck:
+class PlanCheck(EngineFacade):
     """plan_check 方法族协作对象.
 
     未定义的属性读写经 __getattr__/__setattr__ 转发到 self.engine —
     引擎字段/方法不会被复制两份, 方法体零改动、行为完全等价.
     """
-
-    def __init__(self, engine: Any) -> None:
-        object.__setattr__(self, "engine", engine)
-
-    def __getattr__(self, name: str) -> Any:
-        # object.__getattribute__ 直达 engine 实例属性, 避免 engine==self 时递归
-        return object.__getattribute__(self.engine, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name == "engine":
-            object.__setattr__(self, name, value)
-            return
-        # 本对象自有的协作方法名: 赋值意图是覆写协作方法(如测试 mock _plan_check),
-        # 应落在本对象实例 dict 而非转发回引擎; 其余名字(引擎状态字段)转发回引擎.
-        if name in self._OWN_ATTRS:
-            object.__setattr__(self, name, value)
-            return
-        # engine==self (测试 mock) 直写实例 dict 避免转发自递归; 否则转发回引擎
-        if self.engine is self:
-            object.__setattr__(self, name, value)
-            return
-        setattr(self.engine, name, value)
-
-    #: PlanCheck 定义的协作方法名集合. 供 __setattr__ 判定"覆写自身方法" vs "写引擎状态".
-    _OWN_ATTRS: frozenset[str] = frozenset(
-        {
-            "_build_subgoal_block",
-            "_build_plan_prompt",
-            "_plan_context_hint",
-            "_override_plan_mode",
-            "_ovr_force_coder",
-            "_ovr_code_experiment",
-            "_ovr_dual_coverage",
-            "_ovr_force_explore",
-            "_asks_to_write_and_run_code",
-            "_is_code_experiment_plan",
-            "_log_plan_override",
-            "_pp_slots",
-            "_pp_files",
-            "_pp_scan",
-            "_parse_plan",
-            "_plan_check_and_refine",
-            "_pcr_loop",
-            "_pcr_record",
-            "_pcr_pass",
-            "_pcr_fail",
-            "_maybe_trigger_plan_check_clarify",
-            "_plan_check_tier",
-            "_plan_check_complexity_thresholds",
-            "_plan_check_scene_tag",
-            "_discover_scene_tags",
-            "_plan_check_complexity",
-            "_plan_check_max_refines",
-            "_plan_check",
-            "_dimensional_pre_check",
-            "_build_plan_check_prompt",
-            "_pcp_similar_history",
-            "_record_plan_check_failure",
-            "_load_plan_check_patterns",
-            "_save_plan_check_patterns",
-            "_parse_plan_check",
-            "_rp_few_shot",
-            "_refine_plan",
-        }
-    )
 
     def _build_subgoal_block(self) -> str:
         """从 agent 或 self 上读 sub_goals, 注入到 prompt."""
@@ -717,9 +631,15 @@ class PlanCheck:
         # _extend_mode_enum 在返回前按 flag 展开 (模板保留基线字面量).
         extra_mode_lines = self._plan_extra_mode_lines()
 
+        # objective 原文 + 契约独立成块: plan 阶段的 context 只截 1000 字符,
+        # 7KB 任务书 (H1–H5 定义/阈值/交付物键名) 到不了模型 → 模型按自造的
+        # 假设规划, 于是 plan_check 反复判 misalign (ws35 实测 13 连拒).
+        from huginn.autoloop.deliverables import objective_block_for
+
         blocks = self._apply_block_patches(
             [
                 ("body", _pc_plan_body(hypothesis, context, extra_mode_lines)),
+                ("objective", objective_block_for(self)),
                 ("math", math_block),
                 ("kg", kg_block),
                 ("visual", visual_block),
@@ -915,8 +835,18 @@ class PlanCheck:
         "write code and run",
     )
 
+    _NEGATION_WINDOW_RE = re.compile(
+        r"(?:不要|禁止|勿|无需|不必|不得|do\s+not|don['’]?t|without|no\s+need)"
+        r"[^,.;。；\n]{0,40}"
+    )
+
+    @classmethod
+    def _strip_negated_windows(cls, text: str) -> str:
+        """剥离否定窗口, 避免"不要写代码"命中"写代码"标记."""
+        return cls._NEGATION_WINDOW_RE.sub(" ", text or "")
+
     def _asks_to_write_and_run_code(self, plan: dict[str, Any]) -> bool:
-        """目标/plan 是否明确要求"写并运行代码"."""
+        """目标/plan 是否明确要求"写并运行代码" (否定句先剥离)."""
         blob = " ".join(
             str(x)
             for x in (
@@ -924,6 +854,7 @@ class PlanCheck:
                 plan.get("description", "") or "",
             )
         ).lower()
+        blob = self._strip_negated_windows(blob)
         return any(m in blob for m in self._CODE_TASK_MARKERS)
 
     def _is_code_experiment_plan(self, plan: dict[str, Any]) -> bool:
@@ -1018,10 +949,39 @@ class PlanCheck:
                 st["files"] = PlanCheck._pp_files(line)
         return st
 
+    @staticmethod
+    def _pp_desc_after_field(response: str) -> str:
+        """DESCRIPTION 值落在下一行时的补捞.
+
+        模型常把 ``DESCRIPTION:`` 单独占一行、正文另起（尤其长描述）。
+        ``_pp_scan`` 逐行取值 → 拿到空串 → execute 收到空任务（ws14 实测
+        plan→execute 缺证据 ['description']，coder 只能瞎逛）。这里把
+        ``DESCRIPTION:`` 之后、下一个字段行之前的正文整体当描述。
+        """
+        lines = response.split("\n")
+        idx = next(
+            (i for i, l in enumerate(lines) if l.startswith("DESCRIPTION:")), None
+        )
+        if idx is None:
+            return ""
+        head = lines[idx].replace("DESCRIPTION:", "", 1).strip()
+        if head:
+            return head
+        tail: list[str] = []
+        for line in lines[idx + 1 :]:
+            if line.startswith(tuple(_PLAN_TEXT_FIELDS)) or line.startswith(
+                ("SLOTS:", "FILES:")
+            ):
+                break
+            tail.append(line)
+        return "\n".join(tail).strip()
+
     def _parse_plan(self, response: str) -> dict[str, Any]:
         """Parse LLM plan response."""
         st = PlanCheck._pp_scan(response)
         plan = {"mode": st["mode"], "description": st["description"]}
+        if not str(plan["description"]).strip():
+            plan["description"] = PlanCheck._pp_desc_after_field(response)
         for src, dst in _PLAN_OPTIONAL_FIELDS:
             if st[src]:
                 plan[dst] = st[src]

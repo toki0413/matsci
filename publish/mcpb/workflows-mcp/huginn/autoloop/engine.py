@@ -23,8 +23,40 @@ from pathlib import Path
 from typing import Any
 
 from huginn.autoloop.budget import TokenBudget
+from huginn.autoloop.cognitive_loop import CognitiveRunner
+
+# P3 slim-down: 5 个 engine_* mixin (perceive/observe/act/reflect/control) 把
+# AutoloopEngine 的方法族拆到独立模块. mixin 通过 self 访问 engine 状态,
+# 对 engine.py 模块级符号用方法内 lazy import 避免 circular.
+from huginn.autoloop.engine_act import EngineAct
+from huginn.autoloop.engine_control import EngineControl
+from huginn.autoloop.engine_observe import EngineObserve
+from huginn.autoloop.engine_perceive import EnginePerceive
+from huginn.autoloop.engine_reflect import EngineReflect
+from huginn.autoloop.goal_scheduler import GoalScheduler
+from huginn.autoloop.hypothesis_loop import HypothesisLoop
+from huginn.autoloop.math_validation import MathValidator
+from huginn.autoloop.phase_gate import PhaseGateHook
+from huginn.autoloop.plan_check import PlanCheck
 from huginn.autoloop.signals import SIGNAL_NAMES, EngineSignals
-from huginn.autoloop.types import LoopPhase
+from huginn.autoloop.types import CognitiveState, LoopPhase
+from huginn.autoloop.visual_inspect import VisualInspect
+from huginn.bench.runner import BenchmarkRunner  # noqa: F401  # monkeypatch
+from huginn.coder.loop import CoderRunner
+from huginn.config import get_settings
+
+# C1: 共享 KB chunk 格式化函数, 跟 ContextBuilder 走同一条路径, 消除双路径漂移.
+# C4: 共享 meta_trace 加载, engine 写 jsonl 但之前不读, 现在注入 memory_text.
+from huginn.exploration.orchestrator import ExplorationOrchestrator
+from huginn.exploration.strategies import ParetoPruningStrategy
+from huginn.interaction.progress import ProgressTracker
+from huginn.kg.builder import ProjectKnowledgeGraph
+from huginn.llm import get_model
+from huginn.memory.manager import MemoryManager
+from huginn.permissions import PermissionConfig, autoloop_auto_approve
+from huginn.tools.report_tool import ReportTool
+from huginn.utils.runtime import HUGINN_DIR_NAME
+from huginn.workflows.engine import WorkflowEngine
 
 logger = logging.getLogger(__name__)
 
@@ -114,41 +146,6 @@ def _autoloop_streaming_enabled() -> bool:
         return False
     return _feature_flag("autoloop_streaming", True)
 
-
-from huginn.autoloop.cognitive_loop import CognitiveRunner  # noqa: E402
-from huginn.autoloop.engine_act import EngineAct  # noqa: E402
-from huginn.autoloop.engine_control import EngineControl  # noqa: E402
-from huginn.autoloop.engine_observe import EngineObserve  # noqa: E402
-
-# P3 slim-down: 5 个 engine_* mixin (perceive/observe/act/reflect/control) 把
-# AutoloopEngine 的方法族拆到独立模块. mixin 通过 self 访问 engine 状态,
-# 对 engine.py 模块级符号用方法内 lazy import 避免 circular.
-from huginn.autoloop.engine_perceive import EnginePerceive  # noqa: E402
-from huginn.autoloop.engine_reflect import EngineReflect  # noqa: E402
-from huginn.autoloop.goal_scheduler import GoalScheduler  # noqa: E402
-from huginn.autoloop.hypothesis_loop import HypothesisLoop  # noqa: E402
-from huginn.autoloop.math_validation import MathValidator  # noqa: E402
-from huginn.autoloop.phase_gate import (  # noqa: E402
-    PhaseGateHook,
-)
-from huginn.autoloop.plan_check import PlanCheck  # noqa: E402
-from huginn.autoloop.visual_inspect import VisualInspect  # noqa: E402
-from huginn.bench.runner import BenchmarkRunner  # noqa: F401, E402  # monkeypatch
-from huginn.coder.loop import CoderRunner  # noqa: E402
-from huginn.config import get_settings  # noqa: E402
-
-# C1: 共享 KB chunk 格式化函数, 跟 ContextBuilder 走同一条路径, 消除双路径漂移.
-# C4: 共享 meta_trace 加载, engine 写 jsonl 但之前不读, 现在注入 memory_text.
-from huginn.exploration.orchestrator import ExplorationOrchestrator  # noqa: E402
-from huginn.exploration.strategies import ParetoPruningStrategy  # noqa: E402
-from huginn.interaction.progress import ProgressTracker  # noqa: E402
-from huginn.kg.builder import ProjectKnowledgeGraph  # noqa: E402
-from huginn.llm import get_model  # noqa: E402
-from huginn.memory.manager import MemoryManager  # noqa: E402
-from huginn.permissions import PermissionConfig, autoloop_auto_approve  # noqa: E402
-from huginn.tools.report_tool import ReportTool  # noqa: E402
-from huginn.utils.runtime import HUGINN_DIR_NAME  # noqa: E402
-from huginn.workflows.engine import WorkflowEngine  # noqa: E402
 
 # 跨源属性冲突检测用的正则; 提到模块级避免每次调用重编译
 _PROP_RE = re.compile(
@@ -1649,7 +1646,7 @@ class AutoloopEngine:
         return self._engine_reflector._has_post_task_signal(state, prev_outcome)
 
     async def _advisor_post_task_recommend(
-        self, run_id: str, objective: str, cog: dict, state: Any,
+        self, run_id: str, objective: str, cog: CognitiveState, state: Any,
         prev_outcome: str = "",
     ) -> None:
         await self._engine_reflector._advisor_post_task_recommend(
@@ -1799,7 +1796,7 @@ class AutoloopEngine:
         return self._cognitive_runner._load_failure_pattern()
 
     def _persist_run_context(
-        self, run_id: str, objective: str, cog: dict, state: Any,
+        self, run_id: str, objective: str, cog: CognitiveState, state: Any,
     ) -> None:
         self._cognitive_runner._persist_run_context(run_id, objective, cog, state)
 
@@ -1810,16 +1807,16 @@ class AutoloopEngine:
         return self._cognitive_runner._format_timeseries_context()
 
     async def _decide_next_action_llm(
-        self, state: Any, cog: dict, obs: dict,
+        self, state: Any, cog: CognitiveState, obs: dict,
     ):
         return await self._cognitive_runner._decide_next_action_llm(state, cog, obs)
 
     def _build_decider_prompt(
-        self, state: Any, cog: dict, obs: dict,
+        self, state: Any, cog: CognitiveState, obs: dict,
     ) -> str:
         return self._cognitive_runner._build_decider_prompt(state, cog, obs)
 
-    def _is_action_legal(self, action: str, cog: dict) -> bool:
+    def _is_action_legal(self, action: str, cog: CognitiveState) -> bool:
         return self._cognitive_runner._is_action_legal(action, cog)
 
     async def _finalize_run(
@@ -1832,6 +1829,7 @@ class AutoloopEngine:
         tracker: Any,
         progress_task_id: str,
         completed_steps: int,
+        loop_state: Any = None,
     ) -> Any:
         return await self._cognitive_runner._finalize_run(
             objective,
@@ -1842,6 +1840,7 @@ class AutoloopEngine:
             tracker,
             progress_task_id,
             completed_steps,
+            loop_state=loop_state,
         )
 
     def _rollback_on_execute_failure(

@@ -350,11 +350,11 @@
 
 | 事件值 | 生产发布 | 生产订阅 | 发布点 | 订阅点 |
 |---|---|---|---|---|
-| `campaign.budget_exhausted` | 2 | 0 | `huginn/autoloop/cognitive_loop.py:4237`, `huginn/autoloop/cognitive_loop.py:4273` | — |
-| `campaign.control_trace` | 3 | 0 | `huginn/autoloop/cognitive_loop.py:1858`, `huginn/autoloop/engine_observe.py:893`, `huginn/autoloop/engine_reflect.py:2399` | — |
-| `campaign.rejected` | 1 | 0 | `huginn/autoloop/cognitive_loop.py:3874` | — |
-| `campaign.retry` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:4016` | `huginn/events/audit_log.py:586` |
-| `campaign.suspect` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:4037` | `huginn/events/audit_log.py:586` |
+| `campaign.budget_exhausted` | 2 | 0 | `huginn/autoloop/cognitive_loop.py:4296`, `huginn/autoloop/cognitive_loop.py:4332` | — |
+| `campaign.control_trace` | 3 | 0 | `huginn/autoloop/cognitive_loop.py:1914`, `huginn/autoloop/engine_observe.py:897`, `huginn/autoloop/engine_reflect.py:2399` | — |
+| `campaign.rejected` | 1 | 0 | `huginn/autoloop/cognitive_loop.py:3933` | — |
+| `campaign.retry` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:4075` | `huginn/events/audit_log.py:586` |
+| `campaign.suspect` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:4096` | `huginn/events/audit_log.py:586` |
 | `cognitive.csm.transition` | 2 | 0 | `huginn/cognitive_engine.py:606`, `huginn/events/unified_bus.py:346` | — |
 | `embedding.download.done` | 1 | 0 | `huginn/knowledge/store.py:249` | — |
 | `embedding.download.error` | 3 | 0 | `huginn/knowledge/store.py:239`, `huginn/knowledge/store.py:253`, `huginn/knowledge/store.py:372` | — |

@@ -23,13 +23,14 @@ import logging
 import re
 from typing import Any
 
+from huginn.autoloop._facade import EngineFacade
+
 logger = logging.getLogger(__name__)
 
 # 关键词: 只用于 description 的自由文本解析兜底 (模型偶尔不严格按 JSON 输出)
 _KV_RE = re.compile(
     r"(?:^|[\s,;])([A-Za-z_]+)\s*[:=]\s*(\[[^\]]*\]|\"[^\"]*\"|'[^']*'|[^\s,;]+)"
 )
-
 
 def _flag_on(name: str) -> bool:
     try:
@@ -39,7 +40,6 @@ def _flag_on(name: str) -> bool:
     except Exception:  # 防御: flag 层异常 → 当作关 (功能默认 off)
         logger.debug("feature flag read failed for %s", name, exc_info=True)
         return False
-
 
 def _as_float_list(value: Any) -> list[float] | None:
     """把 [..] / 'a,b,c' / 'a b c' 解析成一维 float 列表; 失败 None."""
@@ -58,26 +58,8 @@ def _as_float_list(value: Any) -> list[float] | None:
             return None
     return None
 
-
-class RecallModes:
+class RecallModes(EngineFacade):
     """trace_inspect / frame_inspect 方法族协作对象."""
-
-    def __init__(self, engine: Any) -> None:
-        object.__setattr__(self, "engine", engine)
-
-    def __getattr__(self, name: str) -> Any:
-        if name.startswith("_"):
-            return object.__getattribute__(self.engine, name)
-        raise AttributeError(name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name == "engine":
-            object.__setattr__(self, name, value)
-            return
-        if self.engine is self:
-            object.__setattr__(self, name, value)
-            return
-        setattr(self.engine, name, value)
 
     # ── 帧捕获 (execute 尾部调用, flag 关时零成本直返) ────────────────
     def capture_if_enabled(self, tool: str, result: Any) -> dict[str, Any] | None:

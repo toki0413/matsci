@@ -24,8 +24,9 @@ import time
 from datetime import datetime
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from huginn.autoloop._facade import EngineFacade
 
+logger = logging.getLogger(__name__)
 
 def _pm_traj_advice(match: dict[str, Any]) -> str:
     """由轨迹命中结果构造 advisory 文本块."""
@@ -39,24 +40,12 @@ def _pm_traj_advice(match: dict[str, Any]) -> str:
     )
 
 
-class EnginePerceive:
+class EnginePerceive(EngineFacade):
     """perceive 阶段方法族: 感知工作区 + 上下文块拼装.
 
-    未定义的属性读写经 __getattr__/__setattr__ 转发到 self._engine —
-    引擎共享缓存 (如 _kb/_perception/_persona_manager) 不会被复制两份.
+    未定义的属性读写经 :class:`EngineFacade` 转发到 self.engine — 引擎共享缓存
+    (如 _kb/_perception/_persona_manager) 不会被复制两份.
     """
-
-    def __init__(self, engine: Any) -> None:
-        object.__setattr__(self, "_engine", engine)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._engine, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name == "_engine":
-            object.__setattr__(self, name, value)
-            return
-        setattr(self._engine, name, value)
 
     def _maybe_expire_inbox(self) -> None:
         """P2-5: 周期清理超时 pending inbox item, 防 unattended session 永久阻塞.

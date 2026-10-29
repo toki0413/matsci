@@ -15,9 +15,7 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -25,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from huginn.core_types import ToolContext, ToolResult, ValidationResult
 from huginn.tools.base import HuginnTool
+from huginn.utils.json_extract import extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -33,25 +32,17 @@ logger = logging.getLogger(__name__)
 
 
 def _extract_json(text: str) -> Any | None:
-    """从视觉模型回复里抽出第一个 JSON 对象/数组.
+    """从视觉模型回复里抽出第一个 JSON 对象/数组 (先对象后数组).
 
     容忍 markdown 代码围栏和前后杂文. 找不到返回 None.
+    薄封装: 实现见 huginn/utils/json_extract.py.
     """
     if not text:
         return None
-    cleaned = text.strip()
-    # 去 ```json ... ``` 围栏
-    cleaned = re.sub(r"```(?:json)?\s*", "", cleaned).strip()
-    # 定位第一个 { 或 [ 到末尾, 尝试解析; 逐段收紧
-    for start_ch, _end_ch in (("{", "}"), ("[", "]")):
-        start = cleaned.find(start_ch)
-        if start == -1:
-            continue
-        for end in range(len(cleaned), start, -1):
-            try:
-                return json.loads(cleaned[start:end])
-            except (json.JSONDecodeError, ValueError):
-                continue
+    for opener in ("{", "["):
+        value = extract_json(text, prefer="first", openers=(opener,))
+        if value is not None:
+            return value
     return None
 
 

@@ -44,10 +44,8 @@ from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
 logger = logging.getLogger(__name__)
 
-
 HypothesisStatus = Literal["untested", "supported", "refuted", "superseded"]
 EdgeType = Literal["support", "refute", "derive", "pivot"]
-
 
 # P1-1 Ising 升级 HypothesisGraph.frontier: 假设多了之后 (>10) 按能量最低
 # K-子集排, 互相支撑的子集能量低 (Tᵢⱼ>0), 互相矛盾的能量高 (Tᵢⱼ<0).
@@ -58,7 +56,6 @@ def _ising_frontier_enabled() -> bool:
     """toggle: FeatureFlags `ising_frontier` (默认 on). off 时回退原 frontier()."""
     from huginn.feature_flags import FeatureFlags
     return FeatureFlags.shared().is_enabled("ising_frontier")
-
 
 # ── ARTEX 借鉴: 单写者 frontier 纪律 ─────────────────────────────────────────
 # ARTEX 的 planner 是方向的**唯一追加者** (worker 只领执行), 保证 todolist 不被
@@ -71,17 +68,14 @@ _FRONTIER_WRITER_PHASE: contextvars.ContextVar[str] = contextvars.ContextVar(
 )
 _FRONTIER_WRITE_PHASES = frozenset({"hypothesize", "branch"})
 
-
 def _frontier_single_writer_strict() -> bool:
     """toggle: FeatureFlags `frontier_single_writer_strict` (默认 off = 只观测)."""
     from huginn.feature_flags import FeatureFlags
     return FeatureFlags.shared().is_enabled("frontier_single_writer_strict")
 
-
 def set_frontier_writer_phase(phase: str):
     """标注当前写假设图所处的阶段; 返回 token 供 reset."""
     return _FRONTIER_WRITER_PHASE.set(phase or "")
-
 
 def reset_frontier_writer_phase(token: Any) -> None:
     """复位写者阶段标注 (与 set_frontier_writer_phase 配对)."""
@@ -89,7 +83,6 @@ def reset_frontier_writer_phase(token: Any) -> None:
         _FRONTIER_WRITER_PHASE.reset(token)
     except (ValueError, LookupError):  # 跨 context reset → 覆盖回空串, 不抛
         _FRONTIER_WRITER_PHASE.set("")
-
 
 @contextlib.contextmanager
 def frontier_write_phase(phase: str):
@@ -99,7 +92,6 @@ def frontier_write_phase(phase: str):
         yield
     finally:
         reset_frontier_writer_phase(tok)
-
 
 def _bi_make_value_fn() -> Any:
     """构造 PRM rollout value_fn; 不可用 (无 LLM / 关闭) 时返回 None 回退 token 剪枝."""
@@ -123,7 +115,6 @@ def _bi_make_value_fn() -> Any:
         )
         return None
 
-
 def _bi_resolve_depth(host: Any) -> int:
     """Ataraxos 式强度调度: 假设弱→深搜/广探索, 强→浅搜/局部精修.
 
@@ -135,7 +126,6 @@ def _bi_resolve_depth(host: Any) -> int:
         return base_depth
     return strength_branch_depth(hypothesis_strength(host), base=base_depth)
 
-
 def _fr_track_metric(pool_size: int) -> None:
     """上报 Ising 重排指标; 指标模块不可用/失败时静默跳过."""
     try:
@@ -143,7 +133,6 @@ def _fr_track_metric(pool_size: int) -> None:
         track_memory_rerank("ising", pool_size)
     except Exception:  # 防御: 记忆重排指标失败跳过
         logger.debug("memory rerank metric skipped", exc_info=True)
-
 
 _CF_TOOL_MARKERS = (
     "timeout", "timed out", "connection", "crash", "segfault", "oom",
@@ -168,7 +157,6 @@ _CF_RT_MAP = {
     "alternative_explanation": "hypothesis_error",
 }
 
-
 def _cf_keyword_classify(text: str) -> str | None:
     """关键词匹配 param/noise; 未命中返回 None (交给语义分类器)."""
     if any(m in text for m in _CF_PARAM_MARKERS):
@@ -177,11 +165,9 @@ def _cf_keyword_classify(text: str) -> str | None:
         return "data_noise"
     return None
 
-
 def _mk_stable_id(text: str) -> str:
     """内容哈希做稳定 id — 同文本永远同 id, 保证幂等挂载."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
-
 
 def _mk_bigrams(text: str) -> set[str]:
     """字符 bigram 集 — 中文短语义的粗粒度指纹.
@@ -194,7 +180,6 @@ def _mk_bigrams(text: str) -> set[str]:
     chars = [c for c in text.lower() if not c.isspace()]
     return {chars[i] + chars[i + 1] for i in range(len(chars) - 1)}
 
-
 def _mk_load_principles() -> list[str]:
     """加载 stable_principles; 失败用空表."""
     try:
@@ -202,7 +187,6 @@ def _mk_load_principles() -> list[str]:
         return load_stable_principles()
     except Exception:  # 防御: 原则加载失败用空表
         return []
-
 
 def _mk_load_rules() -> list[dict]:
     """加载 evolution_rules.json; 不存在/失败用空表."""
@@ -216,12 +200,10 @@ def _mk_load_rules() -> list[dict]:
     except Exception:  # 防御: 规则加载失败用空表
         return []
 
-
 def _mk_principle_key(item: Any) -> tuple[str, str]:
     """原则 → (kid, text); 内容哈希保证同文本永远同 id."""
     text = str(item) if item else ""
     return (f"sp:{_mk_stable_id(text)}" if text else ""), text
-
 
 def _mk_rule_key(item: Any) -> tuple[str, str]:
     """进化规则 → (kid, text); 有 rule_id 用 rule_id, 否则内容哈希."""
@@ -232,7 +214,6 @@ def _mk_rule_key(item: Any) -> tuple[str, str]:
     if not desc:
         return "", ""
     return f"er:{item.get('rule_id') or _mk_stable_id(desc)}", desc
-
 
 def _ei_build_prompt(statement: str, existing_block: str) -> str:
     """拼装信息量评估 prompt."""
@@ -245,7 +226,6 @@ def _ei_build_prompt(statement: str, existing_block: str) -> str:
         '输出 JSON: {"novelty": float, "verifiability": float, "reason": str}'
     )
 
-
 def _ei_parse_json(text: str) -> dict | None:
     """LLM 可能包 ```json fence, 直接抠第一个含 novelty 的 JSON 对象."""
     _m = re.search(r'\{[^{}]*"novelty"[^{}]*\}', text, re.DOTALL)
@@ -256,7 +236,6 @@ def _ei_parse_json(text: str) -> dict | None:
     except Exception:  # 防御: LLM 输出非法 JSON
         return None
     return _parsed if isinstance(_parsed, dict) else None
-
 
 def _sr_format_block(payload: Mapping[str, Any]) -> str:
     """把 symreg payload 的首个候选表达式格式化成 prompt block."""
@@ -279,14 +258,12 @@ def _sr_format_block(payload: Mapping[str, Any]) -> str:
         "### End candidate law"
     )
 
-
 def _rbc_predict(fields: list[str]) -> str:
     """从 `|` 切出的字段里取 predict: 后的正文."""
     for _p in fields[1:]:
         if _p.lower().startswith("predict:"):
             return _p.split(":", 1)[1].strip()
     return ""
-
 
 def _cm_score(has_refuted: bool, audited: bool, depth: int) -> float:
     """分量成熟度打分: 有 refuted +0.3 / 过审计 +0.3 / 链深>=2 +0.4."""
@@ -299,9 +276,7 @@ def _cm_score(has_refuted: bool, audited: bool, depth: int) -> float:
         score += 0.4
     return score
 
-
 # ── data structures ──────────────────────────────────────────────────────────
-
 
 @dataclass
 class HypothesisNode:
@@ -385,7 +360,6 @@ class HypothesisNode:
             claimed_at=d.get("claimed_at", ""),
         )
 
-
 @dataclass
 class HypothesisEdge:
     """节点间的关系边."""
@@ -406,16 +380,14 @@ class HypothesisEdge:
             "anchors": list(self.anchors),
         }
 
-
 # ── 异常 ────────────────────────────────────────────────────────────────────
-
 
 class HypothesisGraphError(Exception):
     """图操作错误: 节点不存在 / 重复 / 非法状态转移."""
 
-
 # v11: 假设维度关键词表 — 中英文命中, 非语义. P1#1: 已迁到 hypothesis_semantic.py,
 # 由 LLM 语义判定 (默认关) 覆盖, _extract_dimension 仅作向后兼容薄封装.
+from huginn.autoloop._facade import EngineFacade
 from huginn.autoloop.hypothesis_semantic import (  # noqa: E402
     classify_dimension as _classify_dimension,
 )
@@ -425,13 +397,11 @@ def _extract_dimension(statement: str) -> str:
     """从假设陈述抽 dimension. P1#1: 接 LLM 语义判定; 无 LLM/关 flag 时回退关键词命中."""
     return _classify_dimension(statement)
 
-
 # 落地锚: 假设的验证证据是否可回查到"真实来源". 复用 ARGUS source_class 词汇 ——
 # external_content (外部内容) / tool_output (工具实测) 算落地; agent_generated 是
 # 自说自话, 不算; 空串 = 未验证或来源未知. 这跟 supported_ratio 语义不同: 后者
 # 连 agent 自洽的 support 也算, 前者只认外部/实测根据.
 _GROUNDED_SOURCE_CLASSES: tuple[str, ...] = ("external_content", "tool_output")
-
 
 def _dominant_grounding(evidence: dict[str, Any]) -> str:
     """evidence 里占比最高的 source_class; 无 → "" (未知, 不臆造).
@@ -446,14 +416,12 @@ def _dominant_grounding(evidence: dict[str, Any]) -> str:
         logger.debug("_dominant_source_class failed", exc_info=True)
         return ""
 
-
 # 落地锚 (ARTEX 借鉴): 把"证据可回查的来源"从有损的单一 source_class 字符串
 # (grounding) 升级为一等的锚集合 + 双向索引. 迁移的单位是锚不是文本相似度:
 # 同一锚 (同 run / 工具会话 / 实测值 / 引用) 上的假设跨场景可复用.
 # 诚实边界 (同 memory/anchor.py): 只认白名单前缀, 自由文本一律判"无锚",
 # 宁缺勿猜 —— 假锚会像 "structure_desc 全 0" 一样看着有机制、实际无信息.
 _ANCHOR_TOKEN_RE = re.compile(r"^([a-z]+):(.+)$")
-
 
 def _normalize_anchor(obj: Any) -> str | None:
     """把候选锚归一到 ``kind:ref`` token; 白名单外 / 自由文本返 None (不猜)."""
@@ -469,7 +437,6 @@ def _normalize_anchor(obj: Any) -> str | None:
         a = parse_anchor(obj)
         return a.token() if a else None
     return None
-
 
 def _anchor_tokens_from_evidence(evidence: Mapping[str, Any] | None) -> list[str]:
     """从 evidence 抽可回查锚 (白名单前缀), 不臆造.
@@ -507,7 +474,6 @@ def _anchor_tokens_from_evidence(evidence: Mapping[str, Any] | None) -> list[str
                     _push(_normalize_anchor(item))
     return out
 
-
 # ── 实质内容 / 重复守卫 ──────────────────────────────────────────────────────
 # LLM 偶发把 markdown 强调符 / 裸 [DIM: ...] 标签当成假设陈述输出. 这类空壳
 # (run37: 193 节点里 154 个 statement 是 "**" 或仅 DIM 标签) 只灌 frontier 不含
@@ -518,7 +484,6 @@ _NON_SUBSTANTIVE_RE = re.compile(
     r"[*_`>#~\[\](){}|:;,.!?\"'“”‘’、，。；：！？·\s\-—–]+"
 )
 _WORD_CHAR_RE = re.compile(r"[0-9A-Za-z\u4e00-\u9fff]")
-
 
 def _is_substantive_statement(statement: str, min_chars: int = 1) -> bool:
     """去掉 markdown / [DIM: ...] 标签 / 标点后, 是否仍有实质字符.
@@ -534,16 +499,13 @@ def _is_substantive_statement(statement: str, min_chars: int = 1) -> bool:
     _t = _NON_SUBSTANTIVE_RE.sub("", _t)
     return len(_WORD_CHAR_RE.findall(_t)) >= min_chars
 
-
 def _statement_key(statement: str) -> str:
     """归一化语句指纹 (去标签/标点/空白 + 小写), 用于精确重复判定."""
     _t = _DIM_TAG_RE.sub(" ", statement or "")
     _t = _NON_SUBSTANTIVE_RE.sub("", _t)
     return _t.lower()
 
-
 # ── graph ────────────────────────────────────────────────────────────────────
-
 
 class HypothesisGraph:
     """假设图: 节点 + 边 + 失败驱动的假设修正.
@@ -2237,7 +2199,6 @@ class HypothesisGraph:
         except Exception:  # 防御: 精炼失败回退模板
             return self._template_refine(original, findings)
 
-
 def _selfcheck_phys_steering() -> None:
     """验证 R_phys 推理时 steering 的 orthogonal-gain 主张.
 
@@ -2272,7 +2233,6 @@ def _selfcheck_phys_steering() -> None:
         "orthogonal gain 成立"
     )
 
-
 def _sps_build_graph() -> tuple[HypothesisGraph, list[str], list[str]]:
     """构造证据强度与 R_phys 反相关的假设群, 返回 (graph, 低 R_phys, 高 R_phys)."""
     g = HypothesisGraph()
@@ -2288,11 +2248,9 @@ def _sps_build_graph() -> tuple[HypothesisGraph, list[str], list[str]]:
         g._nodes[nid].evidence["r_phys"] = [0.9, 0.8, 0.7, 0.6][i]
     return g, low, high
 
-
 def _sps_mean_rp(g: HypothesisGraph, ids: list[str]) -> float:
     """给定节点 id 的平均 R_phys."""
     return sum(float(g._nodes[i].evidence["r_phys"]) for i in ids) / len(ids)
-
 
 def _sps_check_monotonic(g: HypothesisGraph, base_rp: float) -> None:
     """λ 单调性: 更强的 steering → 更高的平均 R_phys."""
@@ -2303,7 +2261,6 @@ def _sps_check_monotonic(g: HypothesisGraph, base_rp: float) -> None:
         )
         assert cur >= prev, f"λ 增大平均 R_phys 不应下降 ({lam}: {cur:.2f})"
         prev = cur
-
 
 def _selfcheck_lit_consensus() -> None:
     """验证文献共识谱 + 物理/文献冲突检测.
@@ -2335,7 +2292,6 @@ def _selfcheck_lit_consensus() -> None:
     assert g.lit_phys_conflict(n) is None
     print("OK: 文献共识谱 + 物理/文献冲突检测")
 
-
 def _selfcheck_connected_components() -> None:
     """连通分量监控自检 — 构造 2 个不相交分量验证基本逻辑."""
     g, h2, h3 = _scc_build_graph()
@@ -2344,7 +2300,6 @@ def _selfcheck_connected_components() -> None:
     _scc_check_representative(g, comps, h2, h3)
     _scc_check_cross_pollination()
     print("OK: connected_components selfcheck passed")
-
 
 def _scc_build_graph() -> tuple[HypothesisGraph, str, str]:
     """构造 3+2 两个不相交分量, 返回 (graph, h2, h3)."""
@@ -2365,7 +2320,6 @@ def _scc_build_graph() -> tuple[HypothesisGraph, str, str]:
     g.get("h5").created_at = "2024-01-01T00:00:05Z"
     return g, h2, h3
 
-
 def _scc_check_components(g: HypothesisGraph) -> list[set[str]]:
     """分量数 / 降序 / 最大分量规模 + 坍缩判据."""
     assert g.component_count() == 2, f"expected 2, got {g.component_count()}"
@@ -2379,7 +2333,6 @@ def _scc_check_components(g: HypothesisGraph) -> list[set[str]]:
     assert g.is_collapsed(min_components=3) is True
     assert g.is_collapsed(min_components=2) is False
     return comps
-
 
 def _scc_check_maturity(g: HypothesisGraph, comps: list[set[str]]) -> None:
     """成熟度指标字段 + 取值."""
@@ -2397,7 +2350,6 @@ def _scc_check_maturity(g: HypothesisGraph, comps: list[set[str]]) -> None:
     # depth>=2 -> +0.4, 其余 False
     assert abs(m["maturity_score"] - 0.4) < 1e-9
 
-
 def _scc_check_representative(
     g: HypothesisGraph, comps: list[set[str]], h2: str, h3: str
 ) -> None:
@@ -2411,7 +2363,6 @@ def _scc_check_representative(
     assert rep2 == h2, f"expected supported h2, got {rep2}"
 
     assert g.component_representative(set()) is None
-
 
 def _scc_check_cross_pollination() -> None:
     """交叉授粉延迟: 两端分量都成熟才放行跨分量边."""
@@ -2452,7 +2403,6 @@ def _scc_check_cross_pollination() -> None:
     assert ok3 is True, f"两边都成熟应放行, got ok={ok3}"
     assert reason3 == ""
 
-
 def _selfcheck_save_load() -> None:
     """P15: HypothesisGraph.save/load round-trip — 节点/边/单纯形/状态完整恢复."""
     import shutil
@@ -2473,7 +2423,6 @@ def _selfcheck_save_load() -> None:
     finally:
         shutil.rmtree(ws, ignore_errors=True)
 
-
 def _ssl_build_graph() -> tuple[HypothesisGraph, str, str]:
     """构造带 support/refute/双覆盖的小图, 返回 (graph, h1, h2)."""
     g = HypothesisGraph()
@@ -2485,7 +2434,6 @@ def _ssl_build_graph() -> tuple[HypothesisGraph, str, str]:
     g.support(h1, evidence={"modality": "numeric", "data_source": "dft"})
     assert g.dual_covered(h1), "setup: h1 应该被双覆盖"
     return g, h1, h2
-
 
 def _ssl_verify_loaded(
     g: HypothesisGraph,
@@ -2529,14 +2477,12 @@ def _ssl_verify_loaded(
     data = json.loads(path.read_text(encoding="utf-8"))
     assert "nodes" in data and "edges" in data and "simplicials" in data
 
-
 def _ssl_verify_overwrite(g: HypothesisGraph, path: Any) -> None:
     """二次覆盖 (atomic write 不破)."""
     g.add_hypothesis("h3: 新增节点")
     g.save(path)
     loaded2 = HypothesisGraph.load(path)
     assert len(loaded2.all_nodes()) == 3
-
 
 def _selfcheck_frontier_ranked() -> None:
     """P1-1 Ising-ranked frontier selfcheck."""
@@ -2551,7 +2497,6 @@ def _selfcheck_frontier_ranked() -> None:
     _sfr_check_toggle_off(g3, _saved)
     print("OK: frontier_ranked selfcheck passed")
 
-
 def _sfr_check_small_pool() -> None:
     """场景 1: 假设数 <= top_k → 回退原 frontier."""
     g = HypothesisGraph()
@@ -2561,7 +2506,6 @@ def _sfr_check_small_pool() -> None:
     assert len(out) == 2, f"<=top_k 应回退, got {len(out)}"
     assert {n.id for n in out} == {a, b}
 
-
 def _sfr_check_plain_pool() -> None:
     """场景 2: 假设数 > top_k, 无 parent/sibling → 按 H 排前 K."""
     g2 = HypothesisGraph()
@@ -2569,7 +2513,6 @@ def _sfr_check_plain_pool() -> None:
     out2 = g2.frontier_ranked(top_k=3)
     assert len(out2) == 3, f"top_k=3 应返回 3 个, got {len(out2)}"
     assert all(n.id in ids for n in out2)
-
 
 def _sfr_check_refuted_parent() -> HypothesisGraph:
     """场景 3: refute 过的 parent 的子假设 H 高, 优先入选. 返回该图备用."""
@@ -2585,7 +2528,6 @@ def _sfr_check_refuted_parent() -> HypothesisGraph:
         f"refute 过的 parent 的子假设应优先, got {[n.id for n in out3]}"
     return g3
 
-
 def _sfr_check_sibling_exclusive() -> None:
     """场景 4: 同 sibling_group 互斥 — 不应同时选两个同组候选."""
     g4 = HypothesisGraph()
@@ -2600,7 +2542,6 @@ def _sfr_check_sibling_exclusive() -> None:
     assert grp_count <= 1, \
         f"同 sibling_group 不应同时选两个, got {grp_count} from {[n.id for n in out4]}"
 
-
 def _sfr_check_toggle_off(g3: HypothesisGraph, saved: bool) -> None:
     """场景 5: toggle off → 回退原 frontier() 顺序 (无 ranking)."""
     from huginn.feature_flags import FeatureFlags
@@ -2611,7 +2552,6 @@ def _sfr_check_toggle_off(g3: HypothesisGraph, saved: bool) -> None:
     assert len(out5) == len(g3.frontier()), \
         f"toggle off 应回退完整 frontier, got {len(out5)} vs {len(g3.frontier())}"
     FeatureFlags.shared().toggle("ising_frontier", saved)
-
 
 def _selfcheck_mount_knowledge() -> None:
     """mount_knowledge: 把原则/规则作为高维单纯形挂到 _simplicials.
@@ -2658,7 +2598,6 @@ def _selfcheck_mount_knowledge() -> None:
     assert any(h1 in s for s in g._simplicials), "h1 应出现在挂载的单纯形里"
 
     print("OK: mount_knowledge selfcheck passed")
-
 
 def _selfcheck_p0_durable_state() -> None:
     """P0: FAILED.md / PROVED.md 分层 durable state 文件契约."""
@@ -2708,8 +2647,7 @@ def _selfcheck_p0_durable_state() -> None:
     finally:
         shutil.rmtree(_tmp, ignore_errors=True)
 
-
-class HypothesisLoop:
+class HypothesisLoop(EngineFacade):
     """hypothesis 生成/管理方法族协作对象, 从 engine.py 下沉 (P3 slim-down).
 
     去 mixin 阶段9: 原 HypothesisMixin(2969 行/18 方法) 改为普通类 HypothesisLoop。
@@ -2727,50 +2665,6 @@ class HypothesisLoop:
     - 对 engine.py 模块级符号用方法内 lazy import, 避免 circular
     - 协作对象不额外持有业务状态 (除 engine 引用)
     """
-
-    def __init__(self, engine: Any) -> None:
-        object.__setattr__(self, "engine", engine)
-
-    def __getattr__(self, name: str) -> Any:
-        # object.__getattribute__ 直达 engine 实例属性, 避免 engine==self 时递归
-        return object.__getattribute__(self.engine, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name == "engine":
-            object.__setattr__(self, name, value)
-            return
-        # 本对象自有的协作方法名: 赋值意图是覆写协作方法(如测试 mock _hypothesize),
-        # 应落在本对象实例 dict 而非转发回引擎; 其余名字(引擎状态字段)转发回引擎.
-        if name in self._OWN_ATTRS:
-            object.__setattr__(self, name, value)
-            return
-        # engine==self (测试 mock) 直写实例 dict 避免转发自递归; 否则转发回引擎
-        if self.engine is self:
-            object.__setattr__(self, name, value)
-            return
-        setattr(self.engine, name, value)
-
-    #: HypothesisLoop 定义的协作方法名集合. 供 __setattr__ 判定"覆写自身方法" vs "写引擎状态".
-    _OWN_ATTRS: frozenset[str] = frozenset({
-        "_hypothesize_via_branch_incubator",
-        "_hypothesize",
-        "_record_backup_candidates",
-        "_metacog_classify_family",
-        "_metacog_audit_hypothesis",
-        "_metacog_topology_audit",
-        "_sync_simplicials_to_kg",
-        "_choose_recovery_phase",
-        "_classify_failure",
-        "_redteam_findings",
-        "_attach_lucid_prereqs",
-        "_should_imaginate",
-        "_recent_failed_hypotheses",
-        "_conjecture_hint",
-        "_symreg_hint",
-        "_query_kb_known_forms",
-        "_pick_hypothesis_persona",
-        "_evaluate_informativeness",
-    })
 
     async def _hypothesize_via_branch_incubator(
         self, context: dict[str, Any]
@@ -3552,6 +3446,11 @@ class HypothesisLoop:
         # 由 _validate 阶段 _metacog_check_completion 设的 tag.
         if self.get("failure_kind") == "effort_floor_retry":
             return "tool_error"
+        # 结构性失败 (执行对象/交付物缺失) 保留独立类别: 上层按"同因"计数,
+        # 连续两次即熔断, 不与假设错/工具错混为一类.
+        _fk = str(self.get("failure_kind") or "")
+        if _fk in ("empty_description", "deliverable_missing", "plan_rejected"):
+            return _fk
         # 工具失败: 超时/崩溃/连接/OOM — 不是假设错, 重试即可
         if any(m in text for m in _CF_TOOL_MARKERS):
             return "tool_error"
@@ -4049,7 +3948,6 @@ class HypothesisLoop:
                     logger.debug("best-effort op failed", exc_info=True)
         return {p: sum(v) / len(v) for p, v in persona_scores.items() if v}
 
-
     async def _evaluate_informativeness(self, hypothesis_id: str) -> dict[str, Any]:
         """P0 Task 3: 评估 hypothesis 的 expected_informativeness (新颖度 × 可验证性).
 
@@ -4110,12 +4008,6 @@ class HypothesisLoop:
         except Exception:  # 防御: 既有假设列表失败跳过
             logger.debug("existing hypothesis list skipped", exc_info=True)
         return "\n".join(f"- {s}" for s in _existing[:10]) or "(none)"
-
-
-
-
-
-
 
 if __name__ == "__main__":
     _selfcheck_phys_steering()

@@ -59,7 +59,7 @@ _ENV_HELPER = re.compile(
 # 只惩罚不经 env_access 的读点. 不排除它们的话, "把读点迁到 env_access" 反而会
 # 推高计数, 与 env_schema 中"迁移后应下调基线"的约定直接矛盾.
 _CANONICAL_ACCESSORS = frozenset(
-    {"env_str", "env_int", "env_float", "env_bool", "env_json", "env_is_set"}
+    {"env_str", "env_int", "env_float", "env_bool", "env_json", "env_is_set", "env_path"}
 )
 
 

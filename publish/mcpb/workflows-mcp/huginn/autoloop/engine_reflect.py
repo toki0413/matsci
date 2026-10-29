@@ -37,7 +37,7 @@ from typing import Any
 # 反思阶段方法引用的 engine.py 模块级 import (均为叶子模块, 无 circular 风险)
 from huginn.autoloop.exec_observation import detect_soliloquy, exit_class_counts
 from huginn.autoloop.signals import routing_surprise
-from huginn.autoloop.types import LoopPhase
+from huginn.autoloop.types import CognitiveState, LoopPhase
 from huginn.core_types import ToolContext
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
@@ -5658,7 +5658,7 @@ class EngineReflect:
         self,
         run_id: str,
         objective: str,
-        cog: dict,
+        cog: CognitiveState,
         state: Any,
         prev_outcome: str = "",
     ) -> None:
@@ -5703,7 +5703,7 @@ class EngineReflect:
             )
 
     def _apr_ctx(
-        self, cog: dict, state: Any, prev_outcome: str
+        self, cog: CognitiveState, state: Any, prev_outcome: str
     ) -> tuple[str, str, str, str, str]:
         """拼 next-step 推荐所需的上下文五元组."""
         _hypothesis = (cog.get("hypothesis") or "")[:300]

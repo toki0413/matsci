@@ -28,48 +28,33 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-# ── 1. 工具: 去围栏 / 找平衡 JSON ────────────────────────────────
+from huginn.utils.json_extract import find_json_spans, strip_code_fence
 
-_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+# ── 1. 工具: 去围栏 / 找平衡 JSON ────────────────────────────────
+# 唯一实现见 huginn/utils/json_extract.py; 这里只保留本模块的历史 API 形状.
 
 
 def strip_fence(text: str) -> str:
     """去掉 markdown 围栏(```json ... ``` / ``` ... ```), 取最后一段代码内容."""
-    blocks = _FENCE_RE.findall(text)
-    return blocks[-1] if blocks else text
-
-
-def _try_parse_object(cand: str) -> dict | None:
-    """解析一个候选 JSON 串, 失败或非 dict 返回 None (不抛)."""
-    try:
-        obj = json.loads(cand)
-    except Exception:  # noqa: BLE001 — 单个坏对象跳过
-        return None
-    return obj if isinstance(obj, dict) else None
+    return strip_code_fence(text, prefer="last")
 
 
 def find_json_objects(text: str) -> list[dict]:
     """扫描文本, 返回**所有**平衡 {...} 的已解析 dict(按出现顺序).
 
-    遍历一次找出每个最外层平衡对象; 单对象解析失败不影响其它.
+    嵌套在数组里的对象也算; 单对象解析失败不影响其它.
     返回空表 = 文本里没有完整可解析的 JSON 对象.
     """
     out: list[dict] = []
-    depth = 0
-    start = -1
-    for i, ch in enumerate(text):
-        if ch == "{":
-            if depth == 0:
-                start = i
-            depth += 1
-        elif ch == "}":
-            if depth == 0:
-                continue
-            depth -= 1
-            if depth == 0 and start >= 0:
-                obj = _try_parse_object(text[start:i + 1])
-                if obj is not None:
-                    out.append(obj)
+    for span in find_json_spans(text):
+        if span.opener != "{":
+            continue
+        try:
+            obj = json.loads(text[span.start : span.end])
+        except Exception:  # noqa: BLE001 — 单个坏对象跳过
+            continue
+        if isinstance(obj, dict):
+            out.append(obj)
     return out
 
 
@@ -82,14 +67,7 @@ def extract_json_object(text: str, prefer: str = "last") -> dict | None:
     """
     if not text or not isinstance(text, str):
         return None
-    t = text.strip()
-    try:  # fast-path: 整段本身就是 JSON
-        obj = json.loads(t)
-        return obj if isinstance(obj, dict) else None
-    except Exception:  # noqa: BLE001
-        pass
-    t = strip_fence(t)
-    objs = find_json_objects(t)
+    objs = find_json_objects(strip_fence(text.strip()))
     if not objs:
         return None
     return objs[-1] if prefer == "last" else objs[0]

@@ -699,10 +699,11 @@ def test_step_failure_to_dict_is_serializable():
 # 基线只减不增: 新增静默宽捕获 → 红. 收敛后请下调基线.
 
 _AUTOLOOP_ROOT = Path(__file__).resolve().parents[2] / "huginn" / "autoloop"
-# 575 → 578 (+3): deliverables.check_contract 的 3 个**窄**捕获
-# (OSError / ValueError, 读文件与 JSONL 解析), 均转成缺省判红, 不是静默宽捕获.
-_AUTOLOOP_EXCEPT_TOTAL_BASELINE = 578
-_AUTOLOOP_BROAD_SILENT_BASELINE = 473
+# 575 → 579: deliverables.check_contract 的 3 个**窄**捕获 (OSError / ValueError,
+# 读文件与 JSONL 解析) + cognitive_loop._plan_available_for 的 1 个探针防御
+# (注入的 plan_ready_fn 抛异常 → 按"无 plan"处理并记 debug, 不让循环崩).
+_AUTOLOOP_EXCEPT_TOTAL_BASELINE = 579
+_AUTOLOOP_BROAD_SILENT_BASELINE = 474
 _LOUD_LOG_METHODS = frozenset({"warning", "error", "critical", "exception", "fatal"})
 
 
@@ -759,6 +760,187 @@ def test_autoloop_silent_broad_except_does_not_grow():
     )
 
 
+# ===== G: objective 在 prompt 里被截断 → 模型自造规格 =====
+
+_G_OBJ = "【研究任务·不可改写】\n" + ("H1..H5 的定义与固定阈值。\n" * 600)
+
+
+def test_objective_block_is_not_truncated_by_prompt_budget():
+    """objective 原文必须整段进 prompt, 预算裁剪不得动它.
+
+    ws35 实测: context 被截 2000 字符 / plan 截 1000 字符 / hint 截尾部 500 字符,
+    7KB 任务书到不了模型 → 模型自创 H1–H5 并用错语义的键名. 这里构造远超预算的
+    objective, 断言裁剪后原文仍是完整子串.
+    """
+    from types import SimpleNamespace
+
+    from huginn.autoloop.deliverables import render_objective_block
+    from huginn.autoloop.engine_observe import EngineObserve
+
+    assert len(_G_OBJ) > 7000
+    block = render_objective_block(_G_OBJ, None)
+    host = SimpleNamespace(
+        _get_prompt_budget=lambda phase: 3000,
+        _scan_block_conflicts=lambda blocks: "",
+    )
+    blocks = [("body", "b" * 400), ("objective", block)]
+    blocks += [(f"low{i}", "y" * 1000) for i in range(20)]
+    out = EngineObserve._trim_to_budget(host, blocks, phase="hypothesize")
+    assert _G_OBJ in out, "objective 原文被 prompt 预算裁剪掉了"
+
+
+def test_plan_prompt_carries_full_objective(monkeypatch):
+    """plan prompt 必须带 objective 原文 (plan 阶段 context 只截 1000 字符)."""
+    from types import SimpleNamespace
+
+    from huginn.autoloop import plan_check as pc
+
+    monkeypatch.setattr(pc, "_pc_retrieval_blocks", lambda s, h: ("",) * 6)
+    monkeypatch.setattr(pc, "_pc_world_model_block", lambda s, h: "")
+    monkeypatch.setattr(pc, "_pc_visual_block", lambda s: "")
+    monkeypatch.setattr(pc, "_pc_math_block", lambda s, h, c: "")
+    monkeypatch.setattr(pc, "_pc_learning_blocks", lambda s, h: ("", ""))
+    monkeypatch.setattr(pc, "_pc_composite_block", lambda h: "")
+    monkeypatch.setattr(pc, "_pc_pipeline_block", lambda s: "")
+    host = SimpleNamespace(
+        _objective=_G_OBJ,
+        _deliverable_contract=None,
+        _plan_extra_mode_lines=lambda: "",
+        _apply_block_patches=lambda blocks, phase: blocks,
+        _build_pmk_block=lambda ctx: "",
+        _build_subgoal_block=lambda: "",
+        _plan_context_hint=lambda: "",
+        _extend_mode_enum=lambda s: s,
+        _trim_to_budget=lambda blocks, phase=None: "".join(v for _, v in blocks),
+    )
+    out = pc.PlanCheck._build_plan_prompt(host, "hyp", {})
+    assert _G_OBJ in out, "plan prompt 里没有 objective 原文 → 模型只能自造规格"
+
+
+# ===== H: 减负/空转把确定性验收门绕过 → 连 skip 空转 =====
+
+
+def test_monitor_hold_yields_when_deliverables_unverified():
+    """交付物未验收时不许 hold: ws35 实测 29 连 skip 空转到迭代耗尽."""
+    from types import SimpleNamespace
+
+    from huginn.autoloop.cognitive_loop import CognitiveRunner
+    from huginn.autoloop.monitor_hold import MonitorHoldState
+
+    traces: list[tuple[str, str, dict]] = []
+    stub = SimpleNamespace(
+        _monitor_state=MonitorHoldState(empty_streak=5, last_had_activity=False),
+        _last_had_activity=False,
+        _deliverables_ok=lambda: {
+            "passed": False, "missing": [], "empty": [], "invalid": [],
+            "contract": {"passed": False, "missing_keys": ["results.json:q3_catalyst_median_delta"]},
+        },
+        _control_trace=lambda *a, **k: traces.append((a, k)),
+        _iteration=12,
+    )
+    out = CognitiveRunner._dec_monitor_hold(stub)
+    assert out is None, "验收未过时 hold 了一个 skip, 循环会空转"
+    assert traces and traces[0][0][0] == "monitor_hold_blocked"
+
+
+def test_monitor_hold_still_holds_when_deliverables_pass():
+    from types import SimpleNamespace
+
+    from huginn.autoloop.cognitive_loop import CognitiveRunner
+    from huginn.autoloop.monitor_hold import MonitorHoldState
+
+    stub = SimpleNamespace(
+        _monitor_state=MonitorHoldState(empty_streak=5, last_had_activity=False),
+        _last_had_activity=False,
+        _deliverables_ok=lambda: {"passed": True},
+        _control_trace=lambda *a, **k: None,
+        _iteration=12,
+    )
+    out = CognitiveRunner._dec_monitor_hold(stub)
+    assert out is not None and out.action == "skip"
+
+
+def test_repetition_guard_uses_injected_plan_probe():
+    """内核不认识 cog: plan 是否已在手必须由调用方注入, 不能读不存在的属性."""
+    from types import SimpleNamespace
+
+    from huginn.autoloop.cognitive_loop import ActionDecision, CognitiveLoop
+
+    stub = SimpleNamespace(
+        _max_repeated_actions=3,
+        _deliverables_fn=lambda: {"passed": False, "missing": ["loop_log.jsonl"],
+                                  "empty": [], "invalid": [],
+                                  "contract": {"missing_keys": ["results.json:q4_rmse"]}},
+        _append_hint_fn=lambda _h: None,
+        _control_trace=lambda *a, **k: None,
+        _plan_ready_fn=lambda: True,
+    )
+    state = SimpleNamespace(iteration=11, should_stop=False, should_redirect=False,
+                            redirect_reason="")
+    decision = ActionDecision(action="skip")
+    assert CognitiveLoop._guard_repetition(stub, state, decision, 6) is False
+    assert decision.action == "execute", "plan 已在手却仍改判 plan → 每轮重规划"
+
+
+def test_repetition_guard_gap_reports_contract_failure():
+    """门拒绝时必须把**契约**缺口说出来, 否则模型看到 missing=[] 以为没事."""
+    from types import SimpleNamespace
+
+    from huginn.autoloop.cognitive_loop import ActionDecision, CognitiveLoop
+
+    hints: list[str] = []
+    stub = SimpleNamespace(
+        _max_repeated_actions=3,
+        _deliverables_fn=lambda: {
+            "passed": False, "missing": [], "empty": [], "invalid": [],
+            "contract": {"passed": False,
+                         "missing_keys": ["results.json:q3_catalyst_median_delta"],
+                         "short_lines": ["loop_log.jsonl:1<50"]},
+        },
+        _append_hint_fn=hints.append,
+        _control_trace=lambda *a, **k: None,
+        _plan_ready_fn=lambda: True,
+    )
+    state = SimpleNamespace(iteration=11, should_stop=False, should_redirect=False,
+                            redirect_reason="")
+    CognitiveLoop._guard_repetition(stub, state, ActionDecision(action="skip"), 6)
+    assert hints and "contract=" in hints[0], "hint 里没有契约缺口"
+    assert "q3_catalyst_median_delta" in hints[0]
+
+
+def test_decider_prompt_carries_acceptance_gap():
+    """验收缺口必须出现在 decider prompt 的独立字段, 不能被 spec_hint 的 300 字符截掉."""
+    from types import SimpleNamespace
+
+    from huginn.autoloop.cognitive_loop import CognitiveRunner, LoopState
+
+    stub = SimpleNamespace(
+        _deliverables_ok=lambda: {
+            "passed": False, "missing": ["loop_log.jsonl"], "empty": [], "invalid": [],
+            "contract": {"passed": False,
+                         "missing_keys": ["results.json:q3_catalyst_median_delta"],
+                         "short_lines": ["loop_log.jsonl:1<50"],
+                         "bad_lines": [], "missing_fields": []},
+        },
+        _bd_summary=lambda cog: {"hyp": "h", "plan_mode": "coder",
+                                 "exec_done": True, "val_status": "NONE"},
+        _bd_control_stats=lambda state, cog: {
+            "consec_fail": 0, "max_fail": 20, "type_str": "", "window_str": "",
+            "last_pattern": "", "pivot_count": 0, "max_pivot": 10,
+            "refine_count": 0, "action_hist": "", "last_learn": "",
+            "spec_hint": "", "prev_ctx": "", "ts_ctx": "",
+        },
+        _bd_validation_detail=lambda val: "",
+        _bd_history_block=lambda state: "",
+    )
+    state = LoopState(iteration=14, max_iterations=50)
+    cog = {"plan": {"mode": "coder", "description": "x"}}
+    prompt = CognitiveRunner._build_decider_prompt(stub, state, cog, {})
+    assert "Acceptance (deterministic engine gate" in prompt
+    assert "q3_catalyst_median_delta" in prompt, "契约缺口没进 decider prompt"
+    assert "loop_log.jsonl" in prompt
+
+
 # ===== 缺陷台账: 按 class 记账, 不按实例记账 =====
 #
 # 规则 (用户定): 同一类缺陷第 2 次复发起, **禁止再提交实例补丁**, 必须先有结构性修复
@@ -811,10 +993,13 @@ _DEFECT_LEDGER: tuple[dict, ...] = (
     },
     {
         "class_id": "D-probe-fidelity-gap",
-        "symptom": "测试桩自带真实内核没有的方法, 桩绿而真跑崩",
+        "symptom": "测试桩自带真实内核没有的属性/方法 → 桩绿而真跑走死分支 (内核读不存在的 _last_good_plan, plan 永远改判 plan)",
         "repeat_count": 2,
         "fix_scope": "structural",
-        "probes": ("test_repetition_guard_runs_on_real_kernel_instance",),
+        "probes": (
+            "test_repetition_guard_runs_on_real_kernel_instance",
+            "test_repetition_guard_uses_injected_plan_probe",
+        ),
     },
     {
         "class_id": "E-failure-unobservable",
@@ -838,6 +1023,28 @@ _DEFECT_LEDGER: tuple[dict, ...] = (
             "test_check_manifest_wrong_named_script_is_red",
             "test_check_manifest_directory_at_declared_path_is_red",
             "test_check_manifest_invalid_json",
+        ),
+    },
+    {
+        "class_id": "G-spec-truncated-out-of-prompt",
+        "symptom": "objective/契约在 prompt 里被截断 (context 2000 / plan 1000 / hint 尾部 500) → 模型自造一套假设与键名语义",
+        "repeat_count": 2,
+        "fix_scope": "structural",
+        "probes": (
+            "test_objective_block_is_not_truncated_by_prompt_budget",
+            "test_plan_prompt_carries_full_objective",
+            "test_decider_prompt_carries_acceptance_gap",
+        ),
+    },
+    {
+        "class_id": "H-idle-bypasses-acceptance",
+        "symptom": "减负/空转策略 (monitor-hold) 与门信号脱钩: 验收判红却一直 skip 空转到迭代耗尽",
+        "repeat_count": 2,
+        "fix_scope": "structural",
+        "probes": (
+            "test_monitor_hold_yields_when_deliverables_unverified",
+            "test_monitor_hold_still_holds_when_deliverables_pass",
+            "test_repetition_guard_gap_reports_contract_failure",
         ),
     },
 )

@@ -200,6 +200,13 @@ _DEFAULT_EVIDENCE_REQUIREMENTS: dict[tuple[str, str], list[str]] = {
     ("learn", "report"): [],  # report 总是放行
 }
 
+# 确定性证据: 缺失即硬阻断 (不只是 advisory). 这些 key 的值由 harness 计算,
+# 不依赖模型自评; 缺失等价于"执行对象不存在", 放行只会让空任务流到下阶段
+# (ws28: 空 DESCRIPTION 用当前假设兜底下发 coder → 跨轮漂移).
+_HARD_EVIDENCE_KEYS: dict[tuple[str, str], frozenset[str]] = {
+    ("plan", "execute"): frozenset({"mode", "description"}),
+}
+
 
 class PhaseGateConfig:
     """每个阶段转移的硬性证据要求."""
@@ -616,6 +623,26 @@ class PhaseGateHook:
                 required_evidence=required,
                 missing_evidence=missing,
                 feedback=feedback,
+            )
+        # 确定性证据缺失 → 硬阻断 (不再 advisory 放行). 这些 key 由 harness
+        # 计算, 模型无法通过"自评合格"绕过; 放行等于把空执行对象传给下游.
+        _hard = _HARD_EVIDENCE_KEYS.get((from_phase, to_phase), frozenset())
+        _hard_missing = sorted(_hard & set(missing))
+        if _hard_missing:
+            logger.warning(
+                "phase_gate hard block: %s→%s 缺确定性证据 %s",
+                from_phase, to_phase, _hard_missing,
+            )
+            return PhaseGate(
+                from_phase=from_phase,
+                to_phase=to_phase,
+                status="blocked",
+                required_evidence=required,
+                missing_evidence=missing,
+                feedback=(
+                    f"确定性门阻断 {from_phase}→{to_phase}: 缺 {_hard_missing}. "
+                    "必须重写本轮 plan 补齐后重试 (可用 phase_tool override 强制放行)."
+                ),
             )
         # advisory: 缺证据只 warning + feedback, 不阻断 transition.
         # ponytail: ceiling 是 agent 可能忽略 warning 继续推进, 升级路径:

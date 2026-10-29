@@ -21,15 +21,18 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from huginn.utils.runtime import HUGINN_DIR_NAME
+
+if TYPE_CHECKING:  # 避免 metacog → autoloop 包初始化循环
+    from huginn.autoloop.types import CognitiveState
 
 logger = logging.getLogger(__name__)
 
 
 def _build_meta_trace_entry(
-    cog: dict[str, Any],
+    cog: CognitiveState,
     step_id: int,
 ) -> dict[str, Any]:
     """舱 1: 从 cog 拼 meta_trace_entry.
@@ -69,7 +72,7 @@ def _load_cabin_deps() -> tuple[Any, Any, Any, Any] | None:
     return format_reflector_text, reflect, evaluate_step, should_continue
 
 
-def _run_cabin1(cog: dict[str, Any], step_id: int) -> dict[str, Any] | None:
+def _run_cabin1(cog: CognitiveState, step_id: int) -> dict[str, Any] | None:
     """舱 1: Step — 拼 meta_trace_entry. 失败返 None."""
     try:
         return _build_meta_trace_entry(cog, step_id)
@@ -128,7 +131,7 @@ def _run_cabin3(
 
 def _execute_cabins(
     deps: tuple[Any, Any, Any, Any],
-    cog: dict[str, Any],
+    cog: CognitiveState,
     evals_history: list,
     step_id: int,
     workspace: Path,
@@ -179,7 +182,7 @@ def _execute_cabins(
 
 
 def run_three_cabin(
-    cog: dict[str, Any],
+    cog: CognitiveState,
     evals_history: list,
     step_id: int,
     workspace: Path,

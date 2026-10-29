@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 import subprocess
 import time
@@ -17,6 +16,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from huginn.core_types import HandleType, ToolContext, ToolResult, ValidationResult
+from huginn.env_access import env_path
 from huginn.security import SandboxExecutor
 from huginn.security.conservation import audit_material_conservation
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
@@ -245,9 +245,9 @@ class VaspTool(HuginnTool):
 
     def _find_vasp(self) -> str | None:
         """Find VASP executable."""
-        env_path = os.environ.get("VASP_EXECUTABLE")
-        if env_path and Path(env_path).exists():
-            return env_path
+        exe_from_env = env_path("VASP_EXECUTABLE")
+        if exe_from_env and exe_from_env.exists():
+            return str(exe_from_env)
 
         # Check PATH
         try:

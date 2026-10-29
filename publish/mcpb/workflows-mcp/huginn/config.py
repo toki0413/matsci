@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from huginn.crypto import CryptoVault, EncryptedConfig, KeyManager
+from huginn.env_access import env_str
 
 logger = logging.getLogger(__name__)
 
@@ -749,16 +750,16 @@ class HuginnConfig:
                 os.environ.get("HUGINN_MAX_CONCURRENT_SUBAGENTS", "3")
             ),
             "plan_auto_confirm": os.environ.get("HUGINN_PLAN_AUTO_CONFIRM", "0") == "1",
-            "ollama_host": os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
+            "ollama_host": env_str("OLLAMA_HOST"),
         }
 
     @staticmethod
     def _cfg_science_tools() -> dict[str, Any]:
         return {
-            "vasp_executable": os.environ.get("VASP_EXECUTABLE"),
-            "lammps_executable": os.environ.get("LAMMPS_EXECUTABLE"),
-            "mp_api_key": os.environ.get("MP_API_KEY") or None,
-            "oqmd_api_key": os.environ.get("OQMD_API_KEY") or None,
+            "vasp_executable": env_str("VASP_EXECUTABLE") or None,
+            "lammps_executable": env_str("LAMMPS_EXECUTABLE") or None,
+            "mp_api_key": env_str("MP_API_KEY") or None,
+            "oqmd_api_key": env_str("OQMD_API_KEY") or None,
             "mineru_api_keys": [
                 k.strip()
                 for k in os.environ.get("MINERU_API_KEYS", "").split(",")
@@ -783,9 +784,9 @@ class HuginnConfig:
     def _cfg_hpc() -> dict[str, Any]:
         return {
             "hpc_scheduler": os.environ.get("HPC_SCHEDULER", "local"),
-            "hpc_host": os.environ.get("HPC_HOST"),
-            "hpc_username": os.environ.get("HPC_USERNAME"),
-            "hpc_key_path": os.environ.get("HPC_KEY_PATH") or None,
+            "hpc_host": env_str("HPC_HOST") or None,
+            "hpc_username": env_str("HPC_USERNAME") or None,
+            "hpc_key_path": env_str("HPC_KEY_PATH") or None,
             "hpc_password": os.environ.get("HPC_PASSWORD") or None,
             "hpc_port": int(os.environ.get("HPC_PORT", "22")),
             "remote_work_dir": os.environ.get(
@@ -813,7 +814,7 @@ class HuginnConfig:
     @staticmethod
     def _cfg_mcp() -> dict[str, Any]:
         return {
-            "abaqus_mcp_server": os.environ.get("ABAQUS_MCP_SERVER_PATH"),
+            "abaqus_mcp_server": env_str("ABAQUS_MCP_SERVER_PATH") or None,
             "mcp_allowed_commands": [
                 c.strip()
                 for c in os.environ.get("HUGINN_MCP_ALLOWED_COMMANDS", "").split(",")

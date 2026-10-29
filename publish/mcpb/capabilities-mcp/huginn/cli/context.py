@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,6 +10,7 @@ from typing import Any
 from rich.console import Console
 
 from huginn.config import HuginnConfig
+from huginn.env_access import env_path
 
 console = Console()
 
@@ -65,9 +65,9 @@ def resolve_abaqus_mcp_path(config_path: str | None = None) -> Path:
     2. abaqus_mcp_server from config
     3. Default: ~/.abaqus-mcp/mcp_server.py
     """
-    env_path = os.environ.get("ABAQUS_MCP_SERVER_PATH")
-    if env_path:
-        return Path(env_path)
+    from_env = env_path("ABAQUS_MCP_SERVER_PATH")
+    if from_env:
+        return from_env
     if config_path:
         return Path(config_path)
     return Path.home() / ".abaqus-mcp" / "mcp_server.py"

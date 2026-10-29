@@ -18,9 +18,11 @@ __all__ = [
     "LineSpec",
     "check_contract",
     "check_manifest",
+    "objective_block_for",
     "parse_contract",
     "parse_manifest",
     "render_contract_hint",
+    "render_objective_block",
 ]
 
 _ARTIFACT_RE = re.compile(
@@ -299,11 +301,11 @@ def check_contract(workspace: Any, contract: Contract) -> dict[str, Any]:
     }
 
 
-def render_contract_hint(manifest: list[Deliverable], contract: Contract | None) -> str:
-    """把契约渲染成给模型的一句硬约束 (验收口径与引擎实际检查一致)."""
-    if contract is None or not contract:
-        return ""
-    parts: list[str] = [f"必须交付: {', '.join(d.path for d in manifest)}"]
+def _contract_lines(contract: Contract, manifest: list[Deliverable] | None = None) -> list[str]:
+    """契约的可读条目 (提示与 prompt 块共用同一口径)."""
+    parts: list[str] = []
+    if manifest:
+        parts.append(f"必须交付: {', '.join(d.path for d in manifest)}")
     for path, keys in contract.json_keys.items():
         parts.append(f"{path} 必须含键: {', '.join(keys)}")
     for path, spec in contract.line_specs.items():
@@ -311,6 +313,46 @@ def render_contract_hint(manifest: list[Deliverable], contract: Contract | None)
         if spec.fields:
             seg += f"，每行必须含: {', '.join(spec.fields)}"
         parts.append(seg)
+    return parts
+
+
+def render_objective_block(objective: str, contract: Contract | None) -> str:
+    """把 objective 原文 + 内容契约渲染成**不可截断的 prompt 块**.
+
+    根因: 各 phase prompt 里 context 被截到 2000/1000 字符, hint 被截到尾部
+    500 字符; 7KB 的 objective (含 H1–H5 的定义与阈值) 到不了模型, 模型就只能
+    自造一套假设 (ws35 实测: 自创 H1–H5, 键名对但语义不同).
+    """
+    obj = (objective or "").strip()
+    if not obj:
+        return ""
+    text = (
+        "\n### TASK OBJECTIVE (verbatim; authoritative — do not restate, "
+        "shorten, or redefine it)\n" + obj + "\n"
+    )
+    if contract:
+        text += (
+            "\n### DELIVERABLES CONTRACT (machine-checked by the engine; "
+            "deviation fails acceptance)\n- "
+            + "\n- ".join(_contract_lines(contract))
+            + "\n用 objective 里写明的 H1..H5 定义与阈值逐条计算, 不得替换成自己的假设.\n"
+        )
+    return text
+
+
+def objective_block_for(host: Any) -> str:
+    """从 host (engine / 协作对象) 上取 objective 与契约, 渲染成 prompt 块.
+
+    host 上没有 ``_objective`` 时返回空串 (rcb 等不声明契约的路径保持原行为).
+    """
+    objective = getattr(host, "_objective", "") or ""
+    return render_objective_block(objective, getattr(host, "_deliverable_contract", None))
+
+
+def render_contract_hint(manifest: list[Deliverable], contract: Contract | None) -> str:
+    if contract is None or not contract:
+        return ""
+    parts = _contract_lines(contract, manifest)
     return (
         "[交付物契约 · 机器验收] " + "；".join(parts)
         + "。键名/字段名必须与 objective 字面一致，禁止在交付物里自造另一套键名或另一套假设；"

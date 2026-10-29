@@ -739,17 +739,22 @@ def render_workflow_markdown(contract: dict) -> str:
 # ---------------------------------------------------------------------------
 
 # (人类可读名, 仓根相对路径, 提取模式词的块正则)
+# A3: 三处词表已收敛到 huginn/agent_modes.py (session/set_mode 等处只导入引用).
 _MODE_SITE_RES: tuple[tuple[str, str, str], ...] = (
-    ("session 恢复白名单", "huginn/agent/session.py", r"mode in \(([^)]*)\)"),
     (
-        "critique._VALID_MODES",
-        "huginn/metacog/critique.py",
-        r"_VALID_MODES\s*=\s*frozenset\(\{([^}]*)\}\)",
+        "agent_modes.SETTABLE_MODES",
+        "huginn/agent_modes.py",
+        r"SETTABLE_MODES[^=]*=\s*\(([^)]*)\)",
     ),
     (
-        "core._LONG_HORIZON_MODES",
-        "huginn/agent/core.py",
-        r"_LONG_HORIZON_MODES\s*=\s*\(([^)]*)\)",
+        "agent_modes.CRITIQUE_MODES",
+        "huginn/agent_modes.py",
+        r"CRITIQUE_MODES[^=]*=\s*frozenset\(\{([^}]*)\}\)",
+    ),
+    (
+        "agent_modes.LONG_HORIZON_MODES",
+        "huginn/agent_modes.py",
+        r"LONG_HORIZON_MODES[^=]*=\s*\(([^)]*)\)",
     ),
 )
 _TASKMODE_COMMENT_RE = re.compile(r'mode:\s*str\s*=\s*"[a-z_]+"\s*#\s*([a-z_ /]+)')
@@ -812,8 +817,9 @@ def render_mode_markdown(contract: dict) -> str:
     lines.append("## 模式面: agent 顶层模式词表一致性")
     lines.append("")
     lines.append(
-        "来源: prompt 段 (`_MODE_INSTRUCTIONS`) / session 恢复白名单 / "
-        "`critique._VALID_MODES` / `core._LONG_HORIZON_MODES` / `set_mode()` 实参. "
+        "来源: prompt 段 (`_MODE_INSTRUCTIONS`) / `huginn/agent_modes.py` 的 "
+        "`SETTABLE_MODES` / `CRITIQUE_MODES` / `LONG_HORIZON_MODES` / "
+        "`set_mode()` 实参. "
         "任何一处都不是全集即 MECE 违例 (mutex: 词表互不一致; exhaustive: 缺口)."
     )
     lines.append("")
@@ -962,6 +968,10 @@ _VOCAB_SHARED_TOKENS = frozenset(
 )
 _VOCAB_MAX_CLOSED = 12  # 闭集规模上限: 超过多为词表/包清单, 退化为噪声
 _VOCAB_CLUSTER_THR = 0.5  # Jaccard 阈值: 两站点值域重叠过半即同簇
+
+# 单一词表源模块: 模块内多个常量是有意嵌套的子集 (全集/可设置/长程/...),
+# 簇内分歧不按"词表漂移"报. 只登记确实一处声明、其余派生/导入的模块.
+_VOCAB_SINGLE_SOURCE_MODULES = frozenset({"huginn/agent_modes.py"})
 
 
 def _vocab_is_token(s: object) -> bool:
@@ -1287,6 +1297,10 @@ def _vocab_divergence(sites: list[dict], closed: list[list[int]]) -> list[dict]:
     divergence: list[dict] = []
     for comp in closed:
         if len(comp) < 2:
+            continue
+        # 单一词表源模块内的常量是有意嵌套的子集 (全集/可设置/长程/critique),
+        # 同模块内值域不等不算漂移 (A3 把六处 mode 词表收敛到该模块).
+        if all(sites[i]["rel"] in _VOCAB_SINGLE_SOURCE_MODULES for i in comp):
             continue
         sets = {frozenset(sites[i]["values"]) for i in comp}
         if len(sets) == 1:

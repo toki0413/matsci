@@ -9,7 +9,6 @@ import asyncio
 import contextlib
 import logging
 import math
-import os
 import re
 import subprocess
 import time
@@ -19,6 +18,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from huginn.core_types import HandleType, ToolContext, ToolResult, ValidationResult
+from huginn.env_access import env_path
 from huginn.security import SandboxExecutor
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.tools.sim._async_job import submit_background
@@ -812,9 +812,9 @@ class LammpsTool(HuginnTool):
         import glob
 
         # Check environment variable
-        env_path = os.environ.get("LAMMPS_EXECUTABLE")
-        if env_path and Path(env_path).exists():
-            return env_path
+        exe_from_env = env_path("LAMMPS_EXECUTABLE")
+        if exe_from_env and exe_from_env.exists():
+            return str(exe_from_env)
 
         # Check PATH
         try:

@@ -35,6 +35,7 @@ from typing import Any
 
 # 控制阶段方法引用的 engine.py 模块级 import (均为叶子模块, 无 circular 风险)
 from huginn.api.event import EventType, WorkflowStageEvent
+from huginn.autoloop._facade import EngineFacade
 from huginn.autoloop.budget import BudgetExhausted, IterationBudget
 from huginn.autoloop.phase_gate import PhaseGate, get_shared_phase_gate_state
 from huginn.env_access import env_bool, env_float
@@ -44,7 +45,6 @@ logger = logging.getLogger(__name__)
 
 # 成本高到值得先跟用户确认的 plan mode (workflow=DFT/MD, 通常是几小时)
 _EXPENSIVE_MODES = ("workflow", "dft", "md", "vasp", "lammps")
-
 
 def _write_meta_trace(workspace_root: Any, entry: dict) -> None:
     """追加一行 JSON 到 .huginn/meta_trace.jsonl; 失败只记 debug."""
@@ -56,7 +56,6 @@ def _write_meta_trace(workspace_root: Any, entry: dict) -> None:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception:  # 防御: 元轨迹写入失败忽略
         logger.debug("meta_trace write failed (non-fatal)", exc_info=True)
-
 
 def _deviation_entry(
     iteration: Any,
@@ -76,7 +75,6 @@ def _deviation_entry(
         "expected": expected[:100] if expected else "(none)",
     }
 
-
 def _clarify_plan_ctx(plan: Any, thread_id: str) -> dict | None:
     """高成本 mode 的计划确认上下文; 非高成本返回 None."""
     plan = plan or {}
@@ -92,7 +90,6 @@ def _clarify_plan_ctx(plan: Any, thread_id: str) -> dict | None:
         "cost_estimate_hours": 1.0,  # workflow 类至少 1h
     }
 
-
 def _clarify_validation_ctx(
     phase_result: Any, thread_id: str, consecutive: int
 ) -> dict:
@@ -104,7 +101,6 @@ def _clarify_validation_ctx(
         "summary": str(phase_result)[:300],
         "consecutive_failures": consecutive,
     }
-
 
 def _clarify_plan_check_ctx(info: Any, thread_id: str) -> dict | None:
     """plan_check 连续失败且场景已知时的方向询问上下文."""
@@ -125,30 +121,12 @@ def _clarify_plan_check_ctx(info: Any, thread_id: str) -> dict | None:
         "scene": info.get("scene", ""),
     }
 
-
-class EngineControl:
+class EngineControl(EngineFacade):
     """循环控制 + checkpoint 方法族协作对象.
 
     未定义的属性读写经 __getattr__/__setattr__ 转发到 self.engine —
     引擎字段/方法不会被复制两份, 方法体零改动、行为完全等价.
     """
-
-    def __init__(self, engine: Any) -> None:
-        object.__setattr__(self, "engine", engine)
-
-    def __getattr__(self, name: str) -> Any:
-        # object.__getattribute__ 直达 engine 实例属性, 避免 engine==self 时递归
-        return object.__getattribute__(self.engine, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name == "engine":
-            object.__setattr__(self, name, value)
-            return
-        # engine==self (测试 mock) 直写实例 dict 避免转发自递归; 否则转发回引擎
-        if self.engine is self:
-            object.__setattr__(self, name, value)
-            return
-        setattr(self.engine, name, value)
 
     def _maybe_save_engine_state(
         self, *, force: bool = False, reason: str = "",
@@ -192,7 +170,6 @@ class EngineControl:
             )
         # Step 8: alignment_dataset 跟 engine_state 同节奏落盘
         self._save_alignment_dataset()
-
 
     async def _track_llm_usage(self, usage_meta) -> None:
         """P2-7: 从 langchain usage_metadata 累加 token/cost 到 _token_budget.
@@ -288,7 +265,6 @@ class EngineControl:
                 return False
         return _human_decide
 
-
     def _get_event_bus(self):
         """懒加载 EventBus. 没注册 handler 时返回 None, 调用方判空跳过."""
         if self._event_bus is not None:
@@ -301,7 +277,6 @@ class EngineControl:
             logger.debug("best-effort op failed", exc_info=True)
             return None
         return self._event_bus
-
 
     async def _dispatch_stage_event(
         self,
@@ -339,7 +314,6 @@ class EngineControl:
             logger.warning(
                 "error in _dispatch_stage_event: bus.dispatch failed", exc_info=True
             )
-
 
     def _check_gate(
         self, from_phase: str, to_phase: str, evidence: dict[str, Any]
@@ -575,7 +549,6 @@ class EngineControl:
         )
         return True
 
-
     async def _publish_checkpoint_event(
         self,
         event_type: str,
@@ -612,7 +585,6 @@ class EngineControl:
             await bus.dispatch(ev)
         except Exception:  # 防御: 检查点事件发布失败忽略
             logger.debug("checkpoint event publish failed", exc_info=True)
-
 
     def _check_budget(self, iteration: int, plan: dict[str, Any]) -> bool:
         """检查 plan 的 mode 是否在当前迭代预算允许范围内.
@@ -828,7 +800,6 @@ class EngineControl:
                 logger.warning("side failed to answer %s", sq.id, exc_info=True)
         return answered
 
-
     def _get_clarification_manager(self):
         """懒加载 ClarificationManager. 不可用时返回 None, 调用方判空跳过."""
         if self._clarification_mgr is not None:
@@ -841,7 +812,6 @@ class EngineControl:
             logger.debug("best-effort op failed", exc_info=True)
             return None
         return self._clarification_mgr
-
 
     def _get_plan_store(self):
         """懒加载 PlanStore. 不可用时返回 None, 调用方判空走老的纯 dict 路径."""
@@ -856,7 +826,6 @@ class EngineControl:
             return None
         return self._plan_store
 
-
     def _get_refine_model(self):
         """获取 refine 用的 LLM model, 优先用验证模型 (便宜档).
 
@@ -864,7 +833,6 @@ class EngineControl:
         """
         # ponytail: 直接用已有的 verification_model, 不需要额外的 llm_config 模块
         return getattr(self, "verification_model", None) or None
-
 
     async def _maybe_clarify(
         self,
@@ -995,7 +963,6 @@ class EngineControl:
             self._speculator_hint += f"\n[FDE 对齐] 用户方向: {answer[:200]}\n"
         return answer
 
-
     def _meta_trace_fields(self) -> dict[str, Any]:
         """从 self.* 抽本轮关键信息 (都是上一轮 phase 写进去的)."""
         attempted = ""
@@ -1060,7 +1027,6 @@ class EngineControl:
         """Signal the loop to stop at the next safe point."""
         self._should_stop = True
 
-
     def _log_deviation(
         self,
         plan: dict[str, Any],
@@ -1108,5 +1074,4 @@ class EngineControl:
                 "plan_mismatch",
                 "Plan produced unsuccessful result, will need refinement",
             )
-
 

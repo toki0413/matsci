@@ -757,6 +757,10 @@ LUCID review (mandatory after generating hypothesis):
         blocks = self._apply_block_patches(
             [
                 ("body", self._build_body_block(context)),
+                # objective 原文 + 契约必须**独立成块且不被截断**: context 在这里
+                # 被截到 2000 字符, 7KB 任务书 (含 H1–H5 定义/阈值) 根本到不了模型,
+                # 模型于是自造假设 (ws35 实测).
+                ("objective", _objective_prompt_block(self)),
                 # hint 提到 body 之后: _trim_to_budget 从列表尾部往回裁剪,
                 # 原先把 hint 放最后 → 预算紧张时首先被截断/删除, 换名归约的
                 # 强制重定向提示 (见 hypothesis_loop._metacog_audit_hypothesis)
@@ -1682,6 +1686,17 @@ def _track_applied_patch_ids(host: Any, phase: str, store: Any) -> None:
     if applied_ids:
         host._last_applied_patches = (phase, applied_ids)
 
+
+_PROMPT_PROTECTED_BLOCKS = ("body", "objective")  # 预算裁剪时永不压缩/清空
+
+
+def _objective_prompt_block(host: Any) -> str:
+    """objective 原文 + 交付物契约的 prompt 块 (无 objective 时为空串)."""
+    from huginn.autoloop.deliverables import objective_block_for
+
+    return objective_block_for(host)
+
+
 def _compress_low_priority_blocks(
     host: Any,
     kept: list[tuple[str, str]],
@@ -1694,7 +1709,7 @@ def _compress_low_priority_blocks(
         if total <= budget:
             break
         name, text = kept[i]
-        if name == "body":  # body 永远不压缩
+        if name in _PROMPT_PROTECTED_BLOCKS:  # body/objective 永远不压缩
             continue
         compressed = EngineObserve._compress_block(name, text, level)
         total -= len(text) - len(compressed)
@@ -1709,10 +1724,11 @@ def _drop_low_priority_blocks(
         if total <= budget:
             break
         name, text = kept[i]
-        if name in ("body", "skill", "composite"):
+        if name in ("body", "skill", "composite") or name in _PROMPT_PROTECTED_BLOCKS:
             continue
         total -= len(text)
         kept[i] = (name, "")
+
 
 # ── _build_pmk_block 的模块级辅助 ─────────────────────────────────────────
 

@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool
+from huginn.utils.json_extract import extract_json_text
 
 
 class AutoresearchInput(BaseModel):
@@ -302,7 +303,6 @@ class AutoresearchTool(HuginnTool):
         r"^(val_bpb|training_seconds|total_seconds|peak_vram_mb|mfu_percent|total_tokens_M|num_steps|num_params_M|depth):\s*([\d.]+)",
         re.M,
     )
-    _JSON_RE = re.compile(r"```json\s*(.*?)\s*```", re.S)
 
     async def call(self, args: AutoresearchInput, context: ToolContext) -> ToolResult:
         try:
@@ -442,18 +442,9 @@ class AutoresearchTool(HuginnTool):
         return metrics
 
     def _extract_json(self, text: str) -> str:
-        text = text.strip()
-        match = self._JSON_RE.search(text)
-        if match:
-            return match.group(1).strip()
-        if text.startswith("{") and text.endswith("}"):
-            return text
-        # Try to find the first JSON object if the model added commentary.
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            return text[start : end + 1]
-        return text
+        """抽出模型回复里的 JSON 对象原文 —— 薄封装, 实现见 utils/json_extract."""
+        blob, _err = extract_json_text(text, prefer="first", openers=("{",))
+        return blob or text.strip()
 
     # ------------------------------------------------------------------ actions
 

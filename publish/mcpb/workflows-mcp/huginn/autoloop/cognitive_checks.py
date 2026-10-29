@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # 避免 autoloop 包内循环导入 (annotations 已延迟求值)
+    from huginn.autoloop.types import CognitiveState
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +40,7 @@ def _extract_tests_passed(validation: Any) -> bool:
     return True
 
 
-def _derive_light_on_track(action: str, cog: dict) -> str:
+def _derive_light_on_track(action: str, cog: CognitiveState) -> str:
     """Loop: 每轮轻量 on_track 派生 — 不限 validate, 用机械信号.
 
     返回 "true" / "false" / "unsure", 供连续偏移累积检测. 不调 LLM
@@ -65,7 +68,7 @@ def _derive_light_on_track(action: str, cog: dict) -> str:
 
 
 def progress_invariant_action(
-    cog: dict, action_history: list[str], *, window: int = 4
+    cog: CognitiveState, action_history: list[str], *, window: int = 4
 ) -> str | None:
     """P3.2 在线进展不变量 — 连续 window 轮停在执行前阶段 ⇒ 强制推进流水线.
 
@@ -98,7 +101,7 @@ def progress_invariant_action(
     return "plan" if cog.get("hypothesis") else "hypothesize"
 
 
-def _snapshot_structure_desc(cog: dict, cmap: Any = None) -> list[float]:
+def _snapshot_structure_desc(cog: CognitiveState, cmap: Any = None) -> list[float]:
     """从活跃 StructureCognitiveMap / cog 提取结构描述符, 缺失填 16 维全 0.
 
     episodic 快照里带一份结构向量, 供后续按空间检索. cmap 来源优先级:

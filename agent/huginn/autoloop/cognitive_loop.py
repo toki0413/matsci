@@ -324,6 +324,57 @@ class ReflectionResult:
     # 评估意见 (供下轮 decide 看到)
     advice: str = ""
 
+def _acceptance_gap_text(gate: dict[str, Any]) -> str:
+    """交付物验收缺口 (确定性门) 的 prompt 摘要 — 独立字段, 不挤在 spec_hint 里.
+
+    ws35 实测: 门的缺口只写进 ``_speculator_hint``, 而 decider prompt 里该字段
+    只取前 300 字符 (``[:300]``), 门拒绝原因根本没到决策者眼前 → 模型以为已
+    完成, 继续 skip. 这里把它抬成独立 block, 并给出可执行的修复目标.
+    """
+    if not isinstance(gate, dict) or gate.get("passed", True):
+        return ""
+    _cap = 8
+
+    def _fmt(key: str) -> str:
+        vals = gate.get(key) or []
+        if not isinstance(vals, list):
+            vals = [vals]
+        if not vals:
+            return f"{key}=[]"
+        shown = ", ".join(str(v) for v in vals[:_cap])
+        more = f" (+{len(vals) - _cap} more)" if len(vals) > _cap else ""
+        return f"{key}=[{shown}]{more}"
+
+    parts = [_fmt(k) for k in ("missing", "empty", "invalid")]
+    contract = gate.get("contract")
+    if isinstance(contract, dict) and not contract.get("passed", True):
+        cparts = [
+            f"{k}=[{', '.join(str(x) for x in (contract.get(k) or [])[:_cap])}]"
+            for k in ("missing_keys", "short_lines", "bad_lines", "missing_fields")
+            if contract.get(k)
+        ]
+        if cparts:
+            parts.append("contract: " + "; ".join(cparts))
+    return "; ".join(p for p in parts if p)[:600]
+
+
+def _plan_available_for(host: Any) -> bool:
+    """当前是否有可用 plan: 优先调用注入探针, 未注入时退回归属性.
+
+    内核 (CognitiveLoop) 不认识 cog; 旧实现读 ``self._last_good_plan``, 但那属性
+    挂在 CognitiveRunner 上 —— 真实内核上永远取不到, 死循环处置因此每轮都改判
+    plan, 从不改判 execute (ws35 实测 13 次 force_plan 空转到迭代耗尽).
+    """
+    fn = getattr(host, "_plan_ready_fn", None)
+    if fn is None:
+        return bool(getattr(host, "_last_good_plan", None))
+    try:
+        return bool(fn())
+    except Exception:  # 防御: 探针失败按"无 plan"处理 (改判 plan 是安全侧)
+        logger.debug("plan_ready_fn failed", exc_info=True)
+        return False
+
+
 class CognitiveLoop:
     """共享控制流内核 — 编排 observe/decide/execute_action/reflect 四个钩子.
 
@@ -355,6 +406,7 @@ class CognitiveLoop:
         deliverables_fn: Callable[[], dict[str, Any]] | None = None,
         append_hint_fn: Callable[[str], None] | None = None,
         control_trace_fn: Callable[..., None] | None = None,
+        plan_ready_fn: Callable[[], bool] | None = None,
     ) -> None:
         self._observe = observe_fn
         self._decide = decide_fn
@@ -366,6 +418,9 @@ class CognitiveLoop:
         # 交付物验收回调: 内核不认识 workspace/清单, 由调用方注入 (autoloop 传
         # CognitiveRunner._deliverables_ok). None → 不适用 (rcb 路径保持原行为).
         self._deliverables_fn = deliverables_fn
+        # 当前是否已有可用 plan: 内核不认识 cog, 由调用方注入 (autoloop 传
+        # lambda: bool(cog["plan"])). None → 死循环处置一律改判 plan.
+        self._plan_ready_fn = plan_ready_fn
         # hint 通道: 内核没有 _speculator_hint, 由调用方注入
         # (autoloop 传 CognitiveRunner._append_hint). None → 只记录日志.
         self._append_hint_fn = append_hint_fn
@@ -493,9 +548,10 @@ class CognitiveLoop:
             _gap = (
                 f"missing={gate.get('missing') or []} "
                 f"empty={gate.get('empty') or []} "
-                f"invalid={gate.get('invalid') or []}"
+                f"invalid={gate.get('invalid') or []} "
+                f"contract={gate.get('contract') or 'n/a'}"
             )
-            nxt = "execute" if getattr(self, "_last_good_plan", None) else "plan"
+            nxt = "execute" if _plan_available_for(self) else "plan"
             logger.error(
                 "CognitiveLoop: %d consecutive '%s' (2x limit) — 交付物未验收, "
                 "改判为 %s 而不是 stop: %s",
@@ -2318,6 +2374,7 @@ class CognitiveRunner(EngineFacade):
         ctl = self._bd_control_stats(state, cog)
         val_detail = self._bd_validation_detail(cog.get("validation") or {})
         hist_block = self._bd_history_block(state)
+        accept_block = _acceptance_gap_text(self._deliverables_ok())
         return f"""You are the cognitive controller of a research agent. Choose the next action.
 
 Iteration: {state.iteration}/{state.max_iterations}
@@ -2339,6 +2396,8 @@ State:
 - Last learn summary: {ctl['last_learn']}
 
 Validation details: {val_detail or 'none'}
+Acceptance (deterministic engine gate; if unmet, do NOT stop — keep executing until it passes):
+{accept_block or 'PASSED or not applicable'}
 Speculator hints: {ctl['spec_hint'] or 'none'}
 Last reflection advice: {state.redirect_reason or 'none'}
 
@@ -4463,7 +4522,13 @@ Physical time series collected this run:
         )
 
     def _dec_monitor_hold(self) -> ActionDecision | None:
-        """Monitor-hold 减负: 连续空观测达阈值 → 保持 silent."""
+        """Monitor-hold 减负: 连续空观测达阈值 → 保持 silent.
+
+        确定性验收门优先于减负: 交付物未通过验收时"没有新观测"不等于"没有活
+        可干". ws35 实测 —— hold 判 skip 后 ``_dec_llm`` 因 ``last_action=="skip"``
+        被短路, 规则兜底又落回 hold, 29 连 skip 空转到迭代耗尽, 而契约门一直
+        判红. 所以只要验收未过, 这里就不许 hold, 把决策权交回正常决策链.
+        """
         if getattr(self, "_monitor_state", None) is None:
             return None
         from huginn.autoloop.monitor_hold import decide_hold
@@ -4472,6 +4537,17 @@ Physical time series collected this run:
             self._monitor_state, had_activity=self._last_had_activity
         )
         if not hold.hold:
+            return None
+        gate = self._deliverables_ok()
+        if not gate.get("passed", True):
+            self._control_trace(
+                "monitor_hold_blocked",
+                f"deliverables_unverified missing={gate.get('missing') or []} "
+                f"empty={gate.get('empty') or []} invalid={gate.get('invalid') or []} "
+                f"contract={gate.get('contract') or 'n/a'}",
+                action="no_hold",
+                iteration=getattr(self, "_iteration", 0),
+            )
             return None
         return ActionDecision(
             action="skip", rationale=f"monitor-hold: {hold.reason}"
@@ -4962,6 +5038,7 @@ Physical time series collected this run:
             deliverables_fn=self._deliverables_ok,
             append_hint_fn=self._append_hint,
             control_trace_fn=self._control_trace,
+            plan_ready_fn=lambda: bool(ctx.cog.get("plan")),
         )
 
     async def _rc_post_run(self, ctx: _RcContext, state: LoopState) -> None:

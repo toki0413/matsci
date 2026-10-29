@@ -480,6 +480,14 @@ PREDICTION: {plan.get("expected_prediction", "N/A")}
 - 是否重复了"同场景历史失败"里列出的坑
 - 量纲预检查有警告时, 把它列入 risks
 
+# 判定边界 (硬性, 误判会卡死整个循环)
+- DESCRIPTION 是**计划文本**, 不是源码. 代码/脚本在 execute 阶段才写出.
+  **不得**因为 DESCRIPTION 里没有导入语句、可运行源码、print 语句、完整函数体
+  而判 invalid —— ws35 实测此误判导致 13 连拒、循环空转.
+- 只有以下情况才判 invalid: 计划与 hypothesis 不对齐 (测的不是同一个量)、
+  缺必要前置步骤、PREDICTION 不可验证、方法在本环境不可执行.
+- 判 invalid 必须能在 missing_steps 里给出**可执行**的补充项; 给不出来就判 valid.
+
 输出 JSON (不要其他文本):
 {{
   "is_valid": true 或 false,
@@ -623,9 +631,15 @@ class PlanCheck(EngineFacade):
         # _extend_mode_enum 在返回前按 flag 展开 (模板保留基线字面量).
         extra_mode_lines = self._plan_extra_mode_lines()
 
+        # objective 原文 + 契约独立成块: plan 阶段的 context 只截 1000 字符,
+        # 7KB 任务书 (H1–H5 定义/阈值/交付物键名) 到不了模型 → 模型按自造的
+        # 假设规划, 于是 plan_check 反复判 misalign (ws35 实测 13 连拒).
+        from huginn.autoloop.deliverables import objective_block_for
+
         blocks = self._apply_block_patches(
             [
                 ("body", _pc_plan_body(hypothesis, context, extra_mode_lines)),
+                ("objective", objective_block_for(self)),
                 ("math", math_block),
                 ("kg", kg_block),
                 ("visual", visual_block),
@@ -1478,7 +1492,8 @@ class PlanCheck(EngineFacade):
         if not similar:
             return scene, "N/A"
         return scene, "\n".join(
-            f"- {p['reason']} (缺: {', '.join(p.get('missing_steps', [])) or 'N/A'})"
+            f"- {str(p['reason'])[:240]} "
+            f"(缺: {', '.join(p.get('missing_steps', [])) or 'N/A'})"
             for p in similar
         )
 

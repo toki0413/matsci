@@ -33,6 +33,8 @@ import time
 import uuid
 from typing import Any
 
+from huginn.autoloop._facade import EngineFacade
+
 # 提示面升级阈值 (与 engine_reflect 同一旋钮): 由本对象在组装作者提示时**消费**,
 # 故常量必须同源. engine_reflect 不反向 import 本模块, 无循环风险.
 # with_retry: autoloop 的 LLM 调用此前**绕开**了统一重试层 (agent/streaming.py 有,
@@ -57,7 +59,6 @@ _CODELAB_MIN_TIMEOUT_S = 60.0
 # 未拿到显式超时时的兜底 (与 HUGINN_CODELAB_TIMEOUT_S 的默认档一致).
 _CODELAB_FALLBACK_TIMEOUT_S = 600.0
 
-
 def _ledger_text(output: Any) -> str:
     """执行回执 → 紧凑 JSON 文本; 超长时在词边界截断并补窗口外数值面."""
     import json
@@ -69,6 +70,15 @@ def _ledger_text(output: Any) -> str:
         for k, v in payload.items()
         if k not in ("script", "code", "stdout", "stderr")
     }
+    # stdout/stderr 恰恰是 coder 真跑出来的数值所在 —— 整段丢弃后报告面只
+    # 剩"没有任何数字可引用"的结论 (ws31 实测: 执行成功但报告自述无数). 只
+    # 保留数值面: 证据在, 体量仍可控.
+    for _k in ("stdout", "stderr"):
+        _v = payload.get(_k)
+        if isinstance(_v, str) and _v.strip():
+            _nums = sorted(_numeric_tokens(_v, _CITATION_MIN_MAGNITUDE))
+            if _nums:
+                slim[_k + "_nums"] = " ".join(_nums[:200])
     text = json.dumps(slim, ensure_ascii=False, default=str)
     if len(text) <= _EXEC_LEDGER_ENTRY_CHARS:
         return text
@@ -81,7 +91,6 @@ def _ledger_text(output: Any) -> str:
         cut = _EXEC_LEDGER_ENTRY_CHARS
     tail_nums = sorted(_numeric_tokens(text[cut:], _CITATION_MIN_MAGNITUDE))
     return text[:cut] + (" nums_after_cut=" + " ".join(tail_nums) if tail_nums else "")
-
 
 def _next_timeout_cap(
     current_cap: float | None,
@@ -105,31 +114,13 @@ def _next_timeout_cap(
     )
     return max(_CODELAB_MIN_TIMEOUT_S, base / 2.0), True
 
-
-class EngineAct:
+class EngineAct(EngineFacade):
     """plan / execute 阶段方法族协作对象.
 
     未定义的属性读写经 __getattr__/__setattr__ 转发到 self.engine —
     引擎字段/方法(如 _grill_active / _current_prediction / model / _llm_chat 等)
     不会被复制两份, 方法体零改动、行为完全等价.
     """
-
-    def __init__(self, engine: Any) -> None:
-        object.__setattr__(self, "engine", engine)
-
-    def __getattr__(self, name: str) -> Any:
-        # object.__getattribute__ 直达 engine 实例属性, 避免 engine==self 时递归
-        return object.__getattribute__(self.engine, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name == "engine":
-            object.__setattr__(self, name, value)
-            return
-        # engine==self (mock/selfcheck) 直写实例 dict 避免转发自递归; 否则转发回引擎
-        if self.engine is self:
-            object.__setattr__(self, name, value)
-            return
-        setattr(self.engine, name, value)
 
     #: plan / validate 阶段允许挂载的**只读**工具白名单.
     #: 只收 read_only=True 且无副作用的工具 —— 这两个阶段此前完全没有工具面,
@@ -388,6 +379,16 @@ class EngineAct:
         self._current_plan_target_files = list(plan.get("target_files") or [])
         return plan
 
+    #: plan 空 DESCRIPTION 的强制重写指令 (只重试一次).
+    _PLAN_DESC_RETRY_SUFFIX = (
+        "\n\nCRITICAL: DESCRIPTION is mandatory and must be non-empty. "
+        "It is the exact task handed to the executor. Output it on one line."
+    )
+
+    @staticmethod
+    def _plan_description_missing(plan: dict[str, Any] | None) -> bool:
+        return not str((plan or {}).get("description") or "").strip()
+
     async def _plan(
         self, hypothesis: str, context: dict[str, Any]
     ) -> dict[str, Any] | None:
@@ -395,13 +396,43 @@ class EngineAct:
 
         以前只返回一个临时 dict, turn 结束就丢了. 现在往 PlanStore 落一份,
         跨会话可恢复, 用户也能 confirm/reject. PlanStore 不可用时退回老行为.
+
+        结构性锚点: DESCRIPTION 是下发给执行器的**执行对象**, 不能为空.
+        空描述先强制重写一次; 仍空则 fail-fast 出诊断, 不再用"当前假设"兜底
+        (兜底会让模型自造执行对象 → 假设漂移).
         """
+        self._last_plan_failure = None
         prompt = self._build_plan_prompt(hypothesis, context)
         response, plan = await self._plan_llm(prompt)
         if response is None:
             return None
         self._plan_grill_exit(response)
         if not plan:
+            self._last_plan_failure = {
+                "kind": "empty_description",
+                "attempts": 1,
+                "diagnostic": "planner 未产出可解析的 MODE/DESCRIPTION",
+            }
+            return None
+        if self._plan_description_missing(plan):
+            logger.warning("plan DESCRIPTION 为空 → 强制重写一次")
+            response, _retry = await self._plan_llm(
+                prompt + self._PLAN_DESC_RETRY_SUFFIX
+            )
+            if response is None:
+                return None
+            self._plan_grill_exit(response)
+            if _retry:
+                plan = _retry
+        if self._plan_description_missing(plan):
+            self._last_plan_failure = {
+                "kind": "empty_description",
+                "attempts": 2,
+                "diagnostic": "planner 连续两次产出空 DESCRIPTION, 拒绝下发执行器",
+            }
+            logger.error(
+                "plan 连续两次 DESCRIPTION 为空 → fail-fast (不再用当前假设兜底)"
+            )
             return None
         plan = await self._plan_postprocess(plan, hypothesis, context)
         return await self._plan_persist(hypothesis, plan)
@@ -521,6 +552,35 @@ class EngineAct:
             return False
         low = text.lower()
         return any(h in low for h in self._CODE_EXPERIMENT_HINTS)
+
+    # 「必须外部取证」信号: Code Lab 沙箱移除 ``open()``、import 白名单不含
+    # urllib/requests/socket、``bash_tool``/``code_tool`` 在 _BLOCKED_TOOLS ——
+    # 它**物理上**无法下载也无法落盘. 目标一旦要求真实数据获取, 让 code_lab
+    # 接管 execute 就只能交出一段"合成 stand-in"(ws13 实测: 书生自述
+    # "real data fetch is handled by the outer orchestrator"), 而报告仍把它
+    # 当执行证据抄出去. 这类目标改道 coder: 唯一带 bash_tool/写文件能力的
+    # 真实执行路径.
+    _IO_REQUIRED_HINTS = (
+        "下载",
+        "download",
+        "抓取",
+        "fetch",
+        "csv",
+        "数据集",
+        "dataset",
+        "sha256",
+        "source_url",
+        "http://",
+        "https://",
+        "落盘",
+    )
+
+    def _needs_external_data_io(self, text: Any) -> bool:
+        """启发式: 该项是否要求"从外部取数/落盘"(Code Lab 结构性做不到)."""
+        if not isinstance(text, str) or not text.strip():
+            return False
+        low = text.lower()
+        return any(h in low for h in self._IO_REQUIRED_HINTS)
 
     @staticmethod
     def _codelab_author_prompt(
@@ -1004,6 +1064,15 @@ class EngineAct:
             or self._is_code_experiment(str(getattr(self, "_objective", "") or ""))
         ):
             return None
+        # 目标要求外部取数/落盘时, code_lab 没有 open()/网络 import → 必然只能
+        # 拿合成 stand-in 交差. 这类目标不走快路, 交给 dispatch 里的 coder 真跑.
+        if self._needs_external_data_io(description) or self._needs_external_data_io(
+            str(getattr(self, "_objective", "") or "")
+        ):
+            logger.info(
+                "code_lab fast-path skipped: 目标要求真实数据获取/落盘 (code_lab 无 open/无网络)"
+            )
+            return None
         _lab = await self._execute_code_lab(description, context)
         # 成败都记: 失败的内建实验也占用了真实算力, 不能从遥测里消失.
         self._record_internal_tool_call("code_lab", plan, _lab)
@@ -1037,6 +1106,16 @@ class EngineAct:
             if self._is_deterministic_numeric(description)
             else str(getattr(self, "_objective", "") or "")
         )
+        # 需要外部取数的目标: probe 只会在内存里现编一段算式的数值, 拿不到真实
+        # 数据也落不了盘 —— 用它顶替 execute 就是"合成代替真实"的老毛病.
+        # 交给 coder 真跑(下载+落盘+分析).
+        if self._needs_external_data_io(
+            description
+        ) or self._needs_external_data_io(str(getattr(self, "_objective", "") or "")):
+            logger.info(
+                "numeric-probe fast-path skipped: 目标要求真实数据获取/落盘 (probe 无 I/O)"
+            )
+            return None
         _probe = await self._request_numeric_probe(_src)
         if not _probe:
             return None
@@ -1153,6 +1232,19 @@ class EngineAct:
         if mode == "coder":
             # Use CoderRunner to modify code
             return await self._execute_coder(description, context), mode
+        # 目标要求真实数据获取/落盘时, 除 coder 外的模式都缺"手": workflow 只跑
+        # 模板管线, dynamic_workflow 只并发预置 subtask, explore 只搜设计空间,
+        # skill 是预置流程, code_lab 无 open()/无网络 import. ws16 实测 plan 把
+        # "下载 UCI CSV 再分析"写成 MODE: workflow → 下载根本不会发生.
+        # 一律改道 coder: 唯一带 bash_tool + file_write 的真实执行路径.
+        if self._needs_external_data_io(description) or self._needs_external_data_io(
+            str(getattr(self, "_objective", "") or "")
+        ):
+            logger.info(
+                "dispatch %s→coder: 目标要求真实数据获取/落盘 (该模式无 I/O 能力)",
+                mode,
+            )
+            return await self._execute_coder(description, context), "coder"
         if mode == "workflow":
             # Use WorkflowEngine to run computational pipeline
             result = await self._execute_workflow(description, context)
@@ -1727,9 +1819,11 @@ class EngineAct:
         )
         usable = n_tool_results - len(tool_errors)
         hit_limit = final.startswith(self._CODER_LIMIT_PREFIX)
-        success = (
-            bool(n_tool_calls) and not hit_limit and usable > 0 and bool(final.strip())
-        )
+        # hit_limit 只作诊断, 不再作失败判据: 数据/科研任务里 coder 常在产出可用
+        # 结果后继续探索到上限 (ws22 实测: UCI 数据已下载且 sha256 与源站逐位一致,
+        # 仍被判 failed → validate 反复重规划, 动作全耗在同一件事上). 判据改为
+        # "发生过真实工具调用且有可用回执", 上限命中单独记录供审计区分"做完未收尾".
+        success = bool(n_tool_calls) and usable > 0 and bool(final.strip())
 
         diag: dict[str, Any] = {
             "tool_calls": n_tool_calls,
@@ -1784,17 +1878,48 @@ class EngineAct:
             return "all_tool_calls_failed"
         return "empty_answer"
 
+    def _coder_task_tail(self, task_desc: str) -> str:
+        """coder 任务收尾指令: 数据/研究类任务明确"在工作区跑脚本", 别改源码.
+
+        默认收尾是 "modify the code" —— 科研任务会被引去读仓库/跑 pytest
+        (ws18 实测: 下载已完成后转去查 research_records、生成 .pytest_cache).
+        取数类任务改成"在工作区写脚本并真跑", 产物落当前工作区.
+        """
+        if self._needs_external_data_io(task_desc) or self._needs_external_data_io(
+            str(getattr(self, "_objective", "") or "")
+        ):
+            return (
+                "Do this inside the current workspace: write the needed scripts and run "
+                "them with bash_tool. Do NOT modify the huginn source tree or run repo "
+                "test suites; all artifacts (data/, scripts, results, figures) belong in "
+                "the current working directory."
+            )
+        return "Please modify the code to address this task."
+
     async def _execute_coder(
         self, description: str, context: dict[str, Any]
     ) -> dict[str, Any]:
         """Run the coder loop on the description, reusing self.coder."""
-        task = f"""Task: {description}
+        # 结构性锚点: 没有执行对象就不执行. 旧代码在 description 为空时用
+        # "当前假设"兜底下发 coder —— 那等于让模型自造执行对象, 是 ws28 的
+        # 假设漂移通道. 现在直接 fail-fast 出诊断, 由上层重写 plan.
+        task_desc = str(description or "").strip()
+        if not task_desc:
+            logger.error("coder 收到空 description → fail-fast (拒绝执行)")
+            return {
+                "mode": "coder",
+                "status": "failed",
+                "success": False,
+                "error": "empty_description",
+                "diagnostic": "plan DESCRIPTION 为空, 执行对象不存在; 需重写 plan",
+            }
+        task = f"""Task: {task_desc}
 
 Context:
 - Changed files: {context.get("changed_files", [])}
 - Git diff: {context.get("git_diff", "")[:500]}
 
-Please modify the code to address this task."""
+{self._coder_task_tail(task_desc)}"""
         try:
             # CoderRunner.run 是同步的, 丢线程里避免阻塞事件循环
             result = await asyncio.to_thread(self.coder.run, task)
@@ -1837,6 +1962,17 @@ Please modify the code to address this task."""
         """
         reasons: list[str] = []
         objective = str(getattr(self, "_objective", "") or "")
+        # 目标要真实数据获取/落盘时, 回落链 (code_lab → probe_exec) 结构性做不到:
+        # code_lab 无 open()/无网络 import, probe 只在内存里现编算式. 让它们"成功"
+        # 就是把合成数当真实证据 —— 宁可如实失败, 也不产假证据 (ws13 教训).
+        if self._needs_external_data_io(description) or self._needs_external_data_io(
+            objective
+        ):
+            logger.warning(
+                "coder 失败且目标要求真实数据获取/落盘: 跳过 code_lab/probe 回落"
+                "(二者无 I/O, 只会产出合成证据)"
+            )
+            return None
         lab = await EngineAct._fb_code_lab(self, description, context, reasons)
         if lab is not None:
             return lab

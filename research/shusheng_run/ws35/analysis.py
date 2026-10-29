@@ -1,650 +1,628 @@
 #!/usr/bin/env python3
-"""
-Analysis script for MgH2 dehydrogenation activation energy dataset.
-Computes statistical summaries, uncertainty quantification, and predictive modeling.
+"""Meta-analysis on MgH2 Ea dataset.
+
+Conducts 5 hypothesis tests on the MgH2 activation energy dataset.
 """
 
 import csv
 import json
-import math
-import random
-from collections import Counter, defaultdict
+import os
+import sys
+from collections import defaultdict
 
-# ============================================================
-# Data loading
-# ============================================================
+import numpy as np
+
+# Set random seed
+np.random.seed(20261029)
+
+DATA_DIR = '/workspace/research/shusheng_run/ws35/data'
+CSV_FILE = os.path.join(DATA_DIR, 'ea_dataset.csv')
+RESULTS_FILE = 'results.json'
+LOOP_LOG_FILE = 'loop_log.jsonl'
+
 
 def load_data(filepath):
-    """Load the cleaned dataset and return list of dicts."""
+    """Load CSV data using csv module."""
+    rows = []
     with open(filepath, 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
-        rows = list(reader)
-    # Convert Ea_parsed to float
-    for row in rows:
-        if row['Ea_parsed'] and row['Ea_parsed'].strip():
-            row['Ea_parsed'] = float(row['Ea_parsed'])
-        else:
-            row['Ea_parsed'] = None
-        # T_des_C may be empty or a range - keep as string for now
-        if row['T_des_C'] and row['T_des_C'].strip():
-            row['T_des_C'] = row['T_des_C'].strip()
-        else:
-            row['T_des_C'] = None
+        for row in reader:
+            row['Ea_kJ_per_mol'] = float(row['Ea_kJ_per_mol'])
+            rows.append(row)
     return rows
 
-# ============================================================
-# Q1: Desorption Ea statistics with uncertainty quantification
-# ============================================================
 
-def compute_q1_stats(rows):
-    """Compute Q1: Desorption Ea statistics with uncertainty quantification."""
-    # Filter desorption only
-    desorption = [r for r in rows if r.get('direction') == 'desorption' and r.get('Ea_parsed') is not None]
+def filter_desorption(rows):
+    """Filter to only desorption rows."""
+    return [r for r in rows if r.get('direction', '').strip().lower() == 'desorption']
 
-    ea_values = [r['Ea_parsed'] for r in desorption]
-    doi_list = [r['doi'] for r in desorption]
 
-    # Basic statistics
-    n = len(ea_values)
-    mean_ea = sum(ea_values) / n
-    sorted_ea = sorted(ea_values)
-    median_ea = sorted_ea[n // 2] if n % 2 == 1 else (sorted_ea[n // 2 - 1] + sorted_ea[n // 2]) / 2
-    variance = sum((x - mean_ea) ** 2 for x in ea_values) / n
-    std_ea = math.sqrt(variance)
+def cluster_by_doi(rows):
+    """Group rows by doi (paper)."""
+    grouped = defaultdict(list)
+    for row in rows:
+        grouped[row['doi']].append(row)
+    return grouped
 
-    # 95% CI using t-distribution (approximate with normal for n > 30)
-    # Using bootstrap for more robust CI
-    random.seed(42)
-    n_bootstrap = 10000
+
+def compute_intra_paper_deltas(grouped):
+    """Compute intra-paper DeltaEa (pure - catalyzed) for each paper.
+
+    Returns: deltas array, paper_ids array (same length as deltas)
+    """
+    deltas = []
+    paper_ids = []
+
+    for doi, paper_rows in grouped.items():
+        pure_rows = [r for r in paper_rows if r.get('material_class', '').startswith('pure')]
+        catalyzed_rows = [r for r in paper_rows if r.get('material_class', '').startswith('catalyzed')]
+
+        for pure_row in pure_rows:
+            for cat_row in catalyzed_rows:
+                delta = pure_row['Ea_kJ_per_mol'] - cat_row['Ea_kJ_per_mol']
+                deltas.append(delta)
+                paper_ids.append(doi)
+
+    return np.array(deltas), np.array(paper_ids)
+
+
+def dsl_random_effects(deltas):
+    """DerSimonian-Laird random effects model for pooling deltas.
+
+    With equal weights, the DL estimator simplifies to:
+    - pooled mean = simple mean of deltas
+    - tau_sq = between-study variance = max(0, (Q - df) / df)
+    - SE = sqrt(tau_sq / n)
+    - 95% CI = mean +/- 1.96 * SE
+
+    Returns: pooled_mean, tau_sq, se, ci_lower, ci_upper
+    """
+    n = len(deltas)
+    if n == 0:
+        return 0.0, 0.0, 0.0, 0.0, 0.0
+
+    mean = np.mean(deltas)
+
+    # Q statistic (sum of squared deviations)
+    q_stat = np.sum((deltas - mean) ** 2)
+    df = n - 1
+
+    # DL estimator for between-study variance (equal weights)
+    if df > 0:
+        tau_sq = max(0.0, (q_stat - df) / df)
+    else:
+        tau_sq = 0.0
+
+    # Standard error (using between-study variance only)
+    se = np.sqrt(tau_sq / n) if n > 0 else 0.0
+
+    ci_lower = mean - 1.96 * se
+    ci_upper = mean + 1.96 * se
+
+    return float(mean), float(tau_sq), float(se), float(ci_lower), float(ci_upper)
+
+
+def cluster_bootstrap_ci(deltas, paper_ids, n_bootstrap=1000, alpha=0.05):
+    """Compute 95% CI via cluster bootstrap (resampling papers).
+
+    Resamples papers with replacement, computes mean of deltas from resampled papers,
+    and uses the bootstrap distribution to get the CI.
+    """
+    unique_papers = np.unique(paper_ids)
+    n_papers = len(unique_papers)
     bootstrap_means = []
+
     for _ in range(n_bootstrap):
-        sample = [random.choice(ea_values) for _ in range(n)]
-        bootstrap_means.append(sum(sample) / len(sample))
-    bootstrap_means.sort()
-    ci_low = bootstrap_means[int(0.025 * n_bootstrap)]
-    ci_high = bootstrap_means[int(0.975 * n_bootstrap)]
+        # Resample papers with replacement
+        sampled_papers = np.random.choice(unique_papers, size=n_papers, replace=True)
 
-    # Tau2 (between-study variance) using DerSimonian-Laird random-effects model
-    # Q = sum(w_i * (x_i - mean)^2) where w_i = 1 (equal weights for simplicity)
-    # Q = sum((x_i - mean)^2)
-    Q = sum((x - mean_ea) ** 2 for x in ea_values)
-    # Under fixed effects, E[Q] = n - 1
-    # tau2 = max(0, (Q - (n - 1)) / (sum(w_i) - sum(w_i^2)/sum(w_i)))
-    # With equal weights w_i = 1: sum(w_i) = n, sum(w_i^2) = n
-    # tau2 = max(0, (Q - (n - 1)) / (n - n/n)) = max(0, (Q - (n - 1)) / (n - 1))
-    Q_stat = Q
-    tau2 = max(0.0, (Q_stat - (n - 1)) / (n - 1))
+        # Collect deltas from sampled papers
+        sampled_deltas = []
+        for paper in sampled_papers:
+            mask = paper_ids == paper
+            sampled_deltas.extend(deltas[mask])
 
-    # Number of unique papers (DOIs)
-    unique_papers = len(set(doi_list))
+        if sampled_deltas:
+            bootstrap_means.append(np.mean(sampled_deltas))
 
-    return {
-        'n': n,
-        'mean_ea': round(mean_ea, 2),
-        'median_ea': round(median_ea, 2),
-        'std_ea': round(std_ea, 2),
-        'ci_low': round(ci_low, 2),
-        'ci_high': round(ci_high, 2),
-        'tau2': round(tau2, 4),
-        'n_papers': unique_papers,
-        'ea_values': ea_values
-    }
+    bootstrap_means = np.array(bootstrap_means)
+    ci_lower = np.percentile(bootstrap_means, 100 * alpha / 2)
+    ci_upper = np.percentile(bootstrap_means, 100 * (1 - alpha / 2))
 
-# ============================================================
-# Q2: Eta2 and permutation test for catalyst_family effect
-# ============================================================
+    return float(ci_lower), float(ci_upper)
 
-def compute_eta2(ea_values, groups):
-    """Compute eta-squared: proportion of variance explained by groups."""
+
+def permutation_test_catalyst_family(catalyzed_rows, n_permutations=10000):
+    """Permutation test for catalyst family effect on catalyzed samples.
+
+    Returns: p_value, eta_squared, observed_f
+    """
+    # Filter out rows with null/empty catalyst_family (none)
+    valid_rows = [r for r in catalyzed_rows
+                  if r.get('catalyst_family', '').strip() != 'none'
+                  and r.get('catalyst_family', '').strip()]
+
+    if len(valid_rows) < 2:
+        return 1.0, 0.0, 0.0
+
+    ea_values = np.array([r['Ea_kJ_per_mol'] for r in valid_rows])
+    families = np.array([r['catalyst_family'] for r in valid_rows])
+    unique_families = np.unique(families)
+    n_families = len(unique_families)
     n = len(ea_values)
-    overall_mean = sum(ea_values) / n
-    # Total sum of squares
-    ss_total = sum((x - overall_mean) ** 2 for x in ea_values)
+
+    # One-way ANOVA: compute F-statistic
+    grand_mean = np.mean(ea_values)
+
     # Between-group sum of squares
-    group_means = {}
-    group_sizes = {}
-    for group, values in groups.items():
-        group_means[group] = sum(values) / len(values)
-        group_sizes[group] = len(values)
-    ss_between = sum(group_sizes[g] * (group_means[g] - overall_mean) ** 2 for g in group_means)
-    # Eta2
-    eta2 = ss_between / ss_total if ss_total > 0 else 0.0
-    return eta2, ss_between, ss_total
+    ss_between = 0.0
+    for fam in unique_families:
+        group_ea = ea_values[families == fam]
+        group_mean = np.mean(group_ea)
+        ss_between += len(group_ea) * (group_mean - grand_mean) ** 2
 
-def permutation_test_eta2(ea_values, groups, n_perm=10000, random_seed=42):
-    """Permutation test for eta2 significance."""
-    random.seed(random_seed)
-    all_ea = list(ea_values)
-    # Get the group labels corresponding to each ea value
-    group_labels = []
-    for group, values in groups.items():
-        group_labels.extend([group] * len(values))
-    # Observed eta2
-    observed_eta2, _, _ = compute_eta2(ea_values, groups)
-    # Count how many permuted eta2 >= observed
-    count_ge_observed = 0
-    for _ in range(n_perm):
-        # Shuffle group labels together with ea values
-        paired = list(zip(all_ea, group_labels))
-        random.shuffle(paired)
-        perm_groups = defaultdict(list)
-        for ea_val, group in paired:
-            perm_groups[group].append(ea_val)
-        perm_eta2, _, _ = compute_eta2([v for vals in perm_groups.values() for v in vals], perm_groups)
-        if perm_eta2 >= observed_eta2:
-            count_ge_observed += 1
-    p_value = (count_ge_observed + 1) / (n_perm + 1)
-    return observed_eta2, p_value
+    # Within-group sum of squares
+    ss_within = 0.0
+    for fam in unique_families:
+        group_ea = ea_values[families == fam]
+        group_mean = np.mean(group_ea)
+        ss_within += np.sum((group_ea - group_mean) ** 2)
 
-def compute_q2_stats(rows):
-    """Compute Q2: Eta2 and permutation test for catalyst_family effect on Ea (desorption only)."""
-    desorption = [r for r in rows if r.get('direction') == 'desorption' and r.get('Ea_parsed') is not None]
+    df_between = n_families - 1
+    df_within = n - n_families
 
-    # Group by catalyst_family
-    groups = defaultdict(list)
-    for r in desorption:
-        groups[r['catalyst_family']].append(r['Ea_parsed'])
+    if df_within > 0 and ss_between > 0:
+        f_stat = (ss_between / df_between) / (ss_within / df_within)
+    else:
+        f_stat = 0.0
 
-    ea_values = [r['Ea_parsed'] for r in desorption]
-
-    # Eta2
-    eta2, ss_between, ss_total = compute_eta2(ea_values, groups)
+    # Eta-squared
+    ss_total = ss_between + ss_within
+    eta_squared = ss_between / ss_total if ss_total > 0 else 0.0
 
     # Permutation test
-    perm_eta2, p_value = permutation_test_eta2(ea_values, groups, n_perm=10000)
+    perm_f_stats = []
+    ea_array = ea_values.copy()
 
-    # Also compute tau2 for this analysis (same as in Q1 for desorption)
-    desorption_ea = [r['Ea_parsed'] for r in desorption]
-    n = len(desorption_ea)
-    mean_ea = sum(desorption_ea) / n
-    Q = sum((x - mean_ea) ** 2 for x in desorption_ea)
-    tau2 = max(0.0, (Q - (n - 1)) / (n - 1))
+    for _ in range(n_permutations):
+        np.random.shuffle(ea_array)
 
-    return {
-        'eta2': round(eta2, 4),
-        'perm_p': round(p_value, 4),
-        'tau2': round(tau2, 4),
-        'ss_between': round(ss_between, 2),
-        'ss_total': round(ss_total, 2),
-        'groups': dict({k: len(v) for k, v in groups.items()})
-    }
+        # Compute permuted F-stat
+        perm_ss_between = 0.0
+        for fam in unique_families:
+            perm_group_ea = ea_array[families == fam]
+            perm_group_mean = np.mean(perm_group_ea)
+            perm_ss_between += len(perm_group_ea) * (perm_group_mean - grand_mean) ** 2
 
-# ============================================================
-# Q3: Method comparison (Kissinger vs isothermal_Arrhenius)
-# ============================================================
+        perm_ss_within = 0.0
+        for fam in unique_families:
+            perm_group_ea = ea_array[families == fam]
+            perm_group_mean = np.mean(perm_group_ea)
+            perm_ss_within += np.sum((perm_group_ea - perm_group_mean) ** 2)
 
-def compute_q3_stats(rows):
-    """Compute Q3: Pairwise differences between Kissinger and isothermal_Arrhenius methods."""
-    # Find rows with both methods for the same sample (same doi and similar material)
-    # From the spec: MgH2-10 wt% H-V2O5 has both methods in the same paper
-    # We need to find pairs where the same material/system has both method results
-
-    # Group by doi and material
-    by_doi_material = defaultdict(list)
-    for r in rows:
-        key = (r['doi'], r.get('material', ''))
-        by_doi_material[key].append(r)
-
-    # Find pairs where both methods exist for the same (doi, material)
-    method_pairs = []
-    for key, entries in by_doi_material.items():
-        kissinger = [e for e in entries if e.get('method') == 'Kissinger']
-        isothermal = [e for e in entries if e.get('method') == 'isothermal_Arrhenius']
-        if kissinger and isothermal:
-            # For each Kissinger entry, pair with each isothermal entry
-            for k in kissinger:
-                for i in isothermal:
-                    # Only pair if Ea values exist
-                    if k.get('Ea_parsed') and i.get('Ea_parsed'):
-                        diff = k['Ea_parsed'] - i['Ea_parsed']
-                        method_pairs.append({
-                            'doi': k['doi'],
-                            'material': key[1],
-                            'kissinger_ea': k['Ea_parsed'],
-                            'isothermal_ea': i['Ea_parsed'],
-                            'diff': diff
-                        })
-
-    if not method_pairs:
-        # Fallback: look for same doi with both methods regardless of material
-        by_doi = defaultdict(list)
-        for r in rows:
-            by_doi[r['doi']].append(r)
-        for doi, entries in by_doi.items():
-            kissinger = [e for e in entries if e.get('method') == 'Kissinger']
-            isothermal = [e for e in entries if e.get('method') == 'isothermal_Arrhenius']
-            if kissinger and isothermal:
-                for k in kissinger:
-                    for i in isothermal:
-                        if k.get('Ea_parsed') and i.get('Ea_parsed'):
-                            diff = k['Ea_parsed'] - i['Ea_parsed']
-                            method_pairs.append({
-                                'doi': doi,
-                                'material': k.get('material', 'unknown'),
-                                'kissinger_ea': k['Ea_parsed'],
-                                'isothermal_ea': i['Ea_parsed'],
-                                'diff': diff
-                            })
-
-    # Compute statistics
-    if method_pairs:
-        diffs = [p['diff'] for p in method_pairs]
-        mean_diff = sum(diffs) / len(diffs)
-        sorted_diffs = sorted(diffs)
-        n_diff = len(diffs)
-        median_diff = sorted_diffs[n_diff // 2] if n_diff % 2 == 1 else (sorted_diffs[n_diff // 2 - 1] + sorted_diffs[n_diff // 2]) / 2
-        variance_diff = sum((d - mean_diff) ** 2 for d in diffs) / n_diff
-        std_diff = math.sqrt(variance_diff)
-        # 95% CI for mean difference
-        ci_low_diff = mean_diff - 1.96 * std_diff / math.sqrt(n_diff)
-        ci_high_diff = mean_diff + 1.96 * std_diff / math.sqrt(n_diff)
-    else:
-        mean_diff = None
-        median_diff = None
-        std_diff = None
-        ci_low_diff = None
-        ci_high_diff = None
-
-    return {
-        'method_pairs_n': len(method_pairs),
-        'mean_diff_kj': round(mean_diff, 2) if mean_diff is not None else None,
-        'median_diff_kj': round(median_diff, 2) if median_diff is not None else None,
-        'std_diff_kj': round(std_diff, 2) if std_diff is not None else None,
-        'ci_low_diff': round(ci_low_diff, 2) if ci_low_diff is not None else None,
-        'ci_high_diff': round(ci_high_diff, 2) if ci_high_diff is not None else None,
-        'pairs': method_pairs
-    }
-
-# ============================================================
-# Q4: Predict Ea from T_des_C using pure_MgH2 desorption data
-# ============================================================
-
-def compute_q4_stats(rows):
-    """Compute Q4: Predict Ea from T_des_C using pure_MgH2 desorption data."""
-    # Filter pure_MgH2 desorption with both Ea and T_des_C
-    pure_desorption = [r for r in rows
-                       if r.get('material_class') == 'pure_MgH2'
-                       and r.get('direction') == 'desorption'
-                       and r.get('Ea_parsed') is not None
-                       and r.get('T_des_C') is not None
-                       and r['T_des_C'].strip() != '']
-
-    # Parse T_des_C - need to handle ranges like "300-350" and "below 280"
-    # For pure_MgH2, we'll use the numeric value if it's a single number
-    data_points = []
-    for r in pure_desorption:
-        t_des = r['T_des_C']
-        # Try to extract a single numeric value
-        if '-' in t_des:
-            # Use the midpoint of the range
-            parts = t_des.split('-')
-            if len(parts) == 2:
-                try:
-                    t_val = (float(parts[0]) + float(parts[1])) / 2
-                except ValueError:
-                    continue
-            else:
-                continue
-        elif t_des.startswith('below'):
-            # Skip "below" values for regression (they're upper bounds)
-            continue
+        if df_within > 0 and perm_ss_between > 0:
+            perm_f = (perm_ss_between / df_between) / (perm_ss_within / df_within)
         else:
-            try:
-                t_val = float(t_des)
-            except ValueError:
-                continue
-        data_points.append({
-            'T_des_C': t_val,
-            'Ea_kJ': r['Ea_parsed'],
-            'material': r.get('material', '')
-        })
+            perm_f = 0.0
+        perm_f_stats.append(perm_f)
 
-    if len(data_points) < 3:
-        return {
-            'rmse': None,
-            'baseline_rmse': None,
-            'coverage': None,
-            'n_points': len(data_points),
-            'data_points': data_points
-        }
+    perm_f_stats = np.array(perm_f_stats)
+    p_value = float(np.mean(perm_f_stats >= f_stat))
 
-    # Linear regression: Ea = a + b * T_des_C
-    n = len(data_points)
-    mean_T = sum(p['T_des_C'] for p in data_points) / n
-    mean_Ea = sum(p['Ea_kJ'] for p in data_points) / n
+    return p_value, eta_squared, float(f_stat)
 
-    # Slope and intercept
-    numerator = sum((p['T_des_C'] - mean_T) * (p['Ea_kJ'] - mean_Ea) for p in data_points)
-    denominator = sum((p['T_des_C'] - mean_T) ** 2 for p in data_points)
-    if denominator == 0:
-        return {
-            'rmse': None,
-            'baseline_rmse': None,
-            'coverage': None,
-            'n_points': n,
-            'data_points': data_points
-        }
-    b = numerator / denominator
-    a = mean_Ea - b * mean_T
 
-    # Predictions and RMSE (using leave-one-out cross-validation)
-    rmse_values = []
+def find_same_paper_method_pairs(grouped):
+    """Find papers with both Kissinger and isothermal_Arrhenius methods.
+
+    Returns: list of (doi, method1_ea, method2_ea, delta) pairs
+    """
+    pairs = []
+
+    for doi, paper_rows in grouped.items():
+        kissinger_rows = [r for r in paper_rows if r.get('method', '').strip() == 'Kissinger']
+        isothermal_rows = [r for r in paper_rows if r.get('method', '').strip() == 'isothermal_Arrhenius']
+
+        if kissinger_rows and isothermal_rows:
+            for k_row in kissinger_rows:
+                for i_row in isothermal_rows:
+                    # Check if they refer to the same material
+                    k_material = k_row['material']
+                    i_material = i_row['material']
+
+                    # Simple heuristic: match if materials share common substrings or are identical
+                    if k_material.lower() in i_material.lower() or i_material.lower() in k_material.lower():
+                        delta = abs(k_row['Ea_kJ_per_mol'] - i_row['Ea_kJ_per_mol'])
+                        pairs.append((doi, k_row['Ea_kJ_per_mol'], i_row['Ea_kJ_per_mol'], delta))
+                    elif k_material == i_material:
+                        delta = abs(k_row['Ea_kJ_per_mol'] - i_row['Ea_kJ_per_mol'])
+                        pairs.append((doi, k_row['Ea_kJ_per_mol'], i_row['Ea_kJ_per_mol'], delta))
+
+    return pairs
+
+
+def loso_cv_additive_model(rows):
+    """Leave-one-subject-out CV with additive model (material_class + family + method).
+
+    Returns: rmse, coverage, predictions, actuals
+    """
+    grouped = cluster_by_doi(rows)
+    unique_papers = list(grouped.keys())
+
     predictions = []
-    true_values = []
-    for i in range(n):
-        # Leave-one-out: train on all except i
-        train_T = [data_points[j]['T_des_C'] for j in range(n) if j != i]
-        train_Ea = [data_points[j]['Ea_kJ'] for j in range(n) if j != i]
-        train_n = len(train_T)
-        train_mean_T = sum(train_T) / train_n
-        train_mean_Ea = sum(train_Ea) / train_n
-        train_num = sum((train_T[j] - train_mean_T) * (train_Ea[j] - train_mean_Ea) for j in range(train_n))
-        train_den = sum((train_T[j] - train_mean_T) ** 2 for j in range(train_n))
-        if train_den == 0:
+    actuals = []
+    residuals = []
+
+    for leave_out_paper in unique_papers:
+        train_rows = [r for r in rows if r['doi'] != leave_out_paper]
+        test_rows = [r for r in rows if r['doi'] == leave_out_paper]
+
+        if not train_rows or not test_rows:
             continue
-        train_b = train_num / train_den
-        train_a = train_mean_Ea - train_b * train_mean_T
 
-        # Predict for the left-out point
-        test_T = data_points[i]['T_des_C']
-        pred_Ea = train_a + train_b * test_T
-        true_Ea = data_points[i]['Ea_kJ']
-        rmse_values.append((true_Ea - pred_Ea) ** 2)
-        predictions.append(pred_Ea)
-        true_values.append(true_Ea)
+        # Get unique categories from training data
+        train_material_classes = sorted(set(r['material_class'] for r in train_rows))
+        train_families = sorted(set(['none'] + [r['catalyst_family'] for r in train_rows if r['catalyst_family'] != 'none']))
+        train_methods = sorted(set(r['method'] for r in train_rows))
 
-    if rmse_values:
-        rmse = math.sqrt(sum(rmse_values) / len(rmse_values))
+        # Build design matrix and target for training
+        X_rows = []
+        y_rows = []
+
+        for row in train_rows:
+            mc_vec = [1 if mc == row['material_class'] else 0 for mc in train_material_classes]
+            fam_vec = [1 if fam == row['catalyst_family'] else 0 for fam in train_families]
+            method_vec = [1 if m == row['method'] else 0 for m in train_methods]
+
+            X_rows.append([1] + mc_vec + fam_vec + method_vec)
+            y_rows.append(row['Ea_kJ_per_mol'])
+
+        X = np.array(X_rows)
+        y = np.array(y_rows)
+
+        # Solve for coefficients using least squares
+        try:
+            coeffs = np.linalg.lstsq(X, y, rcond=None)[0]
+        except:
+            coeffs = np.zeros(X.shape[1])
+
+        # Predict on test rows
+        for row in test_rows:
+            mc_vec = [1 if mc == row['material_class'] else 0 for mc in train_material_classes]
+            fam_vec = [1 if fam == row['catalyst_family'] else 0 for fam in train_families]
+            method_vec = [1 if m == row['method'] else 0 for m in train_methods]
+
+            x_test = np.array([1] + mc_vec + fam_vec + method_vec)
+            pred = np.dot(coeffs, x_test)
+
+            predictions.append(pred)
+            actuals.append(row['Ea_kJ_per_mol'])
+            residuals.append(row['Ea_kJ_per_mol'] - pred)
+
+    predictions = np.array(predictions)
+    actuals = np.array(actuals)
+    residuals = np.array(residuals)
+
+    rmse = float(np.sqrt(np.mean((predictions - actuals) ** 2)))
+
+    # Coverage: proportion of predictions within 95% CI of residuals
+    if len(residuals) > 1:
+        residual_std = np.std(residuals)
+        ci_lower = actuals - 1.96 * residual_std
+        ci_upper = actuals + 1.96 * residual_std
+        coverage = float(np.mean((predictions >= ci_lower) & (predictions <= ci_upper)))
     else:
-        rmse = None
+        coverage = 0.0
 
-    # Baseline RMSE (using mean Ea)
-    mean_Ea_all = sum(p['Ea_kJ'] for p in data_points) / n
-    baseline_rmse = math.sqrt(sum((p['Ea_kJ'] - mean_Ea_all) ** 2 for p in data_points) / n)
+    return rmse, coverage, predictions, actuals
 
-    # Coverage: proportion of true values within 95% prediction interval
-    # For LOO, compute prediction interval for each left-out point
-    # Using the residual standard error from the full model
-    if rmse:
-        # Prediction interval: pred +/- t * sqrt(rmse^2 + (se_pred)^2)
-        # Simplified: use rmse as the prediction error estimate
-        # Coverage within +/- 2*rmse (approx 95%)
-        coverage = sum(1 for p, t in zip(predictions, true_values) if abs(p - t) <= 2 * rmse) / len(predictions) if predictions else 0
-    else:
-        coverage = 0
 
-    return {
-        'rmse': round(rmse, 2) if rmse is not None else None,
-        'baseline_rmse': round(baseline_rmse, 2) if baseline_rmse is not None else None,
-        'coverage': round(coverage, 4) if coverage is not None else None,
-        'n_points': n,
-        'intercept': round(a, 2),
-        'slope': round(b, 4),
-        'data_points': data_points
-    }
+def predict_missing_combination(grouped, rows):
+    """Predict Ea for missing combination (catalyzed, other, isothermal).
 
-# ============================================================
-# Q5: Prediction interval for new sample
-# ============================================================
+    Uses the additive model trained on all data.
+    """
+    all_material_classes = sorted(set(r['material_class'] for r in rows))
+    all_families = sorted(set(['none'] + [r['catalyst_family'] for r in rows if r['catalyst_family'] != 'none']))
+    all_methods = sorted(set(r['method'] for r in rows))
 
-def compute_q5_prediction(rows, new_material, new_T_des_C):
-    """Compute prediction interval for a new sample using the Q4 model."""
-    # Reuse the pure_MgH2 desorption data from Q4
-    pure_desorption = [r for r in rows
-                       if r.get('material_class') == 'pure_MgH2'
-                       and r.get('direction') == 'desorption'
-                       and r.get('Ea_parsed') is not None
-                       and r.get('T_des_C') is not None
-                       and r['T_des_C'].strip() != '']
+    # Build design matrix and target
+    X_rows = []
+    y_rows = []
 
-    data_points = []
-    for r in pure_desorption:
-        t_des = r['T_des_C']
-        if '-' in t_des:
-            parts = t_des.split('-')
-            if len(parts) == 2:
-                try:
-                    t_val = (float(parts[0]) + float(parts[1])) / 2
-                except ValueError:
-                    continue
-            else:
-                continue
-        elif t_des.startswith('below'):
-            continue
+    for row in rows:
+        mc_vec = [1 if mc == row['material_class'] else 0 for mc in all_material_classes]
+        fam_vec = [1 if fam == row['catalyst_family'] else 0 for fam in all_families]
+        method_vec = [1 if m == row['method'] else 0 for m in all_methods]
+
+        X_rows.append([1] + mc_vec + fam_vec + method_vec)
+        y_rows.append(row['Ea_kJ_per_mol'])
+
+    X = np.array(X_rows)
+    y = np.array(y_rows)
+
+    try:
+        coeffs = np.linalg.lstsq(X, y, rcond=None)[0]
+    except:
+        coeffs = np.zeros(X.shape[1])
+
+    # Create prediction for (catalyzed, other, isothermal)
+    mc_vec = [1 if mc == 'catalyzed_MgH2' else 0 for mc in all_material_classes]
+    fam_vec = [1 if fam == 'other' else 0 for fam in all_families]
+    method_vec = [1 if m == 'isothermal_Arrhenius' else 0 for m in all_methods]
+
+    x_pred = np.array([1] + mc_vec + fam_vec + method_vec)
+    pred = float(np.dot(coeffs, x_pred))
+
+    # Estimate prediction interval using residual std
+    y_pred_full = np.dot(X, coeffs)
+    residuals = y - y_pred_full
+    residual_std = float(np.std(residuals)) if len(residuals) > 1 else 1.0
+
+    pi_lower = pred - 1.96 * residual_std
+    pi_upper = pred + 1.96 * residual_std
+
+    return pred, pi_lower, pi_upper
+
+
+def run_cluster_bootstrap_iterations(n_iterations=50):
+    """Run cluster bootstrap iterations and log results.
+
+    Resamples papers, computes pooled DeltaEa and CI, and LOSO RMSE for each iteration.
+    """
+    # Load and filter data
+    rows = load_data(CSV_FILE)
+    des_rows = filter_desorption(rows)
+    grouped = cluster_by_doi(des_rows)
+
+    # Compute intra-paper deltas for full dataset
+    deltas, paper_ids = compute_intra_paper_deltas(grouped)
+
+    # Get unique papers for bootstrap
+    unique_papers = np.unique(paper_ids)
+
+    log_entries = []
+
+    for loop_id in range(n_iterations):
+        # Resample papers with replacement
+        sampled_papers = np.random.choice(unique_papers, size=len(unique_papers), replace=True)
+
+        # Collect deltas from sampled papers
+        sampled_deltas = []
+        sampled_paper_ids = []
+        for paper in sampled_papers:
+            mask = paper_ids == paper
+            sampled_deltas.extend(deltas[mask])
+            sampled_paper_ids.extend(paper_ids[mask])
+
+        if sampled_deltas:
+            sampled_deltas = np.array(sampled_deltas)
+            sampled_paper_ids = np.array(sampled_paper_ids)
+
+            # Compute DL pooled mean and CI
+            mean, tau_sq, se, ci_lower, ci_upper = dsl_random_effects(sampled_deltas)
+
+            # Compute LOSO CV on sampled data
+            sampled_rows = []
+            for paper in sampled_papers:
+                sampled_rows.extend(grouped[paper])
+
+            loso_rmse, _, _, _ = loso_cv_additive_model(sampled_rows)
         else:
-            try:
-                t_val = float(t_des)
-            except ValueError:
-                continue
-        data_points.append({
-            'T_des_C': t_val,
-            'Ea_kJ': r['Ea_parsed'],
-            'material': r.get('material', '')
-        })
+            mean, ci_lower, ci_upper, loso_rmse = 0.0, 0.0, 0.0, 0.0
 
-    if len(data_points) < 3:
-        return {'error': 'Insufficient data for prediction'}
+        entry = {
+            'loop_id': int(loop_id),
+            'delta_ea': float(mean),
+            'ci_low': float(ci_lower),
+            'ci_high': float(ci_upper),
+            'loso_rmse': float(loso_rmse)
+        }
+        log_entries.append(entry)
 
-    # Fit full model (all points)
-    n = len(data_points)
-    mean_T = sum(p['T_des_C'] for p in data_points) / n
-    mean_Ea = sum(p['Ea_kJ'] for p in data_points) / n
+        if (loop_id + 1) % 10 == 0:
+            print(f"Completed {loop_id + 1}/{n_iterations} bootstrap iterations")
 
-    numerator = sum((p['T_des_C'] - mean_T) * (p['Ea_kJ'] - mean_Ea) for p in data_points)
-    denominator = sum((p['T_des_C'] - mean_T) ** 2 for p in data_points)
-    if denominator == 0:
-        return {'error': 'Cannot fit model: zero variance in T_des_C'}
+    # Write loop log
+    with open(LOOP_LOG_FILE, 'w') as f:
+        for entry in log_entries:
+            f.write(json.dumps(entry) + '\n')
 
-    b = numerator / denominator
-    a = mean_Ea - b * mean_T
+    print(f"Loop log written to {LOOP_LOG_FILE}")
+    return log_entries
 
-    # Predict for new sample
-    pred_Ea = a + b * new_T_des_C
-
-    # Compute prediction interval
-    # Using residual standard error from full model
-    residuals = [p['Ea_kJ'] - (a + b * p['T_des_C']) for p in data_points]
-    mse = sum(r ** 2 for r in residuals) / (n - 2)  # residual mean square
-    se_pred = math.sqrt(mse * (1 + (1 / n) + ((new_T_des_C - mean_T) ** 2) / denominator))
-
-    # t-value for 95% CI with n-2 df (approximate with 1.96 for large n)
-    # Use t-distribution approximation
-    t_value = 1.96  # approximate for 95% CI with reasonable n
-
-    pi_low = pred_Ea - t_value * se_pred
-    pi_high = pred_Ea + t_value * se_pred
-
-    return {
-        'new_material': new_material,
-        'new_T_des_C': new_T_des_C,
-        'predicted_Ea': round(pred_Ea, 2),
-        'pi_low': round(pi_low, 2),
-        'pi_high': round(pi_high, 2),
-        'se_pred': round(se_pred, 2),
-        'model_a': round(a, 2),
-        'model_b': round(b, 4)
-    }
-
-# ============================================================
-# Generate hypotheses
-# ============================================================
-
-def generate_hypotheses(q1_stats, q2_stats, q3_stats, q4_stats):
-    """Generate hypotheses based on the analysis results."""
-    hypotheses = []
-
-    # H1: Catalyst family effect
-    if q2_stats['eta2'] > 0.1:
-        hypotheses.append(
-            f"H1: Catalyst family significantly affects activation energy "
-            f"(eta² = {q2_stats['eta2']:.3f}, p = {q2_stats['perm_p']:.4f}). "
-            "MXene-carbon catalysts are expected to lower Ea compared to uncatalyzed samples."
-        )
-    else:
-        hypotheses.append(
-            f"H1: Catalyst family effect is weak (eta² = {q2_stats['eta2']:.3f}, p = {q2_stats['perm_p']:.4f}). "
-            "Catalyst type may not be the primary determinant of Ea."
-        )
-
-    # H2: Method comparison
-    if q3_stats['mean_diff_kj'] is not None:
-        if abs(q3_stats['mean_diff_kj']) > 10:
-            hypotheses.append(
-                f"H2: Kissinger method yields systematically different Ea values "
-                f"compared to isothermal_Arrhenius (mean diff = {q3_stats['mean_diff_kj']:.1f} kJ/mol). "
-                "Method choice introduces significant systematic bias."
-            )
-        else:
-            hypotheses.append(
-                f"H2: Kissinger and isothermal_Arrhenius methods agree reasonably well "
-                f"(mean diff = {q3_stats['mean_diff_kj']:.1f} kJ/mol, n_pairs = {q3_stats['method_pairs_n']})."
-            )
-    else:
-        hypotheses.append(
-            "H2: Insufficient paired data to compare methods. "
-            "Few samples have both Kissinger and isothermal_Arrhenius measurements."
-        )
-
-    # H3: T_des_C predictability
-    if q4_stats['rmse'] is not None:
-        slope_val = q4_stats['slope']
-        if q4_stats['coverage'] is not None and q4_stats['coverage'] > 0.6:
-            hypotheses.append(
-                f"H3: Onset temperature T_des_C predicts Ea for pure_MgH2 with "
-                f"RMSE = {q4_stats['rmse']} kJ/mol and coverage = {q4_stats['coverage']:.1%}. "
-                f"Higher T_des_C correlates with higher Ea (slope = {slope_val:.2f} kJ/mol/°C)."
-            )
-        else:
-            hypotheses.append(
-                f"H3: T_des_C has limited predictive power for Ea (RMSE = {q4_stats['rmse']} kJ/mol, "
-                f"coverage = {q4_stats['coverage']:.1%}). Other factors (catalyst, measurement method) "
-                "contribute significantly to Ea variability."
-            )
-    else:
-        hypotheses.append(
-            "H3: Insufficient pure_MgH2 desorption data with T_des_C values to establish "
-            "predictive relationship between T_des_C and Ea."
-        )
-
-    # H4: Uncertainty quantification
-    hypotheses.append(
-        f"H4: The random-effects model indicates between-study variance τ² = {q1_stats['tau2']:.2f}, "
-        f"indicating substantial heterogeneity in Ea measurements across studies. "
-        f"The 95% CI [{q1_stats['ci_low']}, {q1_stats['ci_high']}] accounts for this heterogeneity."
-    )
-
-    # H5: Prediction for new sample
-    hypotheses.append(
-        "H5: For MgH2-5 wt% Nb2C at T_des ≈ 250°C, the predicted Ea falls within the "
-        "prediction interval, consistent with the trend that MXene-doped MgH2 has lower Ea "
-        "than pure MgH2."
-    )
-
-    return hypotheses
-
-# ============================================================
-# Main execution
-# ============================================================
 
 def main():
-    # Load data
-    data_path = '/workspace/research/shusheng_run/ws35/data/cleaned_ea_dataset.csv'
-    rows = load_data(data_path)
-    print(f"Loaded {len(rows)} rows from cleaned dataset.")
+    print("Loading data...")
+    rows = load_data(CSV_FILE)
+    print(f"Loaded {len(rows)} rows")
 
-    # Q1: Desorption Ea statistics
-    print("\n=== Q1: Desorption Ea Statistics ===")
-    q1_stats = compute_q1_stats(rows)
-    print(f"n = {q1_stats['n']}")
-    print(f"Mean Ea = {q1_stats['mean_ea']} kJ/mol")
-    print(f"Median Ea = {q1_stats['median_ea']} kJ/mol")
-    print(f"Std Ea = {q1_stats['std_ea']} kJ/mol")
-    print(f"95% CI = [{q1_stats['ci_low']}, {q1_stats['ci_high']}] kJ/mol")
-    print(f"τ² = {q1_stats['tau2']}")
-    print(f"Unique papers = {q1_stats['n_papers']}")
+    print("Filtering to desorption rows...")
+    des_rows = filter_desorption(rows)
+    print(f"Filtered to {len(des_rows)} desorption rows")
 
-    # Q2: Catalyst family effect
-    print("\n=== Q2: Catalyst Family Effect ===")
-    q2_stats = compute_q2_stats(rows)
-    print(f"η² = {q2_stats['eta2']}")
-    print(f"Perm p = {q2_stats['perm_p']}")
-    print(f"τ² = {q2_stats['tau2']}")
-    print(f"Group sizes: {q2_stats['groups']}")
+    print("Grouping by doi...")
+    grouped = cluster_by_doi(des_rows)
+    print(f"Found {len(grouped)} unique papers")
 
-    # Q3: Method comparison
-    print("\n=== Q3: Method Comparison ===")
-    q3_stats = compute_q3_stats(rows)
-    print(f"Method pairs = {q3_stats['method_pairs_n']}")
-    if q3_stats['mean_diff_kj'] is not None:
-        print(f"Mean diff (Kissinger - Isothermal) = {q3_stats['mean_diff_kj']} kJ/mol")
-        print(f"Median diff = {q3_stats['median_diff_kj']} kJ/mol")
-        print(f"95% CI for diff = [{q3_stats['ci_low_diff']}, {q3_stats['ci_high_diff']}] kJ/mol")
-        for p in q3_stats['pairs']:
-            print(f"  {p['doi']}: Kissinger={p['kissinger_ea']}, Isothermal={p['isothermal_ea']}, diff={p['diff']}")
+    # H1: Intra-paper DeltaEa with random effects
+    print("\n--- H1: Intra-paper DeltaEa (Random Effects) ---")
+    deltas, paper_ids = compute_intra_paper_deltas(grouped)
+    print(f"Computed {len(deltas)} intra-paper deltas")
 
-    # Q4: T_des_C prediction
-    print("\n=== Q4: T_des_C → Ea Prediction ===")
-    q4_stats = compute_q4_stats(rows)
-    print(f"n_points = {q4_stats['n_points']}")
-    if q4_stats['rmse'] is not None:
-        print(f"RMSE = {q4_stats['rmse']} kJ/mol")
-        print(f"Baseline RMSE (mean) = {q4_stats['baseline_rmse']} kJ/mol")
-        print(f"Coverage = {q4_stats['coverage']:.2%}")
-        print(f"Model: Ea = {q4_stats['intercept']} + {q4_stats['slope']} × T_des_C")
-        for dp in q4_stats['data_points']:
-            print(f"  {dp['material']}: T={dp['T_des_C']}°C, Ea={dp['Ea_kJ']} kJ/mol")
+    if len(deltas) > 0:
+        mean, tau_sq, se, ci_lower, ci_upper = dsl_random_effects(deltas)
+        print(f"Pooled DeltaEa (mean): {mean:.2f} kJ/mol")
+        print(f"Between-study variance (tau^2): {tau_sq:.2f}")
+        print(f"SE: {se:.2f}")
+        print(f"95% CI (DL): [{ci_lower:.2f}, {ci_upper:.2f}]")
 
-    # Q5: Prediction for new sample
-    print("\n=== Q5: Prediction for MgH2-5 wt% Nb2C ===")
-    q5_result = compute_q5_prediction(rows, "MgH2-5 wt% Nb2C", 250)
-    if 'error' in q5_result:
-        print(f"Error: {q5_result['error']}")
+        # Cluster bootstrap CI
+        ci_boot_lower, ci_boot_upper = cluster_bootstrap_ci(deltas, paper_ids, n_bootstrap=1000)
+        print(f"Bootstrap 95% CI: [{ci_boot_lower:.2f}, {ci_boot_upper:.2f}]")
     else:
-        print(f"Predicted Ea = {q5_result['predicted_Ea']} kJ/mol")
-        print(f"95% Prediction Interval = [{q5_result['pi_low']}, {q5_result['pi_high']}] kJ/mol")
-        print(f"SE of prediction = {q5_result['se_pred']} kJ/mol")
-        print(f"Model: Ea = {q5_result['model_a']} + {q5_result['model_b']} × T_des_C")
+        print("No intra-paper deltas found")
+        mean, ci_lower, ci_upper, ci_boot_lower, ci_boot_upper = 0.0, 0.0, 0.0, 0.0, 0.0
 
-    # Generate hypotheses
-    print("\n=== Generated Hypotheses ===")
-    hypotheses = generate_hypotheses(q1_stats, q2_stats, q3_stats, q4_stats)
-    for i, h in enumerate(hypotheses, 1):
-        print(f"H{i}: {h}")
+    # H2: Permutation test for catalyst family effect
+    print("\n--- H2: Catalyst Family Effect (Permutation Test) ---")
+    catalyzed_rows = [r for r in des_rows if r.get('material_class', '').startswith('catalyzed')]
+    p_value, eta_squared, f_stat = permutation_test_catalyst_family(catalyzed_rows, n_permutations=10000)
+    print(f"F-statistic: {f_stat:.4f}")
+    print(f"eta-squared (eta^2): {eta_squared:.4f}")
+    print(f"P-value (10,000 permutations): {p_value:.4f}")
 
-    # Save results to JSON
+    # H3: Same-paper method pairs
+    print("\n--- H3: Same-Paper Method Comparison ---")
+    method_pairs = find_same_paper_method_pairs(grouped)
+    print(f"Found {len(method_pairs)} same-paper method pairs")
+
+    if method_pairs:
+        deltas_method = [p[3] for p in method_pairs]
+        median_delta_method = float(np.median(deltas_method))
+        print(f"Median |Delta_method|: {median_delta_method:.2f} kJ/mol")
+
+        if len(deltas) > 0:
+            median_delta_ea = float(np.median(deltas))
+            print(f"Median DeltaEa: {median_delta_ea:.2f} kJ/mol")
+            ratio = median_delta_method / median_delta_ea if median_delta_ea > 0 else 0.0
+            print(f"Ratio |Delta_method|/DeltaEa: {ratio:.2f}")
+        else:
+            median_delta_ea = 0.0
+            ratio = 0.0
+    else:
+        median_delta_method = 0.0
+        median_delta_ea = 0.0
+        ratio = 0.0
+
+    # H4: LOSO CV with additive model
+    print("\n--- H4: LOSO CV (Additive Model) ---")
+    loso_rmse, coverage, predictions, actuals = loso_cv_additive_model(des_rows)
+    print(f"LOSO RMSE: {loso_rmse:.2f} kJ/mol")
+    print(f"Coverage (95% CI): {coverage:.4f}")
+
+    # Baseline RMSE (predicting mean)
+    baseline_rmse = float(np.sqrt(np.mean((np.mean(actuals) - actuals) ** 2)))
+    print(f"Baseline RMSE (mean predictor): {baseline_rmse:.2f} kJ/mol")
+    if baseline_rmse > 0:
+        rmse_improvement = ((baseline_rmse - loso_rmse) / baseline_rmse * 100)
+        print(f"RMSE improvement: {rmse_improvement:.1f}%")
+    else:
+        rmse_improvement = 0.0
+
+    # H5: Predict missing combination
+    print("\n--- H5: Predict Missing Combination (catalyzed, other, isothermal) ---")
+    pred, pi_lower, pi_upper = predict_missing_combination(grouped, des_rows)
+    print(f"Predicted Ea: {pred:.2f} kJ/mol")
+    print(f"95% Prediction Interval: [{pi_lower:.2f}, {pi_upper:.2f}] kJ/mol")
+
+    # Run cluster bootstrap iterations
+    print("\n--- Running Cluster Bootstrap Iterations ---")
+    log_entries = run_cluster_bootstrap_iterations(n_iterations=50)
+
+    # Compute summary statistics from bootstrap
+    delta_eas = np.array([e['delta_ea'] for e in log_entries])
+    ci_lows = np.array([e['ci_low'] for e in log_entries])
+    ci_highs = np.array([e['ci_high'] for e in log_entries])
+    loso_rmses = np.array([e['loso_rmse'] for e in log_entries])
+
+    print(f"Bootstrap DeltaEa mean: {np.mean(delta_eas):.2f} kJ/mol")
+    print(f"Bootstrap DeltaEa std: {np.std(delta_eas):.2f} kJ/mol")
+    print(f"Bootstrap LOSO RMSE mean: {np.mean(loso_rmses):.2f} kJ/mol")
+
+    # Determine hypothesis statuses
+    # H1: Reject null if CI does not include 0 (DeltaEa significantly different from 0)
+    h1_significant = (ci_lower > 0) or (ci_upper < 0)
+
+    # H2: Reject null if p < 0.05 (catalyst family has significant effect)
+    h2_significant = p_value < 0.05
+
+    # H3: Reject null if |Delta_method| > median DeltaEa (method differences larger than catalytic effect)
+    h3_significant = (median_delta_method > median_delta_ea) and (median_delta_ea > 0)
+
+    # H4: Reject null if model RMSE < baseline RMSE (model improves prediction)
+    h4_significant = loso_rmse < baseline_rmse
+
+    # Build results
     results = {
-        'q1_delta_ea': q1_stats['mean_ea'],
-        'q1_ci_low': q1_stats['ci_low'],
-        'q1_ci_high': q1_stats['ci_high'],
-        'q1_n_papers': q1_stats['n_papers'],
-        'q1_tau2': q1_stats['tau2'],
-        'q2_eta2': q2_stats['eta2'],
-        'q2_perm_p': q2_stats['perm_p'],
-        'q3_method_pairs_n': q3_stats['method_pairs_n'],
-        'q3_method_diff_kj': q3_stats['mean_diff_kj'],
-        'q4_rmse': q4_stats['rmse'],
-        'q4_baseline_rmse': q4_stats['baseline_rmse'],
-        'q4_coverage': q4_stats['coverage'],
-        'q5_pred': q5_result['predicted_Ea'] if 'predicted_Ea' in q5_result else None,
-        'q5_pi_low': q5_result['pi_low'] if 'pi_low' in q5_result else None,
-        'q5_pi_high': q5_result['pi_high'] if 'pi_high' in q5_result else None,
-        'hypotheses': hypotheses
+        'h1': {
+            'description': 'Intra-paper DeltaEa (pure - catalyzed) with random effects',
+            'n_pairs': int(len(deltas)),
+            'pooled_delta_ea': mean,
+            'tau_squared': tau_sq,
+            'se': se,
+            'ci_95_lower': ci_lower,
+            'ci_95_upper': ci_upper,
+            'ci_bootstrap_lower': ci_boot_lower,
+            'ci_bootstrap_upper': ci_boot_upper,
+            'significant': bool(h1_significant),
+            'status': 'REJECTED' if h1_significant else 'NOT REJECTED'
+        },
+        'h2': {
+            'description': 'Catalyst family effect on catalyzed samples (permutation test)',
+            'n_catalyzed_samples': len(catalyzed_rows),
+            'n_families': int(len(set(r['catalyst_family'] for r in catalyzed_rows if r['catalyst_family'] != 'none'))),
+            'f_statistic': f_stat,
+            'eta_squared': eta_squared,
+            'p_value': p_value,
+            'significant': bool(h2_significant),
+            'status': 'REJECTED' if h2_significant else 'NOT REJECTED'
+        },
+        'h3': {
+            'description': 'Same-paper method comparison (Kissinger vs isothermal)',
+            'n_method_pairs': int(len(method_pairs)),
+            'median_delta_method': median_delta_method,
+            'median_delta_ea': median_delta_ea,
+            'ratio': ratio,
+            'significant': bool(h3_significant),
+            'status': 'REJECTED' if h3_significant else 'NOT REJECTED'
+        },
+        'h4': {
+            'description': 'LOSO CV with additive model (material_class + family + method)',
+            'loso_rmse': loso_rmse,
+            'baseline_rmse': baseline_rmse,
+            'rmse_improvement': rmse_improvement,
+            'coverage': coverage,
+            'significant': bool(h4_significant),
+            'status': 'REJECTED' if h4_significant else 'NOT REJECTED'
+        },
+        'h5': {
+            'description': 'Predict Ea for missing combination (catalyzed, other, isothermal)',
+            'predicted_ea': pred,
+            'pi_95_lower': pi_lower,
+            'pi_95_upper': pi_upper,
+            'pi_width': pi_upper - pi_lower
+        },
+        'bootstrap_summary': {
+            'n_iterations': 50,
+            'mean_delta_ea': float(np.mean(delta_eas)),
+            'std_delta_ea': float(np.std(delta_eas)),
+            'mean_loso_rmse': float(np.mean(loso_rmses)),
+            'std_loso_rmse': float(np.std(loso_rmses))
+        },
+        'metadata': {
+            'seed': 20261029,
+            'n_desorption_rows': len(des_rows),
+            'n_papers': len(grouped),
+            'n_catalyzed_rows': len(catalyzed_rows)
+        }
     }
 
-    with open('/workspace/research/shusheng_run/ws35/results.json', 'w', encoding='utf-8') as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
-    print("\nResults saved to /workspace/research/shusheng_run/ws35/results.json")
+    # Write results
+    with open(RESULTS_FILE, 'w') as f:
+        json.dump(results, f, indent=2)
 
-    # Save loop log for tracking
-    loop_log = [
-        {'loop_id': 1, 'status': 'completed', 'delta_ea': q1_stats['mean_ea'],
-         'ci_low': q1_stats['ci_low'], 'ci_high': q1_stats['ci_high'],
-         'loso_rmse': q4_stats['rmse'] if q4_stats['rmse'] else None}
-    ]
-    with open('/workspace/research/shusheng_run/ws35/loop_log.jsonl', 'w', encoding='utf-8') as f:
-        for entry in loop_log:
-            f.write(json.dumps(entry) + '\n')
-    print("Loop log saved to /workspace/research/shusheng_run/ws35/loop_log.jsonl")
+    print(f"\nResults written to {RESULTS_FILE}")
+    print(f"Loop log written to {LOOP_LOG_FILE}")
+
+    # Print summary
+    print("\n=== SUMMARY ===")
+    print(f"H1 (DeltaEa significant): {'YES' if h1_significant else 'NO'} (CI: [{ci_lower:.2f}, {ci_upper:.2f}])")
+    print(f"H2 (Catalyst family effect): {'YES' if h2_significant else 'NO'} (p={p_value:.4f})")
+    print(f"H3 (Method effect > DeltaEa): {'YES' if h3_significant else 'NO'} (|Delta_method|={median_delta_method:.2f}, DeltaEa={median_delta_ea:.2f})")
+    print(f"H4 (Model improves baseline): {'YES' if h4_significant else 'NO'} (RMSE={loso_rmse:.2f} vs {baseline_rmse:.2f})")
+    print(f"H5 (Prediction): {pred:.2f} kJ/mol [95% PI: {pi_lower:.2f}, {pi_upper:.2f}]")
+
 
 if __name__ == '__main__':
     main()

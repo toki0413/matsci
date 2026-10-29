@@ -22,6 +22,7 @@ from urllib.parse import urlencode
 from pydantic import BaseModel, Field
 
 from huginn.core_types import ToolContext, ToolResult
+from huginn.env_access import env_str
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.tools.local_structure_db import LocalStructureDB
 from huginn.tools.tool_cache import EXTERNAL_API_TTL, cacheable
@@ -662,7 +663,7 @@ class MaterialsDatabaseTool(HuginnTool):
         return ToolResult(data=output.model_dump(exclude_none=True))
 
     def _mp_key(self, override: str | None) -> str:
-        key = override or self._config_mp_key or os.environ.get("MP_API_KEY")
+        key = override or self._config_mp_key or env_str("MP_API_KEY") or None
         if not key:
             raise ValueError(
                 "Materials Project API key is required. "
@@ -672,7 +673,7 @@ class MaterialsDatabaseTool(HuginnTool):
 
     def _oqmd_key(self, override: str | None) -> str | None:
         return (
-            override or self._config_oqmd_key or os.environ.get("OQMD_API_KEY") or None
+            override or self._config_oqmd_key or env_str("OQMD_API_KEY") or None
         )
 
     def _aflow_key(self, override: str | None) -> str | None:

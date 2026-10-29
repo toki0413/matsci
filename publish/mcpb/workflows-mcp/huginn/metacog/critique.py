@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from dataclasses import field as _dc_field
 from typing import Any
 
+from huginn.agent_modes import CRITIQUE_MODES
+
 logger = logging.getLogger(__name__)
 
 
@@ -216,7 +218,7 @@ class CritiqueResult:
     gap_type: str = "none"
 
 
-_VALID_MODES = frozenset({"chat", "plan", "research"})
+_VALID_MODES = CRITIQUE_MODES
 _VALID_PHASES = frozenset(
     {
         "perceive",
