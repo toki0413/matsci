@@ -3241,8 +3241,11 @@ Physical time series collected this run:
                 or {}
             )
             self._control_trace(
-                "structural_circuit_breaker",
-                f"type={ftype} count={count} diag={_diag}",
+                # 复用 failure_budget (同为资源熔断, 预算 32/32 无空位): 结构性失败
+                # 只是阈值更严的同类熔断, detail 里用 kind=structural 区分统计口径.
+                "failure_budget",
+                f"kind=structural type={ftype} count={count} "
+                f"limit={_STRUCTURAL_SAME_CAUSE_LIMIT} diag={_diag}",
                 action="stop",
                 iteration=state.iteration,
             )

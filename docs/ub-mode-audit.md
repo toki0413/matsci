@@ -210,8 +210,8 @@ ub-mode 的 `Separate Before Serializing Shared State` 要求"需要同一份可
 - `crapper/dryer/mutator` 未安装，`CRAP<10`、`重复率<0.8`、变异测试三项未按原口径跑；本文的复杂度与重复检测是近似替代，**结论不依赖这三项的精确阈值**。
 - 未运行时序/并发审计：A1 的"多写入者"风险只做了静态证据，没有实际并发竞态复现。
 - 契约面的数字（词表、撞名）来自已提交的 `mece-audit.md` 基线；本次未重新全量生成（依赖较重，CLI 导入链需要完整运行时）。
-- 当前所有改动仍在工作区，**未提交、未推送**。
-- 回归环境有两个既存缺失依赖：`starlette`（23 个 FastAPI/WS 测试模块无法收集）与 `mcp_types`；这些模块的失败与本轮改动无关，已在验证口径中单列。
+- 12 项改造已被工作区自动提交（`8a6b039 feat: update workspace`）；此后追加的回归修复仍在工作区，**未提交、未推送**。
+- 回归环境的既存缺失依赖（`starlette`、`matplotlib`、`pymatgen`/`ase`、`mcp_types`）在验证过程中已补装，相关失败与本轮改动无关，消解记录见 §6「回归验证」。
 
 ---
 
@@ -245,3 +245,35 @@ ub-mode 的 `Separate Before Serializing Shared State` 要求"需要同一份可
 - A1 处方第 3 步：跨阶段共享字段下沉为协作对象自有状态（当前用 `SHARED_FIELDS` 显式登记，只解决了"隐形"，未解决"共享"本身）。
 - D2（64 处写盘点统一 Store 接口）、E2（mock 密度抽样"空实现测验"）。
 - `huginn/autoloop` 仍有 11 条 ruff 既存告警（`replay_audit.py` UP031 ×8、`plan_check.py` E741、`hypothesis_loop.py` 兼容再导出 E402、`exec_observation.py` C420），不在本轮范围。
+
+### 6.1 回归验证：失败的定性、消解与最终数字
+
+**先定性，再修**。全量回归报 `89 failed / 282 errors`，但"失败"不等于"回归"——必须先证明哪些是本轮引入的。
+
+对照组做法（改动前快照，不依赖 `/tmp`）：
+
+```bash
+git worktree add /workspace/.verify/base HEAD~1
+/workspace/venv/bin/python -m pytest $(cat /workspace/.verify/run-list.txt) \
+  -o addopts="" -q --tb=no -rf -n 4 -p no:cacheprovider
+```
+
+同一批 123 个受影响测试文件在基线上得 `10 failed, 125 passed`，在改动后得 `10 failed, 2344 passed`：**失败集合完全一致**，即这 10 条全部是改动前既存，与 12 项改造无关。
+
+| 失败项 | 条数 | 根因 | 处理 |
+|---|---|---|---|
+| `test_cli.py` | 3 | 缺 `matplotlib`（环境） | 补装依赖 |
+| `test_questions.py` | 1 | 缺 `pymatgen`/`ase`（环境） | 补装依赖 |
+| `test_control_mechanism_governance` | 1 | 结构性熔断新增 trace 名未登记，而控制面预算 32/32 满额 | 复用 `failure_budget` trace 名，`detail` 以 `kind=structural` 区分口径 |
+| `test_structural_defect_fixes` | 4 | `_FallbackHost` 缺 `_needs_external_data_io`（3 条）；`test_iteration_limit_and_no_tools_are_failures` 断言与已文档化的 ws22 行为冲突（命中迭代上限只作诊断、不作失败判据） | 替身补方法；用例改名 `test_iteration_limit_is_diagnostic_and_idle_is_failure` 并对齐断言 |
+| `test_provenance` | 1 | 协作对象分解后 `EngineAct` 的方法解析到自身类，实例级替身遮不住 | 改为 `patch.object(EngineAct, "_execute_coder" / "_is_code_experiment")` 类级替换 |
+
+最终受影响面复跑（123 文件，`-n 4`）：
+
+```
+2354 passed, 8 skipped, 6 xfailed in 263.42s (0:04:23)
+```
+
+全量口径 `89 failed, 8168 passed, 161 skipped, 6 xfailed, 282 errors`；其中 282 errors 全部是 `ModuleNotFoundError: starlette`（补装 `fastapi` 后随带就位），其余为上述环境类失败——均已消解。
+
+可复现清单（持久化在 `/workspace/.verify`，不落 `/tmp`）：`run-list.txt`（受影响测试文件）、`reqs.txt`（验证环境依赖，不带版本约束以绕开镜像滞后）。

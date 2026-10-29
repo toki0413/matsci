@@ -154,7 +154,7 @@ def test_usable_tool_result_means_coder_succeeded():
     assert diag["usable_tool_results"] == 1
 
 
-def test_iteration_limit_and_no_tools_are_failures():
+def test_iteration_limit_is_diagnostic_and_idle_is_failure():
     host = _coder_host()
     msgs = [
         AIMessage(content="", tool_calls=[{"name": "bash_tool", "args": {}, "id": "1"}]),
@@ -164,8 +164,11 @@ def test_iteration_limit_and_no_tools_are_failures():
     limited, diag = host._derive_coder_outcome(
         EngineAct._CODER_LIMIT_PREFIX + "\nstill working", msgs
     )
-    assert limited is False
-    assert diag["failure_reason"] == "iteration_limit"
+    # 上限命中只做诊断, 不再作失败判据: 已发生过真实工具调用且有可用回执时,
+    # "做完未收尾"仍算成功 (ws22: 数据已下载却被判 failed → validate 反复重规划).
+    assert limited is True
+    assert diag["hit_iteration_limit"] is True
+    assert "failure_reason" not in diag
 
     idle, diag = host._derive_coder_outcome("done", [AIMessage(content="done")])
     assert idle is False
@@ -197,6 +200,11 @@ class _FallbackHost:
 
     def _is_deterministic_numeric(self, text):
         return True
+
+    # _fallback_from_coder 会先问"这个任务是否需要外部数据 IO"; 替身必须提供
+    # 同一协作方法, 否则走未绑定调用时 AttributeError (生产对象由 EngineAct 提供).
+    def _needs_external_data_io(self, text):
+        return False
 
     async def _request_numeric_probe(self, description):
         self.calls.append("probe")
