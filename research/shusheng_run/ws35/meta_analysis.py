@@ -150,8 +150,8 @@ def h1_within_paper_catalytic_effect(df_clean):
     # Random-effects weights
     if tau2 > 0:
         group_var = float(np.var(delta_ea_values, ddof=1))
-        weights = 1.0 / (tau2 + group_var)
-        re_mean = float(weights * delta_ea_values.sum() / weights.sum())
+        weights = np.ones(n) / (tau2 + group_var)
+        re_mean = float((weights * delta_ea_values).sum() / weights.sum())
         re_se = float(np.sqrt(1.0 / weights.sum()))
     else:
         re_mean = fe_mean
@@ -246,7 +246,7 @@ def h2_catalyst_family_explanatory_power(df_clean):
     ss_within = 0.0
     for fm in families:
         fm_data = df_cat[df_cat['catalyst_family'] == fm]
-        ss_within += float((fm_data['Ea_parsed'] - group_means[fm]) ** 2).sum()
+        ss_within += float(((fm_data['Ea_parsed'] - group_means[fm]) ** 2).sum())
 
     k = len(families)
     n = len(df_cat)
@@ -292,7 +292,7 @@ def h2_catalyst_family_explanatory_power(df_clean):
         perm_ss_within = 0.0
         for fm in perm_group_means.index:
             fm_data = perm_df[perm_df['catalyst_family'] == fm]
-            perm_ss_within += float((fm_data['Ea_parsed'] - perm_group_means[fm]) ** 2).sum()
+            perm_ss_within += float(((fm_data['Ea_parsed'] - perm_group_means[fm]) ** 2).sum())
 
         if df_between > 0 and df_within > 0:
             perm_f = float((perm_ss_between / df_between) / (perm_ss_within / df_within))
@@ -380,7 +380,7 @@ def h3_method_noise_vs_catalytic_signal(df_clean):
     # Compute ratios
     ratios = []
     for mp in method_pairs:
-        paper_delta = delta_ea_values[h1_results['delta_ea_df']['doi'] == mp['doi']]
+        paper_delta = h1_results['delta_ea_df'][h1_results['delta_ea_df']['doi'] == mp['doi']]['delta_ea'].values
         if len(paper_delta) > 0 and paper_delta[0] > 0:
             ratio = mp['method_diff'] / paper_delta[0]
             ratios.append(ratio)
