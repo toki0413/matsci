@@ -480,5 +480,33 @@
     ],
     "mode": "coder",
     "description": "Execute a complete data analysis pipeline for Arrhenius kinetics validation with explicit file I/O and statistical hypothesis testing."
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "2f43b42fd833",
+    "reason": "The plan is invalid because the hypothesis is missing (empty string), making it impossible to verify whether the plan achieves its stated goals. While the description outlines a comprehensive statistical analysis pipeline (meta-analysis, ANOVA, cross-validation, etc.) and the MODE 'coder' appropriately matches the task of writing a Python script, the absence of specific hypothesis definitions (H1-H5) renders the entire plan ungrounded. Without knowing what each hypothesis specifically claims (e.g., exact thresholds, relationships, or conditions), the 'supported'/'refuted' conclusions cannot be logically derived. Additionally, the plan lacks explicit data validation steps (checking for missing values, unit consistency in kJ/mol) which are critical for the described statistical methods to be valid.",
+    "missing_steps": [
+      "Define explicit, testable statements for H1 through H5",
+      "Validate input data structure and units in ea_dataset.csv before analysis",
+      "Confirm feature engineering strategy for LOSO cross-validation (material_class, catalyst_family, method encoding)",
+      "Specify handling of out-of-distribution cell in H5 (which cell? what features are missing?)",
+      "Include data quality checks (outliers, missingness) as prerequisite to statistical tests"
+    ],
+    "mode": "coder",
+    "description": "Write a Python script to read data/ea_dataset.csv and data/README.md, then perform the five hypothesis tests (H1–H5) as specified: (H1) within-paper paired ΔEa with DerSimonian–Laird random-effects me"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "2f43b42fd833",
+    "reason": "The plan is fundamentally invalid because the hypothesis (hypothesis field) is completely missing/empty. The DESCRIPTION explicitly references defining 'H1–H5 (with thresholds and statistical criteria)' but these are never actually defined in the plan. Without concrete hypothesis statements, the script cannot be written, and the 'supported'/'refuted' conclusions cannot be logically derived. This directly matches the historical failure pattern where 'the hypothesis is missing (empty string), making it impossible to verify whether the plan achieves its stated goals.'",
+    "missing_steps": [
+      "Define explicit, testable statements for H1 through H5 with specific thresholds and statistical criteria",
+      "Validate input data structure and units in ea_dataset.csv before analysis (check for missing values, unit consistency in kJ/mol)",
+      "Confirm feature engineering strategy for LOSO cross-validation (material_class, catalyst_family, method encoding)",
+      "Specify handling of out-of-distribution cell in H5 (which cell? what features are missing?)",
+      "Include data quality checks (outliers, missingness) as prerequisite to statistical tests"
+    ],
+    "mode": "coder",
+    "description": "Define explicit, testable hypotheses H1–H5 (with thresholds and statistical criteria), then write a Python script to validate data structure/units, perform all five analyses with proper uncertainty qu"
   }
 ]

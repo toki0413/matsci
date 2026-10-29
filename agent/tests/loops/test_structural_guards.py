@@ -221,6 +221,69 @@ def test_check_manifest_invalid_json(tmp_path):
     assert report["passed"] is False
 
 
+# ===== 存在性判据的负例探针 (缺陷类: 存在性判据只能判「在」, 无法判「真」) =====
+#
+# 每个负例都是历史上真实出现过的假绿形态: 空壳 results.json、错名脚本、
+# 同名目录。判据必须在**这些输入下变红**, 否则「门存在」= 假绿。
+
+
+def test_check_manifest_empty_shell_json_is_red(tmp_path):
+    """空壳 JSON 能解析、也凑够字节数, 但没有任何可核对数值 → 必须判红."""
+    from huginn.autoloop.deliverables import Deliverable, check_manifest
+
+    (tmp_path / "results.json").write_text(
+        '{"results": [], "notes": {}}\n\n\n\n\n\n\n\n\n\n'  # 人为凑到 >32 字节
+    )
+    report = check_manifest(tmp_path, [Deliverable("results.json")])
+    assert report["passed"] is False
+    assert report["empty"] == ["results.json"]
+
+
+def test_check_manifest_wrong_named_script_is_red(tmp_path):
+    """ws35 声明 analysis.py; agent 若写成 meta_analysis.py, 必须判红 (缺精确名)."""
+    from huginn.autoloop.deliverables import Deliverable, check_manifest
+
+    (tmp_path / "meta_analysis.py").write_text("print('hi')\n" * 8)
+    report = check_manifest(tmp_path, [Deliverable("analysis.py")])
+    assert report["passed"] is False
+    assert report["missing"] == ["analysis.py"]
+
+
+def test_check_manifest_directory_at_declared_path_is_red(tmp_path):
+    """同名目录不是交付文件 (is_file() 判据), 不能被当成「在」."""
+    from huginn.autoloop.deliverables import Deliverable, check_manifest
+
+    (tmp_path / "results.json").mkdir()
+    (tmp_path / "results.json" / "inner.json").write_text('{"q1": 1.0}')
+    report = check_manifest(tmp_path, [Deliverable("results.json")])
+    assert report["passed"] is False
+    assert report["missing"] == ["results.json"]
+
+
+def test_parse_manifest_keeps_script_declared_in_section():
+    """显式交付物段里的 .py 是验收物: ws35/ws34 的 analysis.py 曾被正则丢掉, 只查 3 个文件."""
+    from huginn.autoloop.deliverables import parse_manifest
+
+    obj = (
+        "【研究任务】做元分析\n\n【交付物】\n- analysis.py：可重复运行，seed=20261029\n"
+        "- results.json：全部数值\n- loop_log.jsonl：50 行\n- report.md：六节\n"
+    )
+    paths = [d.path for d in parse_manifest(obj)]
+    assert paths == ["analysis.py", "results.json", "loop_log.jsonl", "report.md"]
+
+
+def test_parse_manifest_ignores_prose_script_without_section():
+    """无交付物段时, 散文里的示例命令 `["python3","run.py"]` 不是交付物.
+
+    否则 run.py 永久判 missing, 把成功跑判成失败 (ws31 同源误判).
+    """
+    from huginn.autoloop.deliverables import parse_manifest
+
+    obj = '用 bash_tool 执行数组 ["python3","run.py"]，产出 data/out.csv'
+    paths = [d.path for d in parse_manifest(obj)]
+    assert paths == ["data/out.csv"]
+
+
 # ===== Task 2: plan→execute 确定性硬门 =====
 
 
@@ -581,5 +644,117 @@ def test_autoloop_silent_broad_except_does_not_grow():
         f"{_AUTOLOOP_BROAD_SILENT_BASELINE}. 宽捕获里必须至少记 warning/error 级日志, "
         "或把失败上报到调用方 —— 只记 debug 等于把故障埋掉."
     )
+
+
+# ===== 缺陷台账: 按 class 记账, 不按实例记账 =====
+#
+# 规则 (用户定): 同一类缺陷第 2 次复发起, **禁止再提交实例补丁**, 必须先有结构性修复
+# 与可执行探针. 台账把这条规则变成门: 删掉探针 / 复发了却只标 instance 补丁 → 红.
+#
+# 字段:
+#   class_id    缺陷类 (稳定标识, 全表唯一)
+#   symptom     这类缺陷的可观察症状 (一句话)
+#   repeat_count 已复发次数 (>=2 即"结构性")
+#   fix_scope   "structural" (改判据/改契约) | "instance" (only 一次性的实例补丁)
+#   probes      本文件里证明该类缺陷已被拦住的可执行探针 (test_* 函数名)
+
+_DEFECT_LEDGER: tuple[dict, ...] = (
+    {
+        "class_id": "A-spec-undecidable",
+        "symptom": "objective 里的交付物/键名只是散文, 引擎无法判定是否满足",
+        "repeat_count": 3,
+        "fix_scope": "structural",
+        "probes": (
+            "test_parse_manifest_from_explicit_section",
+            "test_parse_manifest_keeps_script_declared_in_section",
+            "test_parse_manifest_ignores_prose_script_without_section",
+        ),
+    },
+    {
+        "class_id": "B-acceptance-authority-misplaced",
+        "symptom": "完成与否由同一模型自评; 模型说 stop 就收工",
+        "repeat_count": 2,
+        "fix_scope": "structural",
+        "probes": (
+            "test_stop_gate_rejects_stop_when_deliverables_missing",
+            "test_finalize_success_requires_deliverables",
+            "test_repetition_guard_forces_execute_when_deliverables_missing",
+        ),
+    },
+    {
+        "class_id": "C-gate-strength-asymmetry",
+        "symptom": "门写着 advisory, 实际不阻断; progress 只数动作不判质量",
+        "repeat_count": 2,
+        "fix_scope": "structural",
+        "probes": (
+            "test_plan_execute_hard_blocks_empty_description",
+            "test_plan_execute_still_advisory_for_non_hard_evidence",
+            "test_same_structural_cause_twice_stops",
+        ),
+    },
+    {
+        "class_id": "D-probe-fidelity-gap",
+        "symptom": "测试桩自带真实内核没有的方法, 桩绿而真跑崩",
+        "repeat_count": 2,
+        "fix_scope": "structural",
+        "probes": ("test_repetition_guard_runs_on_real_kernel_instance",),
+    },
+    {
+        "class_id": "E-failure-unobservable",
+        "symptom": "LLM 超时后静默重试, 无日志; 运行挂了只看到退出码",
+        "repeat_count": 2,
+        "fix_scope": "structural",
+        "probes": (
+            "test_observe_failure_is_recorded_not_silently_degraded",
+            "test_decide_failure_is_recorded_and_stops",
+            "test_execute_failure_is_recorded_and_redirects",
+            "test_reflect_failure_is_recorded",
+        ),
+    },
+    {
+        "class_id": "F-existence-gate-fake-green",
+        "symptom": "存在性判据把「文件在」当「结果真」: 空壳 JSON / 错名文件 / 同名目录都判绿",
+        "repeat_count": 3,
+        "fix_scope": "structural",
+        "probes": (
+            "test_check_manifest_empty_shell_json_is_red",
+            "test_check_manifest_wrong_named_script_is_red",
+            "test_check_manifest_directory_at_declared_path_is_red",
+            "test_check_manifest_invalid_json",
+        ),
+    },
+)
+
+
+def test_defect_ledger_class_ids_are_unique():
+    ids = [e["class_id"] for e in _DEFECT_LEDGER]
+    assert len(ids) == len(set(ids)), f"缺陷台账存在重复 class_id: {ids}"
+
+
+def test_repeated_defect_class_requires_structural_fix_and_probe():
+    """同 class 复发 >= 2 次时, 只许结构性修复, 且必须挂可执行探针.
+
+    "instance" 补丁只能用于 repeat_count == 1 的首次出现; 复发仍打实例补丁 → 红.
+    """
+    for e in _DEFECT_LEDGER:
+        assert e["repeat_count"] >= 1, f"{e['class_id']} repeat_count 非法"
+        if e["repeat_count"] >= 2:
+            assert e["fix_scope"] == "structural", (
+                f"{e['class_id']} 已复发 {e['repeat_count']} 次, 仍是实例补丁 —— "
+                "复发类缺陷必须先改判据/契约再提交."
+            )
+        assert e["probes"], f"{e['class_id']} 无探针: 修复未被任何可执行断言拦住"
+
+
+def test_defect_probes_exist_and_are_collected():
+    """台账里每个探针都真实存在且会被 pytest 收集 (删探针 = 门静默失效)."""
+    missing = [
+        p
+        for e in _DEFECT_LEDGER
+        for p in e["probes"]
+        if not (p.startswith("test_") and callable(globals().get(p)))
+    ]
+    assert missing == [], f"缺陷台账引用了不存在/未收集的探针: {missing}"
+
 
 
