@@ -8,11 +8,20 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-__all__ = ["Deliverable", "parse_manifest", "check_manifest"]
+__all__ = [
+    "Contract",
+    "Deliverable",
+    "LineSpec",
+    "check_contract",
+    "check_manifest",
+    "parse_contract",
+    "parse_manifest",
+    "render_contract_hint",
+]
 
 _ARTIFACT_RE = re.compile(
     r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.(?:md|json|jsonl|csv|tsv|txt|png|jpg|jpeg|pdf|xlsx|parquet|npz|npy|py)\b"
@@ -102,10 +111,223 @@ def _json_has_substance(payload: Any) -> bool:
     return payload is not None
 
 
-def check_manifest(workspace: Any, manifest: list[Deliverable]) -> dict[str, Any]:
+@dataclass(frozen=True)
+class LineSpec:
+    """JSONL 交付物的行契约: 至少 N 行, 每行至少含这些字段."""
+
+    min_lines: int = 0
+    fields: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class Contract:
+    """objective 声明的内容契约 (JSON 必需键名 / JSONL 行 schema).
+
+    只做**确定性**抽取: 从句式 ("键名至少包含 …" / "每行… 至少含 …" /
+    "少于 N 行…") 里取标识符. 抽不到就是空契约 (不适用) —— 不猜、不由模型补写.
+    """
+
+    json_keys: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    line_specs: dict[str, LineSpec] = field(default_factory=dict)
+
+    def __bool__(self) -> bool:
+        return bool(self.json_keys or self.line_specs)
+
+
+_KEY_MARKERS = (
+    "键名至少包含",
+    "键名必须包含",
+    "键名包含",
+    "至少包含以下键",
+    "必须包含以下键",
+    "required keys",
+)
+_FILE_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.jsonl?\b")
+_IDENT_RE = re.compile(r"[a-z][a-z0-9_]{2,}")
+_KEY_STOP = frozenset(
+    {"json", "jsonl", "csv", "md", "tsv", "txt", "true", "false", "supported", "refuted", "keys", "key"}
+)
+_MAX_MIN_LINES = 10_000
+
+
+def _sentence_tail(text: str, pos: int) -> str:
+    """pos 之后到句末 (。或换行) 的片段."""
+    tail = text[pos:]
+    stops = [i for i in (tail.find("。"), tail.find("\n")) if i >= 0]
+    return tail[: min(stops)] if stops else tail
+
+
+def _nearest_file_before(text: str, pos: int, suffix: str) -> str | None:
+    """pos 之前最近一次出现的、以 suffix 结尾的文件名 (取 basename)."""
+    found = None
+    for m in _FILE_RE.finditer(text[:pos]):
+        raw = m.group(0)
+        if raw.endswith(suffix):
+            found = raw.rsplit("/", 1)[-1]
+    return found
+
+
+def _idents(tail: str, stop: frozenset[str]) -> list[str]:
+    """逗号/顿号分隔的片段里各取首个标识符 (去重保序)."""
+    out: list[str] = []
+    for seg in re.split(r"[、，,;；]", tail):
+        m = _IDENT_RE.search(seg)
+        if not m:
+            continue
+        tok = m.group(0)
+        if tok in stop or tok in out:
+            continue
+        out.append(tok)
+    return out
+
+
+def parse_contract(objective: str, manifest: list[Deliverable] | None = None) -> Contract:
+    """objective → 内容契约 (无声明时返回空契约, 表示不适用)."""
+    if not isinstance(objective, str) or not objective.strip():
+        return Contract()
+    text = objective
+    declared = [d.path for d in (manifest or [])]
+
+    json_keys: dict[str, tuple[str, ...]] = {}
+    for marker in _KEY_MARKERS:
+        idx = text.find(marker)
+        while idx >= 0:
+            path = _nearest_file_before(text, idx, ".json")
+            if path is None:
+                path = next((p for p in declared if p.endswith(".json")), None)
+            toks = _idents(_sentence_tail(text, idx + len(marker)).lstrip("：:，, "), _KEY_STOP)
+            if path and toks:
+                merged = tuple(dict.fromkeys(json_keys.get(path, ()) + tuple(toks)))
+                json_keys[path] = merged
+            idx = text.find(marker, idx + len(marker))
+
+    line_specs: dict[str, LineSpec] = {}
+    for m in re.finditer(r"至少含[：:，,]?", text):
+        path = _nearest_file_before(text, m.start(), ".jsonl")
+        if path is None:
+            continue
+        fields = _idents(_sentence_tail(text, m.end()).lstrip("：:，, "), _KEY_STOP)
+        if fields:
+            prev = line_specs.get(path, LineSpec())
+            line_specs[path] = LineSpec(
+                min_lines=prev.min_lines, fields=tuple(dict.fromkeys(prev.fields + tuple(fields)))
+            )
+
+    for path in dict.fromkeys(declared + list(line_specs)):
+        if not path.endswith(".jsonl"):
+            continue
+        base = path.rsplit("/", 1)[-1]
+        if base not in text:
+            continue
+        for sent in re.split(r"[。\n]", text):
+            if base not in sent:
+                continue
+            mm = re.search(r"(\d+)\s*行", sent)
+            if not mm:
+                continue
+            n = int(mm.group(1))
+            if 0 < n <= _MAX_MIN_LINES:
+                prev = line_specs.get(path, LineSpec())
+                line_specs[path] = LineSpec(min_lines=n, fields=prev.fields)
+                break
+
+    return Contract(json_keys=json_keys, line_specs=line_specs)
+
+
+def check_contract(workspace: Any, contract: Contract) -> dict[str, Any]:
+    """内容契约校验: 必需键 / 行数 / 每行字段 (确定性).
+
+    只报**契约**层面的问题; 文件缺失 / 不可解析由 ``check_manifest`` 报, 不重复计.
+    """
+    root = Path(workspace)
+    missing_keys: list[str] = []
+    short_lines: list[str] = []
+    bad_lines: list[str] = []
+    missing_fields: list[str] = []
+
+    for path, want in contract.json_keys.items():
+        p = root / path
+        if not p.is_file():
+            continue
+        try:
+            payload = json.loads(p.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        flat: dict[str, Any] = dict(payload)
+        # 容忍一层嵌套 (results 放在 "q1": {...} 下面) —— 与审计口径一致.
+        for v in payload.values():
+            if isinstance(v, dict):
+                for k2, v2 in v.items():
+                    flat.setdefault(k2, v2)
+        for k in want:
+            if k not in flat:
+                missing_keys.append(f"{path}:{k}")
+
+    for path, spec in contract.line_specs.items():
+        p = root / path
+        if not p.is_file():
+            continue
+        try:
+            lines = [ln for ln in p.read_text(encoding="utf-8", errors="replace").splitlines() if ln.strip()]
+        except OSError:
+            continue
+        if spec.min_lines and len(lines) < spec.min_lines:
+            short_lines.append(f"{path}:{len(lines)}<{spec.min_lines}")
+        if not spec.fields:
+            continue
+        for i, ln in enumerate(lines, 1):
+            try:
+                obj = json.loads(ln)
+            except ValueError:
+                bad_lines.append(f"{path}:{i}")
+                continue
+            if not isinstance(obj, dict):
+                bad_lines.append(f"{path}:{i}")
+                continue
+            miss = [f for f in spec.fields if f not in obj]
+            if miss:
+                missing_fields.append(f"{path}:{i}:{','.join(miss)}")
+
+    return {
+        "passed": not (missing_keys or short_lines or bad_lines or missing_fields),
+        "missing_keys": missing_keys,
+        "short_lines": short_lines,
+        "bad_lines": bad_lines,
+        "missing_fields": missing_fields,
+    }
+
+
+def render_contract_hint(manifest: list[Deliverable], contract: Contract | None) -> str:
+    """把契约渲染成给模型的一句硬约束 (验收口径与引擎实际检查一致)."""
+    if contract is None or not contract:
+        return ""
+    parts: list[str] = [f"必须交付: {', '.join(d.path for d in manifest)}"]
+    for path, keys in contract.json_keys.items():
+        parts.append(f"{path} 必须含键: {', '.join(keys)}")
+    for path, spec in contract.line_specs.items():
+        seg = f"{path} 至少 {spec.min_lines} 行" if spec.min_lines else path
+        if spec.fields:
+            seg += f"，每行必须含: {', '.join(spec.fields)}"
+        parts.append(seg)
+    return (
+        "[交付物契约 · 机器验收] " + "；".join(parts)
+        + "。键名/字段名必须与 objective 字面一致，禁止在交付物里自造另一套键名或另一套假设；"
+        "上述每条都由引擎逐项检查，不满足即拒绝收结。"
+    )
+
+
+def check_manifest(
+    workspace: Any,
+    manifest: list[Deliverable],
+    contract: "Contract | None" = None,
+) -> dict[str, Any]:
     """三关验收: 存在 / 非空 / 结构化文件可解析 (确定性, 不由 LLM 判定).
 
     「非空」既指零字节, 也指 JSON 虽可解析但没有实质内容 (空壳) —— 两者都判红.
+    ``contract`` 非空时再校验**内容契约** (必需键名 / JSONL 行 schema): 文件在、
+    非空、可解析只证明"有东西", 不证明"交付的是 objective 要的东西".
     """
     root = Path(workspace)
     missing: list[str] = []
@@ -137,11 +359,18 @@ def check_manifest(workspace: Any, manifest: list[Deliverable]) -> dict[str, Any
                 continue
         if size < d.min_bytes:
             empty.append(d.path)
-    return {
-        "passed": not (missing or empty or invalid),
+    contract_report = check_contract(root, contract) if contract is not None else None
+    passed = not (missing or empty or invalid)
+    if contract_report is not None and not contract_report["passed"]:
+        passed = False
+    out = {
+        "passed": passed,
         "declared": [d.path for d in manifest],
         "missing": missing,
         "empty": empty,
         "invalid": invalid,
         "checked": len(manifest),
     }
+    if contract_report is not None:
+        out["contract"] = contract_report
+    return out

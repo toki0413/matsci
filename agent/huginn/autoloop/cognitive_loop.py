@@ -1922,14 +1922,23 @@ class CognitiveRunner(EngineFacade):
         self._run_start_time = time.time()
         self._objective = objective
         # 确定性验收锚点: 交付物清单只从 objective 解析, agent 不能改写.
-        from huginn.autoloop.deliverables import parse_manifest
+        from huginn.autoloop.deliverables import parse_contract, parse_manifest
 
         self._deliverable_manifest = parse_manifest(objective)
+        # 同一锚点覆盖**内容契约** (必需键名 / JSONL 行 schema): 只验文件存在
+        # 会让"自造一套键名/假设"的交付物判绿 (ws35 实测).
+        self._deliverable_contract = parse_contract(objective, self._deliverable_manifest)
         self._last_plan_failure = None
         if self._deliverable_manifest:
             logger.warning(
                 "交付物清单 (objective 确定性解析, agent 不可改写): %s",
                 [d.path for d in self._deliverable_manifest],
+            )
+        if self._deliverable_contract:
+            logger.warning(
+                "交付物内容契约 (objective 确定性解析): json_keys=%s line_specs=%s",
+                {k: list(v) for k, v in self._deliverable_contract.json_keys.items()},
+                {k: (v.min_lines, list(v.fields)) for k, v in self._deliverable_contract.line_specs.items()},
             )
         # 工作区收敛: 工具/沙箱的缺省 work_dir 由 cwd 改为本 run 的 workspace.
         # engine.workspace 是权威值 (构造时已解析 env), 每个 run 显式覆盖 —— 不
@@ -1952,6 +1961,15 @@ class CognitiveRunner(EngineFacade):
         self._pr_reset_budget(progressive_budget)
         self._pr_reset_hints()
         self._pr_speculator(objective)
+        # 契约投影: 把**引擎真正会检查**的验收口径直接放进 prompt hint, 而不是让
+        # 模型自己在几万字 objective 里找. 口径与 _deliverables_ok 一致, 不另立标准.
+        from huginn.autoloop.deliverables import render_contract_hint
+
+        contract_hint = render_contract_hint(
+            self._deliverable_manifest, getattr(self, "_deliverable_contract", None)
+        )
+        if contract_hint:
+            self._append_hint(contract_hint)
         return run_id, provenance_record, run_collector
 
     def _pr_provenance(self, run_id: str, objective: str) -> tuple[Any, Any]:
@@ -2444,7 +2462,9 @@ Physical time series collected this run:
             return {"passed": True, "declared": [], "checked": 0}
         from huginn.autoloop.deliverables import check_manifest
 
-        return check_manifest(self.workspace, manifest)
+        return check_manifest(
+            self.workspace, manifest, getattr(self, "_deliverable_contract", None)
+        )
 
     async def _finalize_run(
         self,
@@ -2476,7 +2496,8 @@ Physical time series collected this run:
                 "声明交付物未通过确定性验收: "
                 f"missing={deliverable_gate['missing']} "
                 f"empty={deliverable_gate['empty']} "
-                f"invalid={deliverable_gate['invalid']}"
+                f"invalid={deliverable_gate['invalid']} "
+                f"contract={deliverable_gate.get('contract') or 'n/a'}"
             )
             logger.error("交付物验收失败 → success=False: %s", goal_judgment["reason"])
         provenance_path = self._finalize_provenance(
@@ -4807,7 +4828,8 @@ Physical time series collected this run:
         _gap = (
             f"missing={gate.get('missing') or []} "
             f"empty={gate.get('empty') or []} "
-            f"invalid={gate.get('invalid') or []}"
+            f"invalid={gate.get('invalid') or []} "
+            f"contract={gate.get('contract') or 'n/a'}"
         )
         logger.warning(
             "stop 被交付物硬门拒绝 (iter %d): %s", state.iteration, _gap

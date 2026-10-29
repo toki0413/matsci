@@ -284,6 +284,117 @@ def test_parse_manifest_ignores_prose_script_without_section():
     assert paths == ["data/out.csv"]
 
 
+# ===== Task 1b: objective 内容契约 (必需键名 / JSONL 行 schema) =====
+
+_CONTRACT_OBJ = (
+    "【研究任务】做元分析\n\n"
+    "交付物：\n- analysis.py：可重复运行\n- results.json：键名至少包含 q1_delta_ea、q1_ci_low、"
+    "q1_ci_high、hypotheses。\n- loop_log.jsonl：50 行，每行一个 JSON 对象，至少含："
+    "loop_id、status、delta_ea、ci_low、ci_high、loso_rmse。\n- report.md：六节\n"
+)
+
+
+def test_parse_contract_extracts_json_keys_and_line_schema():
+    """objective 里"键名至少包含 …"是验收条件, 必须变成机器可查的契约."""
+    from huginn.autoloop.deliverables import parse_contract, parse_manifest
+
+    c = parse_contract(_CONTRACT_OBJ, parse_manifest(_CONTRACT_OBJ))
+    assert list(c.json_keys["results.json"]) == [
+        "q1_delta_ea", "q1_ci_low", "q1_ci_high", "hypotheses",
+    ]
+    assert c.line_specs["loop_log.jsonl"].min_lines == 50
+    assert list(c.line_specs["loop_log.jsonl"].fields) == [
+        "loop_id", "status", "delta_ea", "ci_low", "ci_high", "loso_rmse",
+    ]
+
+
+def test_parse_contract_is_empty_when_objective_states_no_keys():
+    """没有键名/行 schema 声明 → 空契约 (不适用), 不能凭空生成要求."""
+    from huginn.autoloop.deliverables import parse_contract
+
+    assert not parse_contract("写一个 report.md 说明结果.")
+
+
+def test_check_manifest_contract_rejects_self_invented_keys(tmp_path):
+    """ws35 实测: agent 写了自己的一套 H1–H5 与键名, 文件在、非空、可解析.
+
+    存在性+空壳门都判绿 → 交付物语义完全不对却算完成. 契约门必须判红.
+    """
+    from huginn.autoloop.deliverables import (
+        Contract, Deliverable, check_manifest,
+    )
+    import json
+
+    (tmp_path / "results.json").write_text(
+        json.dumps({"h1": {"p_value": 0.03}, "h2": {"rmse": 12.0}, "notes": "self-defined"}),
+        encoding="utf-8",
+    )
+    contract = Contract(json_keys={"results.json": ("q1_delta_ea", "q1_ci_low")})
+    report = check_manifest(tmp_path, [Deliverable("results.json")], contract)
+    assert report["passed"] is False
+    assert report["missing"] == [] and report["empty"] == [] and report["invalid"] == []
+    assert report["contract"]["missing_keys"] == [
+        "results.json:q1_delta_ea", "results.json:q1_ci_low",
+    ]
+
+
+def test_check_manifest_contract_rejects_short_or_malformed_loop_log(tmp_path):
+    """loop_log.jsonl 少于声明行数 / 每行缺字段 → 红 (不许"几行凑数")."""
+    from huginn.autoloop.deliverables import (
+        Contract, Deliverable, LineSpec, check_manifest,
+    )
+    import json
+
+    rows = [json.dumps({"loop_id": i, "status": "ok", "delta_ea": 1.0}) for i in range(1, 11)]
+    (tmp_path / "loop_log.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    contract = Contract(
+        line_specs={"loop_log.jsonl": LineSpec(min_lines=50, fields=("loop_id", "ci_low"))}
+    )
+    report = check_manifest(tmp_path, [Deliverable("loop_log.jsonl")], contract)
+    assert report["passed"] is False
+    assert report["contract"]["short_lines"] == ["loop_log.jsonl:10<50"]
+    assert len(report["contract"]["missing_fields"]) == 10
+
+
+def test_check_manifest_contract_passes_on_conforming_deliverables(tmp_path):
+    """契约满足时放行 (门不能只会判红)."""
+    from huginn.autoloop.deliverables import (
+        Contract, Deliverable, LineSpec, check_manifest,
+    )
+    import json
+
+    (tmp_path / "results.json").write_text(
+        json.dumps({"q1_delta_ea": 51.59, "hypotheses": {"P1": "supported"}}), encoding="utf-8"
+    )
+    rows = [
+        json.dumps({"loop_id": i, "status": "ok", "delta_ea": 1.0, "ci_low": 0.1,
+                    "ci_high": 2.0, "loso_rmse": 41.0})
+        for i in range(1, 51)
+    ]
+    (tmp_path / "loop_log.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    contract = Contract(
+        json_keys={"results.json": ("q1_delta_ea", "hypotheses")},
+        line_specs={"loop_log.jsonl": LineSpec(
+            min_lines=50, fields=("loop_id", "ci_low", "ci_high", "loso_rmse"))},
+    )
+    report = check_manifest(
+        tmp_path, [Deliverable("results.json"), Deliverable("loop_log.jsonl")], contract
+    )
+    assert report["passed"] is True
+
+
+def test_contract_hint_names_the_same_checks_as_the_gate(tmp_path):
+    """给模型的契约提示必须与引擎实际判据一致 (提示里写的键 = 门里查的键)."""
+    from huginn.autoloop.deliverables import (
+        Contract, parse_contract, parse_manifest, render_contract_hint,
+    )
+
+    hint = render_contract_hint(parse_manifest(_CONTRACT_OBJ), parse_contract(_CONTRACT_OBJ))
+    assert "q1_delta_ea" in hint and "hypotheses" in hint
+    assert "loop_log.jsonl 至少 50 行" in hint and "loso_rmse" in hint
+    assert render_contract_hint([], Contract()) == ""
+
+
 # ===== Task 2: plan→execute 确定性硬门 =====
 
 
@@ -588,7 +699,9 @@ def test_step_failure_to_dict_is_serializable():
 # 基线只减不增: 新增静默宽捕获 → 红. 收敛后请下调基线.
 
 _AUTOLOOP_ROOT = Path(__file__).resolve().parents[2] / "huginn" / "autoloop"
-_AUTOLOOP_EXCEPT_TOTAL_BASELINE = 575
+# 575 → 578 (+3): deliverables.check_contract 的 3 个**窄**捕获
+# (OSError / ValueError, 读文件与 JSONL 解析), 均转成缺省判红, 不是静默宽捕获.
+_AUTOLOOP_EXCEPT_TOTAL_BASELINE = 578
 _AUTOLOOP_BROAD_SILENT_BASELINE = 473
 _LOUD_LOG_METHODS = frozenset({"warning", "error", "critical", "exception", "fatal"})
 
@@ -661,13 +774,17 @@ def test_autoloop_silent_broad_except_does_not_grow():
 _DEFECT_LEDGER: tuple[dict, ...] = (
     {
         "class_id": "A-spec-undecidable",
-        "symptom": "objective 里的交付物/键名只是散文, 引擎无法判定是否满足",
-        "repeat_count": 3,
+        "symptom": "objective 里的交付物/键名/行 schema 只是散文, 引擎无法判定是否满足",
+        "repeat_count": 4,
         "fix_scope": "structural",
         "probes": (
             "test_parse_manifest_from_explicit_section",
             "test_parse_manifest_keeps_script_declared_in_section",
             "test_parse_manifest_ignores_prose_script_without_section",
+            "test_parse_contract_extracts_json_keys_and_line_schema",
+            "test_check_manifest_contract_rejects_self_invented_keys",
+            "test_check_manifest_contract_rejects_short_or_malformed_loop_log",
+            "test_contract_hint_names_the_same_checks_as_the_gate",
         ),
     },
     {

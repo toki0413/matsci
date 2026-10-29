@@ -81,7 +81,7 @@
 
 ## 词汇面: 值域词表雷达 (系统枚举 + 自动聚类)
 
-系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 296 站点, 按值域 Jaccard 重叠自动聚成 265 簇 (其中闭集簇 178). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
+系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 297 站点, 按值域 Jaccard 重叠自动聚成 266 簇 (其中闭集簇 179). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
 
 ### 同名跨模块定义 (mutually exclusive)
 
@@ -111,6 +111,7 @@
 | `code_tool` | `huginn/modes/pi.py::PRIMITIVES`, `huginn/permissions.py::WRITE_EXEC_TOOLS`, `huginn/tools/adapter.py::_CODING_TOOLS` |
 | `coding` | `huginn/models/router.py::TaskT`, `huginn/pet/__init__.py::class PetMood` |
 | `cp2k_tool` | `huginn/agent/context.py::_EXPENSIVE_TOOL_NAMES`, `huginn/execution/compute_router.py::_DFT_MD_TOOLS`, `huginn/tools/design/design_plan_tool.py::GATED_TOOLS` |
+| `csv` | `huginn/autoloop/deliverables.py::_KEY_STOP`, `huginn/hooks/clarify_questions_hook.py::_OUTPUT_FORMATS_EN` |
 | `data` | `huginn/autoloop/exec_observation.py::_EVIDENCE_KEYS`, `huginn/metacog/failure_modes.py::Category` |
 | `deny` | `huginn/core_types.py::class BudgetDecision`, `huginn/core_types.py::class PermissionMode` |
 | `distinct` | `huginn/autoloop/engine_reflect.py::_CONTRAST_EN`, `huginn/perception/cross_validator.py::_HIGH_INTENSITY_QUALIFIERS` |
@@ -133,7 +134,7 @@
 | `hypothesis` | `huginn/autoloop/cognitive_persist.py::_RUN_CONTEXT_KEYS`, `huginn/harness/joint_optimizer.py::_CORE_BLOCKS`, `huginn/phases.py::class ResearchPhase` |
 | `hypothesize` | `huginn/autoloop/cognitive_loop.py::VALID_ACTIONS`, `huginn/autoloop/engine.py::AUTOLOOP_PHASES` |
 | `inconclusive` | `huginn/autoloop/cognitive_persist.py::_RUN_CONTEXT_KEYS`, `huginn/perception/doc_types.py::class EdgeType` |
-| `json` | `huginn/bench/task_synthesizer.py::_JUDGE_ALLOWED_MODULES`, `huginn/hooks/clarify_questions_hook.py::_OUTPUT_FORMATS_EN` |
+| `json` | `huginn/autoloop/deliverables.py::_KEY_STOP`, `huginn/bench/task_synthesizer.py::_JUDGE_ALLOWED_MODULES`, `huginn/hooks/clarify_questions_hook.py::_OUTPUT_FORMATS_EN` |
 | `knowledge` | `huginn/export_share.py::ALL_COMPONENTS`, `huginn/routes/knowledge.py::ALLOWED_SOURCES`, `huginn/routes/search.py::SEARCH_SOURCE_TYPES` |
 | `lammps` | `huginn/autoloop/engine_control.py::_EXPENSIVE_MODES`, `huginn/execution/compute_router.py::_DFT_MD_TOOLS` |
 | `lammps_tool` | `huginn/agent/context.py::_EXPENSIVE_TOOL_NAMES`, `huginn/execution/compute_router.py::_DFT_MD_TOOLS`, `huginn/permissions.py::WRITE_EXEC_TOOLS`, `huginn/tools/design/design_plan_tool.py::GATED_TOOLS` |
@@ -142,7 +143,7 @@
 | `local` | `huginn/cli/lazy_loader.py::CommandType`, `huginn/models/router.py::TaskT`, `huginn/routes/tunnels.py::TunnelType` |
 | `main` | `huginn/lean/supply_chain.py::_FLOATING_REFS`, `huginn/plugins/prompt_segments.py::_APPLICABLE_PATHS` |
 | `math` | `huginn/bench/task_synthesizer.py::_JUDGE_ALLOWED_MODULES`, `huginn/cli/rcb_utils.py::_DOMAIN_KNOWN` |
-| `md` | `huginn/autoloop/engine_control.py::_EXPENSIVE_MODES`, `huginn/tools/sim/vasp_tool.py::_COMPUTE_ACTIONS` |
+| `md` | `huginn/autoloop/deliverables.py::_KEY_STOP`, `huginn/autoloop/engine_control.py::_EXPENSIVE_MODES`, `huginn/tools/sim/vasp_tool.py::_COMPUTE_ACTIONS` |
 | `measure` | `huginn/autoloop/hypothesis_semantic.py::_DIMENSION_LABELS`, `huginn/memory/anchor.py::ANCHOR_KINDS` |
 | `memory` | `huginn/export_share.py::ALL_COMPONENTS`, `huginn/routes/search.py::SEARCH_SOURCE_TYPES`, `huginn/runtime/context_router.py::CONTEXT_SEGMENTS` |
 | `methodology` | `huginn/metacog/failure_modes.py::Category`, `huginn/tools/literature/tool.py::_DEFAULT_LENSES` |
@@ -173,6 +174,7 @@
 | `stop` | `huginn/autoloop/cognitive_loop.py::VALID_ACTIONS`, `huginn/autoloop/control_mechanisms.py::EFFECTS`, `huginn/cli/slash_commands.py::_BG_SUBCOMMANDS` |
 | `structure` | `huginn/autoloop/hypothesis_semantic.py::_DIMENSION_LABELS`, `huginn/evaluation/matworld_bench.py::CATEGORIES`, `huginn/memory/longterm.py::MATERIAL_CATEGORIES`, `huginn/utils/smart_prefetch.py::_PIPELINE_STAGES` |
 | `structure_tool` | `huginn/agent/context.py::_ALWAYS_ON_TOOLS`, `huginn/hooks/__init__.py::_WATCHED_TOOLS`, `huginn/tools/tool_cache.py::PREFETCH_SAFE_TOOLS` |
+| `supported` | `huginn/autoloop/deliverables.py::_KEY_STOP`, `huginn/autoloop/hypothesis_loop.py::HypothesisStatus` |
 | `table` | `huginn/hooks/clarify_questions_hook.py::_OUTPUT_FORMATS_EN`, `huginn/perception/doc_types.py::class ElementType` |
 | `text` | `huginn/events/audit_log.py::_BODY_KEYS`, `huginn/perception/doc_types.py::class ElementType` |
 | `timeout` | `huginn/autoloop/exec_observation.py::EXIT_CLASSES`, `huginn/core_types.py::class ErrorKind` |
@@ -231,7 +233,7 @@
 |---|---|---|---|---|---|---|---|---|
 | `_EXPENSIVE_TOOL_NAMES` | `huginn/agent/context.py:239` | 4 | 4 | registry | `internal-only` | 0 | 0 | 0 |
 | `_ALWAYS_ON_TOOLS` | `huginn/agent/context.py:249` | 5 | 5 | registry | `internal-only` | 0 | 0 | 0 |
-| `_READONLY_PHASE_TOOLS` | `huginn/autoloop/engine_act.py:119` | 7 | 7 | registry | `internal-only` | 0 | 0 | 0 |
+| `_READONLY_PHASE_TOOLS` | `huginn/autoloop/engine_act.py:128` | 7 | 7 | registry | `internal-only` | 0 | 0 | 0 |
 | `_DFT_MD_TOOLS` | `huginn/execution/compute_router.py:15` | 8 | 4 | registry | `internal-only` | 0 | 0 | 4 |
 | `_QC_TOOLS` | `huginn/execution/compute_router.py:29` | 4 | 2 | registry | `internal-only` | 0 | 0 | 2 |
 | `CORE_BOOTSTRAP_TOOLS` | `huginn/harness/promotion.py:25` | 2 | 2 | registry | `internal-only` | 0 | 0 | 0 |
@@ -250,9 +252,9 @@
 | `_BLOCKED_TOOLS` | `huginn/security/code_act_sandbox.py:29` | 2 | 2 | registry | `wired` | 1 | 0 | 0 |
 | `_EDIT_TOOLS` | `huginn/server_core.py:98` | 2 | 2 | registry | `wired` | 1 | 0 | 0 |
 | `_SNAPSHOT_TOOLS` | `huginn/snapshot/integration.py:26` | 26 | 26 | registry | `internal-only` | 0 | 0 | 0 |
-| `_HASHLINE_TOOLS` | `huginn/tools/adapter.py:709` | 5 | 5 | registry | `internal-only` | 0 | 0 | 0 |
-| `_CODING_TOOLS` | `huginn/tools/adapter.py:1308` | 3 | 3 | registry | `internal-only` | 0 | 0 | 0 |
-| `_REVIEWING_TOOLS` | `huginn/tools/adapter.py:1315` | 5 | 5 | registry | `internal-only` | 0 | 0 | 0 |
+| `_HASHLINE_TOOLS` | `huginn/tools/adapter.py:765` | 5 | 5 | registry | `internal-only` | 0 | 0 | 0 |
+| `_CODING_TOOLS` | `huginn/tools/adapter.py:1364` | 3 | 3 | registry | `internal-only` | 0 | 0 | 0 |
+| `_REVIEWING_TOOLS` | `huginn/tools/adapter.py:1371` | 5 | 5 | registry | `internal-only` | 0 | 0 | 0 |
 | `GATED_TOOLS` | `huginn/tools/design/design_plan_tool.py:45` | 12 | 12 | registry | `wired` | 1 | 0 | 0 |
 | `_HIGH_VALUE_MCP_TOOLS` | `huginn/tools/mcp_adapter.py:27` | 6 | 0 | external | `internal-only` | 0 | 0 | 0 |
 | `PREFETCH_SAFE_TOOLS` | `huginn/tools/tool_cache.py:38` | 3 | 3 | registry | `wired` | 1 | 0 | 0 |
@@ -348,11 +350,11 @@
 
 | 事件值 | 生产发布 | 生产订阅 | 发布点 | 订阅点 |
 |---|---|---|---|---|
-| `campaign.budget_exhausted` | 2 | 0 | `huginn/autoloop/cognitive_loop.py:4169`, `huginn/autoloop/cognitive_loop.py:4205` | — |
-| `campaign.control_trace` | 3 | 0 | `huginn/autoloop/cognitive_loop.py:1811`, `huginn/autoloop/engine_observe.py:893`, `huginn/autoloop/engine_reflect.py:2399` | — |
-| `campaign.rejected` | 1 | 0 | `huginn/autoloop/cognitive_loop.py:3806` | — |
-| `campaign.retry` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3948` | `huginn/events/audit_log.py:586` |
-| `campaign.suspect` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:3969` | `huginn/events/audit_log.py:586` |
+| `campaign.budget_exhausted` | 2 | 0 | `huginn/autoloop/cognitive_loop.py:4237`, `huginn/autoloop/cognitive_loop.py:4273` | — |
+| `campaign.control_trace` | 3 | 0 | `huginn/autoloop/cognitive_loop.py:1858`, `huginn/autoloop/engine_observe.py:893`, `huginn/autoloop/engine_reflect.py:2399` | — |
+| `campaign.rejected` | 1 | 0 | `huginn/autoloop/cognitive_loop.py:3874` | — |
+| `campaign.retry` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:4016` | `huginn/events/audit_log.py:586` |
+| `campaign.suspect` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:4037` | `huginn/events/audit_log.py:586` |
 | `cognitive.csm.transition` | 2 | 0 | `huginn/cognitive_engine.py:606`, `huginn/events/unified_bus.py:346` | — |
 | `embedding.download.done` | 1 | 0 | `huginn/knowledge/store.py:249` | — |
 | `embedding.download.error` | 3 | 0 | `huginn/knowledge/store.py:239`, `huginn/knowledge/store.py:253`, `huginn/knowledge/store.py:372` | — |

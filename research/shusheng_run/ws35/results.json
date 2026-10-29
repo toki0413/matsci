@@ -1,0 +1,24 @@
+{
+  "q1_delta_ea": 116.79,
+  "q1_ci_low": 106.03,
+  "q1_ci_high": 127.81,
+  "q1_n_papers": 19,
+  "q1_tau2": 1206.9199,
+  "q2_eta2": 0.3088,
+  "q2_perm_p": 0.0001,
+  "q3_method_pairs_n": 5,
+  "q3_method_diff_kj": 60.46,
+  "q4_rmse": 36.2,
+  "q4_baseline_rmse": 23.77,
+  "q4_coverage": 1.0,
+  "q5_pred": 137.94,
+  "q5_pi_low": 38.74,
+  "q5_pi_high": 237.14,
+  "hypotheses": [
+    "H1: Catalyst family significantly affects activation energy (eta² = 0.309, p = 0.0001). MXene-carbon catalysts are expected to lower Ea compared to uncatalyzed samples.",
+    "H2: Kissinger method yields systematically different Ea values compared to isothermal_Arrhenius (mean diff = 60.5 kJ/mol). Method choice introduces significant systematic bias.",
+    "H3: Onset temperature T_des_C predicts Ea for pure_MgH2 with RMSE = 36.2 kJ/mol and coverage = 100.0%. Higher T_des_C correlates with higher Ea (slope = 0.13 kJ/mol/°C).",
+    "H4: The random-effects model indicates between-study variance τ² = 1206.92, indicating substantial heterogeneity in Ea measurements across studies. The 95% CI [106.03, 127.81] accounts for this heterogeneity.",
+    "H5: For MgH2-5 wt% Nb2C at T_des ≈ 250°C, the predicted Ea falls within the prediction interval, consistent with the trend that MXene-doped MgH2 has lower Ea than pure MgH2."
+  ]
+}
