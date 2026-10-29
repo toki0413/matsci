@@ -326,5 +326,159 @@
     ],
     "mode": "coder",
     "description": "Generate `analyze_mgH2_ea.py` implementing the meta-analysis workflow with explicit data schema, testable hypotheses, and required output generation. The script will: 1) Define data schema from `READM"
+  },
+  {
+    "scene_tag": "md",
+    "hyp_key": "b15835f133ff",
+    "reason": "The plan has multiple critical failures: (1) The hypothesis field is empty, making it impossible to define what 'Supported' or 'Rejected' means; (2) The DESCRIPTION is vague and doesn't provide executable Python code with imports, formulas, and print statements as required for 'coder' tasks; (3) It fails to address the hard requirement of generating the three missing output files (results.json, loop_log.jsonl, report.md) which caused previous fatal loops; (4) It does not address the dimensional inconsistency warning about Ea units; (5) No data validation checks or error handling are included.",
+    "missing_steps": [
+      "Provide clear, testable hypothesis with specific predictions",
+      "Write executable Python code with imports, formulas, and print statements",
+      "Specify exact CSV file path and data structure details",
+      "Fix dimensional inconsistency in data loading (ensure Ea units are consistent kJ/mol)",
+      "Add explicit output generation steps for results.json, loop_log.jsonl, and report.md",
+      "Include data validation checks before statistical analysis",
+      "Add error handling for the meta-analysis and permutation test steps"
+    ],
+    "mode": "coder",
+    "description": "The web search can't read local files. Let me try to read the README.md directly using a file read approach. I'll need to check if I can access the file system. Let me try using the literature_tool or"
+  },
+  {
+    "scene_tag": "md",
+    "hyp_key": "b15835f133ff",
+    "reason": "Plan fails on multiple critical axes: (1) Empty hypothesis makes validation impossible — no claim to test against; (2) DESCRIPTION is a meta-description, not executable code — lacks imports, formulas, file paths, and actual write operations; (3) Historical failures explicitly flag this exact pattern: vague intent without implementation, missing file writes, no dimensional checks; (4) PREDICTION is unverifiable without running real code. The plan describes what should happen but provides no mechanism to verify it or generate deliverables.",
+    "missing_steps": [
+      "Provide complete executable Python code with all required imports (pandas, numpy, scipy, json, markdown)",
+      "Define a clear, testable hypothesis with specific predictions (e.g., 'Ea will be positive and within 50–200 kJ/mol')",
+      "Specify exact CSV structure (columns: T, k, Ea_unit?) and file path",
+      "Implement unit validation/conversion for Ea to kJ/mol with error handling",
+      "Add explicit file write operations for results.json, loop_log.jsonl, report.md",
+      "Implement permutation test with proper shuffling and p-value calculation",
+      "Add data validation: check for NaNs, ensure paired (T, k) entries, validate ln(k) vs 1/T linearity"
+    ],
+    "mode": "coder",
+    "description": "A Python script that reads kinetic data from `data/kinetics.csv`, validates and standardizes Ea units to kJ/mol, performs a linear regression on Arrhenius plots (ln(k) vs 1/T), calculates the Arrheniu"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "b15835f133ff",
+    "reason": "Plan is completely non-executable: it lacks actual Python code, imports, formulas, print statements, and a defined hypothesis. The description only states intent without implementation. It fails to generate required output files (results.json, loop_log.jsonl, report.md) and repeats all historical failure patterns for coder mode.",
+    "missing_steps": [
+      "Provide complete executable Python code with all required imports and implementation details",
+      "Define a clear, testable hypothesis with specific predictions",
+      "Specify exact file paths and data structure details for input files",
+      "Implement explicit file write operations for results.json, loop_log.jsonl, and report.md",
+      "Add data validation checks and dimensional consistency handling"
+    ],
+    "mode": "coder",
+    "description": "The recall tool doesn't have file reading capability. Let me use the Python tool to read the data files."
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "b15835f133ff",
+    "reason": "The plan is critically invalid for multiple reasons. First, the hypothesis field is empty, making it impossible to define what constitutes a successful outcome or validation. Second, the DESCRIPTION is a high-level meta-description without executable Python code, lacking required imports, file paths, formulas, and write operations - exactly the pattern that triggered historical failures. Third, it explicitly fails to generate the three required output files (results.json, loop_log.jsonl, report.md), which caused fatal loops in previous runs. Fourth, there are no data validation checks, error handling, or dimensional consistency verification.",
+    "missing_steps": [
+      "Define a clear, testable hypothesis with specific predictions",
+      "Provide complete executable Python code with all required imports (pandas, numpy, json, etc.)",
+      "Specify exact CSV file path and data structure details",
+      "Implement explicit file write operations for results.json, loop_log.jsonl, and report.md",
+      "Add data validation checks (NaN handling, paired entries, etc.)",
+      "Include error handling for all operations"
+    ],
+    "mode": "coder",
+    "description": "Read the input data file, compute the mean and standard deviation of the numerical values, and output the results to results.json. The loop_log.jsonl will record each step of the computation. The repo"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "b15835f133ff",
+    "reason": "The plan is fundamentally invalid for 'coder' mode. It provides only a high-level description without any executable Python code, imports, or implementation details. The hypothesis field is empty, making validation impossible. It explicitly repeats the fatal flaw from historical failures: no actual file write operations for results.json, loop_log.jsonl, and report.md, guaranteeing the same 'dead loop' failure where deliverables are missing. The PREDICTION is 'N/A' making it unverifiable.",
+    "missing_steps": [
+      "Provide complete executable Python code with all required imports and statistical implementations",
+      "Define a clear, testable hypothesis with specific predictions for H1-H5",
+      "Fix dimensional inconsistency in data loading (validate/constrain Ea units to kJ/mol)",
+      "Implement explicit file write operations for results.json, loop_log.jsonl, and report.md",
+      "Add data validation checks before statistical analysis (handle NaNs, check Ea units, verify paired structure)",
+      "Implement meta-analysis with DerSimonian-Laird estimator and bootstrap CIs",
+      "Implement permutation test with proper label shuffling for H2",
+      "Specify exact output format and content for all deliverables"
+    ],
+    "mode": "coder",
+    "description": "The data file is a local file in the workspace. Let me try to read it using the web search tool to fetch it, or better, let me check if I can access the file directly. Actually, I should use the `web_"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "b15835f133ff",
+    "reason": "Plan is invalid because it lacks executable Python code (DESCRIPTION is a high-level description only, not actual code), the hypothesis field is empty (making validation impossible), and it fails to specify how the three required output files (results.json, loop_log.jsonl, report.md) will be generated and written. This matches all historical failure patterns for 'coder' mode.",
+    "missing_steps": [
+      "Provide complete executable Python code with all required imports and statistical implementations",
+      "Define a clear, testable hypothesis with specific predictions for H1-H5",
+      "Implement explicit file write operations for results.json, loop_log.jsonl, and report.md",
+      "Add data validation checks (NaN handling, paired entries, Ea unit conversion to kJ/mol)",
+      "Implement DerSimonian-Laird random-effects model, bootstrap CIs, and permutation tests in code"
+    ],
+    "mode": "coder",
+    "description": "Complete executable Python implementation for meta-analysis of 120 paired kinetic data points across 20 systems (6 replicates/system). Implements all 5 hypotheses with DerSimonian-Laird random-effects"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "b15835f133ff",
+    "reason": "The plan is a high-level description lacking executable Python code, violating the 'coder' mode requirement. The hypothesis field is empty, making validation impossible. It repeats historical failures: missing output files (results.json, loop_log.jsonl, report.md), dimensional inconsistency warnings, and no concrete implementation. The plan needs to provide complete executable Python code with all required imports and statistical implementations, define a clear testable hypothesis with specific predictions, implement explicit file write operations, add data validation checks, and implement meta-analysis with DerSimonian-Laird estimator, bootstrap CIs, and permutation tests in code.",
+    "missing_steps": [
+      "Provide executable Python code with imports, formulas, and print statements",
+      "Define a clear, testable hypothesis with specific predictions",
+      "Fix dimensional inconsistency in data loading (ensure Ea units are consistent kJ/mol)",
+      "Add explicit output generation steps for results.json, loop_log.jsonl, and report.md",
+      "Include data validation checks before statistical analysis",
+      "Add error handling for the meta-analysis and permutation test steps"
+    ],
+    "mode": "coder",
+    "description": "[auto-routed: 写码目标需真实执行] Read the MgH2 activation energy dataset from data/ea_dataset.csv and data/README.md, then execute a five-hypothesis statistical meta-analysis pipeline: (H1) paired within-pape"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "b15835f133ff",
+    "reason": "Plan is fundamentally invalid because it describes a high-level meta-description rather than executable code, violating the 'coder' mode requirement. The hypothesis field is empty (making validation impossible), there's no actual Python code with imports/formulas, and it fails to address the dimensional inconsistency warning. This matches historical failure patterns where vague descriptions without concrete implementation are rejected.",
+    "missing_steps": [
+      "Provide actual executable Python code with all required imports (pandas, numpy, scipy, json, markdown)",
+      "Define clear, testable hypothesis with specific predictions for H1-H5",
+      "Specify exact CSV file path and data structure details",
+      "Implement unit validation/conversion for Ea to kJ/mol with error handling",
+      "Add explicit file write operations for results.json, loop_log.jsonl, report.md",
+      "Include data validation checks before statistical analysis",
+      "Add error handling for meta-analysis and permutation test steps"
+    ],
+    "mode": "coder",
+    "description": "Generate a complete, executable Python script that reads the MgH2 activation energy dataset (data/ea_dataset.csv and data/README.md), performs data validation and unit conversion (Ea in kJ/mol), imple"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "b15835f133ff",
+    "reason": "The plan completely fails to meet the requirements of the 'coder' mode. It provides only a high-level description without any executable Python code, imports, or implementation details. The hypothesis field is empty, making validation impossible. It lacks explicit file write operations for the required deliverables (results.json, loop_log.jsonl, report.md), which has caused fatal loops in previous runs. It repeats all the historical failure patterns identified in the scene history.",
+    "missing_steps": [
+      "Provide complete executable Python code with all required imports (pandas, numpy, json, etc.)",
+      "Define a clear, testable hypothesis with specific predictions for H1-H5",
+      "Specify exact CSV file path and data structure details",
+      "Implement explicit file write operations for results.json, loop_log.jsonl, and report.md",
+      "Add data validation checks (NaN handling, paired entries, dimensional consistency)",
+      "Include error handling for all operations"
+    ],
+    "mode": "coder",
+    "description": "Let me read the data files directly using the appropriate approach."
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "b15835f133ff",
+    "reason": "Plan violates core 'coder' mode requirements: (1) No executable Python code provided in DESCRIPTION (only high-level description), (2) Hypothesis field is empty making validation impossible, (3) No explicit file write operations for required deliverables (results.json, loop_log.jsonl, report.md), (4) Lacks statistical implementation details (DerSimonian-Laird, bootstrap CIs, permutation tests), (5) No data validation checks for NaN handling or unit conversion. This matches all historical failure patterns for 'coder' mode described in scene=workflow.",
+    "missing_steps": [
+      "Provide complete executable Python code with all required imports (pandas, numpy, scipy, json, markdown)",
+      "Define clear testable hypothesis with specific H1-H5 predictions",
+      "Specify exact CSV file path and data structure details",
+      "Implement unit validation/conversion for Ea to kJ/mol with error handling",
+      "Add explicit file write operations for results.json, loop_log.jsonl, and report.md",
+      "Include data validation checks before statistical analysis",
+      "Implement DerSimonian-Laird random-effects model, bootstrap CIs, and permutation tests"
+    ],
+    "mode": "coder",
+    "description": "Execute a complete data analysis pipeline for Arrhenius kinetics validation with explicit file I/O and statistical hypothesis testing."
   }
 ]
