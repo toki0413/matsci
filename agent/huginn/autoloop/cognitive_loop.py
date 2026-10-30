@@ -70,6 +70,12 @@ from huginn.autoloop.signals import (
 from huginn.autoloop.types import AutoloopResult, CognitiveState, LoopPhase
 from huginn.env_access import env_bool, env_int
 from huginn.feature_flags import FeatureFlags
+from huginn.llm_retry import (
+    LLMUnavailableError,
+    classify_hard_llm_failure,
+    clear_hard_llm_failure,
+    get_hard_llm_failure,
+)
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
@@ -435,6 +441,8 @@ class CognitiveLoop:
         """
         state = initial_state or LoopState(max_iterations=self._max_iterations)
         state.max_iterations = self._max_iterations
+        # 每个 run 复位 provider 硬失败闩锁 (跨 run 不复用上一轮的 provider 状态).
+        clear_hard_llm_failure()
         # ON_WORKFLOW_BEGIN: 之前只发 stage 级事件, workflow 整体首尾缺失.
         await self._dispatch_workflow_event(EventType.ON_WORKFLOW_BEGIN, "workflow_start")
         while state.iteration < state.max_iterations and not state.should_stop:
@@ -455,6 +463,28 @@ class CognitiveLoop:
 
     async def _run_iteration(self, state: LoopState) -> bool:
         """跑一轮 observe→decide→execute→reflect; 返回 True 表示应退出主循环."""
+        # 结构性缺陷 L (类级): 阶段方法普遍 `except Exception` 把失败降级成空产出,
+        # provider 硬失败(配额/认证)即便抛出来也会被它们吞掉 — 只在 decider 补一次
+        # 是实例补丁(ws35 实测: 仍有 20 轮 plan 空转). 闩锁在唯一重试出口置位,
+        # 这里每轮开头读一次, 于是"哪个阶段吞的"都无所谓, 循环按同一判据停机.
+        latch = get_hard_llm_failure()
+        if latch is not None:
+            kind, message = latch
+            err = LLMUnavailableError(kind, message)
+            self._record_failure(state, "iteration", err, detail=f"provider={kind}")
+            logger.error(
+                "CognitiveLoop: provider 硬失败 (%s) — 阶段已吞掉异常, 本轮停机: %s",
+                kind,
+                message[:160],
+            )
+            if getattr(self, "_control_trace_fn", None) is not None:
+                self._control_trace_fn(
+                    "llm_unavailable",
+                    f"kind={kind} source=phase_latch",
+                    action="stop",
+                )
+            state.should_stop = True
+            return True
         observation, stop = await self._run_observe(state)
         if stop:
             return True
@@ -500,7 +530,20 @@ class CognitiveLoop:
         try:
             decision = await self._decide(state, observation)
         except Exception as e:
-            self._record_failure(state, "decide", e)
+            # provider 硬失败 (配额/认证) 与其余失败一样终止, 但终止原因必须
+            # 指名 provider 侧 —— 否则又会被读成"这轮没想法".
+            provider = isinstance(e, LLMUnavailableError)
+            if provider:
+                self._record_failure(state, "decide", e, detail=f"provider={e.kind}")
+                logger.error(
+                    "CognitiveLoop: LLM provider unavailable (%s) — 终止 run", e.kind
+                )
+                if getattr(self, "_control_trace_fn", None) is not None:
+                    self._control_trace_fn(
+                        "llm_unavailable", f"kind={e.kind}", action="stop"
+                    )
+            else:
+                self._record_failure(state, "decide", e)
             state.should_stop = True
             return None
         if decision.action not in VALID_ACTIONS:
@@ -516,7 +559,12 @@ class CognitiveLoop:
             "hypothesize",
             "pivot",
         ):
-            nxt = "execute" if _plan_available_for(self) else "plan"
+            # pivot 的语义是"换方向", 固定协议下唯一合法的换向就是**重写计划**
+            # (把验收缺口写进 DESCRIPTION); hypothesize 才走"有 plan 就执行".
+            if decision.action == "pivot":
+                nxt = "plan"
+            else:
+                nxt = "execute" if _plan_available_for(self) else "plan"
             logger.warning(
                 "CognitiveLoop: action=%s 被拒 (objective 固定假设), 改判为 %s",
                 decision.action, nxt,
@@ -1994,6 +2042,7 @@ class CognitiveRunner(EngineFacade):
             fixed_protocol_hypothesis,
             parse_contract,
             parse_manifest,
+            parse_static_constraints,
         )
 
         # 结构性缺陷 I: objective 自带固定假设清单 (H1..Hn + "不允许改口径") 时,
@@ -2004,6 +2053,12 @@ class CognitiveRunner(EngineFacade):
         # 同一锚点覆盖**内容契约** (必需键名 / JSONL 行 schema): 只验文件存在
         # 会让"自造一套键名/假设"的交付物判绿 (ws35 实测).
         self._deliverable_contract = parse_contract(objective, self._deliverable_manifest)
+        # 静态约束 (禁用依赖 / 固定种子 / 指定数据文件) 同属 objective 锚点:
+        # ws35 实测 coder 用 pandas + cleaned 变体数据, 交付物"在"但口径全错.
+        self._static_constraints = parse_static_constraints(
+            objective, self.workspace, self._deliverable_manifest
+        )
+        self._repro_cache = None
         self._last_plan_failure = None
         if self._deliverable_manifest:
             logger.warning(
@@ -2352,6 +2407,13 @@ class CognitiveRunner(EngineFacade):
         try:
             raw = await self._llm_chat(prompt, persona_name="reviewer", task="reasoning")
         except Exception as e:
+            # 结构性缺陷 L: provider 硬失败 (配额耗尽/认证失效) 不是"这轮没想法",
+            # 规则兜底会把它伪装成正常动作, 让循环空转到迭代耗尽. 必须显式抛出,
+            # 让 _run_decide 把它记成终止原因.
+            kind = classify_hard_llm_failure(e)
+            if kind is not None:
+                logger.error("decider LLM 硬失败 (%s): %s", kind, e)
+                raise LLMUnavailableError(kind, str(e)) from e
             logger.debug("decider LLM call failed: %s", e)
             return None
         if not raw:
@@ -2534,16 +2596,54 @@ Physical time series collected this run:
         """确定性交付物验收; 无声明时 passed=True (不适用).
 
         清单来自 objective (见 ``_prepare_run``), agent 无法在运行中改写 ——
-        这是"验收标准不由模型自己生成"的锚点.
+        这是"验收标准不由模型自己生成"的锚点. 三道门逐级从严:
+        存在/内容契约 → 静态约束 (禁用依赖/固定种子/指定数据) → 可复现
+        (产物必须能由声明的脚本重跑出来).
         """
         manifest = getattr(self, "_deliverable_manifest", None) or []
         if not manifest:
             return {"passed": True, "declared": [], "checked": 0}
-        from huginn.autoloop.deliverables import check_manifest
+        from huginn.autoloop.deliverables import (
+            check_manifest,
+            check_reproducible,
+            check_static_constraints,
+            parse_static_constraints,
+            repro_signature,
+        )
 
-        return check_manifest(
+        gate = check_manifest(
             self.workspace, manifest, getattr(self, "_deliverable_contract", None)
         )
+        if not gate.get("passed", True):
+            return gate
+        constraints = getattr(self, "_static_constraints", None)
+        if constraints is None:
+            constraints = parse_static_constraints(
+                str(getattr(self, "_objective", "") or ""), self.workspace, manifest
+            )
+            self._static_constraints = constraints
+        violations = check_static_constraints(self.workspace, manifest, constraints)
+        if violations:
+            logger.warning("交付物静态约束未通过: %s", violations)
+            return {**gate, "passed": False, "static_violations": violations}
+        # 可复现门: 缓存键覆盖脚本与产物签名 —— 任何一方被手写改动都会触发重跑,
+        # 重跑通过后按**重跑后的**签名缓存, 避免每轮都重跑一遍分析.
+        key = repro_signature(self.workspace, manifest)
+        cached = getattr(self, "_repro_cache", None)
+        if cached and cached[0] == key:
+            repro = cached[1]
+        else:
+            repro = check_reproducible(self.workspace, manifest)
+            post_key = (
+                repro_signature(self.workspace, manifest)
+                if repro.get("passed", False)
+                else key
+            )
+            self._repro_cache = (post_key, repro)
+        if not repro.get("passed", True):
+            logger.warning("交付物可复现性未通过: %s", repro)
+            return {**gate, "passed": False, "repro": repro}
+        return {**gate, "repro": repro}
 
     async def _finalize_run(
         self,
@@ -4582,6 +4682,9 @@ Physical time series collected this run:
         try:
             llm_decision = await self._decide_next_action_llm(state, cog, obs)
         except Exception as e:
+            if isinstance(e, LLMUnavailableError):
+                # 供应商硬失败: 不许落回规则兜底 (否则就是 ws35 实测的 46 轮空转).
+                raise
             logger.debug("LLM decider failed: %s, fallback to rule", e)
             return None
         if llm_decision is None:

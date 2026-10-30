@@ -6,22 +6,35 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+import logging
+import os
 import re
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "Contract",
     "Deliverable",
     "LineSpec",
+    "StaticConstraints",
+    "acceptance_block_for",
     "check_contract",
     "check_manifest",
+    "check_reproducible",
+    "check_static_constraints",
     "fixed_protocol_hypothesis",
     "objective_block_for",
     "parse_contract",
     "parse_manifest",
+    "parse_static_constraints",
+    "render_acceptance_gap",
     "render_contract_hint",
     "render_objective_block",
 ]
@@ -164,11 +177,27 @@ def render_acceptance_gap(gate: dict[str, Any]) -> str:
     if isinstance(contract, dict) and not contract.get("passed", True):
         cparts = [
             f"{k}=[{', '.join(str(x) for x in (contract.get(k) or [])[:_cap])}]"
-            for k in ("missing_keys", "short_lines", "bad_lines", "missing_fields")
+            for k in (
+                "missing_keys", "short_lines", "bad_lines", "missing_fields",
+                "bad_hypotheses",
+            )
             if contract.get(k)
         ]
         if cparts:
             parts.append("contract: " + "; ".join(cparts))
+    static = gate.get("static_violations")
+    if static:
+        parts.append(f"static=[{'; '.join(str(s) for s in static[:_cap])}]")
+    repro = gate.get("repro")
+    if isinstance(repro, dict) and not repro.get("passed", True):
+        seg = (
+            f"repro: 跑 {repro.get('script')} 未重新生成产物 rc={repro.get('returncode')} "
+            f"missing={repro.get('missing') or []} invalid={repro.get('invalid') or []}"
+        )
+        stderr = str(repro.get("stderr") or "").strip()
+        if stderr:
+            seg += f" stderr={stderr[-240:]}"
+        parts.append(seg)
     return "; ".join(p for p in parts if p)[:600]
 
 
@@ -196,6 +225,213 @@ def acceptance_block_for(host: Any, header: str) -> str:
     if not gap:
         return ""
     return f"\n{header}\n{gap}\n"
+
+
+# ---------------------------------------------------------------------------
+# 静态约束: objective 写死的"禁用依赖 / 固定种子 / 指定数据文件"
+# ---------------------------------------------------------------------------
+
+#: 只认常见的科研栈 —— 在否定句里出现才算禁用, 不做泛化的自然语言推断.
+_FORBIDDEN_MODULES = ("pandas", "matplotlib", "seaborn", "sklearn", "statsmodels", "torch")
+_NEGATION_RE = re.compile(
+    r"没有|不含|不装|未安装|禁止使用|禁止用|不得使用|不要使用|别用|不用|venv 里没有", re.I
+)
+_SEED_RE = re.compile(r"seed\s*[=:：]\s*([0-9]{4,})", re.I)
+_INPUT_PATH_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.(?:csv|tsv|json|xlsx)\b")
+
+
+@dataclass(frozen=True)
+class StaticConstraints:
+    """objective 里的硬性技术条款 — 由脚本源码静态判定, 不靠模型自述."""
+
+    forbidden_imports: tuple[str, ...] = ()
+    required_literals: tuple[str, ...] = ()
+    required_inputs: tuple[str, ...] = ()
+
+    def __bool__(self) -> bool:
+        return bool(
+            self.forbidden_imports or self.required_literals or self.required_inputs
+        )
+
+
+def parse_static_constraints(
+    objective: str,
+    workspace: Any = None,
+    declared: "list[Deliverable] | None" = None,
+) -> StaticConstraints:
+    """objective → 静态约束 (只抽取, 不猜测).
+
+    抽取口径:
+    - 禁用依赖: 某个已知科研栈出现在**否定句**里 ("venv 里没有 pandas、matplotlib");
+    - 固定种子: ``seed=<数字>``;
+    - 指定输入: objective 里点名且**在工作区真实存在**的数据文件 (取 basename),
+      防止 agent 换成数据目录下的其它变体文件 (ws35 实测: 用了 cleaned 版本 → 数值全错).
+      ``declared`` (交付物清单) 里的文件是**产物**, 不是输入 —— 必须排除, 否则
+      "写 results.json" 会被当成"必须引用 results.json"这条无意义的要求.
+    """
+    if not isinstance(objective, str) or not objective.strip():
+        return StaticConstraints()
+    sentences = re.split(r"[。\n]", objective)
+    forbidden: list[str] = []
+    for mod in _FORBIDDEN_MODULES:
+        for sent in sentences:
+            if mod in sent.lower() and _NEGATION_RE.search(sent):
+                forbidden.append(mod)
+                break
+    seeds = tuple(dict.fromkeys(_SEED_RE.findall(objective)))
+    outputs = {d.path.rsplit("/", 1)[-1] for d in (declared or [])}
+    inputs: list[str] = []
+    if workspace is not None:
+        root = Path(workspace)
+        for m in _INPUT_PATH_RE.finditer(objective):
+            rel = m.group(0)
+            if (root / rel).is_file():
+                base = rel.rsplit("/", 1)[-1]
+                if base not in inputs and base not in outputs:
+                    inputs.append(base)
+    return StaticConstraints(
+        forbidden_imports=tuple(forbidden),
+        required_literals=seeds,
+        required_inputs=tuple(inputs),
+    )
+
+
+def check_static_constraints(
+    workspace: Any, manifest: list[Deliverable], constraints: StaticConstraints
+) -> list[str]:
+    """按静态约束检查声明的脚本 (返回违规清单; 空 = 通过)."""
+    if not constraints or not manifest:
+        return []
+    root = Path(workspace)
+    out: list[str] = []
+    for d in manifest:
+        if not d.path.endswith(".py"):
+            continue
+        p = root / d.path
+        if not p.is_file():
+            continue
+        src = p.read_text(encoding="utf-8", errors="replace")
+        for mod in constraints.forbidden_imports:
+            if re.search(
+                rf"^\s*(?:import\s+{mod}\b|from\s+{mod}\s+import)", src, re.M
+            ):
+                out.append(f"{d.path} 导入了 objective 禁用的 {mod}")
+        for lit in constraints.required_literals:
+            if lit not in src:
+                out.append(f"{d.path} 缺少 objective 指定的固定随机种子 {lit}")
+        for base in constraints.required_inputs:
+            # 词边界匹配: "cleaned_ea_dataset.csv" 里的 "ea_dataset.csv" 不算引用
+            # (ws35 实测 agent 就是这么换成变体数据的).
+            pat = rf"(?<![A-Za-z0-9_]){re.escape(base)}"
+            if not re.search(pat, src):
+                out.append(f"{d.path} 未引用 objective 指定的数据文件 {base}")
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 可复现性: 产物必须由声明的脚本重跑生成, 不接受"手写数值"
+# ---------------------------------------------------------------------------
+
+_REPRO_TIMEOUT_S = float(os.environ.get("HUGINN_REPRO_TIMEOUT_S", "240"))
+_REPRO_STASH_DIR = ".gate_rerun"
+
+
+def _sig(path: Path) -> tuple[int, int] | None:
+    st = None
+    with contextlib.suppress(OSError):
+        st = path.stat()
+    return None if st is None else (st.st_mtime_ns, st.st_size)
+
+
+def repro_signature(workspace: Any, manifest: list[Deliverable]) -> tuple:
+    """脚本 + 产物的文件签名 (缓存键: 任何一方被改写都重新判)."""
+    root = Path(workspace)
+    return tuple((d.path, _sig(root / d.path)) for d in manifest)
+
+
+def check_reproducible(
+    workspace: Any,
+    manifest: list[Deliverable],
+    timeout: float | None = None,
+) -> dict[str, Any]:
+    """把产物挪开重跑声明的脚本, 要求它自己把产物重新生成.
+
+    ws35 实测: coder 没有真实执行分析, 直接手写 results.json (16 个键全在、数值
+    全编), 存在性 + 键名两道门全绿 —— 只有和真值对账才发现. 判据改成**可复现**:
+    产物能不能由一个可重跑的脚本产生. 失败时把原产物放回, 不破坏 agent 的中间成果.
+    """
+    root = Path(workspace)
+    scripts = [d.path for d in manifest if d.path.endswith(".py")]
+    outputs = [d for d in manifest if not d.path.endswith(".py")]
+    if not scripts or not outputs:
+        return {"passed": True, "skipped": "no script/output pair"}
+    script = scripts[0]
+    if not (root / script).is_file():
+        return {"passed": True, "skipped": f"{script} missing (manifest gate owns this)"}
+    timeout = _REPRO_TIMEOUT_S if timeout is None else timeout
+    stash = root / _REPRO_STASH_DIR
+    moved: list[tuple[Path, Path]] = []
+    try:
+        stash.mkdir(exist_ok=True)
+        for d in outputs:
+            p = root / d.path
+            if p.is_file():
+                dst = stash / d.path.replace("/", "__")
+                p.replace(dst)
+                moved.append((p, dst))
+        proc = subprocess.run(
+            [sys.executable, script],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        rc = proc.returncode
+        stderr = (proc.stderr or "")[-800:]
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        # 超时/起不了进程: 都判红 (逐字记原因), 原产物在下面回滚.
+        rc, stderr = -9, str(exc)[-800:]
+    after = check_manifest(root, outputs)
+    ok = rc == 0 and after["passed"]
+    if not ok:
+        for p, dst in moved:
+            with contextlib.suppress(OSError):
+                dst.replace(p)
+        return {
+            "passed": False,
+            "script": script,
+            "returncode": rc,
+            "missing": after["missing"],
+            "empty": after["empty"],
+            "invalid": after["invalid"],
+            "stderr": stderr,
+        }
+    for _, dst in moved:
+        with contextlib.suppress(OSError):
+            dst.unlink()
+    return {"passed": True, "script": script, "returncode": rc}
+
+
+def _read_text(p: Path) -> str | None:
+    """读文本; 读失败 (OSError) → None, 调用方按"不可验收"处理."""
+    out: str | None = None
+    with contextlib.suppress(OSError):
+        out = p.read_text(encoding="utf-8", errors="replace")
+    return out
+
+
+def _loads(text: str) -> Any:
+    """解析 JSON; 解析失败 (ValueError ⊃ JSONDecodeError) → None."""
+    out: Any = None
+    with contextlib.suppress(ValueError):
+        out = json.loads(text)
+    return out
+
+
+def _load_json(p: Path) -> Any:
+    """读 + 解析一个 JSON 文件; 任一步失败 → None."""
+    text = _read_text(p)
+    return None if text is None else _loads(text)
 
 
 def _json_has_substance(payload: Any) -> bool:
@@ -231,9 +467,12 @@ class Contract:
 
     json_keys: dict[str, tuple[str, ...]] = field(default_factory=dict)
     line_specs: dict[str, LineSpec] = field(default_factory=dict)
+    #: objective 声明 "hypotheses 对象（P1–P5 各自 supported/refuted）" 时的必需子键.
+    #: 结构性的: 交付物写成 list 或自造键名会被确定性判红, 不再靠人眼对账.
+    hypothesis_range: tuple[str, ...] = ()
 
     def __bool__(self) -> bool:
-        return bool(self.json_keys or self.line_specs)
+        return bool(self.json_keys or self.line_specs or self.hypothesis_range)
 
 
 _KEY_MARKERS = (
@@ -333,7 +572,29 @@ def parse_contract(objective: str, manifest: list[Deliverable] | None = None) ->
                 line_specs[path] = LineSpec(min_lines=n, fields=prev.fields)
                 break
 
-    return Contract(json_keys=json_keys, line_specs=line_specs)
+    return Contract(
+        json_keys=json_keys,
+        line_specs=line_specs,
+        hypothesis_range=_parse_hypothesis_range(text, declared),
+    )
+
+
+_HYP_RANGE_RE = re.compile(r"hypothes[ei]s[^\n]{0,60}?P(\d+)\s*[–—~-]\s*P(\d+)", re.I)
+
+
+def _parse_hypothesis_range(text: str, declared: list[str]) -> tuple[str, ...]:
+    """objective 提到 "hypotheses 对象 (P{a}–P{b})" → 必需子键 (P1..Pn)."""
+    if "hypothes" not in text.lower():
+        return ()
+    if not any(p.endswith(".json") for p in declared):
+        return ()
+    m = _HYP_RANGE_RE.search(text)
+    if not m:
+        return ()
+    a, b = int(m.group(1)), int(m.group(2))
+    if not (0 < a <= b <= 20):
+        return ()
+    return tuple(f"P{i}" for i in range(a, b + 1))
 
 
 def check_contract(workspace: Any, contract: Contract) -> dict[str, Any]:
@@ -346,15 +607,13 @@ def check_contract(workspace: Any, contract: Contract) -> dict[str, Any]:
     short_lines: list[str] = []
     bad_lines: list[str] = []
     missing_fields: list[str] = []
+    bad_hypotheses: list[str] = []
 
     for path, want in contract.json_keys.items():
         p = root / path
         if not p.is_file():
             continue
-        try:
-            payload = json.loads(p.read_text(encoding="utf-8", errors="replace"))
-        except (OSError, ValueError):
-            continue
+        payload = _load_json(p)
         if not isinstance(payload, dict):
             continue
         flat: dict[str, Any] = dict(payload)
@@ -371,20 +630,16 @@ def check_contract(workspace: Any, contract: Contract) -> dict[str, Any]:
         p = root / path
         if not p.is_file():
             continue
-        try:
-            lines = [ln for ln in p.read_text(encoding="utf-8", errors="replace").splitlines() if ln.strip()]
-        except OSError:
+        text = _read_text(p)
+        if text is None:
             continue
+        lines = [ln for ln in text.splitlines() if ln.strip()]
         if spec.min_lines and len(lines) < spec.min_lines:
             short_lines.append(f"{path}:{len(lines)}<{spec.min_lines}")
         if not spec.fields:
             continue
         for i, ln in enumerate(lines, 1):
-            try:
-                obj = json.loads(ln)
-            except ValueError:
-                bad_lines.append(f"{path}:{i}")
-                continue
+            obj = _loads(ln)
             if not isinstance(obj, dict):
                 bad_lines.append(f"{path}:{i}")
                 continue
@@ -392,12 +647,44 @@ def check_contract(workspace: Any, contract: Contract) -> dict[str, Any]:
             if miss:
                 missing_fields.append(f"{path}:{i}:{','.join(miss)}")
 
+    if contract.hypothesis_range:
+        path = next(
+            (p for p, ks in contract.json_keys.items() if "hypotheses" in ks),
+            next((p for p in contract.json_keys if p.endswith(".json")), None),
+        )
+        payload = None
+        if path:
+            fp = root / path
+            if fp.is_file():
+                payload = _load_json(fp)
+            hyp = payload.get("hypotheses") if isinstance(payload, dict) else None
+            if payload is not None:
+                if not isinstance(hyp, dict):
+                    bad_hypotheses.append(
+                        f"{path}:hypotheses 必须是对象 {'/'.join(contract.hypothesis_range)}"
+                    )
+                else:
+                    for k in contract.hypothesis_range:
+                        v = hyp.get(k)
+                        if isinstance(v, dict):
+                            v = v.get("status") or v.get("result") or v.get("supported")
+                        s = str(v).strip().lower()
+                        if s not in {
+                            "supported", "refuted", "true", "false", "被支持", "被推翻",
+                        }:
+                            bad_hypotheses.append(
+                                f"{path}:hypotheses.{k} 缺失或不是 supported/refuted"
+                            )
+
     return {
-        "passed": not (missing_keys or short_lines or bad_lines or missing_fields),
+        "passed": not (
+            missing_keys or short_lines or bad_lines or missing_fields or bad_hypotheses
+        ),
         "missing_keys": missing_keys,
         "short_lines": short_lines,
         "bad_lines": bad_lines,
         "missing_fields": missing_fields,
+        "bad_hypotheses": bad_hypotheses,
     }
 
 
@@ -413,6 +700,11 @@ def _contract_lines(contract: Contract, manifest: list[Deliverable] | None = Non
         if spec.fields:
             seg += f"，每行必须含: {', '.join(spec.fields)}"
         parts.append(seg)
+    if contract.hypothesis_range:
+        parts.append(
+            f"hypotheses 必须是对象且含 {'/'.join(contract.hypothesis_range)}, "
+            "每个取值只能是 supported 或 refuted"
+        )
     return parts
 
 
@@ -490,9 +782,8 @@ def check_manifest(
             continue
         if p.suffix == ".json":
             # 零字节 → 空; 有内容但解析失败 → 无效; 可解析但无实质 → 空壳(判空).
-            try:
-                payload = json.loads(p.read_text(encoding="utf-8", errors="replace"))
-            except (OSError, ValueError):
+            payload = _load_json(p)
+            if payload is None:
                 # 读失败或 JSONDecodeError(⊂ValueError) → 声明交付物不可验收.
                 invalid.append(d.path)
                 continue

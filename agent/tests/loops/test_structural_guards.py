@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import json
 from pathlib import Path
 
 # ===== Task 1: deliverables 模块 =====
@@ -699,10 +700,11 @@ def test_step_failure_to_dict_is_serializable():
 # 基线只减不增: 新增静默宽捕获 → 红. 收敛后请下调基线.
 
 _AUTOLOOP_ROOT = Path(__file__).resolve().parents[2] / "huginn" / "autoloop"
-# 575 → 579: deliverables.check_contract 的 3 个**窄**捕获 (OSError / ValueError,
-# 读文件与 JSONL 解析) + cognitive_loop._plan_available_for 的 1 个探针防御
-# (注入的 plan_ready_fn 抛异常 → 按"无 plan"处理并记 debug, 不让循环崩).
-_AUTOLOOP_EXCEPT_TOTAL_BASELINE = 579
+# 579 → 576: 可复现门新增 2 个**窄**捕获 (_sig 的 stat / subprocess 的 Timeout+OSError),
+# 同时把 check_contract / check_manifest 里 5 处重复的"读文本 + 解析 JSON"try/except
+# 收敛成 _read_text / _loads / _load_json 三个 contextlib.suppress 辅助函数
+# (suppress 不是 ExceptHandler, 不计数), 净减 3. 棘轮只减不增.
+_AUTOLOOP_EXCEPT_TOTAL_BASELINE = 576
 _AUTOLOOP_BROAD_SILENT_BASELINE = 474
 _LOUD_LOG_METHODS = frozenset({"warning", "error", "critical", "exception", "fatal"})
 
@@ -1069,13 +1071,17 @@ def _run_decide_once(loop, decision_action: str):
 
 
 def test_decide_replaces_hypothesize_when_protocol_fixed():
-    """objective 已钉死假设 → hypothesize/pivot 没有语义, 必须改判到 plan/execute."""
+    """objective 已钉死假设 → hypothesize 改判执行; pivot 改判重写计划.
+
+    固定协议下 pivot 唯一合法的"换方向"是把验收缺口写进 DESCRIPTION, 所以
+    pivot → plan; hypothesize 才是"有 plan 就 execute".
+    """
     traces: list[str] = []
     loop = _real_loop("hypothesize", fixed=True, traces=traces)
     out = _run_decide_once(loop, "hypothesize")
     assert out is not None and out.action == "execute", "固定协议下仍去另立假设"
     out = _run_decide_once(loop, "pivot")
-    assert out.action == "execute"
+    assert out.action == "plan", "固定协议下 pivot 没有重写计划, 缺口仍到不了作者手里"
     assert traces and traces[0] == "objective_fixed_protocol"
 
 
@@ -1083,6 +1089,340 @@ def test_decide_keeps_pivot_without_fixed_protocol():
     loop = _real_loop("pivot", fixed=False, traces=[])
     out = _run_decide_once(loop, "pivot")
     assert out is not None and out.action == "pivot"
+
+
+def test_coder_task_carries_acceptance_gap():
+    """验收缺口必须拼进 coder 的任务文本 —— 动手的是 coder, 不是 decider.
+
+    ws35 实测: 模型按旧计划把 results.json / loop_log.jsonl / report.md 写进
+    ``results/`` 子目录, 根目录清单一直判 missing, 循环反复 execute 同一份计划.
+    缺口只有 decider 看得到时, 执行端永远在修错的地方.
+    """
+    import asyncio
+    from types import SimpleNamespace
+
+    from huginn.autoloop.engine_act import EngineAct
+
+    seen: list[str] = []
+
+    class _FakeCoder:
+        def run(self, task):
+            seen.append(task)
+            return {"messages": [], "final_answer": ""}
+
+    host = SimpleNamespace(
+        _objective="objective 原文",
+        workspace=".",
+        _deliverable_manifest=None,
+        _deliverables_ok=lambda: {
+            "passed": False,
+            "missing": ["results.json", "loop_log.jsonl", "report.md"],
+            "empty": [],
+            "invalid": [],
+            "contract": {
+                "passed": True, "missing_keys": [], "short_lines": [],
+                "bad_lines": [], "missing_fields": [],
+            },
+        },
+        coder=_FakeCoder(),
+    )
+    act = EngineAct(host)
+    asyncio.run(
+        EngineAct._execute_coder(act, "写 analysis.py 并跑出 results.json", {})
+    )
+    assert seen, "coder 没有被调用"
+    task = seen[0]
+    assert "Acceptance (deterministic engine gate" in task, "缺口块没进 coder 任务"
+    assert "results.json" in task and "loop_log.jsonl" in task, "缺口文件清单没进任务"
+    assert "ROOT" in task, "没告诉 coder 文件必须落在工作区根目录"
+
+
+# ===== K: 产物"在"但数值是编的 (无可复现性 / 违反硬性技术条款) =====
+
+_WS35_LIKE_OBJ = (
+    "方法要求（硬性）：\n"
+    "- 只用 numpy 与 scipy（venv 里没有 pandas、matplotlib）。读 CSV 用标准库 csv。\n"
+    "- 数据（只读，禁止修改）：data/ea_dataset.csv\n"
+    "- 固定随机种子（seed=20261029）。\n"
+)
+
+
+def test_static_constraints_parsed_from_objective(tmp_path):
+    from huginn.autoloop.deliverables import parse_static_constraints
+
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "ea_dataset.csv").write_text("x\n", encoding="utf-8")
+    c = parse_static_constraints(_WS35_LIKE_OBJ, tmp_path)
+    assert "pandas" in c.forbidden_imports and "matplotlib" in c.forbidden_imports
+    assert c.required_literals == ("20261029",)
+    assert "ea_dataset.csv" in c.required_inputs
+
+
+def test_static_constraints_flag_pandas_and_wrong_data_file(tmp_path):
+    from huginn.autoloop.deliverables import (
+        Deliverable,
+        check_static_constraints,
+        parse_static_constraints,
+    )
+
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "ea_dataset.csv").write_text("x\n", encoding="utf-8")
+    (tmp_path / "data" / "cleaned_ea_dataset.csv").write_text("x\n", encoding="utf-8")
+    (tmp_path / "analysis.py").write_text(
+        "import pandas as pd\n# seed 123\n# 读 cleaned_ea_dataset.csv\n", encoding="utf-8"
+    )
+    c = parse_static_constraints(_WS35_LIKE_OBJ, tmp_path)
+    bad = check_static_constraints(tmp_path, [Deliverable("analysis.py")], c)
+    joined = " | ".join(bad)
+    assert "pandas" in joined, "禁用依赖没被静态门拦住"
+    assert "20261029" in joined, "固定种子缺失没被拦住"
+    assert "ea_dataset.csv" in joined, "指定数据文件缺失没被拦住"
+
+
+def test_reproducible_rejects_handwritten_results(tmp_path):
+    """脚本不产出产物 → 交付物是手写的 → 判红, 且原产物被放回."""
+    from huginn.autoloop.deliverables import Deliverable, check_reproducible
+
+    (tmp_path / "analysis.py").write_text("print('no-op')\n", encoding="utf-8")
+    (tmp_path / "results.json").write_text('{"q1_delta_ea": 116.79}', encoding="utf-8")
+    (tmp_path / "loop_log.jsonl").write_text('{"loop_id": 1}\n', encoding="utf-8")
+    manifest = [
+        Deliverable("analysis.py"),
+        Deliverable("results.json"),
+        Deliverable("loop_log.jsonl"),
+    ]
+    out = check_reproducible(tmp_path, manifest, timeout=30)
+    assert not out["passed"], "没有产物生成也被判绿 (手写数值可蒙混过关)"
+    assert (tmp_path / "results.json").exists(), "判红后没有回滚原产物"
+    assert (tmp_path / "loop_log.jsonl").exists()
+
+
+def test_reproducible_accepts_script_generated_outputs(tmp_path):
+    from huginn.autoloop.deliverables import Deliverable, check_reproducible
+
+    (tmp_path / "analysis.py").write_text(
+        "import json\n"
+        "payload = {'q1_delta_ea': 51.59, 'n_papers': 12,\n"
+        "           'hypotheses': {'P1': 'supported', 'P4': 'refuted'}}\n"
+        "json.dump(payload, open('results.json', 'w'))\n"
+        "with open('loop_log.jsonl', 'w') as f:\n"
+        "    for i in range(1, 51):\n"
+        "        f.write(json.dumps({'loop_id': i, 'status': 'ok', 'delta_ea': 1.0}) + '\\n')\n",
+        encoding="utf-8",
+    )
+    manifest = [
+        Deliverable("analysis.py"),
+        Deliverable("results.json"),
+        Deliverable("loop_log.jsonl"),
+    ]
+    out = check_reproducible(tmp_path, manifest, timeout=30)
+    assert out["passed"], f"真实产出未被接受: {out}"
+    assert (tmp_path / "results.json").exists()
+
+
+def test_contract_requires_hypotheses_object(tmp_path):
+    """objective 写 "hypotheses 对象(P1–P5)" 时, list / 缺失子键都判红."""
+    from huginn.autoloop.deliverables import (
+        Contract,
+        Deliverable,
+        check_contract,
+        parse_contract,
+    )
+
+    obj = "键名至少包含 q1_delta_ea, hypotheses；外加 hypotheses 对象（P1–P5 各自 supported / refuted）。"
+    contract = parse_contract(obj, [Deliverable("results.json")])
+    assert contract.hypothesis_range == ("P1", "P2", "P3", "P4", "P5")
+
+    (tmp_path / "results.json").write_text(
+        json.dumps({"q1_delta_ea": 1.0, "hypotheses": ["a", "b"]}), encoding="utf-8"
+    )
+    bad = check_contract(tmp_path, contract)
+    assert not bad["passed"] and bad["bad_hypotheses"], "hypotheses 写成 list 仍判绿"
+
+    (tmp_path / "results.json").write_text(
+        json.dumps(
+            {
+                "q1_delta_ea": 1.0,
+                "hypotheses": {"P1": "supported", "P2": "supported",
+                               "P3": "supported", "P4": "refuted", "P5": "supported"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    ok = check_contract(tmp_path, contract)
+    assert ok["passed"], f"合规 hypotheses 被判红: {ok}"
+
+
+# ===== L: provider 硬失败被规则兜底伪装成正常动作 =====
+#
+# ws35 实测: 配额耗尽后每次 decider 调用都抛 400/-20080, 该异常被
+# ``_decide_next_action_llm`` 吞成 None → ``_dec_rule_fallback`` 给出 hypothesize →
+# 固定协议改判 plan → 46 轮 "plan" 空转到迭代耗尽, 最后才由交付物门判红. 供应商
+# 死了必须第一次就作为**终止原因**上报, 不能看起来像"模型这轮想先写计划".
+
+
+def test_classify_hard_llm_failure_recognizes_quota_and_auth():
+    from huginn.llm_retry import classify_hard_llm_failure
+
+    class _Quota(Exception):
+        pass
+
+    quota = _Quota(
+        "Error code: 400 - {'error': {'type': 'invalid_request_error', "
+        "'code': '-20080', 'message': '您已超过输入 tokens 配额'}}"
+    )
+    assert classify_hard_llm_failure(quota) == "llm_quota"
+
+    class _Auth(Exception):
+        status_code = 401
+
+    assert classify_hard_llm_failure(_Auth("bad token")) == "llm_auth"
+
+    class _Rate(Exception):
+        status_code = 429
+
+    # 限流是可重试的瞬时错误, 不是硬失败 (否则一次抖动就把整个 run 杀掉).
+    assert classify_hard_llm_failure(_Rate("rate limited")) is None
+    assert classify_hard_llm_failure(ValueError("unparseable decider output")) is None
+
+
+def test_decide_llm_raises_on_provider_quota():
+    """decider 遇到配额耗尽要抛 LLMUnavailableError, 而不是返回 None 让规则接管."""
+    from huginn.autoloop.cognitive_loop import CognitiveRunner, LoopState
+    from huginn.llm_retry import LLMUnavailableError
+
+    class _Quota(Exception):
+        pass
+
+    class _Engine:
+        _use_llm_decider = True
+
+        async def _llm_chat(self, *_a, **_k):
+            raise _Quota("Error code: 400 - {'code': '-20080', 'message': '您已超过输入 tokens 配额'}")
+
+    runner = CognitiveRunner(_Engine())
+    runner._build_decider_prompt = lambda *_a, **_k: "p"
+    try:
+        asyncio.run(
+            runner._decide_next_action_llm(LoopState(max_iterations=3), {}, {})
+        )
+    except LLMUnavailableError as e:
+        assert e.kind == "llm_quota"
+    else:
+        raise AssertionError("decider 配额耗尽返回了 None (规则兜底会接管并空转)")
+
+
+def test_dec_llm_does_not_swallow_provider_hard_failure():
+    """_dec_llm 不得把硬失败降级成 None —— 那正是规则兜底接管的地方."""
+    from huginn.autoloop.cognitive_loop import CognitiveRunner, LoopState
+    from huginn.llm_retry import LLMUnavailableError
+
+    class _Quota(Exception):
+        pass
+
+    class _Engine:
+        _use_llm_decider = True
+
+        async def _llm_chat(self, *_a, **_k):
+            raise _Quota("Error code: 400 - {'code': '-20080', 'message': '配额耗尽'}")
+
+    runner = CognitiveRunner(_Engine())
+    runner._build_decider_prompt = lambda *_a, **_k: "p"
+    state = LoopState(max_iterations=5)
+    state.last_action = "plan"  # 跳过 last_action in ("", "skip") 的短路
+    try:
+        asyncio.run(runner._dec_llm(state, {}, {}))
+    except LLMUnavailableError as e:
+        assert e.kind == "llm_quota"
+    else:
+        raise AssertionError("_dec_llm 吞掉了 provider 硬失败, 规则兜底会接管")
+
+
+def test_decide_hard_failure_terminates_run_with_reason():
+    """硬失败要进 LoopState.failures 并置 should_stop: 终止原因可审计."""
+    from huginn.autoloop.cognitive_loop import LoopState
+    from huginn.llm_retry import LLMUnavailableError
+
+    async def boom(state, obs):
+        raise LLMUnavailableError("llm_quota", "配额耗尽")
+
+    state = _run_one_iteration(decide_fn=boom)
+    assert state.failed is True
+    assert state.should_stop is True
+    assert state.failures[0].stage == "decide"
+    assert "LLMUnavailableError" in state.failures[0].error
+    assert "llm_quota" in state.failures[0].error
+
+
+def test_with_retry_latches_provider_hard_failure():
+    """重试出口必须置闩锁 —— 阶段方法会吞掉异常, 控制流只能靠闩锁看见.
+
+    ws35 复跑实测: 只补 decider 后, plan 阶段的宽捕获把 400/-20080 吞成
+    (None, None), 循环仍空转 20 轮才停. 闩锁在**唯一重试出口**置位后, 无论哪个
+    阶段吞掉异常, 控制流都在同一判据下停机.
+    """
+    from huginn.llm_retry import clear_hard_llm_failure, get_hard_llm_failure, with_retry
+
+    class _Quota(Exception):
+        status_code = 402
+
+    async def boom():
+        raise _Quota("insufficient_quota")
+
+    clear_hard_llm_failure()
+    raised = False
+    try:
+        asyncio.run(with_retry(boom, source="test", max_attempts=1))
+    except _Quota:
+        raised = True
+    finally:
+        latch = get_hard_llm_failure()
+        clear_hard_llm_failure()
+    assert raised, "with_retry 应把不可重试的硬失败抛给调用方"
+    assert latch is not None
+    assert latch[0] == "llm_quota"
+
+
+def test_loop_stops_on_latched_hard_failure_even_if_phase_swallowed_it():
+    """阶段吞掉异常也不许继续空转: 下一轮开头读闩锁即停机."""
+    from huginn.autoloop.cognitive_loop import (
+        ActionDecision,
+        CognitiveLoop,
+        LoopState,
+        ReflectionResult,
+    )
+    from huginn.llm_retry import clear_hard_llm_failure, record_hard_llm_failure
+
+    async def _observe(state):
+        # 模拟"阶段里某个 except Exception 吞掉了 provider 硬失败", 但重试出口已置锁.
+        record_hard_llm_failure("llm_quota", "配额耗尽 (plan 阶段吞掉)")
+        return {"ok": True}
+
+    async def _decide(state, obs):
+        return ActionDecision(action="plan")
+
+    async def _execute(state, decision):
+        return "result"
+
+    async def _reflect(state, decision, result):
+        return ReflectionResult()
+
+    loop = CognitiveLoop(
+        max_iterations=3,
+        observe_fn=_observe,
+        decide_fn=_decide,
+        execute_fn=_execute,
+        reflect_fn=_reflect,
+    )
+    try:
+        state = asyncio.run(loop.run(LoopState(max_iterations=3)))
+    finally:
+        clear_hard_llm_failure()
+    assert state.should_stop is True
+    assert state.failed is True
+    assert state.failures[-1].stage == "iteration"
+    assert "llm_quota" in state.failures[-1].error
+    assert state.iteration == 2, f"闩锁未在下一轮开头生效, 跑到了 iter {state.iteration}"
 
 
 # ===== 缺陷台账: 按 class 记账, 不按实例记账 =====
@@ -1204,6 +1544,38 @@ _DEFECT_LEDGER: tuple[dict, ...] = (
             "test_fixed_protocol_seeds_cog_hypothesis",
             "test_decide_replaces_hypothesize_when_protocol_fixed",
             "test_decide_keeps_pivot_without_fixed_protocol",
+        ),
+    },
+    {
+        "class_id": "K-artifact-fabricated-not-reproducible",
+        "symptom": "产物文件齐全、键名齐全, 但数值是手写的 (脚本从没真跑过), 或脚本违反 objective "
+        "写死的技术条款 (用 pandas / 换数据变体 / 丢固定种子) —— 存在性与键名门全绿, 只有和真值对账才发现",
+        "repeat_count": 3,
+        "fix_scope": "structural",
+        "probes": (
+            "test_static_constraints_parsed_from_objective",
+            "test_static_constraints_flag_pandas_and_wrong_data_file",
+            "test_reproducible_rejects_handwritten_results",
+            "test_reproducible_accepts_script_generated_outputs",
+            "test_contract_requires_hypotheses_object",
+        ),
+    },
+    {
+        "class_id": "L-provider-hard-failure-masked-as-rule-fallback",
+        "symptom": "provider 硬失败 (配额耗尽 400/-20080、认证失效 401) 被阶段/decider 的 "
+        "宽捕获吞成 None 或空产出, 规则兜底即便给出正常动作, 循环也会空转到迭代耗尽; "
+        "事后只能从日志看出供应商死了 (E 类「失败不可见」在外部依赖面的复发). "
+        "两次实测: 只补 decider → 46 轮 plan; 再补 decider 后 → 仍有 20 轮 plan 空转, "
+        "因为 plan 阶段自己把异常吞了 —— 修法必须落在**唯一重试出口** (闩锁), 而不是逐个调用面",
+        "repeat_count": 3,
+        "fix_scope": "structural",
+        "probes": (
+            "test_classify_hard_llm_failure_recognizes_quota_and_auth",
+            "test_decide_llm_raises_on_provider_quota",
+            "test_dec_llm_does_not_swallow_provider_hard_failure",
+            "test_decide_hard_failure_terminates_run_with_reason",
+            "test_with_retry_latches_provider_hard_failure",
+            "test_loop_stops_on_latched_hard_failure_even_if_phase_swallowed_it",
         ),
     },
 )

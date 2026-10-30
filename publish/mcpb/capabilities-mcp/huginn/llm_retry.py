@@ -48,6 +48,11 @@ __all__ = [
     "MAX_529_RETRIES",
     "FALLBACK_MODELS",
     "FallbackTriggeredError",
+    "LLMUnavailableError",
+    "classify_hard_llm_failure",
+    "record_hard_llm_failure",
+    "get_hard_llm_failure",
+    "clear_hard_llm_failure",
     "with_retry",
     "call_with_fallback",
     "is_transient_error",
@@ -64,6 +69,76 @@ class FallbackTriggeredError(Exception):
     ) -> None:
         super().__init__(message)
         self.reason = "529_overloaded"
+
+
+class LLMUnavailableError(RuntimeError):
+    """provider 硬失败 (配额耗尽 / 认证失效) — 重试与规则兜底都没有意义.
+
+    ws35 实测 (结构性缺陷 L): 配额耗尽后每一次 decider 调用都抛 BadRequest
+    (code -20080), ``_decide_next_action_llm`` 把它当成普通失败返回 None, 上层
+    规则兜底随即给出 hypothesize → 固定协议改判 plan, 于是一连 46 轮"plan"空转,
+    直到迭代耗尽才收工. 供应商死了必须在第一次就作为**终止原因**上报, 不能伪装
+    成"模型这轮想先写计划".
+    """
+
+    def __init__(self, kind: str, message: str = "") -> None:
+        super().__init__(f"{kind}: {message}" if message else kind)
+        self.kind = kind
+
+
+#: 配额/欠费类错误的消息指纹 (各 provider 措辞不同, 命中任一即判硬失败).
+_QUOTA_MARKERS = (
+    "-20080",
+    "配额",
+    "quota",
+    "insufficient_quota",
+    "billing",
+    "余额不足",
+    "欠费",
+)
+
+
+#: provider 硬失败的**进程级**闩锁 (kind, message).
+#:
+#: 为什么需要闩锁而不是只靠异常: 阶段方法普遍 `except Exception` 把失败降级成
+#: (None, None) — 异常在到达控制流之前就被吞掉了, 而每个调用面都补一次分类
+#: 就是按实例打补丁 (ws35 实测: 只补 decider 后仍有 20 轮 plan 空转).
+#: 闩锁在**唯一的重试出口**置位, 控制流每轮开头读一次, 于是不管哪个阶段吞了
+#: 异常, 循环都能在同一类判据下停机. 复位由 run 入口负责.
+_hard_failure: tuple[str, str] | None = None
+
+
+def record_hard_llm_failure(kind: str, message: str = "") -> None:
+    """记下一次 provider 硬失败 (幂等: 已有记录不被普通失败覆盖)."""
+    global _hard_failure
+    if _hard_failure is None:
+        _hard_failure = (kind, message)
+
+
+def get_hard_llm_failure() -> tuple[str, str] | None:
+    """读取当前闩锁; None 表示本 run 内未发生 provider 硬失败."""
+    return _hard_failure
+
+
+def clear_hard_llm_failure() -> None:
+    """复位闩锁 (每个 run 开始调用一次)."""
+    global _hard_failure
+    _hard_failure = None
+
+
+def classify_hard_llm_failure(exc: BaseException) -> str | None:
+    """把 provider 异常归类成**不可恢复**的硬失败, 非硬失败返回 None.
+
+    只认两类: 配额/欠费 (改 prompt 也没用) 与 认证失效 (token 已不可用).
+    限流/过载/网络/上下文溢出都是可重试的, 由 ``with_retry`` 负责, 不在此列.
+    """
+    code = _get_status_code(exc)
+    text = f"{exc}".lower()
+    if code == 402 or any(m in text for m in _QUOTA_MARKERS):
+        return "llm_quota"
+    if _is_auth_error(exc):
+        return "llm_auth"
+    return None
 
 
 # ---- 异常属性探测 -----------------------------------------------------------
@@ -337,7 +412,10 @@ async def _handle_retry_error(
     if _is_auth_error(exc):
         return await _handle_auth_error(exc, source, attempt, max_attempts)
 
-    # 其它异常不重试, 直接抛
+    # 其它异常不重试, 直接抛; provider 硬失败先置闩锁, 让控制流能看见.
+    kind = classify_hard_llm_failure(exc)
+    if kind is not None:
+        record_hard_llm_failure(kind, str(exc))
     logger.error("[%s] non-retryable error: %r", source, exc)
     raise exc
 
@@ -448,7 +526,8 @@ async def _handle_auth_error(
             max_attempts,
         )
         return "continue", 0
-    # 刷新失败或不支持刷新, 直接抛
+    # 刷新失败或不支持刷新, 直接抛; 认证失效同样是硬失败, 置闩锁.
+    record_hard_llm_failure("llm_auth", str(exc))
     logger.error("[%s] 401 auth error, not retryable: %r", source, exc)
     raise exc
 
