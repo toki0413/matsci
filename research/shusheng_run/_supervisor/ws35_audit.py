@@ -111,7 +111,15 @@ def main() -> None:
         report["hypotheses"][p] = {"agent": got, "truth": want,
                                    "verdict": "match" if got == want else "MISMATCH"}
     if isinstance(hyp, dict) and "P5" in hyp:
-        report["hypotheses"]["P5"] = {"agent": norm_hyp(hyp["P5"]), "truth": "prediction-only"}
+        got5 = norm_hyp(hyp["P5"])
+        # P5 是可证伪预测（尚无实测可判）：只认"预测/待测"，写 supported/refuted 即为越界。
+        report["hypotheses"]["P5"] = {
+            "agent": got5, "truth": "prediction-only",
+            "verdict": "match" if got5 in {
+                "prediction", "prediction_only", "prediction-only", "predictive",
+                "pending", "untested", "not_testable", "预测", "待检验", "待验证",
+            } else "MISMATCH",
+        }
 
     # loop log
     ll = WS / "loop_log.jsonl"

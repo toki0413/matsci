@@ -334,6 +334,10 @@ def check_static_constraints(
 
 _REPRO_TIMEOUT_S = float(os.environ.get("HUGINN_REPRO_TIMEOUT_S", "240"))
 _REPRO_STASH_DIR = ".gate_rerun"
+#: 只有机器产物的"手写 vs 真算"可判: 叙述型产物 (.md/.txt) 是作者写出来的,
+#: 永远不可能由分析脚本逐字重跑生成. ws35 实测: 一个数值全对、报告六节齐全的
+#: 交付物因为 report.md 不可重跑被判 success=False —— 门把正确解判死.
+_MACHINE_OUTPUT_SUFFIXES = (".json", ".jsonl", ".csv", ".tsv")
 
 
 def _sig(path: Path) -> tuple[int, int] | None:
@@ -363,8 +367,16 @@ def check_reproducible(
     root = Path(workspace)
     scripts = [d.path for d in manifest if d.path.endswith(".py")]
     outputs = [d for d in manifest if not d.path.endswith(".py")]
+    # 叙述型产物不参与"重跑生成"判据 (作者写的报告不可能被脚本逐字重跑出来);
+    # 但存在性/非空仍由 check_manifest 负责, 不是免检.
+    authored = [d for d in outputs if not d.path.endswith(_MACHINE_OUTPUT_SUFFIXES)]
+    outputs = [d for d in outputs if d.path.endswith(_MACHINE_OUTPUT_SUFFIXES)]
     if not scripts or not outputs:
-        return {"passed": True, "skipped": "no script/output pair"}
+        return {
+            "passed": True,
+            "skipped": "no machine output to reproduce",
+            "authored_exempt": [d.path for d in authored],
+        }
     script = scripts[0]
     if not (root / script).is_file():
         return {"passed": True, "skipped": f"{script} missing (manifest gate owns this)"}
@@ -409,7 +421,12 @@ def check_reproducible(
     for _, dst in moved:
         with contextlib.suppress(OSError):
             dst.unlink()
-    return {"passed": True, "script": script, "returncode": rc}
+    return {
+        "passed": True,
+        "script": script,
+        "returncode": rc,
+        "authored_exempt": [d.path for d in authored],
+    }
 
 
 def _read_text(p: Path) -> str | None:
@@ -470,6 +487,9 @@ class Contract:
     #: objective 声明 "hypotheses 对象（P1–P5 各自 supported/refuted）" 时的必需子键.
     #: 结构性的: 交付物写成 list 或自造键名会被确定性判红, 不再靠人眼对账.
     hypothesis_range: tuple[str, ...] = ()
+    #: 没有"推翻条件"的假设项 (objective 里只给了可证伪预测, 尚无实测可判):
+    #: 这些键允许 prediction/pending 类取值, 其余键仍只认 supported/refuted.
+    prediction_only: frozenset[str] = frozenset()
 
     def __bool__(self) -> bool:
         return bool(self.json_keys or self.line_specs or self.hypothesis_range)
@@ -572,11 +592,41 @@ def parse_contract(objective: str, manifest: list[Deliverable] | None = None) ->
                 line_specs[path] = LineSpec(min_lines=n, fields=prev.fields)
                 break
 
+    hyp_range = _parse_hypothesis_range(text, declared)
     return Contract(
         json_keys=json_keys,
         line_specs=line_specs,
-        hypothesis_range=_parse_hypothesis_range(text, declared),
+        hypothesis_range=hyp_range,
+        prediction_only=_parse_prediction_only(text) if hyp_range else frozenset(),
     )
+
+
+_H_ITEM_SPLIT_RE = re.compile(r"^\s*H(\d+)\s*[（(:：]", re.M)
+_REFUTE_RULE_RE = re.compile(r"推翻条件|推翻判据|refuted? if|falsif", re.I)
+#: 纯预测项允许的状态写法 (尚无实测可判, 只能登记预测).
+_PREDICTION_STATUSES = frozenset({
+    "prediction", "prediction_only", "prediction-only", "predictive",
+    "pending", "untested", "not_testable", "预测", "待检验", "待验证",
+})
+
+
+def _parse_prediction_only(text: str) -> frozenset[str]:
+    """逐条 H 项里**没有推翻条件**的 → 对应的 P 键只能给预测, 不能给 supported/refuted.
+
+    ws35 实测: objective 把 H1–H4 写成 "预测 Pn… / 推翻条件…", 而 H5 是可证伪的
+    外推预测 (没有推翻条件可当场判). 契约却要求 P1–P5 全部 supported/refuted ——
+    agent 只能给尚未可测的 P5 贴假标签, 或被判 success=False.
+    """
+    marks = list(_H_ITEM_SPLIT_RE.finditer(text))
+    if len(marks) < 3:
+        return frozenset()
+    out = []
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        chunk = text[m.start():end]
+        if not _REFUTE_RULE_RE.search(chunk):
+            out.append(f"P{m.group(1)}")
+    return frozenset(out)
 
 
 _HYP_RANGE_RE = re.compile(r"hypothes[ei]s[^\n]{0,60}?P(\d+)\s*[–—~-]\s*P(\d+)", re.I)
@@ -669,9 +719,20 @@ def check_contract(workspace: Any, contract: Contract) -> dict[str, Any]:
                         if isinstance(v, dict):
                             v = v.get("status") or v.get("result") or v.get("supported")
                         s = str(v).strip().lower()
-                        if s not in {
+                        if s in {
                             "supported", "refuted", "true", "false", "被支持", "被推翻",
                         }:
+                            continue
+                        # 没有推翻条件的假设项 (纯预测): 允许显式标注为预测/待测,
+                        # 但 supported/refuted 之外的自造状态仍判红.
+                        if k in contract.prediction_only and s in _PREDICTION_STATUSES:
+                            continue
+                        if k in contract.prediction_only:
+                            bad_hypotheses.append(
+                                f"{path}:hypotheses.{k} 必须是 supported/refuted "
+                                "或 prediction/pending (该项无推翻条件)"
+                            )
+                        else:
                             bad_hypotheses.append(
                                 f"{path}:hypotheses.{k} 缺失或不是 supported/refuted"
                             )
@@ -701,9 +762,15 @@ def _contract_lines(contract: Contract, manifest: list[Deliverable] | None = Non
             seg += f"，每行必须含: {', '.join(spec.fields)}"
         parts.append(seg)
     if contract.hypothesis_range:
+        allowed = "supported 或 refuted"
+        if contract.prediction_only:
+            allowed += (
+                f" (无推翻条件的 {'/'.join(sorted(contract.prediction_only))} 也可写"
+                " prediction/pending)"
+            )
         parts.append(
             f"hypotheses 必须是对象且含 {'/'.join(contract.hypothesis_range)}, "
-            "每个取值只能是 supported 或 refuted"
+            f"每个取值只能是 {allowed}"
         )
     return parts
 

@@ -1253,6 +1253,79 @@ def test_contract_requires_hypotheses_object(tmp_path):
     assert ok["passed"], f"合规 hypotheses 被判红: {ok}"
 
 
+def test_reproducible_exempts_authored_markdown(tmp_path):
+    """叙述型交付物 (.md) 不参与"重跑生成"判据, 但机器产物仍要求真算.
+
+    ws35 实测: 数值全对、报告六节齐全的交付物, 只因 report.md 无法被
+    analysis.py 逐字重跑生成就被判 success=False —— 门把正确解判死.
+    """
+    from huginn.autoloop.deliverables import Deliverable, check_reproducible
+
+    (tmp_path / "analysis.py").write_text(
+        "import json\n"
+        "json.dump({'q1_delta_ea': 51.59, 'q1_ci_low': 40.65, 'q1_ci_high': 63.41,\n"
+        "           'hypotheses': {'P1': 'supported', 'P4': 'refuted'}},\n"
+        "          open('results.json', 'w'))\n"
+        "with open('loop_log.jsonl', 'w') as f:\n"
+        "    for i in range(1, 51):\n"
+        "        f.write(json.dumps({'loop_id': i}) + '\\n')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "results.json").write_text('{"q1_delta_ea": 1.0}', encoding="utf-8")
+    (tmp_path / "loop_log.jsonl").write_text('{"loop_id": 1}\n', encoding="utf-8")
+    (tmp_path / "report.md").write_text("# 报告\n手写正文\n", encoding="utf-8")
+    manifest = [
+        Deliverable("analysis.py"), Deliverable("results.json"),
+        Deliverable("loop_log.jsonl"), Deliverable("report.md"),
+    ]
+    out = check_reproducible(tmp_path, manifest, timeout=30)
+    assert out["passed"], f"叙述产物不该拖红可复现门: {out}"
+    assert out["authored_exempt"] == ["report.md"]
+    assert (tmp_path / "report.md").exists(), "被判绿后作者报告被删"
+
+
+def test_contract_prediction_only_hypothesis_may_be_prediction(tmp_path):
+    """没有推翻条件的 H 项 (纯预测) 允许 prediction/pending, 其余项仍只认 supported/refuted."""
+    from huginn.autoloop.deliverables import (
+        Deliverable,
+        check_contract,
+        parse_contract,
+    )
+
+    obj = (
+        "键名至少包含 q1_delta_ea, hypotheses；外加 hypotheses 对象（P1–P5 各自 supported / refuted）。\n"
+        "H1（效应量）：预测 P1：合并值 ≥ 25。\n  推翻条件：点估计 < 25。\n"
+        "H2（方差）：预测 P2：η² < 0.20。\n  推翻条件：η² ≥ 0.20。\n"
+        "H3（方法）：预测 P3：方法差 < 中位数。\n  推翻条件：方法差 ≥ 中位数。\n"
+        "H4（泛化）：预测 P4：RMSE < 30。\n  推翻条件：RMSE ≥ 30。\n"
+        "H5（外推预测，必须可证伪）：给空白格一个点预测与 95% 预测区间。\n"
+    )
+    contract = parse_contract(obj, [Deliverable("results.json")])
+    assert contract.prediction_only == frozenset({"P5"}), contract.prediction_only
+
+    (tmp_path / "results.json").write_text(
+        json.dumps({
+            "q1_delta_ea": 51.59,
+            "hypotheses": {"P1": "supported", "P2": "supported", "P3": "supported",
+                           "P4": "refuted", "P5": "prediction_only"},
+        }),
+        encoding="utf-8",
+    )
+    ok = check_contract(tmp_path, contract)
+    assert ok["passed"], f"P5 标为预测仍被判红: {ok}"
+
+    (tmp_path / "results.json").write_text(
+        json.dumps({
+            "q1_delta_ea": 51.59,
+            "hypotheses": {"P1": "supported", "P2": "pending", "P3": "supported",
+                           "P4": "refuted", "P5": "prediction_only"},
+        }),
+        encoding="utf-8",
+    )
+    bad = check_contract(tmp_path, contract)
+    assert bad["bad_hypotheses"], "有推翻条件的 P2 用 pending 蒙混过关"
+
+
 # ===== L: provider 硬失败被规则兜底伪装成正常动作 =====
 #
 # ws35 实测: 配额耗尽后每次 decider 调用都抛 400/-20080, 该异常被
