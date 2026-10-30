@@ -502,9 +502,17 @@ _KEY_MARKERS = (
     "至少包含以下键",
     "必须包含以下键",
     "required keys",
+    "must include the keys",
+)
+#: jsonl 逐行字段的声明口径 (中英皆可, 题面无关).
+_JSONL_FIELD_MARKER_RE = re.compile(
+    r"至少含[：:，,]?"
+    r"|每行[^\n。]{0,16}?(?:含|包含|必须有)"
+    r"|each line[^\n。]{0,24}?(?:contain|include)s?",
+    re.I,
 )
 _FILE_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.jsonl?\b")
-_IDENT_RE = re.compile(r"[a-z][a-z0-9_]{2,}")
+_IDENT_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{2,}")
 _KEY_STOP = frozenset(
     {"json", "jsonl", "csv", "md", "tsv", "txt", "true", "false", "supported", "refuted", "keys", "key"}
 )
@@ -536,7 +544,7 @@ def _idents(tail: str, stop: frozenset[str]) -> list[str]:
         if not m:
             continue
         tok = m.group(0)
-        if tok in stop or tok in out:
+        if tok.lower() in stop or tok in out:
             continue
         out.append(tok)
     return out
@@ -563,7 +571,7 @@ def parse_contract(objective: str, manifest: list[Deliverable] | None = None) ->
             idx = text.find(marker, idx + len(marker))
 
     line_specs: dict[str, LineSpec] = {}
-    for m in re.finditer(r"至少含[：:，,]?", text):
+    for m in re.finditer(_JSONL_FIELD_MARKER_RE, text):
         path = _nearest_file_before(text, m.start(), ".jsonl")
         if path is None:
             continue
@@ -583,10 +591,21 @@ def parse_contract(objective: str, manifest: list[Deliverable] | None = None) ->
         for sent in re.split(r"[。\n]", text):
             if base not in sent:
                 continue
-            mm = re.search(r"(\d+)\s*行", sent)
-            if not mm:
+            # "N 行" 在中文题面里既可能指台账行数, 也可能指"对 N 行数据"做重采样;
+            # 优先取带下限词的那处, 并跳过"对/把/共 … 行数据"这种输入侧计数.
+            picked = None
+            for mm in re.finditer(r"(\d+)\s*行", sent):
+                pre = sent[max(0, mm.start() - 6):mm.start()]
+                if re.search(r"[对把共]|数据", pre):
+                    continue
+                if re.search(r"少于|至少|不少于|不足", pre):
+                    picked = mm
+                    break
+                if picked is None:
+                    picked = mm
+            if picked is None:
                 continue
-            n = int(mm.group(1))
+            n = int(picked.group(1))
             if 0 < n <= _MAX_MIN_LINES:
                 prev = line_specs.get(path, LineSpec())
                 line_specs[path] = LineSpec(min_lines=n, fields=prev.fields)
@@ -597,12 +616,16 @@ def parse_contract(objective: str, manifest: list[Deliverable] | None = None) ->
         json_keys=json_keys,
         line_specs=line_specs,
         hypothesis_range=hyp_range,
-        prediction_only=_parse_prediction_only(text) if hyp_range else frozenset(),
+        prediction_only=_parse_prediction_only(text, hyp_range) if hyp_range else frozenset(),
     )
 
 
-_H_ITEM_SPLIT_RE = re.compile(r"^\s*H(\d+)\s*[（(:：]", re.M)
-_REFUTE_RULE_RE = re.compile(r"推翻条件|推翻判据|refuted? if|falsif", re.I)
+_ITEM_HEAD_RE = re.compile(r"^\s*(?:[-*#]+\s*)?([A-Z])(\d{1,2})\s*(?:[（(：:]|\s)", re.M)
+_REFUTE_RULE_RE = re.compile(
+    r"推翻条件|推翻判据|推翻标准|refuted?\s+(?:if|when|by)"
+    r"|falsification\s+(?:criterion|condition)",
+    re.I,
+)
 #: 纯预测项允许的状态写法 (尚无实测可判, 只能登记预测).
 _PREDICTION_STATUSES = frozenset({
     "prediction", "prediction_only", "prediction-only", "predictive",
@@ -610,41 +633,97 @@ _PREDICTION_STATUSES = frozenset({
 })
 
 
-def _parse_prediction_only(text: str) -> frozenset[str]:
-    """逐条 H 项里**没有推翻条件**的 → 对应的 P 键只能给预测, 不能给 supported/refuted.
+def _parse_prediction_only(text: str, keys: tuple[str, ...]) -> frozenset[str]:
+    """逐项里**没有推翻条件**的 → 该项只能给预测, 不能给 supported/refuted.
 
     ws35 实测: objective 把 H1–H4 写成 "预测 Pn… / 推翻条件…", 而 H5 是可证伪的
     外推预测 (没有推翻条件可当场判). 契约却要求 P1–P5 全部 supported/refuted ——
     agent 只能给尚未可测的 P5 贴假标签, 或被判 success=False.
+
+    不绑具体题面: 标签前缀取自 ``keys`` (P/Q/H 皆可); 项标题若是同前缀就按编号对齐,
+    否则按出现顺序一一对齐; 少于 3 项或数量对不上时不猜 (返回空 = 维持严格口径).
     """
-    marks = list(_H_ITEM_SPLIT_RE.finditer(text))
+    if not keys:
+        return frozenset()
+    marks = list(_ITEM_HEAD_RE.finditer(text))
     if len(marks) < 3:
         return frozenset()
+    pm = re.match(r"[A-Za-z]+", keys[0])
+    prefix = pm.group(0) if pm else ""
+    same = [m for m in marks if m.group(1) == prefix]
+    if len(same) >= 3:
+        pairs = [(f"{prefix}{int(m.group(2))}", m) for m in same]
+        span = same
+    elif len(marks) == len(keys):
+        pairs = list(zip(keys, marks))
+        span = marks
+    else:
+        return frozenset()
     out = []
-    for i, m in enumerate(marks):
-        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
-        chunk = text[m.start():end]
-        if not _REFUTE_RULE_RE.search(chunk):
-            out.append(f"P{m.group(1)}")
-    return frozenset(out)
+    for i, (key, _m) in enumerate(pairs):
+        end = span[i + 1].start() if i + 1 < len(span) else len(text)
+        if not _REFUTE_RULE_RE.search(text[span[i].start():end]):
+            out.append(key)
+    return frozenset(k for k in out if k in set(keys))
 
 
-_HYP_RANGE_RE = re.compile(r"hypothes[ei]s[^\n]{0,60}?P(\d+)\s*[–—~-]\s*P(\d+)", re.I)
+_HYP_CONTEXT_RE = re.compile(r"hypothes|假设", re.I)
+_VERDICT_WORD_RE = re.compile(r"supported|refuted|被支持|被推翻", re.I)
+_LABEL_RANGE_RE = re.compile(
+    r"([A-Za-z])(\d{1,2})\s*(?:[–—~-]|至|到|\.\.)\s*([A-Za-z]?)(\d{1,2})"
+)
 
 
 def _parse_hypothesis_range(text: str, declared: list[str]) -> tuple[str, ...]:
-    """objective 提到 "hypotheses 对象 (P{a}–P{b})" → 必需子键 (P1..Pn)."""
-    if "hypothes" not in text.lower():
+    """objective 提到 "hypotheses/假设 (P1–P5 或 H1–H5 …)" → 必需子键 (P1..Pn).
+
+    标签前缀从题面读, 不假定一定是 P; 也接受顿号/逗号枚举 "P1、P2、P3".
+    """
+    if not _HYP_CONTEXT_RE.search(text):
         return ()
     if not any(p.endswith(".json") for p in declared):
         return ()
-    m = _HYP_RANGE_RE.search(text)
-    if not m:
-        return ()
-    a, b = int(m.group(1)), int(m.group(2))
-    if not (0 < a <= b <= 20):
-        return ()
-    return tuple(f"P{i}" for i in range(a, b + 1))
+    blank = re.split(r"[。\n]", text)
+    # 分档取标签集: 先认提到 hypotheses 这个**字段名**的句子 (契约判的就是它的子键),
+    # 再退到中文"假设"的叙述句 —— 否则题面开头"H1–H5 固定假设"这类前言会被误当契约.
+    tiers = (
+        (re.compile(r"hypothes", re.I), True),
+        (re.compile(r"hypothes", re.I), False),
+        (_HYP_CONTEXT_RE, True),
+        (_HYP_CONTEXT_RE, False),
+    )
+    for ctx, need_verdict in tiers:
+        for sent in blank:
+            if not ctx.search(sent):
+                continue
+            if need_verdict and not _VERDICT_WORD_RE.search(sent):
+                continue
+            anchor = re.search(r"hypothes", sent, re.I)
+            m = _prefer_near(sent, anchor)
+            if m is None:
+                labels = re.findall(r"\b([A-Z])(\d{1,2})\b", sent)
+                if len(labels) >= 2 and len({p for p, _ in labels}) == 1:
+                    nums = [int(n) for _, n in labels]
+                    if nums == list(range(nums[0], nums[0] + len(nums))):
+                        return tuple(f"{labels[0][0]}{i}" for i in range(nums[0], nums[-1] + 1))
+                continue
+            p1, p2 = m.group(1).upper(), (m.group(3) or m.group(1)).upper()
+            a, b = int(m.group(2)), int(m.group(4))
+            if p1 == p2 and 0 < a <= b <= 20:
+                return tuple(f"{p1}{i}" for i in range(a, b + 1))
+    return ()
+
+
+def _prefer_near(sentence: str, anchor: re.Match | None) -> re.Match | None:
+    """句内若有 "hypotheses" 锚点, 取锚点后 60 字符内的标签区间, 否则取第一个."""
+    cands = list(_LABEL_RANGE_RE.finditer(sentence))
+    if not cands:
+        return None
+    if anchor is not None:
+        for m in cands:
+            if 0 <= m.start() - anchor.start() <= 60:
+                return m
+    return cands[0]
 
 
 def check_contract(workspace: Any, contract: Contract) -> dict[str, Any]:

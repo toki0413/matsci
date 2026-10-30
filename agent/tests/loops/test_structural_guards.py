@@ -1326,6 +1326,49 @@ def test_contract_prediction_only_hypothesis_may_be_prediction(tmp_path):
     assert bad["bad_hypotheses"], "有推翻条件的 P2 用 pending 蒙混过关"
 
 
+def test_contract_parses_any_objective_wording(tmp_path):
+    """契约从题面读, 不绑某一题的写法: 英文题面 + H 标签 + 英文逐行声明都要认."""
+    from huginn.autoloop.deliverables import (
+        Deliverable,
+        check_contract,
+        parse_contract,
+    )
+
+    obj = (
+        "results.json required keys: ea_kj_per_mol, r_exponent, t50_s\n"
+        "loop_log.jsonl: each line must contain loop_id, status, t50_s\n"
+        "Hypotheses H1-H5 must each be marked supported or refuted.\n"
+        "H1: ea below 100 kJ/mol.\nRefuted if ea >= 100.\n"
+        "H2: scaling exponent below 1.5.\nRefuted if p >= 1.5.\n"
+        "H3: bootstrap mean stable.\nRefuted if drift > 5%.\n"
+        "H4: residual below the baseline.\nRefuted if rmse >= baseline.\n"
+        "H5: a falsifiable prediction at T=650 K with a 95% interval.\n"
+    )
+    contract = parse_contract(
+        obj, [Deliverable("results.json"), Deliverable("loop_log.jsonl")]
+    )
+    assert contract.hypothesis_range == ("H1", "H2", "H3", "H4", "H5")
+    assert contract.prediction_only == frozenset({"H5"}), contract.prediction_only
+    assert contract.line_specs["loop_log.jsonl"].fields[:2] == ("loop_id", "status")
+    assert "ea_kj_per_mol" in contract.json_keys["results.json"]
+
+    (tmp_path / "results.json").write_text(
+        json.dumps({
+            "ea_kj_per_mol": 109.9, "r_exponent": 1.0, "t50_s": 494.0,
+            "hypotheses": {"H1": "supported", "H2": "supported", "H3": "supported",
+                           "H4": "refuted", "H5": "pending"},
+        }),
+        encoding="utf-8",
+    )
+    (tmp_path / "loop_log.jsonl").write_text(
+        "".join(json.dumps({"loop_id": i, "status": "ok", "t50_s": 494.0}) + "\n"
+                for i in range(1, 51)),
+        encoding="utf-8",
+    )
+    ok = check_contract(tmp_path, contract)
+    assert ok["passed"], f"英文题面下的合规交付被判红: {ok}"
+
+
 # ===== L: provider 硬失败被规则兜底伪装成正常动作 =====
 #
 # ws35 实测: 配额耗尽后每次 decider 调用都抛 400/-20080, 该异常被
