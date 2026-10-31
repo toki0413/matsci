@@ -90,3 +90,4 @@ milestone: M-INT1（A轨）、M-INT2（B轨）、M-INT3（C轨）、M-INT4（D�
   files: `docs/mece-audit.md`、镜像产物
   acceptance: `pytest tests/ -o addopts="" -q` 全绿；contract_audit 与 mirror_drift 通过
   spec: `#测试总口径`
+  status: 未闭合。已修两类阻断（pytest 9 与 pytest-benchmark 不兼容 → 锁 `pytest<9`；chromadb ONNX 启动期联网下载把 TestClient 卡死 → 未缓存即降级 + 有界探测）。剩余硬限制是内存：cgroup 4GB 无 swap，单进程 19%、70 文件分块 83% 均被 OOM 杀（EXIT=137；CI 专门加 swap）。需 swap 或继续细分块跑完后再勾。

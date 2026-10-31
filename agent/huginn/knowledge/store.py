@@ -59,6 +59,31 @@ SEED_DIR = Path(__file__).parent / "seed"
 # 超时/线程失败时降级到确定性哈希向量, 保证 KB seeding 不阻塞 agent.invoke.
 _ENCODE_TIMEOUT_SECONDS = 30
 
+# chromadb DefaultEmbeddingFunction 首次调用会**联网下载** ONNX 权重, 且它自带
+# 的下载器不读 HF_HUB_OFFLINE / TRANSFORMERS_OFFLINE. 无网或被墙时会永久阻塞
+# 在 __init__ 里 (实测把 TestClient 启动卡死, 全量套件停在 1%). 探测必须有界:
+# 超时即整体降级到确定性哈希向量, 宁可检索质量下降也不能阻塞启动.
+_EMBED_PROBE_TIMEOUT_SECONDS = 10
+
+
+def _chroma_onnx_cached() -> bool:
+    """chromadb ONNX 权重是否已完整解压到本地缓存.
+
+    只认 ``onnx/model.onnx``: 半截的 ``onnx.tar.gz`` 也会触发重新下载
+    (实测 264K 残包导致每次启动都联网重试并卡死启动).
+    """
+    try:
+        from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import (
+            ONNXMiniLM_L6_V2,
+        )
+    except Exception:
+        return False
+    return Path(
+        ONNXMiniLM_L6_V2.DOWNLOAD_PATH,
+        ONNXMiniLM_L6_V2.EXTRACTED_FOLDER_NAME,
+        "model.onnx",
+    ).is_file()
+
 
 def _resolve_embedding_dim(fallback: int = _EMBED_DIM_DEFAULT) -> int:
     """推导当前 embedding 模型的输出维度.
@@ -305,16 +330,62 @@ class _EmbeddingModel:
 
     def __init__(self) -> None:
         if not _EmbeddingModel._initialized:
-            try:
-                from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
-
-                ef = DefaultEmbeddingFunction()
-                _ = ef(["test"])
+            ef = _EmbeddingModel._probe_chroma_ef()
+            if ef is not None:
                 _EmbeddingModel._ef = ef
                 _EmbeddingModel._use_chroma = True
-            except Exception:
+            else:
                 _EmbeddingModel._use_chroma = False
             _EmbeddingModel._initialized = True
+
+    @staticmethod
+    def _probe_chroma_ef() -> Any | None:
+        """有界探测 chromadb 的 ONNX embedder; 超时/未缓存返回 None.
+
+        首次调用会联网下载权重 (见 ``_EMBED_PROBE_TIMEOUT_SECONDS`` 注释).
+        下载在 chromadb 内部持锁, 光有 join 超时不够: 超时的 daemon 线程仍
+        占着锁, 启动线程会卡在 ``validate_metadata``. 所以先检查本地缓存,
+        未缓存直接降级 —— 启动阶段绝不触发下载.
+        """
+        if not _chroma_onnx_cached():
+            _EmbeddingModel._onnx_degraded = True
+            logger.info(
+                "chromadb ONNX weights not cached; using hash-vector fallback "
+                "(no network download during startup)"
+            )
+            return None
+
+        import threading
+
+        holder: dict[str, Any] = {}
+
+        def _run() -> None:
+            try:
+                from chromadb.utils.embedding_functions import (
+                    DefaultEmbeddingFunction,
+                )
+
+                ef = DefaultEmbeddingFunction()
+                ef(["test"])
+                holder["ef"] = ef
+            except Exception as exc:  # noqa: BLE001 - 探测失败即降级
+                holder["error"] = exc
+
+        t = threading.Thread(target=_run, daemon=True, name="kb-embed-probe")
+        t.start()
+        t.join(timeout=_EMBED_PROBE_TIMEOUT_SECONDS)
+        if t.is_alive():
+            _EmbeddingModel._onnx_degraded = True
+            logger.warning(
+                "ONNX embedder probe timed out after %ss (weight download "
+                "blocked); degraded to hash vectors to keep startup unblocked",
+                _EMBED_PROBE_TIMEOUT_SECONDS,
+            )
+            return None
+        if "error" in holder:
+            logger.debug("chromadb embedder unavailable: %s", holder["error"])
+            return None
+        return holder.get("ef")
 
     def encode(self, texts: list[str], cache_key: str | None = None) -> np.ndarray:
         cached = _EmbeddingModel._cache_lookup(cache_key)
