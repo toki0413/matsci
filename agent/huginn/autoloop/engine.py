@@ -23,8 +23,40 @@ from pathlib import Path
 from typing import Any
 
 from huginn.autoloop.budget import TokenBudget
+from huginn.autoloop.cognitive_loop import CognitiveRunner
+
+# P3 slim-down: 5 个 engine_* mixin (perceive/observe/act/reflect/control) 把
+# AutoloopEngine 的方法族拆到独立模块. mixin 通过 self 访问 engine 状态,
+# 对 engine.py 模块级符号用方法内 lazy import 避免 circular.
+from huginn.autoloop.engine_act import EngineAct
+from huginn.autoloop.engine_control import EngineControl
+from huginn.autoloop.engine_observe import EngineObserve
+from huginn.autoloop.engine_perceive import EnginePerceive
+from huginn.autoloop.engine_reflect import EngineReflect
+from huginn.autoloop.goal_scheduler import GoalScheduler
+from huginn.autoloop.hypothesis_loop import HypothesisLoop
+from huginn.autoloop.math_validation import MathValidator
+from huginn.autoloop.phase_gate import PhaseGateHook
+from huginn.autoloop.plan_check import PlanCheck
 from huginn.autoloop.signals import SIGNAL_NAMES, EngineSignals
-from huginn.autoloop.types import LoopPhase
+from huginn.autoloop.types import CognitiveState, LoopPhase
+from huginn.autoloop.visual_inspect import VisualInspect
+from huginn.bench.runner import BenchmarkRunner  # noqa: F401  # monkeypatch
+from huginn.coder.loop import CoderRunner
+from huginn.config import get_settings
+
+# C1: 共享 KB chunk 格式化函数, 跟 ContextBuilder 走同一条路径, 消除双路径漂移.
+# C4: 共享 meta_trace 加载, engine 写 jsonl 但之前不读, 现在注入 memory_text.
+from huginn.exploration.orchestrator import ExplorationOrchestrator
+from huginn.exploration.strategies import ParetoPruningStrategy
+from huginn.interaction.progress import ProgressTracker
+from huginn.kg.builder import ProjectKnowledgeGraph
+from huginn.llm import get_model
+from huginn.memory.manager import MemoryManager
+from huginn.permissions import PermissionConfig, approval_mode, autoloop_auto_approve
+from huginn.tools.report_tool import ReportTool
+from huginn.utils.runtime import HUGINN_DIR_NAME
+from huginn.workflows.engine import WorkflowEngine
 
 logger = logging.getLogger(__name__)
 
@@ -114,41 +146,6 @@ def _autoloop_streaming_enabled() -> bool:
         return False
     return _feature_flag("autoloop_streaming", True)
 
-
-from huginn.autoloop.cognitive_loop import CognitiveRunner  # noqa: E402
-from huginn.autoloop.engine_act import EngineAct  # noqa: E402
-from huginn.autoloop.engine_control import EngineControl  # noqa: E402
-from huginn.autoloop.engine_observe import EngineObserve  # noqa: E402
-
-# P3 slim-down: 5 个 engine_* mixin (perceive/observe/act/reflect/control) 把
-# AutoloopEngine 的方法族拆到独立模块. mixin 通过 self 访问 engine 状态,
-# 对 engine.py 模块级符号用方法内 lazy import 避免 circular.
-from huginn.autoloop.engine_perceive import EnginePerceive  # noqa: E402
-from huginn.autoloop.engine_reflect import EngineReflect  # noqa: E402
-from huginn.autoloop.goal_scheduler import GoalScheduler  # noqa: E402
-from huginn.autoloop.hypothesis_loop import HypothesisLoop  # noqa: E402
-from huginn.autoloop.math_validation import MathValidator  # noqa: E402
-from huginn.autoloop.phase_gate import (  # noqa: E402
-    PhaseGateHook,
-)
-from huginn.autoloop.plan_check import PlanCheck  # noqa: E402
-from huginn.autoloop.visual_inspect import VisualInspect  # noqa: E402
-from huginn.bench.runner import BenchmarkRunner  # noqa: F401, E402  # monkeypatch
-from huginn.coder.loop import CoderRunner  # noqa: E402
-from huginn.config import get_settings  # noqa: E402
-
-# C1: 共享 KB chunk 格式化函数, 跟 ContextBuilder 走同一条路径, 消除双路径漂移.
-# C4: 共享 meta_trace 加载, engine 写 jsonl 但之前不读, 现在注入 memory_text.
-from huginn.exploration.orchestrator import ExplorationOrchestrator  # noqa: E402
-from huginn.exploration.strategies import ParetoPruningStrategy  # noqa: E402
-from huginn.interaction.progress import ProgressTracker  # noqa: E402
-from huginn.kg.builder import ProjectKnowledgeGraph  # noqa: E402
-from huginn.llm import get_model  # noqa: E402
-from huginn.memory.manager import MemoryManager  # noqa: E402
-from huginn.permissions import PermissionConfig, autoloop_auto_approve  # noqa: E402
-from huginn.tools.report_tool import ReportTool  # noqa: E402
-from huginn.utils.runtime import HUGINN_DIR_NAME  # noqa: E402
-from huginn.workflows.engine import WorkflowEngine  # noqa: E402
 
 # 跨源属性冲突检测用的正则; 提到模块级避免每次调用重编译
 _PROP_RE = re.compile(
@@ -306,6 +303,19 @@ class AutoloopEngine:
         agent_factory: Any = None,
         resume_from_state: str | None = None,
     ):
+        self._init_core(workspace, agent_factory, verification_model, memory_manager)
+        self._init_collaborators()
+        self._init_knowledge_and_tools()
+        self._init_runtime(goal_scheduler, resume_from_state)
+
+    def _init_core(
+        self,
+        workspace: str | Path | None,
+        agent_factory: Any,
+        verification_model: Any,
+        memory_manager: MemoryManager | None,
+    ) -> None:
+        """基础状态: workspace / signals / model / model_router / memory."""
         self.workspace = Path(workspace or ".").resolve()
         self.settings = get_settings()
         # EngineSignals: 持有纯环信号字段的单一事实源; 名下属性桥 self._<field>
@@ -325,10 +335,9 @@ class AutoloopEngine:
             set_model_provider(lambda: self.model)
         except Exception:  # 防御: 语义提供方注入失败跳过
             logger.debug("hypothesis_semantic model provider inject skipped", exc_info=True)
-        # H5-a: 从 config 的 ModelManager 挂 model_router, 让 _llm_chat 的
-        # task 路由真正生效 (之前 getattr(self,"model_router",None) 恒 None,
-        # "reasoning/summarize/verification" 分类路由全是死代码).
-        # 单模型配置时 build_agent_kwargs 返回 model_router=None, 行为不变.
+        # H5-a: 从 config 的 ModelManager 挂 model_router, 让 _llm_chat 的 task
+        # 路由真正生效 (单模型配置时 build_agent_kwargs 返回 None, 行为不变).
+        # 不挂则 getattr(self,"model_router",None) 恒 None, verification 路由是死码.
         self.model_router = None
         try:
             from huginn.config import get_config
@@ -340,15 +349,17 @@ class AutoloopEngine:
         except Exception:  # 防御: 模型路由构建失败跳过
             logger.debug("model_router build skipped (non-fatal)", exc_info=True)
         # Moonshine 三槽: verification 用独立 LLM 验证假设, 避免确认偏差.
-        # 显式注入的 verification_model 优先; 未注入时默认走 select_model
-        # ("verification" 路由会选注册的独立验证模型, 无则退回 self.model),
-        # 保持单模型下行为与改动前一致.
+        # 显式注入优先; 未注入走 select_model("verification") (无注册则退回 self.model),
+        # 单模型下行为不变.
         self.verification_model = verification_model or self.select_model(
             "verification"
         )
         # 共享 MemoryManager: 由 agent/CLI 传入, 避免引擎私有实例和 agent 的
         # memory 隔离. 默认 None 时 new 一个, 保持向后兼容.
         self.memory = memory_manager or MemoryManager()
+
+    def _init_collaborators(self) -> None:
+        """去 mixin 协作对象 (阶段 1-10) + 召回/帧存储."""
         # 去 mixin 阶段1: MathValidationMixin → MathValidator 协作对象.
         # engine_reflect.py:133/153 通过薄委托方法 _run_math_validation /
         # _collect_math_evidence 走这里, 调用点零改动.
@@ -388,6 +399,9 @@ class AutoloopEngine:
         self._recall_modes = RecallModes(self)
         # 无损视觉帧存储 (懒加载; 只在 visual_frame_memory 开且真产出帧时才建).
         self._frame_store: Any = None
+
+    def _init_knowledge_and_tools(self) -> None:
+        """知识图 / 假设图 / 报告与子引擎 (explorer / workflow / coder)."""
         self.kg = ProjectKnowledgeGraph(root=self.workspace)
         # 假设图: 跟踪 hypothesis 的 support/refute/derive 关系,
         # refute 时触发 RedTeam 审查 → 修正假设入队, 形成闭环
@@ -428,10 +442,17 @@ class AutoloopEngine:
         # adapter 里**先于**该放行判定被拦, 不受此开关影响.
         self.coder = CoderRunner(
             permission_config=PermissionConfig(
-                auto_approve_all=autoloop_auto_approve()
+                auto_approve_all=autoloop_auto_approve(),
+                workspace_root=(
+                    self.workspace if approval_mode() == "workspace" else None
+                ),
             )
         )
 
+    def _init_runtime(
+        self, goal_scheduler: GoalScheduler | None, resume_from_state: str | None
+    ) -> None:
+        """运行期状态: 失败跟踪 / lazy 后端 / resume / ledger / 对齐数据集."""
         self._init_failure_state()
         self._init_lazy_backends(goal_scheduler)
 
@@ -450,7 +471,13 @@ class AutoloopEngine:
     # ── 状态初始化分片 (b4 slim: 纯 self.xxx 默认值块外移, 行为等价) ──
 
     def _init_failure_state(self) -> None:
-        """失败跟踪 / 窗口 / refine / pivot 状态 (原 __init__ 主体, 纯默认值)."""
+        """失败跟踪 / 窗口 / refine / pivot / plan_check 状态 (原 __init__ 主体)."""
+        self._init_failure_counters()
+        self._init_refine_state()
+        self._init_plan_check_state()
+
+    def _init_failure_counters(self) -> None:
+        """stop / iteration / 连续失败 / 分类阈值 / 滑动窗口失败率."""
         self._should_stop = False
         self._iteration = 0
         # 连续验证失败计数: 给 _maybe_clarify 判断是否该问用户;
@@ -478,6 +505,9 @@ class AutoloopEngine:
         self._validate_window_fail_threshold = float(
             os.environ.get("HUGINN_VALIDATE_FAIL_THRESHOLD", "0.8")
         )
+
+    def _init_refine_state(self) -> None:
+        """refine / pivot 计数 + phase 解耦 hint + 瞬时不可用标记."""
         # refine 循环计数: 防止 refute→refine 无限循环
         # v7 长任务: 8→20 默认. Oxelra 失败回退不计数, 这里仍保留上限防失控.
         self._refine_count = 0
@@ -505,6 +535,9 @@ class AutoloopEngine:
         # 默认开, RCBench 跑分需要确定性时设 HUGINN_COGNITIVE_LLM_DECIDER=0 关掉.
         # 失败/超时/非法 action 自动 fallback 到规则版, 不影响死循环防护.
         self._use_llm_decider = os.environ.get("HUGINN_COGNITIVE_LLM_DECIDER", "1") == "1"
+
+    def _init_plan_check_state(self) -> None:
+        """plan_check / scene_tag 状态 (跨 run 持久化的失败模式记忆)."""
         # plan_check 状态走引擎级, 不塞 plan dict — plan 会序列化进 prompt,
         # 塞进去等于把校验元信息喂给 LLM 污染上下文. history 喂自适应, last_result
         # 给 _validate 取, warnings 留痕. patterns 跨 run 持久化 (失败模式记忆).
@@ -518,6 +551,16 @@ class AutoloopEngine:
 
     def _init_lazy_backends(self, goal_scheduler: GoalScheduler | None = None) -> None:
         """懒加载词汇表 + phase_gate_hook 装配 (原 __init__ 主体, 行为等价)."""
+        self._lazy_backends_basics()
+        self._lazy_backends_metacog_state()
+        self._lazy_backends_hypothesis_state()
+        self._lazy_backends_execution_state()
+        self._lazy_backends_phase_gate()
+        self._lazy_backends_metacog_layers()
+        self._lazy_backends_services(goal_scheduler)
+
+    def _lazy_backends_basics(self) -> None:
+        """clarification / evolution / persona / kb / perception / plan store / progress / target chains."""
         # ClarificationManager 懒加载 — autoloop 期间在关键决策点提问用户
         self._clarification_mgr = None
         # Evolution engine 懒加载——只在 _learn 真正用到时初始化
@@ -540,6 +583,9 @@ class AutoloopEngine:
         # 时 lazy build (调 build_target_chains, 一次 LLM call). 之后只读.
         self._target_chains: list = []
         self._target_chains_built: bool = False
+
+    def _lazy_backends_metacog_state(self) -> None:
+        """eval history / task metrics / drift / visual context / prediction / darwin belief state."""
         # AV2: 元认知护航状态 — autoloop 之前零接 PMK/TaskMetrics/detect_drift,
         # 跑完无 task_metrics.json 落盘, 脱轨无告警, PMK 撕裂无感知. 现补上.
         self._evals_history: list = []
@@ -576,6 +622,9 @@ class AutoloopEngine:
         # prior N(0, 100): 弱信息先验, 让早期观测主导.
         self._darwin_belief_mu: float = 0.0
         self._darwin_belief_sigma2: float = 100.0
+
+    def _lazy_backends_hypothesis_state(self) -> None:
+        """hypothesis confidence / prediction / task perf / reconstruct / GRILL state."""
         # v6 G54: 假设的 confidence + evidence_strength, 供 _plan / _validate 读取
         # confidence = darwin score / 10 (0-1); evidence_strength = supported_ratio (代理)
         # 升级路径: evidence_strength 改成 RAG recall 命中数 / provenance 引用数
@@ -601,6 +650,9 @@ class AutoloopEngine:
         # ponytail: 不持 GrillSession 实例, 只用 bool + 计数. LLM 自己负责流程.
         self._grill_active: bool = False
         self._grill_turns: int = 0
+
+    def _lazy_backends_execution_state(self) -> None:
+        """last execution result + per-round execution ledger."""
         # 上一轮执行结果, 给 _build_plan_prompt 的 pipeline suggest_next 用
         self._last_execution_result: dict | None = None
         # 本轮所有真实执行结果的紧凑台账 (每次 execute 追加一条). 报告生成只用
@@ -608,6 +660,9 @@ class AutoloopEngine:
         # 凭印象编表 (run56: 末轮 execute 全超时零证据, 报告却写出干净的 N_c(w) 表).
         # 台账给报告面一个"数值必须溯源到本轮真实执行"的citation门 (C 族诚实门).
         self._execution_ledger: list[dict[str, Any]] = []
+
+    def _lazy_backends_phase_gate(self) -> None:
+        """phase gate hook: red/blue team reviewers + math evidence checker."""
         # 阶段门 hook: 在 plan→execute / execute→validate / validate→learn
         # 三个转移点评估证据, 不足时阻断并把 feedback 拼进 _speculator_hint
         # 让下轮 prompt 带上"缺什么证据". R3 接入 red-team reviewer_fn:
@@ -628,6 +683,9 @@ class AutoloopEngine:
             blue_reviewer_fn=BlueTeamReviewer(),
             math_checker=MathEvidenceChecker(graph=self.hypothesis_graph),
         )
+
+    def _lazy_backends_metacog_layers(self) -> None:
+        """metacognition layers: auditor / registries / convergence & completion detectors."""
         # 元认知层: 信息隔离 / 方法族注册 / 等价性审计 / 阻塞-重启协议.
         # 全部懒加载, 测试或不需要时不会拉起. _hypothesize / refine_failed 按需读.
         # ponytail: 不在 __init__ 实例化, 避免循环 import 和测试 mock 复杂度
@@ -640,6 +698,9 @@ class AutoloopEngine:
         self._metacog_convergence_detector = None
         # 反完成审计: 综合 effort floor + 等价性陷阱 + 不完整性自白
         self._metacog_completion_auditor = None
+
+    def _lazy_backends_services(self, goal_scheduler: GoalScheduler | None = None) -> None:
+        """goal scheduler / side channel / event bus / pending signals / phase state / self-model counter."""
         # Goal scheduler: 持久化目标到 $HUGINN_CACHE_DIR/goals.json.
         # engine.run(goal=...) 时每轮 learn 后查 completion, 满足则提前停.
         # None → 懒加载, 避免实例化时就碰磁盘 (测试隔离用).
@@ -671,70 +732,86 @@ class AutoloopEngine:
         # off 时不触发 (向后兼容). ponytail: 复用 longterm typed memory 存储.
         self._experiment_count_since_self_model_update = 0
 
+    def _resolve_resume_id(self, resume_from_state: str | None) -> str | None:
+        """未显式传 resume_from_state 时, 默认加载最新 checkpoint (按 mtime)."""
+        if resume_from_state:
+            return resume_from_state
+        try:
+            from huginn.runtime.engine_state import latest_run_id
+            return latest_run_id(self.workspace)
+        except Exception:  # 防御: 恢复上下文读取失败置空
+            logger.debug("best-effort op failed", exc_info=True)
+            return None
+
+    def _restore_projected_phase(self) -> None:
+        """H3: 事件投影优先 — 有 autoloop 事件日志时用投影恢复当前 phase.
+
+        best-effort: 投影读失败时沿用快照值, 不阻塞.
+        """
+        try:
+            projected = self.read_runtime_state()
+            if projected.get("phase"):
+                self._current_phase = projected["phase"]
+                logger.info(
+                    "restored autoloop phase from event projection: %s",
+                    projected["phase"],
+                )
+        except Exception:  # 防御: 事件投影恢复失败忽略
+            logger.debug(
+                "autoloop event projection restore failed (non-fatal)",
+                exc_info=True,
+            )
+
+    def _restore_hypothesis_graph(self, resume_id: str) -> None:
+        """hypothesis_graph 单独恢复 (refuted 状态跨 session 必须保留)."""
+        from huginn.runtime.engine_state import _hypothesis_graph_path
+        try:
+            loaded_graph = self.hypothesis_graph.load(
+                _hypothesis_graph_path(self.workspace, resume_id)
+            )
+            if loaded_graph is not None:
+                self.hypothesis_graph = loaded_graph
+        except Exception:  # 防御: 假设图恢复失败忽略
+            logger.debug(
+                "resume: hypothesis_graph.load failed (non-fatal)",
+                exc_info=True,
+            )
+
+    def _apply_resume_snapshot(self, resume_id: str) -> None:
+        """按 run_id 加载并应用引擎快照 (含 phase / 假设图恢复)."""
+        from huginn.runtime.engine_state import (
+            apply_state_to_engine,
+            load_engine_state,
+            use_persistence,
+        )
+        if not use_persistence():
+            return
+        state = load_engine_state(resume_id, self.workspace)
+        if state is None:
+            logger.info(
+                "resume requested but no snapshot for run_id=%s, starting fresh",
+                resume_id,
+            )
+            return
+        apply_state_to_engine(state, self)
+        self._restore_projected_phase()
+        self._restore_hypothesis_graph(resume_id)
+        logger.info(
+            "resumed engine from run_id=%s: iteration=%d persona=%s",
+            resume_id, state._iteration,
+            state._last_persona or "(none)",
+        )
+
     def _init_resume_state(self, resume_from_state: str | None) -> None:
         """crash-safe resume + WakeStore 自动唤醒 flag (原 __init__ 主体, 行为等价)."""
         # P15: crash-safe resume. flag off / snapshot 缺失时静默跳过, 行为不变.
         # ponytail: 用 duck typing, 不做 isinstance 检查; 失败 log warning 不抛.
         # Task 2.2: 未显式传 resume_from_state 时, 默认尝试加载最新 checkpoint
         # (按 mtime). 加载失败不 fatal, warn 后从零开始.
-        _resume_id = resume_from_state
-        if not _resume_id:
-            try:
-                from huginn.runtime.engine_state import latest_run_id
-                _resume_id = latest_run_id(self.workspace)
-            except Exception:  # 防御: 恢复上下文读取失败置空
-                logger.debug("best-effort op failed", exc_info=True)
-                _resume_id = None
+        _resume_id = self._resolve_resume_id(resume_from_state)
         if _resume_id:
             try:
-                from huginn.runtime.engine_state import (
-                    _hypothesis_graph_path,
-                    apply_state_to_engine,
-                    load_engine_state,
-                    use_persistence,
-                )
-                if use_persistence():
-                    state = load_engine_state(_resume_id, self.workspace)
-                    if state is not None:
-                        apply_state_to_engine(state, self)
-                        # H3: 事件投影优先 — 若 workspace 有 autoloop 事件日志,
-                        # 用投影恢复当前 phase (而非只信任可变快照的 phase 字段).
-                        # best-effort: 投影读失败时沿用快照值, 不阻塞.
-                        try:
-                            projected = self.read_runtime_state()
-                            if projected.get("phase"):
-                                self._current_phase = projected["phase"]
-                                logger.info(
-                                    "restored autoloop phase from event projection: %s",
-                                    projected["phase"],
-                                )
-                        except Exception:  # 防御: 事件投影恢复失败忽略
-                            logger.debug(
-                                "autoloop event projection restore failed (non-fatal)",
-                                exc_info=True,
-                            )
-                        # hypothesis_graph 单独恢复 (refuted 状态跨 session 必须保留)
-                        try:
-                            loaded_graph = self.hypothesis_graph.load(
-                                _hypothesis_graph_path(self.workspace, _resume_id)
-                            )
-                            if loaded_graph is not None:
-                                self.hypothesis_graph = loaded_graph
-                        except Exception:  # 防御: 假设图恢复失败忽略
-                            logger.debug(
-                                "resume: hypothesis_graph.load failed (non-fatal)",
-                                exc_info=True,
-                            )
-                        logger.info(
-                            "resumed engine from run_id=%s: iteration=%d persona=%s",
-                            _resume_id, state._iteration,
-                            state._last_persona or "(none)",
-                        )
-                    else:
-                        logger.info(
-                            "resume requested but no snapshot for run_id=%s, "
-                            "starting fresh", _resume_id,
-                        )
+                self._apply_resume_snapshot(_resume_id)
             except Exception:  # 防御: 恢复状态失败新建会话
                 logger.warning(
                     "resume_from_state=%s failed, starting fresh",
@@ -752,6 +829,7 @@ class AutoloopEngine:
         self._auto_wake_enabled = os.environ.get(
             "HUGINN_AUTO_WAKE", "1"
         ) == "1"
+
 
     def _init_runtime_ledger(self) -> None:
         """MCMC 状态 + token/cost 预算 (原 __init__ 主体, 纯默认值)."""
@@ -996,10 +1074,21 @@ class AutoloopEngine:
         persona_name: str | None = None,
         model: Any = None,
         task: str | None = None,
+        tools: list[Any] | None = None,
+        max_tool_rounds: int = 2,
     ) -> str:
         return await self._engine_actor._llm_chat(
-            prompt, persona_name=persona_name, model=model, task=task
+            prompt,
+            persona_name=persona_name,
+            model=model,
+            task=task,
+            tools=tools,
+            max_tool_rounds=max_tool_rounds,
         )
+
+    def _resolve_readonly_tools(self) -> list[Any]:
+        """plan/validate 阶段可挂的只读工具面 (实现在 EngineAct, 此处薄委托)."""
+        return self._engine_actor._resolve_readonly_tools()
 
     # ── 去 mixin 阶段5: EngineControl 薄委托 ─────────────────────
     # 循环控制/checkpoint/状态持久化/澄清交互/事件总线方法族已下沉为 EngineControl
@@ -1560,7 +1649,7 @@ class AutoloopEngine:
         return self._engine_reflector._has_post_task_signal(state, prev_outcome)
 
     async def _advisor_post_task_recommend(
-        self, run_id: str, objective: str, cog: dict, state: Any,
+        self, run_id: str, objective: str, cog: CognitiveState, state: Any,
         prev_outcome: str = "",
     ) -> None:
         await self._engine_reflector._advisor_post_task_recommend(
@@ -1710,7 +1799,7 @@ class AutoloopEngine:
         return self._cognitive_runner._load_failure_pattern()
 
     def _persist_run_context(
-        self, run_id: str, objective: str, cog: dict, state: Any,
+        self, run_id: str, objective: str, cog: CognitiveState, state: Any,
     ) -> None:
         self._cognitive_runner._persist_run_context(run_id, objective, cog, state)
 
@@ -1721,16 +1810,16 @@ class AutoloopEngine:
         return self._cognitive_runner._format_timeseries_context()
 
     async def _decide_next_action_llm(
-        self, state: Any, cog: dict, obs: dict,
+        self, state: Any, cog: CognitiveState, obs: dict,
     ):
         return await self._cognitive_runner._decide_next_action_llm(state, cog, obs)
 
     def _build_decider_prompt(
-        self, state: Any, cog: dict, obs: dict,
+        self, state: Any, cog: CognitiveState, obs: dict,
     ) -> str:
         return self._cognitive_runner._build_decider_prompt(state, cog, obs)
 
-    def _is_action_legal(self, action: str, cog: dict) -> bool:
+    def _is_action_legal(self, action: str, cog: CognitiveState) -> bool:
         return self._cognitive_runner._is_action_legal(action, cog)
 
     async def _finalize_run(
@@ -1743,6 +1832,7 @@ class AutoloopEngine:
         tracker: Any,
         progress_task_id: str,
         completed_steps: int,
+        loop_state: Any = None,
     ) -> Any:
         return await self._cognitive_runner._finalize_run(
             objective,
@@ -1753,6 +1843,7 @@ class AutoloopEngine:
             tracker,
             progress_task_id,
             completed_steps,
+            loop_state=loop_state,
         )
 
     def _rollback_on_execute_failure(
@@ -2008,8 +2099,6 @@ class AutoloopEngine:
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
-
-
     def _extract_haptic_layer(self, execution_result: Any):
         """Step 8: 从 execution_result 抽力学字段, 构 HapticPropertyLayer.
 
@@ -2018,17 +2107,9 @@ class AutoloopEngine:
         phonon_freqs / surface_energy / thermal), 其他格式让各 tool 自己 add.
         ceiling: stage_results[*].output 里的力学字段抓不到, 升级路径递归扫.
         """
-        if not isinstance(execution_result, dict):
+        data = self._haptic_unwrap(execution_result)
+        if data is None:
             return None
-        data = execution_result
-        # _validate / _literature_comparison 用的同款 fallback: result_data 优先, parsed 兜底
-        nested = data.get("result_data")
-        if isinstance(nested, dict):
-            data = nested
-        else:
-            nested = data.get("parsed")
-            if isinstance(nested, dict):
-                data = nested
 
         # 力学字段 — 跟 validate_tool._run_elastic_validation 对齐
         elastic_raw = data.get("elastic_tensor") or data.get("elastic_constants") or data.get("C")
@@ -2044,37 +2125,55 @@ class AutoloopEngine:
 
         from huginn.metacog.haptic_property_layer import HapticPropertyLayer
 
-        elastic = None
-        if elastic_raw is not None:
-            try:
-                import numpy as np
-
-                from huginn.mechanics import ElasticTensor
-                C = np.array(elastic_raw, dtype=float)
-                if C.shape == (6, 6):
-                    elastic = ElasticTensor(C=C)
-            except Exception:  # 防御: 弹性张量解析失败跳过
-                logger.debug(
-                    "elastic_tensor parse failed, skipping elastic field",
-                    exc_info=True,
-                )
-
-        phonon_arr = None
-        if phonon is not None:
-            try:
-                import numpy as np
-                phonon_arr = np.asarray(phonon, dtype=float)
-            except Exception:  # 防御: 声子数组解析失败跳过
-                logger.debug("phonon array parse skipped", exc_info=True)
-
         return HapticPropertyLayer(
-            elastic=elastic,
-            phonon_freqs=phonon_arr,
+            elastic=self._haptic_elastic(elastic_raw),
+            phonon_freqs=self._haptic_phonon(phonon),
             surface_energy=float(surface) if surface is not None else None,
             thermal=thermal if isinstance(thermal, dict) else None,
         )
 
+    @staticmethod
+    def _haptic_unwrap(execution_result: Any) -> dict | None:
+        """取顶层 dict; result_data 优先, parsed 兜底 (同 _validate 的 fallback)."""
+        if not isinstance(execution_result, dict):
+            return None
+        data = execution_result
+        nested = data.get("result_data")
+        if isinstance(nested, dict):
+            return nested
+        nested = data.get("parsed")
+        return nested if isinstance(nested, dict) else data
 
+    @staticmethod
+    def _haptic_elastic(elastic_raw: Any) -> Any:
+        """解析 6x6 弹性张量; 非 6x6 或解析失败 → None."""
+        if elastic_raw is None:
+            return None
+        try:
+            import numpy as np
+
+            from huginn.mechanics import ElasticTensor
+            C = np.array(elastic_raw, dtype=float)
+            if C.shape == (6, 6):
+                return ElasticTensor(C=C)
+        except Exception:  # 防御: 弹性张量解析失败跳过
+            logger.debug(
+                "elastic_tensor parse failed, skipping elastic field",
+                exc_info=True,
+            )
+        return None
+
+    @staticmethod
+    def _haptic_phonon(phonon: Any) -> Any:
+        """解析声子频率数组; 解析失败 → None."""
+        if phonon is None:
+            return None
+        try:
+            import numpy as np
+            return np.asarray(phonon, dtype=float)
+        except Exception:  # 防御: 声子数组解析失败跳过
+            logger.debug("phonon array parse skipped", exc_info=True)
+            return None
 
     def _collect_alignment_pair(
         self, execution_result: Any, tool_name: str | None = None,

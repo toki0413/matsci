@@ -230,39 +230,43 @@ class HuginnSwarm:
                 # Cyclic dependency fallback: run remaining sequentially.
                 ready = list(pending.values())
 
-            async def run_one(step: SwarmPlanStep) -> tuple[str, str]:
-                worker = self.workers.get(step.role)
-                if not worker:
-                    return step.id, ""
-                # Build input using outputs from dependencies.
-                try:
-                    dep_text = "\n".join(
-                        f"{dep}: {results[dep]}"
-                        for dep in step.depends_on
-                        if dep in results
-                    )
-                    task = step.task
-                    if dep_text:
-                        task = f"{task}\n\nContext from previous steps:\n{dep_text}"
-                    output = await self._run_agent(worker, task, ctx)
-                    return step.id, output
-                except Exception as exc:
-                    # 失败隔离: 单个 sub-agent 异常不应团灭整个并行 batch.
-                    # 与 parallel_executor._run_one 的 try/except 对齐. 之前
-                    # asyncio.gather 会 propagate 异常杀死整批, 导致一个
-                    # RateLimitError 让 plan 后续步骤全死.
-                    logger.warning(
-                        "swarm run_one step=%s failed (isolated): %s",
-                        step.id, exc, exc_info=True,
-                    )
-                    return step.id, f"[ERROR] step {step.id} failed: {exc}"
-
-            batch_results = await asyncio.gather(*(run_one(s) for s in ready))
+            batch_results = await asyncio.gather(
+                *(HuginnSwarm._run_one_step(self, s, results, ctx) for s in ready)
+            )
             for step_id, output in batch_results:
                 results[step_id] = output
                 pending.pop(step_id)
 
         return [results[s.id] for s in steps]
+
+    async def _run_one_step(
+        self, step: SwarmPlanStep, results: dict[str, str], ctx: dict[str, Any]
+    ) -> tuple[str, str]:
+        worker = self.workers.get(step.role)
+        if not worker:
+            return step.id, ""
+        # Build input using outputs from dependencies.
+        try:
+            dep_text = "\n".join(
+                f"{dep}: {results[dep]}" for dep in step.depends_on if dep in results
+            )
+            task = step.task
+            if dep_text:
+                task = f"{task}\n\nContext from previous steps:\n{dep_text}"
+            output = await self._run_agent(worker, task, ctx)
+            return step.id, output
+        except Exception as exc:
+            # 失败隔离: 单个 sub-agent 异常不应团灭整个并行 batch.
+            # 与 parallel_executor._run_one 的 try/except 对齐. 之前
+            # asyncio.gather 会 propagate 异常杀死整批, 导致一个
+            # RateLimitError 让 plan 后续步骤全死.
+            logger.warning(
+                "swarm run_one step=%s failed (isolated): %s",
+                step.id,
+                exc,
+                exc_info=True,
+            )
+            return step.id, f"[ERROR] step {step.id} failed: {exc}"
 
     async def _delegate(self, role: AgentRole, task: str, ctx: dict[str, Any]) -> str:
         worker = self.workers.get(role)
@@ -383,9 +387,7 @@ class InProcessBackend(DistributedSwarmBackend):
 
     def _run_async(self, task: dict[str, Any]) -> dict[str, Any]:
         """在线程里跑 swarm.run, asyncio.run 自带 loop."""
-        return asyncio.run(
-            self._swarm.run(task.get("task", ""), task.get("context"))
-        )
+        return asyncio.run(self._swarm.run(task.get("task", ""), task.get("context")))
 
 
 class RedisBackend(DistributedSwarmBackend):
@@ -408,9 +410,7 @@ class RedisBackend(DistributedSwarmBackend):
         try:
             import redis  # type: ignore[import-untyped]
         except ImportError as exc:  # pragma: no cover - 跟环境绑死
-            raise ImportError(
-                "RedisBackend 需要 redis-py: pip install redis"
-            ) from exc
+            raise ImportError("RedisBackend 需要 redis-py: pip install redis") from exc
         self._redis = redis
         self._redis_url = redis_url
         self._queue_key = queue_key

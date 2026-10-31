@@ -120,6 +120,7 @@ class HierarchicalRetriever:
         # 和 indexes/{bm25,dense}/. 这里的 fallback 只在用户显式提供路径时生效,
         # 否则保持空索引 (router 退化为纯关键词匹配). 想启用就设 HUGINN_SOBKO_HIERARCHICAL_INDEX.
         import os
+
         env_path = os.environ.get("HUGINN_SOBKO_HIERARCHICAL_INDEX", "")
         if env_path and Path(env_path).exists():
             with open(env_path, encoding="utf-8") as f:
@@ -173,6 +174,32 @@ class HierarchicalRetriever:
             targeted_filter["software_tags"] = sw
 
         # Primary search: targeted
+        targeted_results, general_results = HierarchicalRetriever._routed_search(
+            self, query, top_k, targeted_filter, filter_dict
+        )
+
+        merged = HierarchicalRetriever._merge_results(
+            self, targeted_results, general_results
+        )
+
+        # Build routing reason
+        reason = _routing_reason(sw, method)
+
+        return {
+            "route": route_info,
+            "results": merged[:top_k],
+            "targeted_count": len(targeted_results),
+            "general_count": len(general_results),
+            "routing_reason": reason,
+        }
+
+    def _routed_search(
+        self,
+        query: str,
+        top_k: int,
+        targeted_filter: dict[str, Any],
+        filter_dict: dict[str, Any] | None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         try:
             targeted_results = self.store.search(
                 query=query,
@@ -192,6 +219,13 @@ class HierarchicalRetriever:
         except Exception:  # 防御: 全量检索失败置空结果
             general_results = []
 
+        return targeted_results, general_results
+
+    def _merge_results(
+        self,
+        targeted_results: list[dict[str, Any]],
+        general_results: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         # Deduplicate and merge
         seen_ids = {r.get("id", r.get("chunk_id", "")) for r in targeted_results}
         merged = list(targeted_results)
@@ -199,21 +233,16 @@ class HierarchicalRetriever:
             rid = r.get("id", r.get("chunk_id", ""))
             if rid not in seen_ids:
                 merged.append(r)
+        return merged
 
-        # Build routing reason
-        if sw and method:
-            reason = f"Routed to {sw} software index + {method} method index"
-        elif sw:
-            reason = f"Routed to {sw} software index"
-        elif method:
-            reason = f"Routed to {method} method index"
-        else:
-            reason = "No specific route detected; using general search"
 
-        return {
-            "route": route_info,
-            "results": merged[:top_k],
-            "targeted_count": len(targeted_results),
-            "general_count": len(general_results),
-            "routing_reason": reason,
-        }
+def _routing_reason(sw: str | None, method: str | None) -> str:
+    if sw and method:
+        reason = f"Routed to {sw} software index + {method} method index"
+    elif sw:
+        reason = f"Routed to {sw} software index"
+    elif method:
+        reason = f"Routed to {method} method index"
+    else:
+        reason = "No specific route detected; using general search"
+    return reason

@@ -26,6 +26,7 @@
   - 多 feature 联合拟合 (joint NLL)
   - 噪声模型自适应 (heteroscedastic)
 """
+
 from __future__ import annotations
 
 import logging
@@ -53,6 +54,7 @@ R = 8.314e-3  # kJ/(mol*K), 跟 visual_scm.py 保持一致
 
 # ── 数据点 ─────────────────────────────────────────────────────
 
+
 @dataclass
 class Observation:
     """单个实验观测点: conditions + features 数值对.
@@ -62,6 +64,7 @@ class Observation:
       - "vision_describe": 从图像通过 vision_describe 提取
       - "literature":    从论文表格/文本抽出
     """
+
     conditions: dict[str, float]
     features: dict[str, float]
     source: str = "manual"
@@ -70,46 +73,64 @@ class Observation:
 
 # ── 可拟合模板规格 ────────────────────────────────────────────
 
+
 @dataclass
 class _FittableSpec:
     """每个模板的可拟合表征."""
+
     template_name: str
-    feature: str                                            # 拟合的主要特征
-    conditions: list[str]                                   # 条件变量名
-    params: list[str]                                       # 可拟合参数名
-    defaults: dict[str, float]                              # 默认参数值
-    bounds: tuple[list[float], list[float]]                 # curve_fit bounds
-    predict: Callable[..., np.ndarray]                      # f(X[k,n], *params) -> y[n]
+    feature: str  # 拟合的主要特征
+    conditions: list[str]  # 条件变量名
+    params: list[str]  # 可拟合参数名
+    defaults: dict[str, float]  # 默认参数值
+    bounds: tuple[list[float], list[float]]  # curve_fit bounds
+    predict: Callable[..., np.ndarray]  # f(X[k,n], *params) -> y[n]
     make_feature_equation: Callable[[dict[str, float]], Callable]  # 拟合后构建闭包
 
 
 def _sintering_predict(X: np.ndarray, Ea: float, A0: float, r0: float) -> np.ndarray:
     """烧结颗粒生长: r = (r0^3 + A0*exp(-Ea/(R*T)) * t)^(1/3)."""
     T, t = X[0], X[1]
-    return np.cbrt(r0**3 + A0 * np.exp(-Ea / (R * np.maximum(T, 1.0))) * np.maximum(t, 0.0))
+    return np.cbrt(
+        r0**3 + A0 * np.exp(-Ea / (R * np.maximum(T, 1.0))) * np.maximum(t, 0.0)
+    )
 
 
-def _sint_make_eq(params: dict[str, float]) -> Callable[[dict[str, float], float], float]:
+def _sint_make_eq(
+    params: dict[str, float],
+) -> Callable[[dict[str, float], float], float]:
     Ea, A0, r0 = params["Ea_grow"], params["A0_grow"], params["r0"]
+
     def f(p: dict[str, float], u: float) -> float:
         T, t = p.get("T", 1500.0), p.get("t", 2.0)
-        r = (r0**3 + A0 * math.exp(-Ea / (R * max(T, 1.0))) * max(t, 0.0)) ** (1.0/3.0)
+        r = (r0**3 + A0 * math.exp(-Ea / (R * max(T, 1.0))) * max(t, 0.0)) ** (
+            1.0 / 3.0
+        )
         return max(r * (1 + u), 1.0)
+
     return f
 
 
 def _ostwald_predict(X: np.ndarray, Ea: float, K0: float, r0: float) -> np.ndarray:
     """LSW: r^3 = r0^3 + K0*exp(-Ea/(R*T)) * t."""
     T, t = X[0], X[1]
-    return np.cbrt(r0**3 + K0 * np.exp(-Ea / (R * np.maximum(T, 1.0))) * np.maximum(t, 0.0))
+    return np.cbrt(
+        r0**3 + K0 * np.exp(-Ea / (R * np.maximum(T, 1.0))) * np.maximum(t, 0.0)
+    )
 
 
-def _ostw_make_eq(params: dict[str, float]) -> Callable[[dict[str, float], float], float]:
+def _ostw_make_eq(
+    params: dict[str, float],
+) -> Callable[[dict[str, float], float], float]:
     Ea, K0, r0 = params["Ea"], params["K0"], params["r0"]
+
     def f(p: dict[str, float], u: float) -> float:
         T, t = p.get("T", 600.0), p.get("t", 100.0)
-        r = (r0**3 + K0 * math.exp(-Ea / (R * max(T, 1.0))) * max(t, 0.0)) ** (1.0/3.0)
+        r = (r0**3 + K0 * math.exp(-Ea / (R * max(T, 1.0))) * max(t, 0.0)) ** (
+            1.0 / 3.0
+        )
         return max(r * (1 + u), 0.5)
+
     return f
 
 
@@ -119,12 +140,16 @@ def _diffusion_predict(X: np.ndarray, Ea: float, D0: float) -> np.ndarray:
     return D0 * np.exp(-Ea / (R * np.maximum(T, 1.0)))
 
 
-def _diff_make_eq(params: dict[str, float]) -> Callable[[dict[str, float], float], float]:
+def _diff_make_eq(
+    params: dict[str, float],
+) -> Callable[[dict[str, float], float], float]:
     Ea, D0 = params["Ea"], params["D0"]
+
     def f(p: dict[str, float], u: float) -> float:
         T = p.get("T", 800.0)
         D = D0 * math.exp(-Ea / (R * max(T, 1.0)))
         return max(D * math.exp(u), 1e-25)
+
     return f
 
 
@@ -144,9 +169,12 @@ def _phase_predict(X: np.ndarray, Ea: float, k0: float, T_eq: float) -> np.ndarr
     return np.where(delta <= 0, 0.0, f)
 
 
-def _phase_make_eq(params: dict[str, float]) -> Callable[[dict[str, float], float], float]:
+def _phase_make_eq(
+    params: dict[str, float],
+) -> Callable[[dict[str, float], float], float]:
     Ea, k0, T_eq = params["Ea"], params["k0"], params["T_eq"]
     n_avrami, dTdP = 2.5, 1e-7
+
     def f(p: dict[str, float], u: float) -> float:
         T, p_val = p.get("T", 1100.0), p.get("p", 1e5)
         T_eq_p = T_eq + dTdP * p_val
@@ -156,6 +184,7 @@ def _phase_make_eq(params: dict[str, float]) -> Callable[[dict[str, float], floa
         k = k0 * math.exp(-Ea / (R * max(T, 1.0)))
         f_val = 1.0 - math.exp(-((k * 1.0 * delta / 100.0) ** n_avrami))
         return min(max(f_val + u * 0.05, 0.0), 1.0)
+
     return f
 
 
@@ -205,6 +234,7 @@ _FITTABLE: dict[str, _FittableSpec] = {
 
 # ── 核心拟合 ─────────────────────────────────────────────────
 
+
 def _build_fitted_scm(
     template: VisualSCM, spec: _FittableSpec, params: dict[str, float]
 ) -> VisualSCM:
@@ -222,10 +252,117 @@ def _build_fitted_scm(
         edges=template.edges,
         equations=new_equations,
         noise=template.noise,
-        confirmed=False,          # 视觉/数据拟合需用户审核
+        confirmed=False,  # 视觉/数据拟合需用户审核
         source="visual_chain_fit",
         notes="",
     )
+
+
+def _valid_observations(
+    observations: list[Observation], spec: _FittableSpec
+) -> list[Observation]:
+    """过滤有 feature 数值 + 条件齐全的观测点."""
+    return [
+        o
+        for o in observations
+        if spec.feature in o.features
+        and all(c in o.conditions for c in spec.conditions)
+    ]
+
+
+def _insufficient_data_result(
+    template: VisualSCM,
+    spec: _FittableSpec,
+    valid_obs: list[Observation],
+    template_name: str,
+) -> tuple[VisualSCM, dict[str, Any]]:
+    """数据点不够, 回退默认参数."""
+    fitted_params = spec.defaults.copy()
+    fitted_scm = _build_fitted_scm(template, spec, fitted_params)
+    warning = f"数据点不足 ({len(valid_obs)} < {len(spec.params)} 参数), 回退默认参数"
+    fitted_scm.notes = (
+        f"Phase 2 fit: feature={spec.feature}, n_points={len(valid_obs)} | "
+        f"R^2=N/A | params={fitted_params} | warning: {warning}"
+    )
+    return fitted_scm, {
+        "r2": float("nan"),
+        "params": fitted_params,
+        "n_points": len(valid_obs),
+        "warning": warning,
+        "template": template_name,
+        "feature": spec.feature,
+    }
+
+
+def _fit_with_curve_fit(
+    spec: _FittableSpec,
+    valid_obs: list[Observation],
+    maxfev: int,
+    template_name: str,
+) -> tuple[dict[str, float], float, str | None]:
+    """curve_fit 拟合参数, 返 (params, r2, warning)."""
+    # 准备 X (k, n) 和 y (n,)
+    X = np.array(
+        [[o.conditions[c] for c in spec.conditions] for o in valid_obs]
+    ).T  # shape: (k, n)
+    y = np.array([o.features[spec.feature] for o in valid_obs], dtype=float)
+
+    # curve_fit
+    from scipy.optimize import curve_fit  # 懒导入: 唯一 scipy 依赖, 外移到调用点
+
+    p0 = [spec.defaults[p] for p in spec.params]
+    lower, upper = spec.bounds
+    try:
+        popt, _ = curve_fit(
+            spec.predict,
+            X,
+            y,
+            p0=p0,
+            bounds=(lower, upper),
+            maxfev=maxfev,
+        )
+        fitted_params = dict(zip(spec.params, popt))
+        y_pred = spec.predict(X, *popt)
+        ss_res = float(np.sum((y - y_pred) ** 2))
+        ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+        r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+        warning = None
+    except Exception as exc:
+        logger.warning("curve_fit failed for %s: %s", template_name, exc, exc_info=True)
+        fitted_params = spec.defaults.copy()
+        r2 = float("nan")
+        warning = f"curve_fit 失败: {exc}, 回退默认参数"
+    return fitted_params, r2, warning
+
+
+def _format_fit_notes(
+    spec: _FittableSpec,
+    n_points: int,
+    r2: float,
+    fitted_params: dict[str, float],
+    warning: str | None,
+) -> str:
+    notes_parts = [
+        f"Phase 2 fit: feature={spec.feature}, n_points={n_points}",
+        f"R^2={r2:.4f}" if not math.isnan(r2) else "R^2=N/A",
+        f"params={{{', '.join(f'{k}={v:.4g}' for k, v in fitted_params.items())}}}",
+    ]
+    if warning:
+        notes_parts.append(f"warning: {warning}")
+    return " | ".join(notes_parts)
+
+
+def _resolve_template(template_name: str) -> tuple[_FittableSpec, VisualSCM]:
+    """按模板名取 (拟合规格, 模板 SCM); 不存在则抛 ValueError."""
+    spec = _FITTABLE.get(template_name)
+    if spec is None:
+        raise ValueError(
+            f"无拟合规格 for '{template_name}'. 可用: {list(_FITTABLE.keys())}"
+        )
+    template = get_template(template_name)
+    if template is None:
+        raise ValueError(f"模板 '{template_name}' 不存在")
+    return spec, template
 
 
 def fit_scm_from_observations(
@@ -247,95 +384,54 @@ def fit_scm_from_observations(
         fitted_scm: 拟合后的 VisualSCM (confirmed=False, source="visual_chain_fit")
         fit_report: {r2, params, n_points, warning, template, feature}
     """
-    spec = _FITTABLE.get(template_name)
-    if spec is None:
-        raise ValueError(
-            f"无拟合规格 for '{template_name}'. 可用: {list(_FITTABLE.keys())}"
-        )
-    template = get_template(template_name)
-    if template is None:
-        raise ValueError(f"模板 '{template_name}' 不存在")
+    spec, template = _resolve_template(template_name)
 
     # 过滤有 feature 数值 + 条件齐全的观测点
-    valid_obs = [
-        o for o in observations
-        if spec.feature in o.features
-        and all(c in o.conditions for c in spec.conditions)
-    ]
+    valid_obs = _valid_observations(observations, spec)
 
     if len(valid_obs) < len(spec.params):
         # 数据点不够, 回退默认参数
-        fitted_params = spec.defaults.copy()
-        fitted_scm = _build_fitted_scm(template, spec, fitted_params)
-        warning = (
-            f"数据点不足 ({len(valid_obs)} < {len(spec.params)} 参数), "
-            f"回退默认参数"
-        )
-        fitted_scm.notes = (
-            f"Phase 2 fit: feature={spec.feature}, n_points={len(valid_obs)} | "
-            f"R^2=N/A | params={fitted_params} | warning: {warning}"
-        )
-        return fitted_scm, {
-            "r2": float("nan"), "params": fitted_params,
-            "n_points": len(valid_obs), "warning": warning,
-            "template": template_name, "feature": spec.feature,
-        }
+        return _insufficient_data_result(template, spec, valid_obs, template_name)
 
-    # 准备 X (k, n) 和 y (n,)
-    X = np.array([
-        [o.conditions[c] for c in spec.conditions]
-        for o in valid_obs
-    ]).T  # shape: (k, n)
-    y = np.array([o.features[spec.feature] for o in valid_obs], dtype=float)
-
-    # curve_fit
-    from scipy.optimize import curve_fit  # 懒导入: 唯一 scipy 依赖, 外移到调用点
-    p0 = [spec.defaults[p] for p in spec.params]
-    lower, upper = spec.bounds
-    try:
-        popt, _ = curve_fit(
-            spec.predict, X, y, p0=p0, bounds=(lower, upper), maxfev=maxfev,
-        )
-        fitted_params = dict(zip(spec.params, popt))
-        y_pred = spec.predict(X, *popt)
-        ss_res = float(np.sum((y - y_pred) ** 2))
-        ss_tot = float(np.sum((y - np.mean(y)) ** 2))
-        r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
-        warning = None
-    except Exception as exc:
-        logger.warning(
-            "curve_fit failed for %s: %s", template_name, exc, exc_info=True
-        )
-        fitted_params = spec.defaults.copy()
-        r2 = float("nan")
-        warning = f"curve_fit 失败: {exc}, 回退默认参数"
+    fitted_params, r2, warning = _fit_with_curve_fit(
+        spec, valid_obs, maxfev, template_name
+    )
 
     fitted_scm = _build_fitted_scm(template, spec, fitted_params)
-    notes_parts = [
-        f"Phase 2 fit: feature={spec.feature}, n_points={len(valid_obs)}",
-        f"R^2={r2:.4f}" if not math.isnan(r2) else "R^2=N/A",
-        f"params={{{', '.join(f'{k}={v:.4g}' for k, v in fitted_params.items())}}}",
-    ]
-    if warning:
-        notes_parts.append(f"warning: {warning}")
-    fitted_scm.notes = " | ".join(notes_parts)
+    fitted_scm.notes = _format_fit_notes(
+        spec, len(valid_obs), r2, fitted_params, warning
+    )
 
     return fitted_scm, {
-        "r2": r2, "params": fitted_params, "n_points": len(valid_obs),
-        "warning": warning, "template": template_name, "feature": spec.feature,
+        "r2": r2,
+        "params": fitted_params,
+        "n_points": len(valid_obs),
+        "warning": warning,
+        "template": template_name,
+        "feature": spec.feature,
     }
 
 
 # ── 视觉提取 (上层 wrapper) ──────────────────────────────────
 
 _FEATURE_ALIASES: dict[str, list[str]] = {
-    "particle_size": ["particle size", "particle_size", "grain size",
-                      "颗粒尺寸", "颗粒大小", "size"],
-    "density":       ["density", "致密度", "密度"],
-    "D":             ["diffusion coefficient", "diffusion_coefficient",
-                      "扩散系数", "D ==", "D="],
-    "phase_fraction":["phase fraction", "phase_fraction", "相分数",
-                      "体积分数", "fraction"],
+    "particle_size": [
+        "particle size",
+        "particle_size",
+        "grain size",
+        "颗粒尺寸",
+        "颗粒大小",
+        "size",
+    ],
+    "density": ["density", "致密度", "密度"],
+    "D": ["diffusion coefficient", "diffusion_coefficient", "扩散系数", "D ==", "D="],
+    "phase_fraction": [
+        "phase fraction",
+        "phase_fraction",
+        "相分数",
+        "体积分数",
+        "fraction",
+    ],
 }
 
 
@@ -369,6 +465,63 @@ def _extract_numerical_feature(text: str, feature_name: str) -> float | None:
     return None
 
 
+def _vision_question(feature_keys: list[str], question: str | None) -> str:
+    return question or f"Extract numerical values for: {', '.join(feature_keys)}"
+
+
+def _spec_conditions(
+    spec: dict[str, Any], condition_keys: list[str]
+) -> dict[str, float]:
+    """从 spec 的 conditions 里取需要且可转 float 的条件变量."""
+    return {
+        k: float(v)
+        for k, v in spec.get("conditions", {}).items()
+        if k in condition_keys
+    }
+
+
+def _observation_from_image(
+    spec: dict[str, Any],
+    conditions: dict[str, float],
+    feature_keys: list[str],
+    auto_question: str,
+    describe_image: Callable[..., dict[str, Any]],
+    describe_image_bytes: Callable[..., dict[str, Any]],
+) -> Observation | None:
+    """单张图 → Observation; 无图像源时返 None (调用方跳过)."""
+    # 调 vision_describe
+    desc: dict[str, Any]
+    if spec.get("image_bytes"):
+        desc = describe_image_bytes(spec["image_bytes"], question=auto_question)
+    elif spec.get("image_path"):
+        desc = describe_image(spec["image_path"], question=auto_question)
+    else:
+        return None
+
+    if not desc.get("available"):
+        return Observation(
+            conditions=conditions,
+            features={},
+            source="vision_describe",
+            raw=desc,
+        )
+
+    # 从描述里提取数值
+    text = desc.get("text_concat", "") or desc.get("text", "") or ""
+    features: dict[str, float] = {}
+    for fk in feature_keys:
+        v = _extract_numerical_feature(text, fk)
+        if v is not None:
+            features[fk] = v
+
+    return Observation(
+        conditions=conditions,
+        features=features,
+        source="vision_describe",
+        raw=desc,
+    )
+
+
 def extract_observations_from_images(
     image_specs: list[dict[str, Any]],
     condition_keys: list[str],
@@ -394,51 +547,28 @@ def extract_observations_from_images(
     )
 
     observations: list[Observation] = []
-    auto_question = (
-        question
-        or f"Extract numerical values for: {', '.join(feature_keys)}"
-    )
+    auto_question = _vision_question(feature_keys, question)
 
     for spec in image_specs:
-        conditions = {
-            k: float(v) for k, v in spec.get("conditions", {}).items()
-            if k in condition_keys
-        }
+        conditions = _spec_conditions(spec, condition_keys)
         if len(conditions) != len(condition_keys):
             continue  # 条件不全跳过
 
-        # 调 vision_describe
-        desc: dict[str, Any]
-        if spec.get("image_bytes"):
-            desc = describe_image_bytes(spec["image_bytes"], question=auto_question)
-        elif spec.get("image_path"):
-            desc = describe_image(spec["image_path"], question=auto_question)
-        else:
-            continue
-
-        if not desc.get("available"):
-            observations.append(Observation(
-                conditions=conditions, features={},
-                source="vision_describe", raw=desc,
-            ))
-            continue
-
-        # 从描述里提取数值
-        text = desc.get("text_concat", "") or desc.get("text", "") or ""
-        features: dict[str, float] = {}
-        for fk in feature_keys:
-            v = _extract_numerical_feature(text, fk)
-            if v is not None:
-                features[fk] = v
-
-        observations.append(Observation(
-            conditions=conditions, features=features,
-            source="vision_describe", raw=desc,
-        ))
+        obs = _observation_from_image(
+            spec,
+            conditions,
+            feature_keys,
+            auto_question,
+            describe_image,
+            describe_image_bytes,
+        )
+        if obs is not None:
+            observations.append(obs)
     return observations
 
 
 # ── HuginnTool 包装 ──────────────────────────────────────────
+
 
 class FitSCMFromObservationsInput(BaseModel):
     template_name: str = Field(
@@ -476,28 +606,25 @@ class FitSCMFromObservationsTool(HuginnTool):
         self, args: dict[str, Any], context: ToolContext | None = None
     ) -> ValidationResult:
         input_data = (
-            args if isinstance(args, FitSCMFromObservationsInput)
+            args
+            if isinstance(args, FitSCMFromObservationsInput)
             else FitSCMFromObservationsInput(**args)
         )
         if input_data.template_name not in list_templates():
             return ValidationResult(
                 result=False,
                 message=(
-                    f"未知模板: {input_data.template_name}. "
-                    f"可用: {list_templates()}"
+                    f"未知模板: {input_data.template_name}. 可用: {list_templates()}"
                 ),
             )
         if not input_data.observations:
-            return ValidationResult(
-                result=False, message="observations 不能为空"
-            )
+            return ValidationResult(result=False, message="observations 不能为空")
         return ValidationResult(result=True)
 
-    async def call(
-        self, args: dict[str, Any], context: ToolContext
-    ) -> ToolResult:
+    async def call(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
         input_data = (
-            args if isinstance(args, FitSCMFromObservationsInput)
+            args
+            if isinstance(args, FitSCMFromObservationsInput)
             else FitSCMFromObservationsInput(**args)
         )
         try:
@@ -506,7 +633,8 @@ class FitSCMFromObservationsTool(HuginnTool):
                     conditions=o.get("conditions", {}),
                     features=o.get("features", {}),
                     source=o.get("source", "manual"),
-                ) for o in input_data.observations
+                )
+                for o in input_data.observations
             ]
             fitted_scm, report = fit_scm_from_observations(
                 observations,
@@ -522,44 +650,53 @@ class FitSCMFromObservationsTool(HuginnTool):
                 success=True,
             )
         except Exception as exc:
-            logger.warning(
-                "fit_scm_from_observations failed: %s", exc, exc_info=True
-            )
+            logger.warning("fit_scm_from_observations failed: %s", exc, exc_info=True)
             return ToolResult(data=None, success=False, error=str(exc))
 
 
 # ── self-check ───────────────────────────────────────────────
 
-def _selfcheck() -> None:
-    """14 项 assert 验证 visual_causal_chain 核心行为."""
-    import random as _rng
-    _rng.seed(42)
 
+def _sc_templates_fittable() -> None:
     # 1. 4 个模板都有拟合规格
-    assert set(_FITTABLE.keys()) == {"sintering", "ostwald_ripening",
-                                      "diffusion", "phase_transition"}
+    assert set(_FITTABLE.keys()) == {
+        "sintering",
+        "ostwald_ripening",
+        "diffusion",
+        "phase_transition",
+    }
 
+
+def _sc_sintering_monotonic() -> None:
     # 2. _sintering_predict 单调性: T 升 → particle_size 升
     X = np.array([[1500.0, 1800.0], [2.0, 2.0]])  # (2, 2): T=[1500,1800], t=[2,2]
     y = _sintering_predict(X, 250.0, 1e6, 50.0)
     assert y[1] > y[0], f"Arrhenius 单调性失败: {y}"
 
+
+def _sc_ostwald_monotonic() -> None:
     # 3. _ostwald_predict 单调性: t 升 → particle_size 升
     X = np.array([[800.0, 800.0], [10.0, 100.0]])
     y = _ostwald_predict(X, 180.0, 1e4, 20.0)
     assert y[1] > y[0]
 
+
+def _sc_diffusion_monotonic() -> None:
     # 4. _diffusion_predict 单调性: T 升 → D 升
     X = np.array([[500.0, 1000.0]])  # (1, 2): 1 个条件, 2 个数据点
     y = _diffusion_predict(X, 150.0, 1e-4)  # 返 shape (2,)
     assert y[1] > y[0], f"Fick 单调性失败: {y}"
 
+
+def _sc_phase_predict() -> None:
     # 5. _phase_predict: T 低于 T_eq → phase_fraction > 0; T 高于 T_eq → 0
     X = np.array([[900.0, 1100.0]])  # (1, 2): 1 个条件 T, 2 个数据点
     y = _phase_predict(X, 120.0, 1e3, 1000.0)  # 返 shape (2,)
     assert y[0] > 0.0, f"低温应有相变: {y}"
     assert y[1] == 0.0, f"高温应无相变: {y}"
 
+
+def _sc_fit_sintering(_rng) -> tuple[list[Observation], VisualSCM]:
     # 6. 拟合 sintering 数据点 (用真实参数生成 16 点 + 1% 噪声) → 拟合参数接近真实
     # 用 Ea=100, A0=1e8, r0=30 (不是模板默认 Ea=250), 让 Arrhenius 项在 1200-2000 K 明显起作用.
     # ponytail: 模板默认 Ea=250 在 2000 K 下 exp(-15)≈3e-7 几乎不变化, 测试无意义.
@@ -567,12 +704,16 @@ def _selfcheck() -> None:
     obs: list[Observation] = []
     for T in [1200, 1400, 1500, 1600, 1700, 1800, 1900, 2000]:
         for t in [1.0, 4.0]:
-            r_true = (r0_true**3 + A0_true * math.exp(-Ea_true / (R * T)) * t) ** (1.0/3.0)
+            r_true = (r0_true**3 + A0_true * math.exp(-Ea_true / (R * T)) * t) ** (
+                1.0 / 3.0
+            )
             r_noisy = r_true * (1 + _rng.gauss(0, 0.01))
-            obs.append(Observation(
-                conditions={"T": float(T), "t": t},
-                features={"particle_size": r_noisy},
-            ))
+            obs.append(
+                Observation(
+                    conditions={"T": float(T), "t": t},
+                    features={"particle_size": r_noisy},
+                )
+            )
     fitted_scm, report = fit_scm_from_observations(obs, "sintering")
     assert report["n_points"] == 16
     assert report["warning"] is None
@@ -583,13 +724,18 @@ def _selfcheck() -> None:
     assert 60 < p["Ea_grow"] < 150, f"Ea_grow 偏离: {p}"
     assert 1e6 < p["A0_grow"] < 1e10, f"A0_grow 偏离: {p}"
     assert 15 < p["r0"] < 60, f"r0 偏离: {p}"
+    return obs, fitted_scm
 
+
+def _sc_fitted_scm_flags(fitted_scm: VisualSCM) -> None:
     # 7. fitted_scm 标记正确
     assert fitted_scm.name == "sintering_fitted"
     assert fitted_scm.source == "visual_chain_fit"
     assert fitted_scm.confirmed is False  # 数据拟合需用户审核
     assert "R^2=" in fitted_scm.notes
 
+
+def _sc_fit_insufficient(obs: list[Observation]) -> None:
     # 8. 数据点不足 → 回退默认参数 + warning
     obs_few = obs[:2]  # 只 2 点, 但 sintering 有 3 参数
     fitted_scm2, report2 = fit_scm_from_observations(obs_few, "sintering")
@@ -598,6 +744,8 @@ def _selfcheck() -> None:
     assert report2["params"] == _FITTABLE["sintering"].defaults
     assert math.isnan(report2["r2"])
 
+
+def _sc_fit_unknown_template(obs: list[Observation]) -> None:
     # 9. 不存在的模板 → 抛 ValueError
     try:
         fit_scm_from_observations(obs, "nonexistent_template")
@@ -605,14 +753,19 @@ def _selfcheck() -> None:
     except ValueError:
         logger.debug("best-effort op failed", exc_info=True)
 
+
+def _sc_fit_diffusion(_rng) -> None:
     # 10. 拟合 diffusion 数据点
     obs_d: list[Observation] = []
     for T in [600, 700, 800, 900, 1000, 1100, 1200]:
         D_true = 1e-4 * math.exp(-150.0 / (R * T))
         D_noisy = D_true * (1 + _rng.gauss(0, 0.02))
-        obs_d.append(Observation(
-            conditions={"T": float(T)}, features={"D": D_noisy},
-        ))
+        obs_d.append(
+            Observation(
+                conditions={"T": float(T)},
+                features={"D": D_noisy},
+            )
+        )
     fitted_d, report_d = fit_scm_from_observations(obs_d, "diffusion")
     assert report_d["n_points"] == 7
     assert report_d["r2"] > 0.95
@@ -620,18 +773,24 @@ def _selfcheck() -> None:
     assert 80 < p_d["Ea"] < 250, f"Ea 偏离: {p_d}"
     assert 1e-6 < p_d["D0"] < 1e-2, f"D0 偏离: {p_d}"
 
+
+def _sc_fit_ostwald(_rng) -> None:
     # 11. 拟合 ostwald_ripening 数据点
     # 用 Ea=60, K0=1e7, r0=15 (不是模板默认), 让 LSW 项在 500-900 K 明显起作用.
     Ea_true_o, K0_true, r0_true_o = 60.0, 1e7, 15.0
     obs_o: list[Observation] = []
     for T in [500, 600, 700, 800, 900]:
         for t in [10, 100, 1000]:
-            r_true = (r0_true_o**3 + K0_true * math.exp(-Ea_true_o / (R * T)) * t) ** (1.0/3.0)
+            r_true = (r0_true_o**3 + K0_true * math.exp(-Ea_true_o / (R * T)) * t) ** (
+                1.0 / 3.0
+            )
             r_noisy = r_true * (1 + _rng.gauss(0, 0.01))
-            obs_o.append(Observation(
-                conditions={"T": float(T), "t": float(t)},
-                features={"particle_size": r_noisy},
-            ))
+            obs_o.append(
+                Observation(
+                    conditions={"T": float(T), "t": float(t)},
+                    features={"particle_size": r_noisy},
+                )
+            )
     fitted_o, report_o = fit_scm_from_observations(obs_o, "ostwald_ripening")
     assert report_o["n_points"] == 15
     assert report_o["r2"] > 0.95, f"R^2 太低: {report_o['r2']}"
@@ -640,6 +799,8 @@ def _selfcheck() -> None:
     assert 1e5 < p_o["K0"] < 1e9, f"K0 偏离: {p_o}"
     assert 5 < p_o["r0"] < 40, f"r0 偏离: {p_o}"
 
+
+def _sc_fit_phase(_rng) -> None:
     # 12. 拟合 phase_transition 数据点
     # 用 Ea=70, k0=1e4, T_eq=1000 (让 Avrami 项在 850-990 K 有非平凡值).
     Ea_true_p, k0_true, T_eq_true = 70.0, 1e4, 1000.0
@@ -652,15 +813,19 @@ def _selfcheck() -> None:
             k = k0_true * math.exp(-Ea_true_p / (R * T))
             f_true = 1.0 - math.exp(-((k * delta / 100.0) ** 2.5))
         f_noisy = max(0.0, min(1.0, f_true + _rng.gauss(0, 0.005)))
-        obs_p.append(Observation(
-            conditions={"T": float(T), "p": 1e5},
-            features={"phase_fraction": f_noisy},
-        ))
+        obs_p.append(
+            Observation(
+                conditions={"T": float(T), "p": 1e5},
+                features={"phase_fraction": f_noisy},
+            )
+        )
     fitted_p, report_p = fit_scm_from_observations(obs_p, "phase_transition")
     assert report_p["n_points"] == 6
     # phase_transition 6 数据点拟合 3 参数, R^2 可能不稳定, 只验证无报错
     assert report_p["warning"] is None or "curve_fit" in (report_p["warning"] or "")
 
+
+def _sc_extract_feature() -> None:
     # 13. _extract_numerical_feature 命中各种格式
     assert _extract_numerical_feature("particle size: 250 nm", "particle_size") == 250.0
     assert _extract_numerical_feature("particle_size = 250", "particle_size") == 250.0
@@ -670,45 +835,94 @@ def _selfcheck() -> None:
     assert _extract_numerical_feature("扩散系数 1.5e-12", "D") == 1.5e-12
     assert _extract_numerical_feature("no relevant info", "particle_size") is None
 
+
+def _sc_tool_validate() -> None:
     # 14. Tool validate_input 拒绝未知模板 + 空 observations
     import asyncio
+
     tool = FitSCMFromObservationsTool()
     loop = asyncio.new_event_loop()
     try:
-        r = loop.run_until_complete(tool.validate_input(
-            {"template_name": "nonexistent", "observations": [{"conditions": {}, "features": {}}]}
-        ))
+        r = loop.run_until_complete(
+            tool.validate_input(
+                {
+                    "template_name": "nonexistent",
+                    "observations": [{"conditions": {}, "features": {}}],
+                }
+            )
+        )
         assert r.result is False
-        r = loop.run_until_complete(tool.validate_input(
-            {"template_name": "sintering", "observations": []}
-        ))
+        r = loop.run_until_complete(
+            tool.validate_input({"template_name": "sintering", "observations": []})
+        )
         assert r.result is False
-        r = loop.run_until_complete(tool.validate_input(
-            {"template_name": "sintering",
-             "observations": [{"conditions": {"T": 1500, "t": 2}, "features": {"particle_size": 200}}]}
-        ))
+        r = loop.run_until_complete(
+            tool.validate_input(
+                {
+                    "template_name": "sintering",
+                    "observations": [
+                        {
+                            "conditions": {"T": 1500, "t": 2},
+                            "features": {"particle_size": 200},
+                        }
+                    ],
+                }
+            )
+        )
         assert r.result is True
     finally:
         loop.close()
 
+
+def _sc_tool_call() -> None:
     # 15. Tool call 成功返 fit_report
+    import asyncio
+
     tool2 = FitSCMFromObservationsTool()
     loop2 = asyncio.new_event_loop()
     try:
         from huginn.core_types import ToolContext
+
         ctx = ToolContext(session_id="selfcheck", workspace=".")
-        r = loop2.run_until_complete(tool2.call(
-            {"template_name": "diffusion",
-             "observations": [{"conditions": {"T": 800}, "features": {"D": 1e-8}},
-                              {"conditions": {"T": 1000}, "features": {"D": 1e-7}}]},
-            ctx,
-        ))
+        r = loop2.run_until_complete(
+            tool2.call(
+                {
+                    "template_name": "diffusion",
+                    "observations": [
+                        {"conditions": {"T": 800}, "features": {"D": 1e-8}},
+                        {"conditions": {"T": 1000}, "features": {"D": 1e-7}},
+                    ],
+                },
+                ctx,
+            )
+        )
         assert r.success
         assert "fit_report" in r.data
         assert r.data["scm_name"] == "diffusion_fitted"
     finally:
         loop2.close()
 
+
+def _selfcheck() -> None:
+    """14 项 assert 验证 visual_causal_chain 核心行为."""
+    import random as _rng
+
+    _rng.seed(42)
+    _sc_templates_fittable()
+    _sc_sintering_monotonic()
+    _sc_ostwald_monotonic()
+    _sc_diffusion_monotonic()
+    _sc_phase_predict()
+    obs, fitted_scm = _sc_fit_sintering(_rng)
+    _sc_fitted_scm_flags(fitted_scm)
+    _sc_fit_insufficient(obs)
+    _sc_fit_unknown_template(obs)
+    _sc_fit_diffusion(_rng)
+    _sc_fit_ostwald(_rng)
+    _sc_fit_phase(_rng)
+    _sc_extract_feature()
+    _sc_tool_validate()
+    _sc_tool_call()
     print("all self-checks passed")
 
 

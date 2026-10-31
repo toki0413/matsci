@@ -159,9 +159,9 @@ prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 -> 必须生�
 
 | 预算 | 位置 | 模式 | 冻结值 | 实测 | 余量 | 消费者门 |
 |---|---|---|---|---|---|---|
-| MECE 发现基线 | `tests/golden/mece_findings_baseline.txt` | 引用 | 47 项 | — | — | MECE wiring-contract guard (ratchet) |
+| MECE 发现基线 | `tests/golden/mece_findings_baseline.txt` | 引用 | 48 项 | — | — | MECE wiring-contract guard (ratchet) |
 | 镜像漂移预算 | `tests/test_publish_mirror_drift.py` | 权威 | 0/0/0 | — | — | publish mirror drift (only-shrink) · 全量 |
-| 环境裸读基线 | `huginn/env_schema.py` | 引用 | 467 | — | — | env surface governance · 全量 |
+| 环境裸读基线 | `huginn/env_schema.py` | 引用 | 464 | — | — | env surface governance · 全量 |
 | 外部直连白名单 | `tests/test_arch_single_gateway.py` | 引用 | 19 项 | — | — | Architecture single-gateway guard |
 | 冻结委托子命令 | `tests/test_arch_single_gateway.py` | 引用 | 11 项 | — | — | Architecture single-gateway guard |
 | 插件准入清单 | `tests/test_arch_plugin_governance.py` | 引用 | 2 项 | — | — | Plugin admission guard |
@@ -179,7 +179,7 @@ prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 -> 必须生�
 | 能力锚点数下限 | `tests/test_arch_gate_registry.py` | 权威 | 19 | 19 | 0 | Governance gate registry guard |
 | prompt 段数下限 | `tests/test_arch_gate_registry.py` | 权威 | 13 | 13 | 0 | Governance gate registry guard |
 | gitleaks 密钥豁免数 | `.gitleaks.toml` | 上限 | 7 | 7 | 0 | Governance gate registry guard |
-| pip-audit 漏洞豁免数 | `.github/workflows/ci.yml` | 上限 | 24 | 24 | 0 | Governance gate registry guard |
+| pip-audit 漏洞豁免数 | `.github/workflows/ci.yml` | 上限 | 25 | 25 | 0 | Governance gate registry guard |
 | dependabot 忽略项数 | `.github/dependabot.yml` | 上限 | 5 | 5 | 0 | Governance gate registry guard |
 | 覆盖率下限 | `pyproject.toml` | 下限 | 60 | 60 | 0 | Governance gate registry guard |
 | 可运行性探针清单下限 | `huginn/capabilities/smoke_specs.py` | 权威 | 7 | 7 | 0 | Governance gate registry guard |

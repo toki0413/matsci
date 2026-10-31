@@ -129,9 +129,7 @@ class MCPToolAdapter(HuginnTool):
     async def call(self, args: BaseModel, context: ToolContext) -> ToolResult:
         # Determine timeout based on read/write classification
         timeout = (
-            _MCP_TIMEOUT_READONLY
-            if self.is_read_only(args)
-            else _MCP_TIMEOUT_WRITE
+            _MCP_TIMEOUT_READONLY if self.is_read_only(args) else _MCP_TIMEOUT_WRITE
         )
 
         # Use async CircuitBreaker if available
@@ -188,21 +186,9 @@ class MCPToolAdapter(HuginnTool):
             # retrieval, etc.), store the result in long-term memory so
             # future queries can benefit without re-calling the MCP server.
             if self._tool_name in _HIGH_VALUE_MCP_TOOLS and context.memory_manager:
-                try:
-                    memory_text = output[:2000] if isinstance(output, str) else json.dumps(data)[:2000]
-                    context.memory_manager.add_tool_call(
-                        tool_name=self._tool_name,
-                        tool_args=arguments,
-                        tool_result=memory_text,
-                        success=True,
-                    )
-                except Exception:
-                    # Memory promotion failure should never block tool result
-                    logger.debug(
-                        "MCP memory promotion failed for %s",
-                        self._tool_name,
-                        exc_info=True,
-                    )
+                MCPToolAdapter._promote_result_to_memory(
+                    self, arguments, output, data, context
+                )
 
             return ToolResult(data=data, success=True)
 
@@ -214,6 +200,28 @@ class MCPToolAdapter(HuginnTool):
             )
         except Exception as e:
             return ToolResult(data=None, success=False, error=f"MCP tool error: {e}")
+
+    def _promote_result_to_memory(
+        self, arguments: dict, output, data, context: ToolContext
+    ) -> None:
+        """Store high-value result in long-term memory (best effort)."""
+        try:
+            memory_text = (
+                output[:2000] if isinstance(output, str) else json.dumps(data)[:2000]
+            )
+            context.memory_manager.add_tool_call(
+                tool_name=self._tool_name,
+                tool_args=arguments,
+                tool_result=memory_text,
+                success=True,
+            )
+        except Exception:
+            # Memory promotion failure should never block tool result
+            logger.debug(
+                "MCP memory promotion failed for %s",
+                self._tool_name,
+                exc_info=True,
+            )
 
 
 class MCPPromptAdapter(HuginnTool):
@@ -294,16 +302,10 @@ def register_mcp_tools(
         existing = ToolRegistry.get(info.name)
         if existing is not None:
             logger.debug(
-                f"Replacing existing tool '{info.name}' "
-                f"(server: {info.server_name})"
+                f"Replacing existing tool '{info.name}' (server: {info.server_name})"
             )
 
-        adapter = MCPToolAdapter(
-            name=info.name,
-            description=info.description,
-            input_schema=info.input_schema,
-            client_manager=client_manager,
-        )
+        adapter = _build_mcp_tool_adapter(client_manager, info)
         ToolRegistry.register(adapter)
         tools.append(adapter)
 
@@ -314,6 +316,16 @@ def register_mcp_tools(
         )
 
     return tools
+
+
+def _build_mcp_tool_adapter(client_manager: MCPClientManager, info) -> MCPToolAdapter:
+    """Build an adapter for one discovered MCP tool."""
+    return MCPToolAdapter(
+        name=info.name,
+        description=info.description,
+        input_schema=info.input_schema,
+        client_manager=client_manager,
+    )
 
 
 async def register_mcp_prompts(

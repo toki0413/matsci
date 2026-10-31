@@ -352,60 +352,91 @@ class LspTool(HuginnTool):
             )
 
         # 生成统一 diff 摘要供确认
-        diffs: dict[str, str] = {}
-        for fp, new_code in changes.items():
-            old = _read_file(Path(fp))
-            diffs[fp] = _make_diff(old or "", new_code, fp)
+        diffs = _build_rename_diffs(changes)
 
-        perm_config = (
-            context.config
-            if context is not None and isinstance(context.config, PermissionConfig)
-            else PermissionConfig()
-        )
-        checker = PermissionChecker(perm_config)
+        checker = LspTool._permission_checker(self, context)
         perm_result = await checker.check(
             "lsp_tool",
             is_destructive=True,
             args={"action": "rename", "file_path": str(path), "name": args.name},
         )
         if perm_result.mode == PermissionMode.ASK:
-            return ToolResult(
-                data={
-                    "action": "rename",
-                    "dry_run": True,
-                    "needs_approval": True,
-                    "diffs": diffs,
-                    "reason": perm_result.reason,
-                    "message": f"Rename to '{args.name}' requires approval — files unchanged.",
-                },
-                success=True,
-            )
+            return _rename_ask_result(diffs, perm_result, args.name)
         if perm_result.mode == PermissionMode.DENY:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=perm_result.reason or "Rename denied by permission policy.",
-            )
+            return _rename_deny_result(perm_result)
 
         # 落盘: 记录每个文件编辑前 hash 供 Hashline 闭环.
-        written: list[dict] = []
-        for fp, new_code in changes.items():
-            target = Path(fp)
-            before = _read_file(target) or ""
-            target.write_text(new_code, encoding="utf-8")
-            written.append(
-                {
-                    "file_path": fp,
-                    "snapshot_hash": _content_hash(before),
-                }
-            )
-        return ToolResult(
-            data={
-                "action": "rename",
-                "name": args.name,
-                "files": written,
-                "diffs": diffs,
-                "message": f"Renamed symbol to '{args.name}' across {len(written)} file(s).",
-            },
-            success=True,
+        written = _apply_rename_changes(changes)
+        return _rename_ok_result(args.name, written, diffs)
+
+    def _permission_checker(self, context) -> PermissionChecker:
+        """从 context 取 PermissionConfig 构造 checker."""
+        perm_config = (
+            context.config
+            if context is not None and isinstance(context.config, PermissionConfig)
+            else PermissionConfig()
         )
+        return PermissionChecker(perm_config)
+
+
+def _build_rename_diffs(changes) -> dict[str, str]:
+    """生成统一 diff 摘要供确认."""
+    diffs: dict[str, str] = {}
+    for fp, new_code in changes.items():
+        old = _read_file(Path(fp))
+        diffs[fp] = _make_diff(old or "", new_code, fp)
+    return diffs
+
+
+def _rename_ask_result(diffs, perm_result, name: str):
+    """ASK 模式: 返回 dry-run 预览."""
+    return ToolResult(
+        data={
+            "action": "rename",
+            "dry_run": True,
+            "needs_approval": True,
+            "diffs": diffs,
+            "reason": perm_result.reason,
+            "message": f"Rename to '{name}' requires approval — files unchanged.",
+        },
+        success=True,
+    )
+
+
+def _rename_deny_result(perm_result):
+    """DENY 模式: 返回失败."""
+    return ToolResult(
+        data=None,
+        success=False,
+        error=perm_result.reason or "Rename denied by permission policy.",
+    )
+
+
+def _apply_rename_changes(changes) -> list[dict]:
+    """落盘: 记录每个文件编辑前 hash 供 Hashline 闭环."""
+    written: list[dict] = []
+    for fp, new_code in changes.items():
+        target = Path(fp)
+        before = _read_file(target) or ""
+        target.write_text(new_code, encoding="utf-8")
+        written.append(
+            {
+                "file_path": fp,
+                "snapshot_hash": _content_hash(before),
+            }
+        )
+    return written
+
+
+def _rename_ok_result(name: str, written: list[dict], diffs) -> ToolResult:
+    """成功落盘后的结果."""
+    return ToolResult(
+        data={
+            "action": "rename",
+            "name": name,
+            "files": written,
+            "diffs": diffs,
+            "message": f"Renamed symbol to '{name}' across {len(written)} file(s).",
+        },
+        success=True,
+    )

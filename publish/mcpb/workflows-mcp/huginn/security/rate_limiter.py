@@ -142,10 +142,80 @@ class TokenRateLimiter:
         s["warned"].add(key)
         logger.warning(
             "限流预警: %s 已用 %.1f%% (阈值 %.0f%%)",
-            label, ratio * 100, thr * 100,
+            label,
+            ratio * 100,
+            thr * 100,
         )
 
     # ---- 公开接口 ----------------------------------------------------------
+
+    def _gate_limits(
+        self,
+        s: dict,
+        model_name: str,
+        thread_id: str,
+        est: int,
+        sec_tokens: int,
+    ) -> tuple[bool, str] | None:
+        """按顺序过三道闸门; 超限返回 (False, 原因), 全部通过返回 None."""
+        # 闸门 1: 单轮 token 上限 (per-session)
+        if s["turn_tokens"] + est > self.config.max_tokens_per_turn:
+            return False, (
+                f"单轮 token 超限: 已用 {s['turn_tokens']} + 预估 "
+                f"{est} > 上限 {self.config.max_tokens_per_turn} "
+                f"(model={model_name}, thread={thread_id})"
+            )
+
+        # 闸门 2: 秒级速率 (per-session)
+        # 只按最近 1s 的"实际消耗"判定, 不把单次请求的输入规模 (est) 算进
+        # 每秒速率. 长程研究 / extreme 任务上下文会累积到 1k-100k token,
+        # 单次请求输入大是常态, 但那是跨秒慢速消耗, 不是"每秒失控速率".
+        # 真正的失控循环由窗口内多个快速完成的请求累积体现 —— 所以这里
+        # 只看 sec_tokens (窗口实际消耗), est 只用于单轮闸门 1 的预算判断.
+        if sec_tokens > self.config.max_tokens_per_second:
+            return False, (
+                f"秒级 token 超限: 近 1s 实际消耗 {sec_tokens:.0f} "
+                f"> 上限 {self.config.max_tokens_per_second} "
+                f"(model={model_name}, thread={thread_id})"
+            )
+
+        # 闸门 3: 总成本兜底 (全局, 跨所有会话)
+        if self._total_cost >= self.config.max_total_cost_usd:
+            return False, (
+                f"总成本超限: 已花 ${self._total_cost:.4f} >= "
+                f"上限 ${self.config.max_total_cost_usd:.2f} "
+                f"(model={model_name})"
+            )
+        return None
+
+    def _emit_warnings(
+        self,
+        s: dict,
+        model_name: str,
+        est: int,
+        sec_tokens: int,
+    ) -> None:
+        """三道闸门的预警 (到阈值才发, 同维度不重复)."""
+        # 预警
+        self._maybe_warn(
+            s,
+            "turn",
+            (s["turn_tokens"] + est) / self.config.max_tokens_per_turn,
+            f"单轮 token ({model_name})",
+        )
+        self._maybe_warn(
+            s,
+            "second",
+            sec_tokens / self.config.max_tokens_per_second,
+            f"秒级 token ({model_name})",
+        )
+        if self.config.max_total_cost_usd > 0:
+            self._maybe_warn(
+                s,
+                "cost",
+                self._total_cost / self.config.max_total_cost_usd,
+                f"总成本 ({model_name})",
+            )
 
     def check_allowed(
         self,
@@ -173,52 +243,11 @@ class TokenRateLimiter:
             sec_tokens = self._prune_session_window(s, now)
             est = max(estimated_input_tokens, 0)
 
-            # 闸门 1: 单轮 token 上限 (per-session)
-            if s["turn_tokens"] + est > self.config.max_tokens_per_turn:
-                return False, (
-                    f"单轮 token 超限: 已用 {s['turn_tokens']} + 预估 "
-                    f"{est} > 上限 {self.config.max_tokens_per_turn} "
-                    f"(model={model_name}, thread={thread_id})"
-                )
+            blocked = self._gate_limits(s, model_name, thread_id, est, sec_tokens)
+            if blocked is not None:
+                return blocked
 
-            # 闸门 2: 秒级速率 (per-session)
-            # 只按最近 1s 的"实际消耗"判定, 不把单次请求的输入规模 (est) 算进
-            # 每秒速率. 长程研究 / extreme 任务上下文会累积到 1k-100k token,
-            # 单次请求输入大是常态, 但那是跨秒慢速消耗, 不是"每秒失控速率".
-            # 真正的失控循环由窗口内多个快速完成的请求累积体现 —— 所以这里
-            # 只看 sec_tokens (窗口实际消耗), est 只用于单轮闸门 1 的预算判断.
-            if sec_tokens > self.config.max_tokens_per_second:
-                return False, (
-                    f"秒级 token 超限: 近 1s 实际消耗 {sec_tokens:.0f} "
-                    f"> 上限 {self.config.max_tokens_per_second} "
-                    f"(model={model_name}, thread={thread_id})"
-                )
-
-            # 闸门 3: 总成本兜底 (全局, 跨所有会话)
-            if self._total_cost >= self.config.max_total_cost_usd:
-                return False, (
-                    f"总成本超限: 已花 ${self._total_cost:.4f} >= "
-                    f"上限 ${self.config.max_total_cost_usd:.2f} "
-                    f"(model={model_name})"
-                )
-
-            # 预警
-            self._maybe_warn(
-                s, "turn",
-                (s["turn_tokens"] + est) / self.config.max_tokens_per_turn,
-                f"单轮 token ({model_name})",
-            )
-            self._maybe_warn(
-                s, "second",
-                sec_tokens / self.config.max_tokens_per_second,
-                f"秒级 token ({model_name})",
-            )
-            if self.config.max_total_cost_usd > 0:
-                self._maybe_warn(
-                    s, "cost",
-                    self._total_cost / self.config.max_total_cost_usd,
-                    f"总成本 ({model_name})",
-                )
+            self._emit_warnings(s, model_name, est, sec_tokens)
 
             return True, ""
 
@@ -333,6 +362,7 @@ class TokenRateLimiter:
 # 用量提取辅助 —— 不绑死任何一家 SDK, 靠鸭子类型探测
 # ---------------------------------------------------------------------------
 
+
 def _detect_model_name(model: Any) -> str:
     """尽量从 model 对象上挖出模型名, 挖不到就退回到类名."""
     for attr in ("model_name", "model", "deployment_name", "name"):
@@ -442,14 +472,10 @@ def _extract_from_message(msg: Any) -> tuple[int, int]:
 def _extract_from_usage_dict(d: dict[str, Any]) -> tuple[int, int]:
     """从 usage dict 里挖 token 数, 兼容各家字段命名."""
     in_tok = _safe_int(
-        d.get("input_tokens")
-        or d.get("prompt_tokens")
-        or d.get("inputTokens")
+        d.get("input_tokens") or d.get("prompt_tokens") or d.get("inputTokens")
     )
     out_tok = _safe_int(
-        d.get("output_tokens")
-        or d.get("completion_tokens")
-        or d.get("outputTokens")
+        d.get("output_tokens") or d.get("completion_tokens") or d.get("outputTokens")
     )
     return in_tok, out_tok
 

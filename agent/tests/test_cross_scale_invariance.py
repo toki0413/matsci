@@ -61,7 +61,10 @@ def test_phase_layer_surprise_feedback():
         "_pick_hypothesis_persona 未使用 surprise 信号"
     # surprise 信号通过实例属性 _last_surprise 跨阶段传递,
     # 在 EngineReflect._validate 中计算并赋值, 在 _pick_hypothesis_persona 中读取.
-    validate_src = inspect.getsource(EngineReflect._validate)
+    # _validate 拆分后计算移入 _validate_prediction_error, 两处源码一起看.
+    validate_src = inspect.getsource(EngineReflect._validate) + inspect.getsource(
+        EngineReflect._validate_prediction_error
+    )
     assert "_last_surprise" in validate_src or "_compute_surprise" in validate_src, \
         "validate 未计算或存储 surprise 信号"
 

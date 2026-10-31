@@ -7,19 +7,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
+import re
 import subprocess
 import time
-import uuid
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
 from huginn.core_types import HandleType, ToolContext, ToolResult, ValidationResult
+from huginn.env_access import env_path
 from huginn.security import SandboxExecutor
 from huginn.security.conservation import audit_material_conservation
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
+from huginn.tools.sim._async_job import submit_background
 from huginn.validation.handle_validator import HandleValidator
 
 logger = logging.getLogger(__name__)
@@ -92,10 +93,10 @@ class VaspToolInput(BaseModel):
     @model_validator(mode="after")
     def _check_action_fields(self) -> VaspToolInput:
         """不同 action 需要不同字段, 在 schema 层兜底, 别等 call() 才挂."""
-        if (self.action in _COMPUTE_ACTIONS or self.action in ("submit_async", "eos")) and not self.working_dir:
-                raise ValueError(
-                    f"action '{self.action}' requires 'working_dir'"
-                )
+        if (
+            self.action in _COMPUTE_ACTIONS or self.action in ("submit_async", "eos")
+        ) and not self.working_dir:
+            raise ValueError(f"action '{self.action}' requires 'working_dir'")
         if self.action == "submit_async" and not self.compute_action:
             raise ValueError(
                 "submit_async requires 'compute_action' (relax/scf/band/dos/md/phonon)"
@@ -112,6 +113,99 @@ class VaspToolOutput(BaseModel):
     converged: bool = False
     output_files: list[str] = []
     warnings: list[str] = []
+
+
+def _output_file_names(work_dir: Path) -> list[str]:
+    """列出工作目录下 OUTCAR / vasprun / CHG 输出文件名."""
+    return [
+        f.name
+        for f in work_dir.iterdir()
+        if f.suffix in [".OUTCAR", ".vasprun", ".CHG"]
+    ]
+
+
+def _attach_provenance(data: dict[str, Any], args: VaspToolInput) -> None:
+    """带上 provenance 快照, 事后能追溯参数/版本/环境."""
+    try:
+        from huginn.provenance import capture
+
+        data["provenance"] = capture(
+            "vasp_tool", args.model_dump(), output=dict(data)
+        ).to_dict()
+    except Exception:  # 防御: 溯源失败不阻断结果返回
+        logger.debug("provenance 失败不能把计算结果带挂", exc_info=True)
+
+
+def _collect_ev_points(work_dir: Path, parse_outcar: Any) -> list[tuple[float, float]]:
+    """遍历子目录, 从每个 OUTCAR 收集 (volume, energy) 点."""
+    ev_points: list[tuple[float, float]] = []
+    for subdir in sorted(work_dir.iterdir()):
+        if not subdir.is_dir():
+            continue
+        outcar = subdir / "OUTCAR"
+        if not outcar.exists():
+            continue
+        parsed = parse_outcar(outcar)
+        vol = parsed.get("volume")
+        en = parsed.get("energy")
+        if vol is not None and en is not None:
+            ev_points.append((float(vol), float(en)))
+    return ev_points
+
+
+def _vasprun_via_pymatgen(vasprun_path: Path, result: dict[str, Any]) -> bool:
+    """优先用 pymatgen 填 band_gap / efermi; 成功返回 True."""
+    try:
+        from pymatgen.io.vasp import Vasprun
+
+        vr = Vasprun(str(vasprun_path))
+        try:
+            gap, cbm, vbm = vr.eigenvalue_band_properties
+            result["band_gap"] = float(gap) if gap is not None else None
+            result["cbm"] = float(cbm) if cbm is not None else None
+            result["vbm"] = float(vbm) if vbm is not None else None
+        except Exception:  # 防御: 能带属性解析失败仅记录
+            logger.debug("suppressed in _parse_vasprun_quick", exc_info=True)
+        result["efermi"] = float(vr.efermi) if vr.efermi is not None else None
+        result["parse_source"] = "pymatgen_vasprun"
+        return True
+    except Exception:  # 防御: Vasprun 失败回退 ElementTree
+        logger.debug("pymatgen 没装或解析失败, 走 ElementTree", exc_info=True)
+        return False
+
+
+def _vasprun_via_elementtree(vasprun_path: Path, result: dict[str, Any]) -> None:
+    """ElementTree 兜底解析 vasprun.xml (energy / forces / kpoints)."""
+    import xml.etree.ElementTree as ET
+
+    try:
+        tree = ET.parse(vasprun_path)
+        root = tree.getroot()
+
+        # Find calculation/energy/i
+        for calc in root.findall(".//calculation"):
+            energy_elem = calc.find(".//energy/i[@name='e_wo_entrp']")
+            if energy_elem is not None and energy_elem.text:
+                result["energy_vasprun"] = float(energy_elem.text)
+
+            # Forces
+            varray = calc.find(".//varray[@name='forces']")
+            if varray is not None:
+                forces = []
+                for v in varray.findall("v"):
+                    forces.append([float(x) for x in v.text.split()])
+                result["forces_vasprun"] = forces
+            break  # Only first calc for quick parse
+
+        # K-points
+        kpoints = root.find(".//kpoints")
+        if kpoints is not None:
+            varray = kpoints.find("varray[@name='kpointlist']")
+            if varray is not None:
+                result["kpoint_count"] = len(varray.findall("v"))
+
+    except Exception as e:
+        result["parse_error"] = str(e)
 
 
 class VaspTool(HuginnTool):
@@ -151,9 +245,9 @@ class VaspTool(HuginnTool):
 
     def _find_vasp(self) -> str | None:
         """Find VASP executable."""
-        env_path = os.environ.get("VASP_EXECUTABLE")
-        if env_path and Path(env_path).exists():
-            return env_path
+        exe_from_env = env_path("VASP_EXECUTABLE")
+        if exe_from_env and exe_from_env.exists():
+            return str(exe_from_env)
 
         # Check PATH
         try:
@@ -191,7 +285,9 @@ class VaspTool(HuginnTool):
 
         if args.action == "eos":
             # eos 只需要 working_dir 存在, 不检查 POSCAR
-            vr = HandleValidator.validate(HandleType.FILE_PATH, args.working_dir, context)
+            vr = HandleValidator.validate(
+                HandleType.FILE_PATH, args.working_dir, context
+            )
             if not vr.result:
                 return ValidationResult(
                     result=False,
@@ -209,7 +305,11 @@ class VaspTool(HuginnTool):
             )
         poscar = Path(args.working_dir) / "POSCAR"
         if not poscar.exists():
-            ws_poscar = Path(context.workspace) / args.working_dir / "POSCAR" if context.workspace else None
+            ws_poscar = (
+                Path(context.workspace) / args.working_dir / "POSCAR"
+                if context.workspace
+                else None
+            )
             if not (ws_poscar and ws_poscar.exists()):
                 return ValidationResult(
                     result=False,
@@ -267,171 +367,19 @@ class VaspTool(HuginnTool):
         """Execute real VASP calculation, 自动诊断+改 INCAR 重试."""
         autoheal_log: list[dict[str, Any]] = []
         try:
-            cmd = [self.vasp_executable]
-            result: Any = None
-            max_retries = args.max_auto_retries
-            # 软失败原因. returncode=0 但 SCF 没收敛 / 物理审计报错都属于软失败,
-            # 这种情况 result.returncode==0, 不能让最终 success 判定当成成功.
-            soft_failure_msg: str | None = None
-            audit_report = None
-
-            for attempt in range(max_retries + 1):
-                sb_result = self.sandbox.run(
-                    cmd,
-                    cwd=str(work_dir),
-                    timeout=args.walltime_hours * 3600,
-                    queue=args.queue,
-                    walltime=f"{args.walltime_hours}:00:00",
-                )
-                result = sb_result
-
-                # 判断这次跑完到底算成功还是失败:
-                # - returncode != 0 → 硬失败, 用 stderr 诊断
-                # - returncode == 0 但 SCF 没收敛 → 软失败, VASP 经常静默返回 0
-                # - returncode == 0 且 SCF 收敛, 但物理审计报错 → 软失败
-                error: str | None = None
-                soft_failure_msg = None
-                if result.returncode != 0:
-                    error = result.stderr or ""
-                else:
-                    # returncode=0 不代表收敛了, 先查 OUTCAR 的 SCF 状态
-                    parsed_now = (
-                        self._parse_outcar(work_dir / "OUTCAR", action=args.action)
-                        if (work_dir / "OUTCAR").exists()
-                        else {}
-                    )
-                    vasprun_now = work_dir / "vasprun.xml"
-                    if vasprun_now.exists():
-                        parsed_now.update(self._parse_vasprun_quick(vasprun_now))
-                    if not parsed_now.get("converged", True):
-                        # SCF 没收敛 (NELM 撑满), 软失败走重试
-                        error = (
-                            "SCF did not converge — "
-                            "electronic convergence not reached (NELM)"
-                        )
-                        soft_failure_msg = error
-                    else:
-                        # SCF 收敛了, 再过一遍物理审计,
-                        # 抓 unbound energy / 负 gap 之类的 "成功但不可信"
-                        try:
-                            from huginn.execution.physics_auditor import (
-                                PhysicsAuditor,
-                            )
-
-                            auditor = PhysicsAuditor()
-                            audit_report = auditor.audit(
-                                "vasp_tool",
-                                args.action,
-                                parsed_now,
-                                args.model_dump(),
-                            )
-                            if audit_report.has_errors:
-                                errs = [
-                                    f.message
-                                    for f in audit_report.findings
-                                    if f.severity == "error"
-                                ]
-                                error = f"Physics audit found errors: {errs}"
-                                soft_failure_msg = error
-                        except Exception:  # 防御: 审计异常不阻断重试流程
-                            logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
-
-                if error is None:
-                    break  # 真正成功
-
-                # 失败了 (硬失败或软失败), 看还有没有重试额度 + 能不能自动修
-                if attempt < max_retries:
-                    fixed = self._try_autofix(work_dir, error)
-                    if fixed:
-                        autoheal_log.append(
-                            {
-                                "attempt": attempt + 1,
-                                "error": error[:300],
-                                "fixes_applied": fixed["fixes"],
-                                "reasoning": fixed["reasoning"],
-                            }
-                        )
-                        continue
-                break  # 没修动或重试耗尽
-
-            # Parse OUTCAR for comprehensive results
-            outcar = work_dir / "OUTCAR"
-            parsed = (
-                self._parse_outcar(outcar, action=args.action)
-                if outcar.exists() else {}
+            result, soft_failure_msg, audit_report = self._run_retry_loop(
+                args, work_dir, autoheal_log
             )
-
-            # Also try vasprun.xml for structured data
-            vasprun = work_dir / "vasprun.xml"
-            if vasprun.exists():
-                parsed.update(self._parse_vasprun_quick(vasprun))
-
-            # 最终成功判定: returncode==0 且没有遗留软失败 (SCF 没收敛 / 物理审计报错)
-            ok = result.returncode == 0 and soft_failure_msg is None
-            output = VaspToolOutput(
-                status="completed" if ok else "failed",
-                energy=parsed.get("energy"),
-                converged=parsed.get("converged", False),
-                output_files=[
-                    f.name
-                    for f in work_dir.iterdir()
-                    if f.suffix in [".OUTCAR", ".vasprun", ".CHG"]
-                ],
+            parsed = self._collect_parsed(args, work_dir)
+            return self._build_result(
+                args,
+                work_dir,
+                result,
+                soft_failure_msg,
+                audit_report,
+                autoheal_log,
+                parsed,
             )
-
-            # Include parsed details in result
-            data = output.model_dump()
-            data["parsed"] = parsed
-            if autoheal_log:
-                data["autoheal_attempts"] = autoheal_log
-
-            # Physics audit — check if results are physically reasonable.
-            # AutoFixLoop only handles hard failures; this catches results that
-            # "succeeded" but violate basic physics (e.g. unbound energy, neg gap).
-            # 循环里跑过审计就复用, 没跑过 (比如硬失败) 就补跑一次兜底.
-            if audit_report is not None:
-                data["physics_audit"] = audit_report.to_dict()
-            else:
-                try:
-                    from huginn.execution.physics_auditor import PhysicsAuditor
-
-                    auditor = PhysicsAuditor()
-                    audit_report = auditor.audit(
-                        "vasp_tool", args.action, parsed, args.model_dump()
-                    )
-                    data["physics_audit"] = audit_report.to_dict()
-                except Exception:  # 防御: 审计失败不阻断结果返回
-                    logger.debug("audit failure can't block result delivery", exc_info=True)
-
-            # 带上 provenance 快照, 事后能追溯参数/版本/环境
-            try:
-                from huginn.provenance import capture
-
-                data["provenance"] = capture(
-                    "vasp_tool", args.model_dump(), output=dict(data)
-                ).to_dict()
-            except Exception:  # 防御: 溯源失败不阻断结果返回
-                logger.debug("provenance 失败不能把计算结果带挂", exc_info=True)
-
-            # 提示 agent 可以链式调 gp_tool 做 GP 不确定性量化
-            data["uq_hint"] = self._uq_hint()
-            # 告知下游工具 (xrd_sim/descriptor/symmetry) 可以从哪里读优化结构
-            data["structure_file_hint"] = self._structure_file_hint(work_dir)
-
-            return ToolResult(
-                data=data,
-                success=ok,
-                error=(
-                    None
-                    if ok
-                    else (
-                        result.stderr[:500]
-                        if result.returncode != 0
-                        else soft_failure_msg
-                    )
-                ),
-            )
-
         except subprocess.TimeoutExpired:
             return ToolResult(
                 data=None,
@@ -442,6 +390,191 @@ class VaspTool(HuginnTool):
             return ToolResult(
                 data=None, success=False, error=f"VASP execution failed: {e}"
             )
+
+    def _run_retry_loop(
+        self, args: VaspToolInput, work_dir: Path, autoheal_log: list[dict[str, Any]]
+    ) -> tuple:
+        """跑 ``max_auto_retries+1`` 次, 硬/软失败都尝试自动修 INCAR.
+
+        返回 ``(result, soft_failure_msg, audit_report)``.
+        """
+        cmd = [self.vasp_executable]
+        result: Any = None
+        soft_failure_msg: str | None = None
+        audit_report = None
+
+        for attempt in range(args.max_auto_retries + 1):
+            sb_result = self.sandbox.run(
+                cmd,
+                cwd=str(work_dir),
+                timeout=args.walltime_hours * 3600,
+                queue=args.queue,
+                walltime=f"{args.walltime_hours}:00:00",
+            )
+            result = sb_result
+
+            error, soft_failure_msg, audit_report = self._classify_attempt(
+                args, work_dir, result, audit_report
+            )
+            if error is None:
+                break  # 真正成功
+
+            # 失败了 (硬失败或软失败), 看还有没有重试额度 + 能不能自动修
+            if attempt < args.max_auto_retries:
+                fixed = self._try_autofix(work_dir, error)
+                if fixed:
+                    autoheal_log.append(
+                        {
+                            "attempt": attempt + 1,
+                            "error": error[:300],
+                            "fixes_applied": fixed["fixes"],
+                            "reasoning": fixed["reasoning"],
+                        }
+                    )
+                    continue
+            break  # 没修动或重试耗尽
+
+        return result, soft_failure_msg, audit_report
+
+    def _classify_attempt(
+        self, args: VaspToolInput, work_dir: Path, result: Any, audit_report: Any
+    ) -> tuple:
+        """判断这次跑完到底算成功还是失败.
+
+        - returncode != 0 → 硬失败, 用 stderr 诊断
+        - returncode == 0 但 SCF 没收敛 → 软失败, VASP 经常静默返回 0
+        - returncode == 0 且 SCF 收敛, 但物理审计报错 → 软失败
+        """
+        soft_failure_msg: str | None = None
+        if result.returncode != 0:
+            return result.stderr or "", soft_failure_msg, audit_report
+
+        # returncode=0 不代表收敛了, 先查 OUTCAR 的 SCF 状态
+        parsed_now = (
+            self._parse_outcar(work_dir / "OUTCAR", action=args.action)
+            if (work_dir / "OUTCAR").exists()
+            else {}
+        )
+        vasprun_now = work_dir / "vasprun.xml"
+        if vasprun_now.exists():
+            parsed_now.update(self._parse_vasprun_quick(vasprun_now))
+        if not parsed_now.get("converged", True):
+            # SCF 没收敛 (NELM 撑满), 软失败走重试
+            error = "SCF did not converge — electronic convergence not reached (NELM)"
+            return error, error, audit_report
+
+        # SCF 收敛了, 再过一遍物理审计,
+        # 抓 unbound energy / 负 gap 之类的 "成功但不可信"
+        audit_report, error = self._audit_parsed(args, parsed_now, audit_report)
+        return error, (error if error else soft_failure_msg), audit_report
+
+    def _audit_parsed(
+        self, args: VaspToolInput, parsed: dict, audit_report: Any
+    ) -> tuple:
+        """跑物理审计; 审计自身异常不阻断重试流程."""
+        try:
+            from huginn.execution.physics_auditor import (
+                PhysicsAuditor,
+            )
+
+            auditor = PhysicsAuditor()
+            audit_report = auditor.audit(
+                "vasp_tool",
+                args.action,
+                parsed,
+                args.model_dump(),
+            )
+            if audit_report.has_errors:
+                errs = [
+                    f.message for f in audit_report.findings if f.severity == "error"
+                ]
+                return audit_report, f"Physics audit found errors: {errs}"
+        except Exception:  # 防御: 审计异常不阻断重试流程
+            logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
+        return audit_report, None
+
+    def _collect_parsed(self, args: VaspToolInput, work_dir: Path) -> dict:
+        """读 OUTCAR + vasprun.xml 汇总解析结果."""
+        outcar = work_dir / "OUTCAR"
+        parsed = (
+            self._parse_outcar(outcar, action=args.action) if outcar.exists() else {}
+        )
+        vasprun = work_dir / "vasprun.xml"
+        if vasprun.exists():
+            parsed.update(self._parse_vasprun_quick(vasprun))
+        return parsed
+
+    def _build_result(
+        self,
+        args: VaspToolInput,
+        work_dir: Path,
+        result: Any,
+        soft_failure_msg: str | None,
+        audit_report: Any,
+        autoheal_log: list[dict[str, Any]],
+        parsed: dict,
+    ) -> ToolResult:
+        """组装最终 ToolResult (含审计 / provenance / 提示字段)."""
+        # 最终成功判定: returncode==0 且没有遗留软失败 (SCF 没收敛 / 物理审计报错)
+        ok = result.returncode == 0 and soft_failure_msg is None
+        output = VaspToolOutput(
+            status="completed" if ok else "failed",
+            energy=parsed.get("energy"),
+            converged=parsed.get("converged", False),
+            output_files=_output_file_names(work_dir),
+        )
+
+        data = output.model_dump()
+        data["parsed"] = parsed
+        if autoheal_log:
+            data["autoheal_attempts"] = autoheal_log
+
+        # Physics audit — check if results are physically reasonable.
+        # AutoFixLoop only handles hard failures; this catches results that
+        # "succeeded" but violate basic physics (e.g. unbound energy, neg gap).
+        # 循环里跑过审计就复用, 没跑过 (比如硬失败) 就补跑一次兜底.
+        try:
+            data["physics_audit"] = self._final_audit(args, parsed, audit_report)
+        except Exception:  # 防御: 审计失败不阻断结果返回
+            logger.debug("audit failure can't block result delivery", exc_info=True)
+
+        # 带上 provenance 快照, 事后能追溯参数/版本/环境
+        _attach_provenance(data, args)
+
+        # 提示 agent 可以链式调 gp_tool 做 GP 不确定性量化
+        data["uq_hint"] = self._uq_hint()
+        # 告知下游工具 (xrd_sim/descriptor/symmetry) 可以从哪里读优化结构
+        data["structure_file_hint"] = self._structure_file_hint(work_dir)
+
+        return ToolResult(
+            data=data,
+            success=ok,
+            error=self._result_error(ok, result, soft_failure_msg),
+        )
+
+    @staticmethod
+    def _final_audit(args: VaspToolInput, parsed: dict, audit_report: Any) -> dict:
+        """循环里跑过审计就复用其 dict, 否则补跑一次."""
+        if audit_report is not None:
+            return audit_report.to_dict()
+        from huginn.execution.physics_auditor import PhysicsAuditor
+
+        return (
+            PhysicsAuditor()
+            .audit("vasp_tool", args.action, parsed, args.model_dump())
+            .to_dict()
+        )
+
+    @staticmethod
+    def _result_error(
+        ok: bool, result: Any, soft_failure_msg: str | None
+    ) -> str | None:
+        """成功返回 None; 硬失败取 stderr 前 500 字; 软失败取软失败原因."""
+        if ok:
+            return None
+        if result.returncode != 0:
+            return result.stderr[:500]
+        return soft_failure_msg
 
     def _read_incar_params(self, work_dir: Path) -> dict[str, Any]:
         """读 INCAR 解析成 dict, 给 AutoFixLoop 判断当前参数用."""
@@ -516,43 +649,13 @@ class VaspTool(HuginnTool):
             walltime_hours=args.walltime_hours,
         )
 
-        job_id = f"vasp-{uuid.uuid4().hex[:12]}"
-
-        job_entry: dict[str, Any] = {
-            "status": "running",
-            "task": None,
-            "result": None,
-            "error": None,
-            "compute_action": args.compute_action,
-            "working_dir": args.working_dir,
-            "started_at": time.time(),
-            "finished_at": None,
-        }
-        VaspTool._async_jobs[job_id] = job_entry
-
-        async def _run_in_background() -> None:
-            """后台跑实际计算, 完成后更新 job_entry."""
-            try:
-                result = await self.call(sync_args, context)
-                job_entry["result"] = (
-                    result.data if result.success else None
-                )
-                job_entry["error"] = result.error
-                job_entry["status"] = "done" if result.success else "failed"
-            except Exception as exc:
-                job_entry["error"] = str(exc)
-                job_entry["status"] = "failed"
-            finally:
-                job_entry["finished_at"] = time.time()
-
-        # create_task 把协程排到当前事件循环, agent chat 期间会并发跑
-        try:
-            task = asyncio.create_task(_run_in_background())
-            job_entry["task"] = task
-        except RuntimeError:
-            # 没有运行中的事件循环 (比如同步路径调用), 退化为同步执行
-            # 这种情况下 "异步" 提交实际是阻塞的, 但至少功能正确
-            await _run_in_background()
+        job_id = await submit_background(
+            "vasp",
+            compute_action=args.compute_action,
+            working_dir=args.working_dir,
+            jobs=VaspTool._async_jobs,
+            run=lambda: self.call(sync_args, context),
+        )
 
         return ToolResult(
             data={
@@ -653,26 +756,17 @@ class VaspTool(HuginnTool):
         work_dir = Path(args.working_dir)
         if not work_dir.exists():
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"Working directory not found: {work_dir}",
             )
 
-        ev_points: list[tuple[float, float]] = []
-        for subdir in sorted(work_dir.iterdir()):
-            if not subdir.is_dir():
-                continue
-            outcar = subdir / "OUTCAR"
-            if not outcar.exists():
-                continue
-            parsed = self._parse_outcar(outcar)
-            vol = parsed.get("volume")
-            en = parsed.get("energy")
-            if vol is not None and en is not None:
-                ev_points.append((float(vol), float(en)))
+        ev_points = _collect_ev_points(work_dir, self._parse_outcar)
 
         if len(ev_points) < 4:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"EOS fit needs ≥4 points with volume+energy, found {len(ev_points)}.",
             )
 
@@ -682,12 +776,14 @@ class VaspTool(HuginnTool):
         from huginn.tools.numerical_tool import NumericalTool
 
         num_tool = NumericalTool()
-        eos_result = await num_tool.call({
-            "action": "eos_fit",
-            "volumes": list(volumes),
-            "energies": list(energies),
-            "eos_type": args.eos_type or "birch_murnaghan",
-        })
+        eos_result = await num_tool.call(
+            {
+                "action": "eos_fit",
+                "volumes": list(volumes),
+                "energies": list(energies),
+                "eos_type": args.eos_type or "birch_murnaghan",
+            }
+        )
 
         return ToolResult(
             data={
@@ -731,7 +827,9 @@ class VaspTool(HuginnTool):
             except Exception:  # 防御: Rust 解析失败回退 Python 解析
                 logger.debug("suppressed in _parse_outcar", exc_info=True)
 
-        return self._with_conservation(self._parse_outcar_python(outcar_path, action=action))
+        return self._with_conservation(
+            self._parse_outcar_python(outcar_path, action=action)
+        )
 
     def _with_conservation(self, result: dict[str, Any]) -> dict[str, Any]:
         """为解析结果附加守恒对账 (独立于 LLM 的机械不变量审计).
@@ -748,9 +846,32 @@ class VaspTool(HuginnTool):
         self, outcar_path: Path, action: str | None = None
     ) -> dict[str, Any]:
         """Pure-Python OUTCAR parser (baseline/fallback)."""
-        import re
+        result = self._vasp_parse_defaults()
 
-        result = {
+        # 优先用 pymatgen 解析, 拿不到的字段留给后面的 regex 兜底.
+        result.update(self._vasp_parse_pymatgen(outcar_path))
+
+        try:
+            content = outcar_path.read_text(encoding="utf-8", errors="ignore")
+            result.update(
+                self._vasp_parse_energy(
+                    content, action, result["energy"], result["converged"]
+                )
+            )
+            result.update(self._vasp_parse_run_params(content))
+            result.update(self._vasp_parse_cell(content))
+            result.update(self._vasp_parse_forces(content, result["forces"]))
+            result.update(self._vasp_parse_moments(content, result["magnetic_moments"]))
+            result.update(self._vasp_parse_efermi(content))
+        except Exception as e:
+            result["parse_error"] = str(e)
+
+        return result
+
+    @staticmethod
+    def _vasp_parse_defaults() -> dict[str, Any]:
+        """解析结果的默认字段 (缺失字段的兜底值)."""
+        return {
             "energy": None,
             "converged": False,
             "forces": [],
@@ -765,204 +886,181 @@ class VaspTool(HuginnTool):
             "ispin": None,
         }
 
-        # 优先用 pymatgen 解析, 拿不到的字段留给后面的 regex 兜底.
-        # 注意 pymatgen 的 Outcar.converged 也是用离子收敛标记,
-        # 对 scf/band/dos 同样误判 — 下面 action-aware 检查会覆盖它.
+    @staticmethod
+    def _vasp_parse_pymatgen(outcar_path: Path) -> dict[str, Any]:
+        """优先用 pymatgen 解析, 拿不到的字段留给 regex 兜底.
+
+        注意 pymatgen 的 Outcar.converged 也是用离子收敛标记,
+        对 scf/band/dos 同样误判 — 后续 action-aware 检查会覆盖它.
+        """
+        parsed: dict[str, Any] = {}
         try:
             from pymatgen.io.vasp import Outcar
 
             oc = Outcar(str(outcar_path))
             if oc.final_energy is not None:
-                result["energy"] = float(oc.final_energy)
+                parsed["energy"] = float(oc.final_energy)
             if oc.forces:
-                result["forces"] = [
+                parsed["forces"] = [
                     {"position": [0.0, 0.0, 0.0], "force": list(f)}
                     for f in oc.forces[-1]
                 ]
             if oc.magnetizations:
-                result["magnetic_moments"] = list(oc.magnetizations[-1])
-            result["converged"] = bool(oc.converged)
-            result["parse_source"] = "pymatgen"
+                parsed["magnetic_moments"] = list(oc.magnetizations[-1])
+            parsed["converged"] = bool(oc.converged)
+            parsed["parse_source"] = "pymatgen"
         except Exception:  # 防御: pymatgen 失败走正则降级
             logger.debug("pymatgen 没装或解析失败, 走下面的 regex", exc_info=True)
+        return parsed
 
-        try:
-            content = outcar_path.read_text(encoding="utf-8", errors="ignore")
+    @staticmethod
+    def _vasp_parse_energy(
+        content: str,
+        action: str | None,
+        energy: float | None,
+        converged: bool,
+    ) -> dict[str, Any]:
+        """能量 (TOTEN) + action-aware 收敛判定.
 
-            # Energy — pymatgen 已经填了就不覆盖
-            if result["energy"] is None:
-                energy_matches = re.findall(r"free  energy   TOTEN  =\s+([-\d.]+)", content)
-                if energy_matches:
-                    result["energy"] = float(energy_matches[-1])
+        - relax/md/phonon: "reached required accuracy" 是离子步收敛标记.
+        - scf: NSW=0, 检查电子步是否达到 EDIFF ("EDIFF is reached").
+        - band/dos: 非自洽无 SCF 循环, 输出存在即算成功.
+        """
+        parsed: dict[str, Any] = {"energy": energy, "converged": converged}
 
-            # Convergence — action-aware (audit_20260717/14 P1-5):
-            # - relax/md/phonon: "reached required accuracy" 是 VASP 的
-            #   离子步收敛标记 (NSW>1 时出现).
-            # - scf: NSW=0, OUTCAR 永远不会有 "reached required accuracy";
-            #   应当检查电子步是否达到 EDIFF. VASP 在 SCF 收敛时打印
-            #   "EDIFF is reached" 串, 撑满 NELM 时不打印.
-            # - band/dos: 非自洽 (ICHARG=11), 完全没有 SCF 循环, OUTCAR 里
-            #   只有 Kohn-Sham 本征值; 输出存在就算成功.
-            if action in ("scf", "band", "dos"):
-                if "EDIFF is reached" in content:
-                    result["converged"] = True
-                elif action in ("band", "dos") and (
-                    "E-fermi" in content or "free  energy" in content
-                ):
-                    # 非自洽计算无 SCF, 输出存在即可
-                    result["converged"] = True
-                else:
-                    # NELM 撑满 = 未收敛
-                    result["converged"] = False
-                result["convergence_criterion"] = f"electronic (action={action})"
+        # Energy — pymatgen 已经填了就不覆盖
+        if energy is None:
+            energy_matches = re.findall(r"free  energy   TOTEN  =\s+([-\d.]+)", content)
+            if energy_matches:
+                parsed["energy"] = float(energy_matches[-1])
+
+        if action in ("scf", "band", "dos"):
+            if "EDIFF is reached" in content:
+                parsed["converged"] = True
+            elif action in ("band", "dos") and (
+                "E-fermi" in content or "free  energy" in content
+            ):
+                # 非自洽计算无 SCF, 输出存在即可
+                parsed["converged"] = True
             else:
-                # relax/md/phonon: 离子收敛标记
-                if not result["converged"] or "reached required accuracy" in content:
-                    result["converged"] = "reached required accuracy" in content
-                result["convergence_criterion"] = "ionic (reached required accuracy)"
+                # NELM 撑满 = 未收敛
+                parsed["converged"] = False
+            parsed["convergence_criterion"] = f"electronic (action={action})"
+        else:
+            # relax/md/phonon: 离子收敛标记
+            if not converged or "reached required accuracy" in content:
+                parsed["converged"] = "reached required accuracy" in content
+            parsed["convergence_criterion"] = "ionic (reached required accuracy)"
+        return parsed
 
-            # ENCUT
-            encut_match = re.search(r"ENCUT\s*=\s*([\d.]+)", content)
-            if encut_match:
-                result["encut"] = float(encut_match.group(1))
+    @staticmethod
+    def _vasp_parse_run_params(content: str) -> dict[str, Any]:
+        """ENCUT / ISPIN / NELM / NELMIN / KPOINTS."""
+        parsed: dict[str, Any] = {}
 
-            # ISPIN
-            ispin_match = re.search(r"ISPIN\s*=\s*(\d+)", content)
-            if ispin_match:
-                result["ispin"] = int(ispin_match.group(1))
+        encut_match = re.search(r"ENCUT\s*=\s*([\d.]+)", content)
+        if encut_match:
+            parsed["encut"] = float(encut_match.group(1))
 
-            # NELM / NELMIN
-            nelm_match = re.search(r"NELM\s*=\s*(\d+)", content)
-            if nelm_match:
-                result["nelm"] = int(nelm_match.group(1))
-            nelmin_match = re.search(r"NELMIN\s*=\s*(\d+)", content)
-            if nelmin_match:
-                result["nelmin"] = int(nelmin_match.group(1))
+        ispin_match = re.search(r"ISPIN\s*=\s*(\d+)", content)
+        if ispin_match:
+            parsed["ispin"] = int(ispin_match.group(1))
 
-            # K-points
-            kpoint_match = re.search(
-                r"k-points in units of 2pi/SCALE and weight:.*\n.*\n.*", content
-            )
-            if kpoint_match:
-                result["kpoints"] = "found"  # Simplified
+        nelm_match = re.search(r"NELM\s*=\s*(\d+)", content)
+        if nelm_match:
+            parsed["nelm"] = int(nelm_match.group(1))
+        nelmin_match = re.search(r"NELMIN\s*=\s*(\d+)", content)
+        if nelmin_match:
+            parsed["nelmin"] = int(nelmin_match.group(1))
 
-            # Lattice vectors (last occurrence)
-            lattice_pattern = r"direct lattice vectors\s+reciprocal lattice vectors\n\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+.*\n\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+.*\n\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+.*"
-            lattice_matches = re.findall(lattice_pattern, content)
-            if lattice_matches:
-                last = lattice_matches[-1]
-                result["lattice_vectors"] = [
-                    [float(last[0]), float(last[1]), float(last[2])],
-                    [float(last[3]), float(last[4]), float(last[5])],
-                    [float(last[6]), float(last[7]), float(last[8])],
-                ]
+        kpoint_match = re.search(
+            r"k-points in units of 2pi/SCALE and weight:.*\n.*\n.*", content
+        )
+        if kpoint_match:
+            parsed["kpoints"] = "found"  # Simplified
+        return parsed
 
-            # Volume
-            vol_match = re.findall(r"volume of cell :\s+([\d.]+)", content)
-            if vol_match:
-                result["volume"] = float(vol_match[-1])
+    @staticmethod
+    def _vasp_parse_cell(content: str) -> dict[str, Any]:
+        """晶格矢量 (最后一次出现) 与晶胞体积."""
+        parsed: dict[str, Any] = {}
+        lattice_pattern = r"direct lattice vectors\s+reciprocal lattice vectors\n\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+.*\n\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+.*\n\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+.*"
+        lattice_matches = re.findall(lattice_pattern, content)
+        if lattice_matches:
+            last = lattice_matches[-1]
+            parsed["lattice_vectors"] = [
+                [float(last[0]), float(last[1]), float(last[2])],
+                [float(last[3]), float(last[4]), float(last[5])],
+                [float(last[6]), float(last[7]), float(last[8])],
+            ]
 
-            # Final forces — pymatgen 已填就不覆盖
-            if not result["forces"]:
-                force_section = re.findall(
-                    r"TOTAL-FORCE.*?\n(.*?)(?:\n\n|\n---)", content, re.DOTALL
+        vol_match = re.findall(r"volume of cell :\s+([\d.]+)", content)
+        if vol_match:
+            parsed["volume"] = float(vol_match[-1])
+        return parsed
+
+    def _vasp_parse_forces(self, content: str, existing: list) -> dict[str, Any]:
+        """最终 TOTAL-FORCE 块 — pymatgen 已填就不覆盖."""
+        if existing:
+            return {}
+        force_section = re.findall(
+            r"TOTAL-FORCE.*?\n(.*?)(?:\n\n|\n---)", content, re.DOTALL
+        )
+        if not force_section:
+            return {}
+        forces = []
+        for line in force_section[-1].strip().split("\n"):
+            parts = line.split()
+            if len(parts) >= 6 and all(self._is_float(p) for p in parts[:6]):
+                forces.append(
+                    {
+                        "position": [
+                            float(parts[0]),
+                            float(parts[1]),
+                            float(parts[2]),
+                        ],
+                        "force": [
+                            float(parts[3]),
+                            float(parts[4]),
+                            float(parts[5]),
+                        ],
+                    }
                 )
-                if force_section:
-                    forces = []
-                    for line in force_section[-1].strip().split("\n"):
-                        parts = line.split()
-                        if len(parts) >= 6 and all(self._is_float(p) for p in parts[:6]):
-                            forces.append(
-                                {
-                                    "position": [
-                                        float(parts[0]),
-                                        float(parts[1]),
-                                        float(parts[2]),
-                                    ],
-                                    "force": [
-                                        float(parts[3]),
-                                        float(parts[4]),
-                                        float(parts[5]),
-                                    ],
-                                }
-                            )
-                    result["forces"] = forces
+        return {"forces": forces}
 
-            # Magnetic moments — pymatgen 已填就不覆盖
-            if not result["magnetic_moments"]:
-                mag_matches = re.findall(
-                    r"magnetization \(x\).*?\n(.*?)(?:\n\n|\n---)", content, re.DOTALL
-                )
-                if mag_matches:
-                    mag_moments = []
-                    for line in mag_matches[-1].strip().split("\n"):
-                        parts = line.split()
-                        if len(parts) >= 5 and self._is_float(parts[-1]):
-                            mag_moments.append(float(parts[-1]))
-                    result["magnetic_moments"] = mag_moments
+    def _vasp_parse_moments(self, content: str, existing: list) -> dict[str, Any]:
+        """磁矩 — pymatgen 已填就不覆盖."""
+        if existing:
+            return {}
+        mag_matches = re.findall(
+            r"magnetization \(x\).*?\n(.*?)(?:\n\n|\n---)", content, re.DOTALL
+        )
+        if not mag_matches:
+            return {}
+        mag_moments = []
+        for line in mag_matches[-1].strip().split("\n"):
+            parts = line.split()
+            if len(parts) >= 5 and self._is_float(parts[-1]):
+                mag_moments.append(float(parts[-1]))
+        return {"magnetic_moments": mag_moments}
 
-            # Band gap — OUTCAR 里没有直接值, 只记 efermi, 真值靠 vasprun.xml
-            efermi_match = re.search(r"E-fermi\s*:\s*([-\d.]+)", content)
-            if efermi_match:
-                result["efermi"] = float(efermi_match.group(1))
-
-        except Exception as e:
-            result["parse_error"] = str(e)
-
-        return result
+    @staticmethod
+    def _vasp_parse_efermi(content: str) -> dict[str, Any]:
+        """Fermi 能 — OUTCAR 里没有 band gap, 真值靠 vasprun.xml."""
+        efermi_match = re.search(r"E-fermi\s*:\s*([-\d.]+)", content)
+        if efermi_match:
+            return {"efermi": float(efermi_match.group(1))}
+        return {}
 
     def _parse_vasprun_quick(self, vasprun_path: Path) -> dict[str, Any]:
         """Quick-parse vasprun.xml for structured data."""
-        import xml.etree.ElementTree as ET
-
         result = {"parse_source": "vasprun.xml"}
 
         # 优先用 pymatgen 拿 band gap / efermi, 失败落回 ElementTree
-        try:
-            from pymatgen.io.vasp import Vasprun
-
-            vr = Vasprun(str(vasprun_path))
-            try:
-                gap, cbm, vbm = vr.eigenvalue_band_properties
-                result["band_gap"] = float(gap) if gap is not None else None
-                result["cbm"] = float(cbm) if cbm is not None else None
-                result["vbm"] = float(vbm) if vbm is not None else None
-            except Exception:  # 防御: 能带属性解析失败仅记录
-                logger.debug("suppressed in _parse_vasprun_quick", exc_info=True)
-            result["efermi"] = float(vr.efermi) if vr.efermi is not None else None
-            result["parse_source"] = "pymatgen_vasprun"
+        if _vasprun_via_pymatgen(vasprun_path, result):
             return result
-        except Exception:  # 防御: Vasprun 失败回退 ElementTree
-            logger.debug("pymatgen 没装或解析失败, 走 ElementTree", exc_info=True)
 
-        try:
-            tree = ET.parse(vasprun_path)
-            root = tree.getroot()
-
-            # Find calculation/energy/i
-            for calc in root.findall(".//calculation"):
-                energy_elem = calc.find(".//energy/i[@name='e_wo_entrp']")
-                if energy_elem is not None and energy_elem.text:
-                    result["energy_vasprun"] = float(energy_elem.text)
-
-                # Forces
-                varray = calc.find(".//varray[@name='forces']")
-                if varray is not None:
-                    forces = []
-                    for v in varray.findall("v"):
-                        forces.append([float(x) for x in v.text.split()])
-                    result["forces_vasprun"] = forces
-                break  # Only first calc for quick parse
-
-            # K-points
-            kpoints = root.find(".//kpoints")
-            if kpoints is not None:
-                varray = kpoints.find("varray[@name='kpointlist']")
-                if varray is not None:
-                    result["kpoint_count"] = len(varray.findall("v"))
-
-        except Exception as e:
-            result["parse_error"] = str(e)
+        _vasprun_via_elementtree(vasprun_path, result)
 
         return result
 
@@ -1056,7 +1154,9 @@ class VaspTool(HuginnTool):
             "note": (
                 "Pass this path as 'file_path' to xrd_sim_tool, descriptor_tool, "
                 "or symmetry_tool to analyze the DFT-optimized structure."
-            ) if contcar.exists() else (
+            )
+            if contcar.exists()
+            else (
                 "CONTCAR not found — VASP may not have completed a structural optimization."
             ),
         }

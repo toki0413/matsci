@@ -6,6 +6,7 @@ import asyncio
 
 # ===== 阶段1: MathValidator =====
 
+
 def test_no_math_mixin_in_bases() -> None:
     from huginn.autoloop.engine import AutoloopEngine
     from huginn.autoloop.math_validation import MathValidator
@@ -60,6 +61,7 @@ async def test_math_validator_run_uses_engine_deps() -> None:
 
 
 # ===== 阶段2: EnginePerceive =====
+
 
 def test_no_perceive_mixin_in_bases() -> None:
     from huginn.autoloop.engine import AutoloopEngine
@@ -130,6 +132,7 @@ def test_engine_perceiver_forwards_state() -> None:
 
 # ===== 阶段3: VisualInspect =====
 
+
 def test_no_visual_inspect_mixin_in_bases() -> None:
     from huginn.autoloop.engine import AutoloopEngine
     from huginn.autoloop.visual_inspect import VisualInspect
@@ -190,6 +193,7 @@ async def test_engine_visual_inspector_reads_engine_field() -> None:
 
 # ===== 阶段4: EngineAct =====
 
+
 def test_no_act_mixin_in_bases() -> None:
     from huginn.autoloop.engine import AutoloopEngine
     from huginn.autoloop.engine_act import EngineAct
@@ -241,9 +245,12 @@ async def test_engine_actor_delegates_llm_chat() -> None:
     assert eng._is_deterministic_numeric("just observe") is False
     # 中文数值目标同样要认 (autoloop 的真实 objective 多为中文), 否则内建
     # probe 执行路径永不触发 -> execute 落到 explore 空转
-    assert eng._is_deterministic_numeric(
-        "训练小 MLP 拟合 N 个点值约束, 在 128 点留出集统计均方违规, 求 N_c"
-    ) is True
+    assert (
+        eng._is_deterministic_numeric(
+            "训练小 MLP 拟合 N 个点值约束, 在 128 点留出集统计均方违规, 求 N_c"
+        )
+        is True
+    )
     assert eng._is_deterministic_numeric("复核这个结论是否正确") is False
 
 
@@ -351,8 +358,11 @@ def test_exec_fingerprint_same_code_is_repeat_despite_value_jitter() -> None:
     # 注释/格式/空行差异不进结构
     code_reformatted = "# 换个注释\ndef run(cfg):\n\n    return {'Nc': 3}  # 尾注\n"
     a = {"mode": "code_lab", "script": code, "objectives": {"Nc_rigid": [3, 3]}}
-    b = {"mode": "code_lab", "script": code_reformatted,
-         "objectives": {"Nc_rigid": [3.0000001, 2.9999998]}}  # 数值抖动
+    b = {
+        "mode": "code_lab",
+        "script": code_reformatted,
+        "objectives": {"Nc_rigid": [3.0000001, 2.9999998]},
+    }  # 数值抖动
     fa, _ = _exec_fingerprint(a)
     fb, _ = _exec_fingerprint(b)
     assert fa and fa == fb, "同代码重跑(仅注释/格式/末位数值不同)应判为重复"
@@ -407,12 +417,14 @@ def test_non_finite_objective_keys_flags_inf_nan() -> None:
     """inf/nan 键被点名; 全有限/无 objectives 返回空."""
     from huginn.autoloop.engine_reflect import _non_finite_objective_keys
 
-    res = {"mode": "code_lab", "objectives": {"a": 1.0, "b": float("inf"),
-                                              "c": float("nan")}}
+    res = {
+        "mode": "code_lab",
+        "objectives": {"a": 1.0, "b": float("inf"), "c": float("nan")},
+    }
     assert _non_finite_objective_keys(res) == ["b", "c"]
-    assert _non_finite_objective_keys(
-        {"mode": "code_lab", "objectives": {"a": 1.0}}
-    ) == []
+    assert (
+        _non_finite_objective_keys({"mode": "code_lab", "objectives": {"a": 1.0}}) == []
+    )
     assert _non_finite_objective_keys({"mode": "code_lab"}) == []
     assert _non_finite_objective_keys(None) == []
 
@@ -433,12 +445,16 @@ def test_is_code_lab_solved_rejects_non_finite_objectives() -> None:
     assert ref._is_code_lab_solved(ok) is True
     assert ref._is_code_lab_solved(bad) is False
     # 失败/空 objectives 仍按旧口径拒绝
-    assert ref._is_code_lab_solved(
-        {"mode": "code_lab", "success": False, "objectives": {"Nc": 3.0}}
-    ) is False
-    assert ref._is_code_lab_solved(
-        {"mode": "code_lab", "success": True, "objectives": {}}
-    ) is False
+    assert (
+        ref._is_code_lab_solved(
+            {"mode": "code_lab", "success": False, "objectives": {"Nc": 3.0}}
+        )
+        is False
+    )
+    assert (
+        ref._is_code_lab_solved({"mode": "code_lab", "success": True, "objectives": {}})
+        is False
+    )
 
 
 # ===== 定点验证: 检测 → 软提示 → 硬指令 全链 (v13) =====
@@ -446,6 +462,7 @@ def test_is_code_lab_solved_rejects_non_finite_objectives() -> None:
 
 def _repeat_stub() -> object:
     """带真实字段的引擎替身: EngineReflect/EngineAct 都按转发取属性."""
+
     class _StubEngine:
         _objective = "恒定研究目标"
         _last_hypothesis = "H1: N_c 随 w 饱和"
@@ -456,8 +473,11 @@ def _repeat_stub() -> object:
 
 def _lab_result(script: str, nc: float = 4.0) -> dict:
     return {
-        "mode": "code_lab", "success": True, "script": script,
-        "objectives": {"Nc": nc}, "summary": {"note": "trace"},
+        "mode": "code_lab",
+        "success": True,
+        "script": script,
+        "objectives": {"Nc": nc},
+        "summary": {"note": "trace"},
     }
 
 
@@ -512,7 +532,9 @@ def test_control_trace_emits_uniform_schema() -> None:
             captured.append((event_type, data))
 
     CognitiveRunner._control_trace(
-        _Stub(), "failure_budget", "type=tool_error count=20 limit=20",
+        _Stub(),
+        "failure_budget",
+        "type=tool_error count=20 limit=20",
         action="stop",
     )
     assert captured[0][0] == "campaign.control_trace"
@@ -590,18 +612,9 @@ def test_blind_reconstruct_skip_emits_control_trace() -> None:
     assert "no current_hyp_id_for_plan" in trace["evidence"]
 
 
-def test_blind_reconstruct_refute_emits_control_trace(monkeypatch) -> None:
-    """成功派发的反证此前**只落 logger.info** → 控制面只见 skip, 会误判空转.
-
-    run65 实测 3 次真反证全靠 FAILED.md 才看出, run.log 里只有 "skip: node
-    status=refuted". 现在成功路径也必须落 trace.
-    """
-    import json as _json
-
-    import huginn.agents.subagent as sub_mod
-    from huginn.autoloop.engine_reflect import EngineReflect
-
-    captured: list[tuple[str, dict]] = []
+def _build_refute_doubles():
+    """Graph/result/dispatch doubles for the blind-refute control trace test."""
+    import json
 
     class _Node:
         status = "untested"
@@ -617,7 +630,7 @@ def test_blind_reconstruct_refute_emits_control_trace(monkeypatch) -> None:
 
     class _Res:
         success = True
-        summary = _json.dumps({"holds": False, "derivation": "bounded counterexample"})
+        summary = json.dumps({"holds": False, "derivation": "bounded counterexample"})
         full_output = "bounded counterexample"
         tool_calls = [{"name": "code_lab"}]
         spec_name = "blind_reconstructor"
@@ -626,23 +639,24 @@ def test_blind_reconstruct_refute_emits_control_trace(monkeypatch) -> None:
         async def dispatch(self, name, task, context=None):
             return _Res()
 
-    monkeypatch.setattr(sub_mod, "SubagentDispatch", _FakeDispatch)
-    monkeypatch.delenv("HUGINN_PER_HYP_BUDGET", raising=False)
+    return _Graph(), _FakeDispatch
+
+
+def _make_emit_engine(captured: list, graph=None, iteration: int = 7):
+    """Engine double that records ``_emit_campaign`` events into ``captured``."""
 
     class _StubEngine:
-        _iteration = 7
+        _iteration = iteration
         _agent_factory = object()
-        hypothesis_graph = _Graph()
+        hypothesis_graph = graph
 
         def _emit_campaign(self, event_type: str, data: dict) -> None:
             captured.append((event_type, data))
 
-    eng = EngineReflect(_StubEngine())
-    eng._current_hyp_id_for_plan = "h1"
-    # results.tests_passed=True → orig_holds=True, 盲重建 holds=False → mismatch → refute
-    asyncio.run(eng._blind_reconstruct_verify(None, {"tests_passed": True}))
+    return _StubEngine()
 
-    trace = next(d for _, d in captured if d.get("name") == "collab_blind_reconstruct")
+
+def _assert_refute_control_trace(trace: dict, eng) -> None:
     assert trace["action"] == "refute"
     assert "blind_holds=False" in trace["evidence"]
     # 受控独立观察者: mismatch → 差分读数 True; 置信度落盘
@@ -652,6 +666,30 @@ def test_blind_reconstruct_refute_emits_control_trace(monkeypatch) -> None:
     assert "_last_task_perf" not in vars(eng.engine)
     assert "summary_len=" in trace["evidence"]
     assert eng.hypothesis_graph.refuted[0] == "h1"
+
+
+def test_blind_reconstruct_refute_emits_control_trace(monkeypatch) -> None:
+    """成功派发的反证此前**只落 logger.info** → 控制面只见 skip, 会误判空转.
+
+    run65 实测 3 次真反证全靠 FAILED.md 才看出, run.log 里只有 "skip: node
+    status=refuted". 现在成功路径也必须落 trace.
+    """
+    import huginn.agents.subagent as sub_mod
+    from huginn.autoloop.engine_reflect import EngineReflect
+
+    captured: list[tuple[str, dict]] = []
+    graph, fake_dispatch = _build_refute_doubles()
+
+    monkeypatch.setattr(sub_mod, "SubagentDispatch", fake_dispatch)
+    monkeypatch.delenv("HUGINN_PER_HYP_BUDGET", raising=False)
+
+    eng = EngineReflect(_make_emit_engine(captured, graph))
+    eng._current_hyp_id_for_plan = "h1"
+    # results.tests_passed=True → orig_holds=True, 盲重建 holds=False → mismatch → refute
+    asyncio.run(eng._blind_reconstruct_verify(None, {"tests_passed": True}))
+
+    trace = next(d for _, d in captured if d.get("name") == "collab_blind_reconstruct")
+    _assert_refute_control_trace(trace, eng)
 
 
 def test_blind_reconstruct_gate_force_and_default(monkeypatch) -> None:
@@ -950,7 +988,9 @@ def test_repeat_chain_alternating_families_lights_directive() -> None:
     ref = EngineReflect(eng)
     act = EngineAct(eng)
     for i in range(6):  # A,B,A,B,A,B —— 从不连续相同
-        ref._detect_repeat_execution(_lab_result(f"W = [2, 4, {6 if i % 2 else 7}]\n"), {})
+        ref._detect_repeat_execution(
+            _lab_result(f"W = [2, 4, {6 if i % 2 else 7}]\n"), {}
+        )
 
     assert getattr(eng, "_repeat_exec_streak", 0) == 0, "交替时连续 streak 恒为 0"
     assert getattr(eng, "_exec_cycling", False) is True
@@ -982,7 +1022,9 @@ def test_repeat_chain_converges_only_on_two_distinct_results() -> None:
     eng = _repeat_stub()
     ref = EngineReflect(eng)
     for i in range(6):  # A,B,A,B... 两种等价 family 来回换
-        ref._detect_repeat_execution(_lab_result(f"W = [2, 4, {6 if i % 2 else 7}]\n"), {})
+        ref._detect_repeat_execution(
+            _lab_result(f"W = [2, 4, {6 if i % 2 else 7}]\n"), {}
+        )
     assert eng._exec_converged is True
 
     eng2 = _repeat_stub()
@@ -1146,7 +1188,9 @@ async def test_codelab_repair_loop_runs_when_no_long_horizon(monkeypatch) -> Non
     act = EngineAct(_StubEngine())
     out = await act._execute_code_lab("扫描 w", {})
 
-    assert len(attempts) == 3, f"短程模式应跑满 max_repairs+1=3 次, 实际 {len(attempts)}"
+    assert len(attempts) == 3, (
+        f"短程模式应跑满 max_repairs+1=3 次, 实际 {len(attempts)}"
+    )
     assert out["success"] is False
 
 
@@ -1370,6 +1414,7 @@ async def test_report_flags_nondiscriminative_and_hedged(tmp_path) -> None:
 
 # ===== 单一完成出口 + 验收门 (完成 ≠ 验收) =====
 
+
 def test_ledger_has_finite_evidence_accepts_finite_objectives() -> None:
     from huginn.autoloop.engine_reflect import _ledger_has_finite_evidence
 
@@ -1470,7 +1515,9 @@ async def test_evaluate_completion_stops_only_with_evidence(monkeypatch) -> None
     assert any(d.get("name") == "goal_judge" for _, d in captured)
 
 
-async def test_evaluate_completion_blocks_without_execution_evidence(monkeypatch) -> None:
+async def test_evaluate_completion_blocks_without_execution_evidence(
+    monkeypatch,
+) -> None:
     """judge 说达成但台账无有限数值 → 证据门拦截 (完成 ≠ 验收)."""
     import huginn.evaluation.goal_judge as gj_mod
 
@@ -1565,8 +1612,12 @@ async def test_evaluate_completion_dedups_same_iteration(monkeypatch) -> None:
             return (False, "")
 
     stub = _Stub()
-    first = await CognitiveRunner(stub)._evaluate_completion(_goal(), {}, _LoopState(2), 5)
-    second = await CognitiveRunner(stub)._evaluate_completion(_goal(), {}, _LoopState(2), 5)
+    first = await CognitiveRunner(stub)._evaluate_completion(
+        _goal(), {}, _LoopState(2), 5
+    )
+    second = await CognitiveRunner(stub)._evaluate_completion(
+        _goal(), {}, _LoopState(2), 5
+    )
     assert first["ran"] is True
     assert second["ran"] is False
 
@@ -1634,12 +1685,16 @@ def test_engine_controller_plan_missing_executable() -> None:
     eng._engine_controller = EngineControl(eng)
     assert eng._plan_missing_executable({"mode": "", "description": ""}) is True
     # description 带 import 计算标记 → 判定有可执行片段
-    assert eng._plan_missing_executable(
-        {"mode": "coder", "description": "import numpy as np; print(x)"}
-    ) is False
+    assert (
+        eng._plan_missing_executable(
+            {"mode": "coder", "description": "import numpy as np; print(x)"}
+        )
+        is False
+    )
 
 
 # ===== 阶段6: PlanCheck =====
+
 
 def test_no_plan_check_mixin_in_bases() -> None:
     from huginn.autoloop.engine import AutoloopEngine
@@ -1711,6 +1766,7 @@ def test_plan_checker_override_plan_mode_forwards_state() -> None:
 
 # ===== 阶段7: EngineObserve =====
 
+
 def test_no_observe_mixin_in_bases() -> None:
     from huginn.autoloop.engine import AutoloopEngine
     from huginn.autoloop.engine_observe import EngineObserve
@@ -1779,6 +1835,7 @@ def test_observe_static_and_instance_delegation() -> None:
 
 # ===== 阶段8: EngineReflect =====
 
+
 def test_no_reflect_mixin_in_bases() -> None:
     from huginn.autoloop.engine import AutoloopEngine
     from huginn.autoloop.engine_reflect import EngineReflect
@@ -1845,6 +1902,7 @@ def test_reflect_static_and_instance_delegation() -> None:
 
 # ===== 阶段9: HypothesisLoop =====
 
+
 def test_no_hypothesis_mixin_in_bases() -> None:
     from huginn.autoloop.engine import AutoloopEngine
     from huginn.autoloop.hypothesis_loop import HypothesisLoop
@@ -1894,6 +1952,7 @@ def test_hypothesis_loop_sync_simplicials_forwards() -> None:
 
 
 # ===== 阶段10: CognitiveRunner =====
+
 
 def test_no_cognitive_mixin_in_bases() -> None:
     from huginn.autoloop.cognitive_loop import CognitiveRunner
@@ -1986,71 +2045,77 @@ def test_hypothesis_node_novelty_roundtrip() -> None:
     assert HypothesisNode.from_dict(old).novelty == 0.0
 
 
+class _NoveltyGraph:
+    """Fake hypothesis graph feeding the darwin novelty/progress ratchet."""
+
+    _rejected_adds = 0
+
+    def __init__(self, nodes):  # noqa: ANN001
+        self._n = nodes
+
+    def all_nodes(self):  # noqa: ANN201
+        return self._n
+
+    def supported(self):  # noqa: ANN201
+        return [x for x in self._n if x.status == "supported"]
+
+    def edges(self):  # noqa: ANN201
+        return []
+
+    def grounded_ratio(self) -> float:
+        # 第 7 维 (落地锚) 探针: _darwin_ratchet_check 会读. 无锚 → 0.0,
+        # 与"无信号不进分"一致, 不影响 novelty/progress 的断言.
+        return 0.0
+
+
+def _darwin_engine(graph, task_perf=None):  # noqa: ANN001, ANN202
+    from huginn.autoloop.cognitive_loop import CognitiveRunner
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.signals import EngineSignals
+
+    eng = AutoloopEngine.__new__(AutoloopEngine)
+    eng.signals = EngineSignals()
+    eng._iteration = 1
+    eng._darwin_last_score = 0.0
+    eng._darwin_stagnation = 0
+    eng._darwin_best_score = 0.0
+    eng._darwin_belief_mu = 5.0
+    eng._darwin_belief_sigma2 = 101.0
+    eng.hypothesis_graph = graph
+    if task_perf is not None:
+        eng._last_task_perf = task_perf
+    eng._cognitive_runner = CognitiveRunner(eng)
+    return eng
+
+
+def _novelty_nodes(novelty):  # noqa: ANN001, ANN202
+    from huginn.autoloop.hypothesis_loop import HypothesisNode
+
+    return [
+        HypothesisNode(id="a", statement="s1", status="untested", novelty=novelty),
+        HypothesisNode(id="b", statement="s2", status="untested", novelty=novelty),
+    ]
+
+
 def test_darwin_novelty_gated_by_progress(monkeypatch) -> None:
     """E (创新点 → 服务解决问题): novelty 只有伴随真实进展才计入 darwin 分数.
 
     - 只有 novelty、无任务进展 → 不加分 (新而无用不进棘轮).
     - novelty + 进展 → 比只有进展更高 (创新服务解决问题时被奖励).
     """
-    from huginn.autoloop.cognitive_loop import CognitiveRunner
-    from huginn.autoloop.engine import AutoloopEngine
-    from huginn.autoloop.hypothesis_loop import HypothesisNode
-    from huginn.autoloop.signals import EngineSignals
-
-    class _FakeGraph:
-        _rejected_adds = 0
-
-        def __init__(self, nodes):  # noqa: ANN001
-            self._n = nodes
-
-        def all_nodes(self):  # noqa: ANN201
-            return self._n
-
-        def supported(self):  # noqa: ANN201
-            return [x for x in self._n if x.status == "supported"]
-
-        def edges(self):  # noqa: ANN201
-            return []
-
-        def grounded_ratio(self) -> float:
-            # 第 7 维 (落地锚) 探针: _darwin_ratchet_check 会读. 无锚 → 0.0,
-            # 与"无信号不进分"一致, 不影响 novelty/progress 的断言.
-            return 0.0
-
     monkeypatch.setenv("HUGINN_STRENGTH_SCHEDULE", "0")  # 绕开强度调度读字段
 
-    def _mk_eng(graph, task_perf=None):  # noqa: ANN001, ANN202
-        eng = AutoloopEngine.__new__(AutoloopEngine)
-        eng.signals = EngineSignals()
-        eng._iteration = 1
-        eng._darwin_last_score = 0.0
-        eng._darwin_stagnation = 0
-        eng._darwin_best_score = 0.0
-        eng._darwin_belief_mu = 5.0
-        eng._darwin_belief_sigma2 = 101.0
-        eng.hypothesis_graph = graph
-        if task_perf is not None:
-            eng._last_task_perf = task_perf
-        eng._cognitive_runner = CognitiveRunner(eng)
-        return eng
-
-    def _nodes(novelty):  # noqa: ANN001, ANN202
-        return [
-            HypothesisNode(id="a", statement="s1", status="untested", novelty=novelty),
-            HypothesisNode(id="b", statement="s2", status="untested", novelty=novelty),
-        ]
-
     # 只有 novelty、无进展 → 与无 novelty 同分 (novelty 单独不加分)
-    base_eng = _mk_eng(_FakeGraph(_nodes(0.0)))
+    base_eng = _darwin_engine(_NoveltyGraph(_novelty_nodes(0.0)))
     base_eng._cognitive_runner._darwin_ratchet_check()
-    nov_only_eng = _mk_eng(_FakeGraph(_nodes(0.8)))
+    nov_only_eng = _darwin_engine(_NoveltyGraph(_novelty_nodes(0.8)))
     nov_only_eng._cognitive_runner._darwin_ratchet_check()
     assert nov_only_eng._darwin_last_score == base_eng._darwin_last_score
 
     # novelty + 进展 → 比只有进展更高 (创新服务解决问题时被奖励)
-    prog_only_eng = _mk_eng(_FakeGraph(_nodes(0.0)), task_perf=0.6)
+    prog_only_eng = _darwin_engine(_NoveltyGraph(_novelty_nodes(0.0)), task_perf=0.6)
     prog_only_eng._cognitive_runner._darwin_ratchet_check()
-    nov_prog_eng = _mk_eng(_FakeGraph(_nodes(0.8)), task_perf=0.6)
+    nov_prog_eng = _darwin_engine(_NoveltyGraph(_novelty_nodes(0.8)), task_perf=0.6)
     nov_prog_eng._cognitive_runner._darwin_ratchet_check()
     assert nov_prog_eng._darwin_last_score > prog_only_eng._darwin_last_score, (
         nov_prog_eng._darwin_last_score,

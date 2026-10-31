@@ -117,13 +117,9 @@ def concat(a: CompositeToken, b: CompositeToken) -> CompositeToken:
     return CompositeToken(new_text, new_coords)
 
 
-def _selfcheck() -> None:
-    """验证 3 个数学性质 + 1 个实际场景."""
-    print("=" * 70)
-    print("C 实验: 复合 token (text × SE(3)) 半直积叠加验证")
-    print("=" * 70)
-    print()
 
+
+def _sc_compatibility() -> CompositeToken:
     # ── 性质 1: 群作用 compatibility ───────────────────────────
     # (g1·g2)▷t == g1▷(g2▷t)
     print("[1] 群作用 compatibility: (g1·g2)▷t == g1▷(g2▷t)")
@@ -154,6 +150,10 @@ def _selfcheck() -> None:
     print(f"    RHS: {rhs.text}")
     print()
 
+    return t
+
+
+def _sc_concat_homomorphism() -> None:
     # ── 性质 2: concat 同态 ───────────────────────────────────
     # g▷(a·b) == (g▷a)·(g▷b)
     print("[2] concat 同态: g▷(a·b) == (g▷a)·(g▷b)")
@@ -182,6 +182,9 @@ def _selfcheck() -> None:
     print(f"    RHS: {rhs.text}")
     print()
 
+
+
+def _sc_identity(t: CompositeToken) -> None:
     # ── 性质 3: 单位元 ───────────────────────────────────────
     # e▷t == t
     print("[3] 单位元: e▷t == t")
@@ -197,6 +200,9 @@ def _selfcheck() -> None:
     print(f"    coords: {'PASS' if coords_match else 'FAIL'}")
     print()
 
+
+
+def _sc_scene_2d() -> None:
     # ── 实际场景: 旋转复合 token 90° ──────────────────────────
     print("[4] 实际场景: 旋转复合 token 90° (绕 z 轴 CCW)")
     print("    含义: 文本 <point> 坐标 + 3D 原子坐标 同步旋转")
@@ -229,6 +235,9 @@ def _selfcheck() -> None:
     print("    PASS: <point> 坐标和 3D 坐标同步旋转, 原点不变")
     print()
 
+
+
+def _sc_point3d_rotation() -> None:
     # ── 扩展: <point3d> 真 3D SE(3) 群作用 ────────────────────
     print("[5] <point3d> 真 3D SE(3) 群作用 (绕 x 轴 90°)")
     print("    含义: 3D 原语直接 3D 旋转, 不投影, 不丢 z 维度")
@@ -275,6 +284,9 @@ def _selfcheck() -> None:
     print("    PASS: <point3d> 3D 坐标和 3D coords 同步旋转, z 维度保留")
     print()
 
+
+
+def _sc_point3d_compatibility() -> None:
     # ── 扩展: <point3d> 群作用 compatibility ───────────────────
     print("[6] <point3d> 群作用 compatibility: (g1·g2)▷t == g1▷(g2▷t)")
     print("    含义: 3D 原语也满足群作用相容性")
@@ -301,6 +313,9 @@ def _selfcheck() -> None:
     print(f"    coords: {'PASS' if coords_match else 'FAIL'}")
     print()
 
+
+
+def _sc_conclusion() -> None:
     # ── 结论 ─────────────────────────────────────────────────
     print("=" * 70)
     print("结论")
@@ -328,6 +343,21 @@ def _selfcheck() -> None:
     print("这是 unified token protocol 的数学基础 (虽然离工程实现还有距离).")
     print()
     print("C EXPERIMENT ALL CHECKS PASSED")
+
+
+def _selfcheck() -> None:
+    """验证 3 个数学性质 + 1 个实际场景."""
+    print("=" * 70)
+    print("C 实验: 复合 token (text × SE(3)) 半直积叠加验证")
+    print("=" * 70)
+    print()
+    t = _sc_compatibility()
+    _sc_concat_homomorphism()
+    _sc_identity(t)
+    _sc_scene_2d()
+    _sc_point3d_rotation()
+    _sc_point3d_compatibility()
+    _sc_conclusion()
 
 
 if __name__ == "__main__":

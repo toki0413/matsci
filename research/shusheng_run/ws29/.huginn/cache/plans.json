@@ -1,0 +1,93 @@
+{
+  "plans": [
+    {
+      "id": "plan_471b7033",
+      "objective": "[DIM: computation]**",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "The design document is a local file. I'll read it directly.",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-28T07:45:33.715084+00:00",
+      "confirmed_at": "2026-10-28T07:45:33.716129+00:00",
+      "completed_at": "2026-10-28T08:00:02.984254+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_0d377194",
+      "objective": "[DIM: computation]**",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-10-28T08:01:36.596292+00:00",
+      "confirmed_at": "2026-10-28T08:01:36.597294+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_fd96a462",
+      "objective": "[DIM: computation]**",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Read design_solid_h2.md once to map the scheme line (C2/C5/C3) and any geometry/boundary constraints, then select Direction A (1D MgH₂ hydrogen–thermal coupled model) as the primary deliverable and Direction C (world-model error accumulation) as the independent cross-check — because C reuses A's low-fidelity rollout as \"truth\", so one implementation validates both. Implement prototype/ with: (1) finite-difference explicit/semi-implicit time integration of the 1D energy equation + hydrogen absorption fraction ODE, van't Hoff equilibrium pressure and Arrhenius rate; (2) grid-independence study at Nx=50 and Nx=100 comparing charging time, peak temperature, energy residual; (3) a least-squares/ kernel one-step predictor fitted on A's trajectory, then N-step autoregressive rollout measuring error vs step with a training-size ablation (50 vs 200 samples). Write results.json with every numeric claim and report.md with the six required sections, marking Verified vs Unverified. Fixed random seed, numpy/scipy only.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "prototype/mgh2_1d.py",
+            "prototype/world_model_error.py",
+            "results.json",
+            "report.md"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-28T08:01:47.936103+00:00",
+      "confirmed_at": "2026-10-28T08:01:47.937557+00:00",
+      "completed_at": "2026-10-28T08:08:30.320758+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    }
+  ]
+}

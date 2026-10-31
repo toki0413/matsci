@@ -12,11 +12,10 @@
 接入点:
   - ToolRegistry 注册为 "vision_locate" (huginn/tools/__init__.py _OPTIONAL_MODULES)
 """
+
 from __future__ import annotations
 
-import json
 import logging
-import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -24,32 +23,26 @@ from pydantic import BaseModel, Field
 
 from huginn.core_types import ToolContext, ToolResult, ValidationResult
 from huginn.tools.base import HuginnTool
+from huginn.utils.json_extract import extract_json
 
 logger = logging.getLogger(__name__)
 
 
 # ── 纯解析函数 (无 IO, 可单测) ──────────────────────────────────────
 
+
 def _extract_json(text: str) -> Any | None:
-    """从视觉模型回复里抽出第一个 JSON 对象/数组.
+    """从视觉模型回复里抽出第一个 JSON 对象/数组 (先对象后数组).
 
     容忍 markdown 代码围栏和前后杂文. 找不到返回 None.
+    薄封装: 实现见 huginn/utils/json_extract.py.
     """
     if not text:
         return None
-    cleaned = text.strip()
-    # 去 ```json ... ``` 围栏
-    cleaned = re.sub(r"```(?:json)?\s*", "", cleaned).strip()
-    # 定位第一个 { 或 [ 到末尾, 尝试解析; 逐段收紧
-    for start_ch, _end_ch in (("{", "}"), ("[", "]")):
-        start = cleaned.find(start_ch)
-        if start == -1:
-            continue
-        for end in range(len(cleaned), start, -1):
-            try:
-                return json.loads(cleaned[start:end])
-            except (json.JSONDecodeError, ValueError):
-                continue
+    for opener in ("{", "["):
+        value = extract_json(text, prefer="first", openers=(opener,))
+        if value is not None:
+            return value
     return None
 
 
@@ -102,10 +95,12 @@ def _parse_detect(text: str, width: int, height: int) -> list[dict[str, Any]]:
         box = _clamp_box(item, width, height)
         if box is None:
             continue
-        out.append({
-            "text": str(item.get("text", "") or ""),
-            **box,
-        })
+        out.append(
+            {
+                "text": str(item.get("text", "") or ""),
+                **box,
+            }
+        )
     return out
 
 
@@ -126,6 +121,85 @@ _DETECT_PROMPT = (
 
 
 # ── 工具 ────────────────────────────────────────────────────────────
+
+
+def _image_size(path: Path):
+    """读图片尺寸; 失败返回 ((None, None), 错误结果)."""
+    try:
+        from PIL import Image
+
+        with Image.open(path) as img:
+            width, height = img.size
+    except Exception as exc:
+        return (None, None), ToolResult(
+            data=None,
+            success=False,
+            error=f"读取图片尺寸失败: {exc}",
+        )
+    return (width, height), None
+
+
+def _detect_result(decode_image, path: Path, input_data, width: int, height: int):
+    """detect action: 解析元素清单."""
+    raw = decode_image(path, question=_DETECT_PROMPT.format(target=input_data.target))
+    if not raw:
+        return ToolResult(
+            data=None,
+            success=False,
+            error="视觉解码不可用或未返回内容 (检查 HUGINN_VISION_PROVIDER / 本地 ollama 视觉模型)",
+        )
+    elements = _parse_detect(raw, width, height)
+    if not elements:
+        return ToolResult(
+            data={"raw": raw[:400]},
+            success=False,
+            error="未能从模型回复解析出元素清单",
+        )
+    return ToolResult(
+        data={"elements": elements, "size": [width, height]}, success=True
+    )
+
+
+def _ground_or_crop_result(
+    decode_image, path: Path, input_data, width: int, height: int
+):
+    """ground 与 crop 共用同一套"定位单框"逻辑."""
+    raw = decode_image(path, question=_GROUND_PROMPT.format(target=input_data.target))
+    if not raw:
+        return ToolResult(
+            data=None,
+            success=False,
+            error="视觉解码不可用或未返回内容 (检查 HUGINN_VISION_PROVIDER / 本地 ollama 视觉模型)",
+        )
+    box = _parse_grounding(raw, width, height)
+    if box is None:
+        return ToolResult(
+            data={"raw": raw[:400]},
+            success=False,
+            error="未能从模型回复解析出边界框",
+        )
+
+    if input_data.action == "crop":
+        try:
+            from PIL import Image as _PILImage
+
+            with _PILImage.open(path) as img:
+                img.convert("RGB").crop(
+                    (box["x1"], box["y1"], box["x2"], box["y2"])
+                ).save(input_data.output_path)
+        except Exception as exc:
+            return ToolResult(
+                data={"box": box},
+                success=False,
+                error=f"裁剪保存失败: {exc}",
+            )
+        return ToolResult(
+            data={"box": box, "output_path": input_data.output_path},
+            success=True,
+        )
+
+    return ToolResult(data={"box": box, "size": [width, height]}, success=True)
+
 
 class VisionLocateInput(BaseModel):
     image_path: str = Field(..., description="图像文件路径")
@@ -171,7 +245,9 @@ class VisionLocateTool(HuginnTool):
     async def validate_input(
         self, args: dict[str, Any], context: ToolContext | None = None
     ) -> ValidationResult:
-        input_data = args if isinstance(args, VisionLocateInput) else VisionLocateInput(**args)
+        input_data = (
+            args if isinstance(args, VisionLocateInput) else VisionLocateInput(**args)
+        )
         if not Path(input_data.image_path).exists():
             return ValidationResult(
                 result=False, message=f"图片不存在: {input_data.image_path}"
@@ -182,76 +258,23 @@ class VisionLocateTool(HuginnTool):
             )
         return ValidationResult(result=True)
 
-    async def call(
-        self, args: dict[str, Any], context: ToolContext
-    ) -> ToolResult:
-        input_data = args if isinstance(args, VisionLocateInput) else VisionLocateInput(**args)
+    async def call(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
+        input_data = (
+            args if isinstance(args, VisionLocateInput) else VisionLocateInput(**args)
+        )
         try:
             from huginn.vision.local_decoder import decode_image
 
             path = Path(input_data.image_path)
             # 拿图片尺寸用于坐标夹紧
-            try:
-                from PIL import Image
-                with Image.open(path) as img:
-                    width, height = img.size
-            except Exception as exc:
-                return ToolResult(
-                    data=None, success=False,
-                    error=f"读取图片尺寸失败: {exc}",
-                )
+            (width, height), size_error = _image_size(path)
+            if size_error is not None:
+                return size_error
 
             if input_data.action == "detect":
-                raw = decode_image(
-                    path, question=_DETECT_PROMPT.format(target=input_data.target)
-                )
-                if not raw:
-                    return ToolResult(
-                        data=None, success=False,
-                        error="视觉解码不可用或未返回内容 (检查 HUGINN_VISION_PROVIDER / 本地 ollama 视觉模型)",
-                    )
-                elements = _parse_detect(raw, width, height)
-                if not elements:
-                    return ToolResult(
-                        data={"raw": raw[:400]}, success=False,
-                        error="未能从模型回复解析出元素清单",
-                    )
-                return ToolResult(data={"elements": elements, "size": [width, height]}, success=True)
+                return _detect_result(decode_image, path, input_data, width, height)
 
-            # ground 与 crop 共用同一套"定位单框"逻辑
-            raw = decode_image(
-                path, question=_GROUND_PROMPT.format(target=input_data.target)
-            )
-            if not raw:
-                return ToolResult(
-                    data=None, success=False,
-                    error="视觉解码不可用或未返回内容 (检查 HUGINN_VISION_PROVIDER / 本地 ollama 视觉模型)",
-                )
-            box = _parse_grounding(raw, width, height)
-            if box is None:
-                return ToolResult(
-                    data={"raw": raw[:400]}, success=False,
-                    error="未能从模型回复解析出边界框",
-                )
-
-            if input_data.action == "crop":
-                try:
-                    from PIL import Image as _PILImage
-                    with _PILImage.open(path) as img:
-                        img.convert("RGB").crop(
-                            (box["x1"], box["y1"], box["x2"], box["y2"])
-                        ).save(input_data.output_path)
-                except Exception as exc:
-                    return ToolResult(
-                        data={"box": box}, success=False,
-                        error=f"裁剪保存失败: {exc}",
-                    )
-                return ToolResult(
-                    data={"box": box, "output_path": input_data.output_path},
-                    success=True,
-                )
-
-            return ToolResult(data={"box": box, "size": [width, height]}, success=True)
+            return _ground_or_crop_result(decode_image, path, input_data, width, height)
         except Exception as exc:
             logger.warning("vision_locate failed: %s", exc, exc_info=True)
             return ToolResult(data=None, success=False, error=str(exc))
@@ -259,11 +282,15 @@ class VisionLocateTool(HuginnTool):
 
 # ── self-check (assert-based, 无框架) ────────────────────────
 
-def _selfcheck() -> None:
-    """校验解析层的纯函数: JSON 抽取 / 夹紧 / ground 与 detect 解析."""
+
+def _selfcheck_json_and_clamp() -> None:
+    """1-2: JSON 抽取 + 坐标夹紧."""
     # 1. _extract_json 容忍 markdown 围栏 + 前后杂文
     assert _extract_json('```json\n{"x1": 1, "y1": 2, "x2": 3, "y2": 4}\n```') == {
-        "x1": 1, "y1": 2, "x2": 3, "y2": 4,
+        "x1": 1,
+        "y1": 2,
+        "x2": 3,
+        "y2": 4,
     }
     assert _extract_json('结果如下 {"a": 1} 完毕') == {"a": 1}
     assert _extract_json("没有 JSON") is None
@@ -272,11 +299,17 @@ def _selfcheck() -> None:
     box = _clamp_box({"x1": 50, "y1": 80, "x2": 20, "y2": 30}, 100, 100)
     assert box == {"x1": 20, "y1": 30, "x2": 50, "y2": 80}
     assert _clamp_box({"x1": -5, "y1": 0, "x2": 999, "y2": 999}, 100, 100) == {
-        "x1": 0, "y1": 0, "x2": 100, "y2": 100,
+        "x1": 0,
+        "y1": 0,
+        "x2": 100,
+        "y2": 100,
     }
     # 非法字段 → None
     assert _clamp_box({"x1": "a", "y1": 0, "x2": 1, "y2": 2}, 100, 100) is None
 
+
+def _selfcheck_grounding_and_detect() -> None:
+    """3-4: ground 单框解析 + detect 元素清单解析."""
     # 3. _parse_grounding: 直接对象 / 包在 elements 里都能解
     g1 = _parse_grounding('{"x1":10,"y1":20,"x2":30,"y2":40}', 200, 200)
     assert g1 == {"x1": 10, "y1": 20, "x2": 30, "y2": 40}
@@ -288,21 +321,36 @@ def _selfcheck() -> None:
     det = _parse_detect(
         '{"elements":[{"text":"按钮A","x1":1,"y1":2,"x2":3,"y2":4},'
         '{"text":"按钮B","x1":5,"y1":6,"x2":7,"y2":8}]}',
-        100, 100,
+        100,
+        100,
     )
     assert len(det) == 2
     assert det[0]["text"] == "按钮A"
     assert det[1]["y2"] == 8
     assert _parse_detect("{}", 100, 100) == []
 
-    # 5. 工具元数据
+
+def _selfcheck_tool_metadata() -> None:
+    """5. 工具元数据."""
     tool = VisionLocateTool()
     assert tool.name == "vision_locate"
     assert tool.category == "cv"
     assert tool.is_read_only(VisionLocateInput(image_path="x", target="y")) is True
-    assert tool.is_read_only(
-        VisionLocateInput(image_path="x", target="y", action="crop", output_path="o.png")
-    ) is False
+    assert (
+        tool.is_read_only(
+            VisionLocateInput(
+                image_path="x", target="y", action="crop", output_path="o.png"
+            )
+        )
+        is False
+    )
+
+
+def _selfcheck() -> None:
+    """校验解析层的纯函数: JSON 抽取 / 夹紧 / ground 与 detect 解析."""
+    _selfcheck_json_and_clamp()
+    _selfcheck_grounding_and_detect()
+    _selfcheck_tool_metadata()
 
     print("all self-checks passed (vision_locate parsing OK)")
 

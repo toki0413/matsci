@@ -9,6 +9,7 @@ action 入口:
 
 能量评估通过 ToolRegistry 互调 ml_potential_tool / vasp_tool, 不硬 import.
 """
+
 from __future__ import annotations
 
 from typing import Any, Literal
@@ -59,13 +60,9 @@ class NEBToolInput(BaseModel):
         default=None, description="NEB 终点结构 (路径或内联 dict)"
     )
     n_images: int = Field(default=7, ge=3, description="NEB 图像数 (含首尾)")
-    spring_constant: float = Field(
-        default=5.0, description="弹簧常数 k (eV/Å^2)"
-    )
+    spring_constant: float = Field(default=5.0, description="弹簧常数 k (eV/Å^2)")
     max_iter: int = Field(default=300, ge=1, description="最大迭代步数")
-    tolerance: float = Field(
-        default=0.05, description="收敛阈值 (最大原子受力, eV/Å)"
-    )
+    tolerance: float = Field(default=0.05, description="收敛阈值 (最大原子受力, eV/Å)")
     climbing_image: bool = Field(
         default=True, description="启用 climbing image NEB (CI-NEB)"
     )
@@ -89,30 +86,24 @@ class NEBToolInput(BaseModel):
         default="dimer", description="鞍点搜索方法"
     )
     dimer_length: float = Field(default=0.01, description="Dimer 长度 (Å)")
-    dimer_rotations: int = Field(
-        default=20, description="每步 Dimer 旋转次数"
-    )
+    dimer_rotations: int = Field(default=20, description="每步 Dimer 旋转次数")
 
     # ---- mep_analyze ----
     neb_result: dict | None = Field(
         default=None, description="neb action 返回的结果 dict"
     )
-    analysis_type: Literal[
-        "energy_profile", "barrier", "decomposition"
-    ] = Field(default="energy_profile")
+    analysis_type: Literal["energy_profile", "barrier", "decomposition"] = Field(
+        default="energy_profile"
+    )
 
     # ---- landscape_topology ----
-    pes_data: dict | None = Field(
-        default=None, description="pes_scan 返回的结果 dict"
-    )
+    pes_data: dict | None = Field(default=None, description="pes_scan 返回的结果 dict")
     method: Literal["tda", "basin_analysis"] = Field(
         default="basin_analysis", description="拓扑分析方法"
     )
 
     # ---- 共享:能量评估 ----
-    energy_evaluator: Literal[
-        "ml_potential", "vasp", "empirical"
-    ] = Field(
+    energy_evaluator: Literal["ml_potential", "vasp", "empirical"] = Field(
         default="empirical",
         description="能量评估后端: ml_potential / vasp / empirical (内置 LJ)",
     )
@@ -133,12 +124,16 @@ class NEBToolInput(BaseModel):
     @model_validator(mode="after")
     def _check_action_fields(self) -> NEBToolInput:
         """不同 action 校验必填字段, 别等 call() 才挂."""
-        if self.action == "neb" and (not self.initial_structure or not self.final_structure):
-                raise ValueError("neb action 需要 initial_structure 和 final_structure")
+        if self.action == "neb" and (
+            not self.initial_structure or not self.final_structure
+        ):
+            raise ValueError("neb action 需要 initial_structure 和 final_structure")
         if self.action in ("pes_scan", "saddle_search") and not self.structure:
             raise ValueError(f"{self.action} action 需要 structure")
-        if self.action == "pes_scan" and (not self.scan_coords or self.scan_range is None):
-                raise ValueError("pes_scan action 需要 scan_coords 和 scan_range")
+        if self.action == "pes_scan" and (
+            not self.scan_coords or self.scan_range is None
+        ):
+            raise ValueError("pes_scan action 需要 scan_coords 和 scan_range")
         if self.action == "mep_analyze" and not self.neb_result:
             raise ValueError("mep_analyze action 需要 neb_result")
         if self.action == "landscape_topology" and not self.pes_data:
@@ -173,9 +168,7 @@ class NEBTool(HuginnTool):
     # 不写文件 (除了临时文件), 不修改用户输入; 默认按只读处理
     read_only = True
 
-    async def call(
-        self, args: NEBToolInput, context: ToolContext
-    ) -> ToolResult:
+    async def call(self, args: NEBToolInput, context: ToolContext) -> ToolResult:
         try:
             if args.action == "neb":
                 return await self._action_neb(args, context)
@@ -191,17 +184,13 @@ class NEBTool(HuginnTool):
                 data=None, success=False, error=f"未知 action: {args.action}"
             )
         except Exception as exc:
-            return ToolResult(
-                data=None, success=False, error=f"NEBTool 错误: {exc}"
-            )
+            return ToolResult(data=None, success=False, error=f"NEBTool 错误: {exc}")
 
     # =====================================================================
     # 1. NEB
     # =====================================================================
 
-    async def _action_neb(
-        self, args: NEBToolInput, context: ToolContext
-    ) -> ToolResult:
+    async def _action_neb(self, args: NEBToolInput, context: ToolContext) -> ToolResult:
         """Nudged Elastic Band 最小能量路径."""
         init = read_structure(args.initial_structure)
         final = read_structure(args.final_structure)
@@ -214,103 +203,37 @@ class NEBTool(HuginnTool):
             )
 
         # 1. IDPP 初猜
-        images = idpp_initial_path(
-            init["positions"], final["positions"], args.n_images
-        )
-
-        # 2. NEB 优化
-        energies: list[float] = []
-        forces_history: list[float] = []
+        images = idpp_initial_path(init["positions"], final["positions"], args.n_images)
 
         atomic_numbers = init["atomic_numbers"]
         cell = init.get("cell")
 
-        step = 0
-        max_force = float("inf")
-        converged = False
-        while step < args.max_iter and max_force > args.tolerance:
-            # 评估每个 image 的能量和力
-            energies, forces = await eval_images(
-                images, atomic_numbers, cell, args, context
-            )
-
-            # NEB 力投影
-            neb_forces = compute_neb_forces(
-                images, forces, energies, args.spring_constant, args.climbing_image
-            )
-
-            # 更新位置 (quick-min 风格: 用当前力做一步最速下降)
-            # 简化版, 没做线搜索; 为了避免 LJ 等陡峭势导致原子重叠爆炸,
-            # 加两道保险: (1) 力大就小步走 (2) 单原子单步位移硬上限 0.05 Å.
-            # 真正的生产级 NEB 会用 FIRE / LBFGS, 这里够 demo / 教学用.
-            dt = 0.05
-            max_atom_step = 0.05  # Å, 单原子单步位移上限
-            for i in range(1, args.n_images - 1):
-                f_norm = np.linalg.norm(neb_forces[i])
-                if f_norm < 1e-12:
-                    continue
-                step_size = min(dt, 0.5 / (f_norm + 1e-8))
-                delta = step_size * neb_forces[i]
-                # 每个原子的位移范数封顶, 防止力爆炸时位置也爆炸
-                atom_norms = np.linalg.norm(delta, axis=1, keepdims=True)
-                scale = np.where(
-                    atom_norms > max_atom_step,
-                    max_atom_step / (atom_norms + 1e-12),
-                    1.0,
-                )
-                images[i] = images[i] + delta * scale
-
-            max_force = float(
-                max(
-                    np.linalg.norm(neb_forces[i])
-                    for i in range(1, args.n_images - 1)
-                )
-            )
-            forces_history.append(max_force)
-            step += 1
-
-        converged = max_force <= args.tolerance
-
-        # 重算一次能量, 确保输出对应当前位置
-        energies, _ = await eval_images(
+        # 2. NEB 优化
+        step, max_force, converged = await _optimize_neb_path(
             images, atomic_numbers, cell, args, context
         )
 
+        # 重算一次能量, 确保输出对应当前位置
+        energies, _ = await eval_images(images, atomic_numbers, cell, args, context)
+
         # 势垒 / 鞍点
-        forward_barrier, reverse_barrier, saddle_idx = compute_barriers(
-            energies
-        )
-        saddle_structure = {
-            "atomic_numbers": atomic_numbers,
-            "positions": images[saddle_idx].tolist(),
-            "cell": cell.tolist() if cell is not None else None,
-        }
+        forward_barrier, reverse_barrier, saddle_idx = compute_barriers(energies)
         path_length = compute_path_length(images)
 
         return ToolResult(
-            data={
-                "action": "neb",
-                "images": [
-                    {
-                        "atomic_numbers": atomic_numbers,
-                        "positions": img.tolist(),
-                        "cell": cell.tolist() if cell is not None else None,
-                    }
-                    for img in images
-                ],
-                "energies": [float(e) for e in energies],
-                "forward_barrier": float(forward_barrier),
-                "reverse_barrier": float(reverse_barrier),
-                "saddle_point": {
-                    "image_index": int(saddle_idx),
-                    "energy": float(energies[saddle_idx]),
-                    "structure": saddle_structure,
-                },
-                "path_length": float(path_length),
-                "converged": bool(converged),
-                "iterations": int(step),
-                "final_max_force": float(max_force),
-            },
+            data=_neb_payload(
+                images,
+                energies,
+                atomic_numbers,
+                cell,
+                forward_barrier,
+                reverse_barrier,
+                saddle_idx,
+                path_length,
+                converged,
+                step,
+                max_force,
+            ),
             success=True,
         )
 
@@ -330,51 +253,41 @@ class NEBTool(HuginnTool):
         scan_coords = args.scan_coords or []
         n_dims = len(scan_coords)
         if n_dims == 0:
-            return ToolResult(
-                data=None, success=False, error="scan_coords 不能为空"
-            )
+            return ToolResult(data=None, success=False, error="scan_coords 不能为空")
 
-        lo, hi = args.scan_range[0], args.scan_range[1]
-        grid_1d = np.linspace(lo, hi, args.n_points)
-        # n 维网格
-        mesh = np.meshgrid(*([grid_1d] * n_dims), indexing="ij")
-        grid_shape = mesh[0].shape
-        n_total = int(np.prod(grid_shape))
-        energies = np.zeros(grid_shape)
-
-        # 遍历每个网格点
-        for _flat_idx, idx in enumerate(np.ndindex(*grid_shape)):
-            disp = np.zeros_like(positions0)
-            for d, (atom_idx, axis) in enumerate(scan_coords):
-                disp[atom_idx, axis] = mesh[d][idx]
-            displaced = positions0 + disp
-            e, _ = await eval_single(
-                displaced, atomic_numbers, cell, args, context
-            )
-            energies[idx] = e
+        lo, hi, grid_1d, mesh, grid_shape, n_total, energies = _make_pes_grid(
+            args, n_dims
+        )
+        energies = await _evaluate_pes_grid(
+            args,
+            context,
+            positions0,
+            atomic_numbers,
+            cell,
+            scan_coords,
+            mesh,
+            grid_shape,
+            energies,
+        )
 
         # 找极小 / 鞍点 (网格上的局部极值)
         minima, saddles = find_extrema(energies, mesh, scan_coords)
 
         return ToolResult(
-            data={
-                "action": "pes_scan",
-                "scan_coords": scan_coords,
-                "scan_range": [float(lo), float(hi)],
-                "n_points": args.n_points,
-                "n_dims": n_dims,
-                "grid_shape": list(grid_shape),
-                "grid_axes": [grid_1d.tolist()] * n_dims,
-                "energies": energies.tolist(),
-                "contour_data": {
-                    "x": mesh[0].tolist() if n_dims >= 1 else None,
-                    "y": mesh[1].tolist() if n_dims >= 2 else None,
-                    "z": energies.tolist(),
-                },
-                "minima": minima,
-                "saddle_points": saddles,
-                "n_evaluations": n_total,
-            },
+            data=_pes_payload(
+                scan_coords,
+                lo,
+                hi,
+                args,
+                n_dims,
+                grid_shape,
+                grid_1d,
+                mesh,
+                energies,
+                minima,
+                saddles,
+                n_total,
+            ),
             success=True,
         )
 
@@ -390,15 +303,9 @@ class NEBTool(HuginnTool):
         Dimer 由两个相近点 R ± d*τ 组成, 通过旋转 τ 找最低曲率方向
         (最负本征值对应的本征矢), 然后沿 τ 把 R 平移到鞍点.
         """
-        if args.search_method != "dimer":
-            return ToolResult(
-                data=None,
-                success=False,
-                error=(
-                    f"search_method={args.search_method} 暂未实现, "
-                    "目前只支持 dimer"
-                ),
-            )
+        unsupported = _unsupported_search_method(args)
+        if unsupported is not None:
+            return unsupported
 
         struct = read_structure(args.structure)
         R = np.asarray(struct["positions"], dtype=float).flatten()
@@ -411,63 +318,30 @@ class NEBTool(HuginnTool):
         tau = rng.standard_normal(n)
         tau /= np.linalg.norm(tau) + 1e-12
 
-        d = args.dimer_length
-        max_iter = args.max_iter
-        converged = False
-        step = 0
-        last_eigval = 0.0
-
-        while step < max_iter:
-            # 1. 旋转阶段: 找最低曲率方向
-            tau, curvature = await dimer_rotate(
-                R, tau, d, atomic_numbers, cell, args, context,
-                n_rot=args.dimer_rotations,
-            )
-
-            # 2. 平移阶段: 沿 tau 方向爬向鞍点
-            # 在 R 处算力 F, 取其平行 tau 分量的反号 + 垂直分量
-            e0, f0 = await eval_single(
-                R.reshape(-1, 3), atomic_numbers, cell, args, context
-            )
-            F = f0.flatten()
-            F_parallel = np.dot(F, tau) * tau
-            F_perp = F - F_parallel
-            # saddle 力: -F_parallel + F_perp (把平行分量翻转, 顺 tau 上坡)
-            F_saddle = -F_parallel + F_perp
-
-            step_size = min(0.05, 0.5 / (np.linalg.norm(F_saddle) + 1e-8))
-            R = R + step_size * F_saddle / (np.linalg.norm(F_saddle) + 1e-12)
-
-            last_eigval = float(curvature)
-            if np.linalg.norm(F_saddle) < args.tolerance and curvature < 0:
-                converged = True
-                break
-            step += 1
+        R, tau, last_eigval, converged, step = await _dimer_search(
+            R, tau, args, atomic_numbers, cell, context
+        )
 
         # 最终结构 / 能量 / Hessian 沿 tau 的本征值
         e_final, _ = await eval_single(
             R.reshape(-1, 3), atomic_numbers, cell, args, context
         )
         hess_eigvals, hess_mode = await estimate_hessian_along_mode(
-            R, tau, d, atomic_numbers, cell, args, context
+            R, tau, args.dimer_length, atomic_numbers, cell, args, context
         )
 
         return ToolResult(
-            data={
-                "action": "saddle_search",
-                "search_method": "dimer",
-                "saddle_structure": {
-                    "atomic_numbers": atomic_numbers,
-                    "positions": R.reshape(-1, 3).tolist(),
-                    "cell": cell.tolist() if cell is not None else None,
-                },
-                "energy": float(e_final),
-                "hessian_eigenvalues": hess_eigvals,
-                "mode": hess_mode.tolist(),
-                "lowest_curvature": last_eigval,
-                "converged": bool(converged),
-                "iterations": int(step),
-            },
+            data=_saddle_payload(
+                R,
+                atomic_numbers,
+                cell,
+                e_final,
+                hess_eigvals,
+                hess_mode,
+                last_eigval,
+                converged,
+                step,
+            ),
             success=True,
         )
 
@@ -487,17 +361,7 @@ class NEBTool(HuginnTool):
         e_arr = np.asarray(energies, dtype=float)
         n = len(e_arr)
         # 反应坐标: 累计路径长度 (用 images 位置算, 没有就退化为均匀)
-        images = neb.get("images") or []
-        if images and len(images) == n:
-            coords = [np.asarray(im["positions"]) for im in images]
-            cum = [0.0]
-            for i in range(1, n):
-                cum.append(cum[-1] + float(np.linalg.norm(coords[i] - coords[i - 1])))
-            reaction_coord = np.asarray(cum)
-            total_len = reaction_coord[-1] if reaction_coord.size else 0.0
-        else:
-            reaction_coord = np.linspace(0.0, 1.0, n)
-            total_len = 1.0
+        reaction_coord, total_len = _mep_reaction_coord(neb, n)
 
         # 势垒
         e_init = float(e_arr[0])
@@ -506,53 +370,26 @@ class NEBTool(HuginnTool):
         forward_barrier = e_max - e_init
         reverse_barrier = e_max - e_final
         thermodynamic_driving_force = e_init - e_final
+        metrics = (
+            e_init,
+            e_final,
+            e_max,
+            forward_barrier,
+            reverse_barrier,
+            thermodynamic_driving_force,
+        )
 
         if args.analysis_type == "barrier":
-            return ToolResult(
-                data={
-                    "action": "mep_analyze",
-                    "analysis_type": "barrier",
-                    "forward_barrier": forward_barrier,
-                    "reverse_barrier": reverse_barrier,
-                    "saddle_energy": e_max,
-                    "initial_energy": e_init,
-                    "final_energy": e_final,
-                    "thermodynamic_driving_force": thermodynamic_driving_force,
-                },
-                success=True,
-            )
+            return ToolResult(data=_mep_barrier_payload(metrics), success=True)
 
         if args.analysis_type == "decomposition":
-            # 把能量分解成: 化学势 (端点均值) + 路径起伏 + 端点偏置
-            e_mean = 0.5 * (e_init + e_final)
-            path_deviation = (e_arr - np.linspace(e_init, e_final, n)).tolist()
             return ToolResult(
-                data={
-                    "action": "mep_analyze",
-                    "analysis_type": "decomposition",
-                    "chemical_potential_mean": float(e_mean),
-                    "path_deviation": path_deviation,
-                    "initial_energy": e_init,
-                    "final_energy": e_final,
-                    "asymmetry": float(e_init - e_final),
-                    "max_deviation": float(np.max(np.abs(path_deviation))),
-                },
-                success=True,
+                data=_mep_decomposition_payload(metrics, e_arr, n), success=True
             )
 
         # 默认 energy_profile
         return ToolResult(
-            data={
-                "action": "mep_analyze",
-                "analysis_type": "energy_profile",
-                "reaction_coordinate": reaction_coord.tolist(),
-                "energies": e_arr.tolist(),
-                "path_length": float(total_len),
-                "forward_barrier": forward_barrier,
-                "reverse_barrier": reverse_barrier,
-                "thermodynamic_driving_force": thermodynamic_driving_force,
-                "saddle_index": int(np.argmax(e_arr)),
-            },
+            data=_mep_profile_payload(metrics, reaction_coord, e_arr, total_len),
             success=True,
         )
 
@@ -567,12 +404,365 @@ class NEBTool(HuginnTool):
         pes = args.pes_data or {}
         energies = np.asarray(pes.get("energies") or [], dtype=float)
         if energies.size == 0:
-            return ToolResult(
-                data=None, success=False, error="pes_data.energies 为空"
-            )
+            return ToolResult(data=None, success=False, error="pes_data.energies 为空")
 
         if args.method == "tda":
             return await topology_via_tda(pes, energies, context)
 
         # basin_analysis: 把能量从最低到阈值分层, 数连通分量
         return basin_analysis(pes, energies)
+
+
+# ---------------------------------------------------------------------------
+# 模块级 helper: 把长 action 里的语义块外提
+# ---------------------------------------------------------------------------
+
+
+async def _optimize_neb_path(
+    images: list,
+    atomic_numbers: list,
+    cell: Any,
+    args: NEBToolInput,
+    context: ToolContext,
+) -> tuple[int, float, bool]:
+    """NEB 优化循环; 返回 (迭代步数, 最终最大力, 是否收敛)."""
+    energies: list[float] = []
+    forces_history: list[float] = []
+
+    step = 0
+    max_force = float("inf")
+    while step < args.max_iter and max_force > args.tolerance:
+        # 评估每个 image 的能量和力
+        energies, forces = await eval_images(
+            images, atomic_numbers, cell, args, context
+        )
+
+        # NEB 力投影
+        neb_forces = compute_neb_forces(
+            images, forces, energies, args.spring_constant, args.climbing_image
+        )
+
+        _apply_neb_step(images, neb_forces, args.n_images)
+
+        max_force = float(
+            max(np.linalg.norm(neb_forces[i]) for i in range(1, args.n_images - 1))
+        )
+        forces_history.append(max_force)
+        step += 1
+
+    converged = max_force <= args.tolerance
+    return step, max_force, converged
+
+
+def _apply_neb_step(images: list, neb_forces: list, n_images: int) -> None:
+    """用当前 NEB 力对中间 image 做一步位置更新."""
+    # 更新位置 (quick-min 风格: 用当前力做一步最速下降)
+    # 简化版, 没做线搜索; 为了避免 LJ 等陡峭势导致原子重叠爆炸,
+    # 加两道保险: (1) 力大就小步走 (2) 单原子单步位移硬上限 0.05 Å.
+    # 真正的生产级 NEB 会用 FIRE / LBFGS, 这里够 demo / 教学用.
+    dt = 0.05
+    max_atom_step = 0.05  # Å, 单原子单步位移上限
+    for i in range(1, n_images - 1):
+        f_norm = np.linalg.norm(neb_forces[i])
+        if f_norm < 1e-12:
+            continue
+        step_size = min(dt, 0.5 / (f_norm + 1e-8))
+        delta = step_size * neb_forces[i]
+        # 每个原子的位移范数封顶, 防止力爆炸时位置也爆炸
+        atom_norms = np.linalg.norm(delta, axis=1, keepdims=True)
+        scale = np.where(
+            atom_norms > max_atom_step,
+            max_atom_step / (atom_norms + 1e-12),
+            1.0,
+        )
+        images[i] = images[i] + delta * scale
+
+
+def _unsupported_search_method(args: NEBToolInput) -> ToolResult | None:
+    """目前只实现 dimer; 其它鞍点搜索方法返回错误结果."""
+    if args.search_method != "dimer":
+        return ToolResult(
+            data=None,
+            success=False,
+            error=(f"search_method={args.search_method} 暂未实现, 目前只支持 dimer"),
+        )
+    return None
+
+
+def _neb_payload(
+    images: list,
+    energies: list,
+    atomic_numbers: list,
+    cell: Any,
+    forward_barrier: float,
+    reverse_barrier: float,
+    saddle_idx: int,
+    path_length: float,
+    converged: bool,
+    step: int,
+    max_force: float,
+) -> dict[str, Any]:
+    saddle_structure = {
+        "atomic_numbers": atomic_numbers,
+        "positions": images[saddle_idx].tolist(),
+        "cell": cell.tolist() if cell is not None else None,
+    }
+    return {
+        "action": "neb",
+        "images": [
+            {
+                "atomic_numbers": atomic_numbers,
+                "positions": img.tolist(),
+                "cell": cell.tolist() if cell is not None else None,
+            }
+            for img in images
+        ],
+        "energies": [float(e) for e in energies],
+        "forward_barrier": float(forward_barrier),
+        "reverse_barrier": float(reverse_barrier),
+        "saddle_point": {
+            "image_index": int(saddle_idx),
+            "energy": float(energies[saddle_idx]),
+            "structure": saddle_structure,
+        },
+        "path_length": float(path_length),
+        "converged": bool(converged),
+        "iterations": int(step),
+        "final_max_force": float(max_force),
+    }
+
+
+def _make_pes_grid(
+    args: NEBToolInput, n_dims: int
+) -> tuple[float, float, np.ndarray, list, tuple, int, np.ndarray]:
+    lo, hi = args.scan_range[0], args.scan_range[1]
+    grid_1d = np.linspace(lo, hi, args.n_points)
+    # n 维网格
+    mesh = np.meshgrid(*([grid_1d] * n_dims), indexing="ij")
+    grid_shape = mesh[0].shape
+    n_total = int(np.prod(grid_shape))
+    energies = np.zeros(grid_shape)
+    return lo, hi, grid_1d, mesh, grid_shape, n_total, energies
+
+
+async def _evaluate_pes_grid(
+    args: NEBToolInput,
+    context: ToolContext,
+    positions0: np.ndarray,
+    atomic_numbers: list,
+    cell: Any,
+    scan_coords: list[list[int]],
+    mesh: list,
+    grid_shape: tuple,
+    energies: np.ndarray,
+) -> np.ndarray:
+    # 遍历每个网格点
+    for _flat_idx, idx in enumerate(np.ndindex(*grid_shape)):
+        disp = np.zeros_like(positions0)
+        for d, (atom_idx, axis) in enumerate(scan_coords):
+            disp[atom_idx, axis] = mesh[d][idx]
+        displaced = positions0 + disp
+        e, _ = await eval_single(displaced, atomic_numbers, cell, args, context)
+        energies[idx] = e
+    return energies
+
+
+def _pes_payload(
+    scan_coords: list[list[int]],
+    lo: float,
+    hi: float,
+    args: NEBToolInput,
+    n_dims: int,
+    grid_shape: tuple,
+    grid_1d: np.ndarray,
+    mesh: list,
+    energies: np.ndarray,
+    minima: list,
+    saddles: list,
+    n_total: int,
+) -> dict[str, Any]:
+    return {
+        "action": "pes_scan",
+        "scan_coords": scan_coords,
+        "scan_range": [float(lo), float(hi)],
+        "n_points": args.n_points,
+        "n_dims": n_dims,
+        "grid_shape": list(grid_shape),
+        "grid_axes": [grid_1d.tolist()] * n_dims,
+        "energies": energies.tolist(),
+        "contour_data": {
+            "x": mesh[0].tolist() if n_dims >= 1 else None,
+            "y": mesh[1].tolist() if n_dims >= 2 else None,
+            "z": energies.tolist(),
+        },
+        "minima": minima,
+        "saddle_points": saddles,
+        "n_evaluations": n_total,
+    }
+
+
+async def _dimer_search(
+    R: np.ndarray,
+    tau: np.ndarray,
+    args: NEBToolInput,
+    atomic_numbers: list,
+    cell: Any,
+    context: ToolContext,
+) -> tuple[np.ndarray, np.ndarray, float, bool, int]:
+    """Dimer 旋转 + 平移循环; 返回 (R, tau, 最低曲率, 是否收敛, 步数)."""
+    d = args.dimer_length
+    max_iter = args.max_iter
+    converged = False
+    step = 0
+    last_eigval = 0.0
+
+    while step < max_iter:
+        # 1. 旋转阶段: 找最低曲率方向
+        tau, curvature = await dimer_rotate(
+            R,
+            tau,
+            d,
+            atomic_numbers,
+            cell,
+            args,
+            context,
+            n_rot=args.dimer_rotations,
+        )
+
+        # 2. 平移阶段: 沿 tau 方向爬向鞍点
+        # 在 R 处算力 F, 取其平行 tau 分量的反号 + 垂直分量
+        e0, f0 = await eval_single(
+            R.reshape(-1, 3), atomic_numbers, cell, args, context
+        )
+        F = f0.flatten()
+        F_parallel = np.dot(F, tau) * tau
+        F_perp = F - F_parallel
+        # saddle 力: -F_parallel + F_perp (把平行分量翻转, 顺 tau 上坡)
+        F_saddle = -F_parallel + F_perp
+
+        step_size = min(0.05, 0.5 / (np.linalg.norm(F_saddle) + 1e-8))
+        R = R + step_size * F_saddle / (np.linalg.norm(F_saddle) + 1e-12)
+
+        last_eigval = float(curvature)
+        if np.linalg.norm(F_saddle) < args.tolerance and curvature < 0:
+            converged = True
+            break
+        step += 1
+    return R, tau, last_eigval, converged, step
+
+
+def _saddle_payload(
+    R: np.ndarray,
+    atomic_numbers: list,
+    cell: Any,
+    e_final: float,
+    hess_eigvals: Any,
+    hess_mode: np.ndarray,
+    last_eigval: float,
+    converged: bool,
+    step: int,
+) -> dict[str, Any]:
+    return {
+        "action": "saddle_search",
+        "search_method": "dimer",
+        "saddle_structure": {
+            "atomic_numbers": atomic_numbers,
+            "positions": R.reshape(-1, 3).tolist(),
+            "cell": cell.tolist() if cell is not None else None,
+        },
+        "energy": float(e_final),
+        "hessian_eigenvalues": hess_eigvals,
+        "mode": hess_mode.tolist(),
+        "lowest_curvature": last_eigval,
+        "converged": bool(converged),
+        "iterations": int(step),
+    }
+
+
+def _mep_reaction_coord(neb: dict[str, Any], n: int) -> tuple[np.ndarray, float]:
+    images = neb.get("images") or []
+    if images and len(images) == n:
+        coords = [np.asarray(im["positions"]) for im in images]
+        cum = [0.0]
+        for i in range(1, n):
+            cum.append(cum[-1] + float(np.linalg.norm(coords[i] - coords[i - 1])))
+        reaction_coord = np.asarray(cum)
+        total_len = reaction_coord[-1] if reaction_coord.size else 0.0
+    else:
+        reaction_coord = np.linspace(0.0, 1.0, n)
+        total_len = 1.0
+    return reaction_coord, total_len
+
+
+def _mep_barrier_payload(metrics: tuple) -> dict[str, Any]:
+    (
+        e_init,
+        e_final,
+        e_max,
+        forward_barrier,
+        reverse_barrier,
+        thermodynamic_driving_force,
+    ) = metrics
+    return {
+        "action": "mep_analyze",
+        "analysis_type": "barrier",
+        "forward_barrier": forward_barrier,
+        "reverse_barrier": reverse_barrier,
+        "saddle_energy": e_max,
+        "initial_energy": e_init,
+        "final_energy": e_final,
+        "thermodynamic_driving_force": thermodynamic_driving_force,
+    }
+
+
+def _mep_decomposition_payload(
+    metrics: tuple, e_arr: np.ndarray, n: int
+) -> dict[str, Any]:
+    (
+        e_init,
+        e_final,
+        _e_max,
+        _forward_barrier,
+        _reverse_barrier,
+        _thermodynamic_driving_force,
+    ) = metrics
+    # 把能量分解成: 化学势 (端点均值) + 路径起伏 + 端点偏置
+    e_mean = 0.5 * (e_init + e_final)
+    path_deviation = (e_arr - np.linspace(e_init, e_final, n)).tolist()
+    return {
+        "action": "mep_analyze",
+        "analysis_type": "decomposition",
+        "chemical_potential_mean": float(e_mean),
+        "path_deviation": path_deviation,
+        "initial_energy": e_init,
+        "final_energy": e_final,
+        "asymmetry": float(e_init - e_final),
+        "max_deviation": float(np.max(np.abs(path_deviation))),
+    }
+
+
+def _mep_profile_payload(
+    metrics: tuple,
+    reaction_coord: np.ndarray,
+    e_arr: np.ndarray,
+    total_len: float,
+) -> dict[str, Any]:
+    (
+        _e_init,
+        _e_final,
+        _e_max,
+        forward_barrier,
+        reverse_barrier,
+        thermodynamic_driving_force,
+    ) = metrics
+    return {
+        "action": "mep_analyze",
+        "analysis_type": "energy_profile",
+        "reaction_coordinate": reaction_coord.tolist(),
+        "energies": e_arr.tolist(),
+        "path_length": float(total_len),
+        "forward_barrier": forward_barrier,
+        "reverse_barrier": reverse_barrier,
+        "thermodynamic_driving_force": thermodynamic_driving_force,
+        "saddle_index": int(np.argmax(e_arr)),
+    }

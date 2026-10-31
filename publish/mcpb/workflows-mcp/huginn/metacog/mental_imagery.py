@@ -29,6 +29,7 @@ Bourbaki 三结构视角 (B 文档化):
 # 架构状态: 已接入主循环 — engine_observe 观察阶段调 mental_imagery_loop
 # (sketch→verify), rcb_step2 Task 15 也调用. advisory: 不可用/失败静默降级.
 """
+
 from __future__ import annotations
 
 import io
@@ -66,68 +67,88 @@ def sketch(spec: str) -> bytes:
     img_arr: np.ndarray | None = None
 
     if "lattice" in spec_lower:
-        m = re.search(r"(\d+\.?\d*)\s*(?:å|a|angstrom)", spec_lower)
-        a_angstrom = float(m.group(1)) if m else 4.0
-        period_px = max(5, int(a_angstrom * 10))
-        size = 200
-        x = np.arange(size)
-        XX, YY = np.meshgrid(x, x)
-        if "hex" in spec_lower:
-            # 六方: 60° 旋转叠加两个正弦
-            angle = np.pi / 3
-            XXr = XX * np.cos(angle) + YY * np.sin(angle)
-            YYr = -XX * np.sin(angle) + YY * np.cos(angle)
-            grating = (
-                128
-                + 80 * np.sin(2 * np.pi * XXr / period_px)
-                + 80 * np.sin(2 * np.pi * YYr / period_px)
-            )
-        else:
-            # cubic: 两个正弦叠加
-            grating = (
-                128
-                + 80 * np.sin(2 * np.pi * XX / period_px)
-                + 80 * np.sin(2 * np.pi * YY / period_px)
-            )
-        img_arr = np.clip(grating, 0, 255).astype(np.uint8)
-
+        img_arr = _render_lattice(spec_lower)
     elif "particle" in spec_lower:
-        m = re.search(r"(\d+)\s*particles?", spec_lower)
-        n = int(m.group(1)) if m else 10
-        size = 200
-        img_arr = np.full((size, size), 255, dtype=np.uint8)
-        rng = np.random.default_rng(42)
-        for _ in range(n):
-            cx = int(rng.integers(20, size - 20))
-            cy = int(rng.integers(20, size - 20))
-            r = int(rng.integers(5, 15))
-            # numpy 矢量画圆 (比 putpixel 双循环快)
-            ys, xs = np.ogrid[:size, :size]
-            mask = (xs - cx) ** 2 + (ys - cy) ** 2 <= r * r
-            img_arr[mask] = 0
-
+        img_arr = _render_particles(spec_lower)
     elif "spectrum" in spec_lower or "spectra" in spec_lower:
-        m = re.search(r"(\d+)\s*peaks?", spec_lower)
-        n_peaks = int(m.group(1)) if m else 3
-        size = 200
-        x = np.linspace(0, 10, size)
-        y = np.zeros(size)
-        rng = np.random.default_rng(42)
-        for _ in range(n_peaks):
-            mu = float(rng.uniform(1, 9))
-            sigma = float(rng.uniform(0.1, 0.3))
-            amp = float(rng.uniform(0.5, 1.0))
-            y += amp * np.exp(-((x - mu) / sigma) ** 2)
-        y_2d = np.clip(y * 200, 0, 255).astype(np.uint8)
-        # 1D 曲线 tiled 成 2D 图 (高度 50)
-        img_arr = np.tile(y_2d, (50, 1))
+        img_arr = _render_spectrum(spec_lower)
 
     if img_arr is None:
         # 默认: 白图 (spec 不匹配任何模板)
         img_arr = np.full((100, 100), 255, dtype=np.uint8)
 
+    return _encode_png(img_arr)
+
+
+def _render_lattice(spec_lower: str) -> np.ndarray:
+    """lattice 模板: 晶格条纹, 周期由 a (Å) 决定 (1Å=10px)."""
+    m = re.search(r"(\d+\.?\d*)\s*(?:å|a|angstrom)", spec_lower)
+    a_angstrom = float(m.group(1)) if m else 4.0
+    period_px = max(5, int(a_angstrom * 10))
+    size = 200
+    x = np.arange(size)
+    XX, YY = np.meshgrid(x, x)
+    if "hex" in spec_lower:
+        # 六方: 60° 旋转叠加两个正弦
+        angle = np.pi / 3
+        XXr = XX * np.cos(angle) + YY * np.sin(angle)
+        YYr = -XX * np.sin(angle) + YY * np.cos(angle)
+        grating = (
+            128
+            + 80 * np.sin(2 * np.pi * XXr / period_px)
+            + 80 * np.sin(2 * np.pi * YYr / period_px)
+        )
+    else:
+        # cubic: 两个正弦叠加
+        grating = (
+            128
+            + 80 * np.sin(2 * np.pi * XX / period_px)
+            + 80 * np.sin(2 * np.pi * YY / period_px)
+        )
+    return np.clip(grating, 0, 255).astype(np.uint8)
+
+
+def _render_particles(spec_lower: str) -> np.ndarray:
+    """particles 模板: n 个圆形粒子 (黑底白图反白, 黑粒子在白底)."""
+    m = re.search(r"(\d+)\s*particles?", spec_lower)
+    n = int(m.group(1)) if m else 10
+    size = 200
+    img_arr = np.full((size, size), 255, dtype=np.uint8)
+    rng = np.random.default_rng(42)
+    for _ in range(n):
+        cx = int(rng.integers(20, size - 20))
+        cy = int(rng.integers(20, size - 20))
+        r = int(rng.integers(5, 15))
+        # numpy 矢量画圆 (比 putpixel 双循环快)
+        ys, xs = np.ogrid[:size, :size]
+        mask = (xs - cx) ** 2 + (ys - cy) ** 2 <= r * r
+        img_arr[mask] = 0
+    return img_arr
+
+
+def _render_spectrum(spec_lower: str) -> np.ndarray:
+    """spectrum 模板: n_peaks 个高斯峰 (1D 曲线 tiled 成 2D 图)."""
+    m = re.search(r"(\d+)\s*peaks?", spec_lower)
+    n_peaks = int(m.group(1)) if m else 3
+    size = 200
+    x = np.linspace(0, 10, size)
+    y = np.zeros(size)
+    rng = np.random.default_rng(42)
+    for _ in range(n_peaks):
+        mu = float(rng.uniform(1, 9))
+        sigma = float(rng.uniform(0.1, 0.3))
+        amp = float(rng.uniform(0.5, 1.0))
+        y += amp * np.exp(-(((x - mu) / sigma) ** 2))
+    y_2d = np.clip(y * 200, 0, 255).astype(np.uint8)
+    # 1D 曲线 tiled 成 2D 图 (高度 50)
+    return np.tile(y_2d, (50, 1))
+
+
+def _encode_png(img_arr: np.ndarray) -> bytes:
+    """PNG 编码; PIL 不可用时返回空 bytes (verify 会处理)."""
     try:
         from PIL import Image
+
         buf = io.BytesIO()
         Image.fromarray(img_arr).save(buf, format="PNG")
         return buf.getvalue()
@@ -144,6 +165,7 @@ def _decode_to_gray(image_bytes: bytes) -> np.ndarray | None:
     """解码 image_bytes 到灰度 numpy array. 失败返 None."""
     try:
         from PIL import Image
+
         img = Image.open(io.BytesIO(image_bytes))
         if img.mode != "L":
             img = img.convert("L")
@@ -178,7 +200,7 @@ def _analyze_particles(img_arr: np.ndarray) -> dict[str, Any]:
         eroded = ndimage.binary_erosion(region)
         perimeter = int((region & ~eroded).sum())
         if perimeter > 0:
-            circ = 4 * np.pi * area / (perimeter ** 2)
+            circ = 4 * np.pi * area / (perimeter**2)
             circularities.append(float(min(circ, 1.0)))
         diam = np.sqrt(4 * area / np.pi)
         diameters.append(float(diam))
@@ -248,60 +270,21 @@ def verify(image_bytes: bytes, expected: dict[str, Any]) -> dict[str, Any]:
     try:
         from huginn.tools.visual_hook import extract_box_primitives, parse_box_primitive
     except ImportError:
-        return {"verified": False, "error": "visual_hook not available", "expected": expected}
+        return {
+            "verified": False,
+            "error": "visual_hook not available",
+            "expected": expected,
+        }
 
     primitives = extract_box_primitives(image_bytes, threshold=128, max_boxes=50)
     boxes = parse_box_primitive(primitives)
-    region_boxes = [b for b in boxes if b.get("label") != "overall" and b.get("label", "").startswith("region")]
-    n_detected = len(region_boxes)
-
-    kind = expected.get("kind", "")
-    verified = False
-    note = ""
-    shape_analysis: dict[str, Any] | None = None
+    n_detected = _count_region_boxes(boxes)
 
     # A2: numpy 级分析 (附加层, 失败退化到原逻辑)
     img_arr = _decode_to_gray(image_bytes)
-
-    if kind == "particles":
-        n_expected = int(expected.get("n", 0))
-        tol = max(2, n_expected // 2)
-        count_ok = abs(n_detected - n_expected) <= tol
-        # A2: 形状检查 — 圆度均值 >0.5 才算真粒子
-        shape_ok = True
-        if img_arr is not None:
-            shape_analysis = _analyze_particles(img_arr)
-            circs = shape_analysis.get("circularities", [])
-            if circs:
-                shape_ok = bool(np.mean(circs) > 0.5)
-        verified = count_ok and shape_ok
-        note = f"particles expected={n_expected}, detected={n_detected}, tol=±{tol}, shape_ok={shape_ok}"
-
-    elif kind == "lattice":
-        # A2: FFT 周期性检查
-        fft_ok = True
-        if img_arr is not None:
-            fft_analysis = _analyze_lattice_fft(img_arr)
-            fft_ok = fft_analysis["has_periodicity"]
-            note = f"lattice FFT periodic={fft_ok}, period={fft_analysis['period_px']:.1f}px"
-        else:
-            note = f"lattice detected={n_detected} regions (FFT unavailable)"
-        verified = fft_ok and (n_detected >= 1 or len(boxes) >= 1)
-
-    elif kind == "spectrum":
-        # A2: find_peaks 峰位数量检查
-        n_expected_peaks = int(expected.get("n_peaks", 0))
-        n_detected_peaks = n_detected  # fallback
-        if img_arr is not None:
-            peak_analysis = _analyze_spectrum_peaks(img_arr)
-            n_detected_peaks = peak_analysis.get("n_peaks", n_detected)
-        tol = max(1, n_expected_peaks // 3)
-        verified = abs(n_detected_peaks - n_expected_peaks) <= tol
-        note = f"spectrum expected={n_expected_peaks} peaks, detected={n_detected_peaks}, tol=±{tol}"
-
-    else:
-        verified = len(boxes) >= 1
-        note = f"generic check: {len(boxes)} boxes detected"
+    verified, note, shape_analysis = _check_by_kind(
+        expected.get("kind", ""), img_arr, expected, n_detected, len(boxes)
+    )
 
     result: dict[str, Any] = {
         "verified": verified,
@@ -314,6 +297,100 @@ def verify(image_bytes: bytes, expected: dict[str, Any]) -> dict[str, Any]:
     if shape_analysis is not None:
         result["shape_analysis"] = shape_analysis
     return result
+
+
+def _count_region_boxes(boxes: list[dict]) -> int:
+    """数 label 是 region* 的 box (排除 overall 汇总 box)."""
+    region_boxes = [
+        b
+        for b in boxes
+        if b.get("label") != "overall" and b.get("label", "").startswith("region")
+    ]
+    return len(region_boxes)
+
+
+def _check_by_kind(
+    kind: str,
+    img_arr: np.ndarray | None,
+    expected: dict[str, Any],
+    n_detected: int,
+    n_boxes: int,
+) -> tuple[bool, str, dict[str, Any] | None]:
+    """按 kind 分派 numpy 级检查, 返回 (verified, note, shape_analysis)."""
+    if kind == "particles":
+        return _verify_particles(img_arr, expected, n_detected)
+    if kind == "lattice":
+        verified, note = _verify_lattice(img_arr, n_detected, n_boxes)
+        return verified, note, None
+    if kind == "spectrum":
+        verified, note = _verify_spectrum(img_arr, expected, n_detected)
+        return verified, note, None
+    verified = n_boxes >= 1
+    note = f"generic check: {n_boxes} boxes detected"
+    return verified, note, None
+
+
+def _verify_particles(
+    img_arr: np.ndarray | None,
+    expected: dict[str, Any],
+    n_detected: int,
+) -> tuple[bool, str, dict[str, Any] | None]:
+    """particles: 连通域数量 + 形状 (圆度) 检查."""
+    n_expected = int(expected.get("n", 0))
+    tol = max(2, n_expected // 2)
+    count_ok = abs(n_detected - n_expected) <= tol
+    # A2: 形状检查 — 圆度均值 >0.5 才算真粒子
+    shape_ok = True
+    shape_analysis: dict[str, Any] | None = None
+    if img_arr is not None:
+        shape_analysis = _analyze_particles(img_arr)
+        circs = shape_analysis.get("circularities", [])
+        if circs:
+            shape_ok = bool(np.mean(circs) > 0.5)
+    verified = count_ok and shape_ok
+    note = (
+        f"particles expected={n_expected}, detected={n_detected}, tol=±{tol}, "
+        f"shape_ok={shape_ok}"
+    )
+    return verified, note, shape_analysis
+
+
+def _verify_lattice(
+    img_arr: np.ndarray | None,
+    n_detected: int,
+    n_boxes: int,
+) -> tuple[bool, str]:
+    """lattice: FFT 主峰周期性 (numpy 分析不可用时退化到连通域)."""
+    # A2: FFT 周期性检查
+    fft_ok = True
+    if img_arr is not None:
+        fft_analysis = _analyze_lattice_fft(img_arr)
+        fft_ok = fft_analysis["has_periodicity"]
+        note = (
+            f"lattice FFT periodic={fft_ok}, period={fft_analysis['period_px']:.1f}px"
+        )
+    else:
+        note = f"lattice detected={n_detected} regions (FFT unavailable)"
+    verified = fft_ok and (n_detected >= 1 or n_boxes >= 1)
+    return verified, note
+
+
+def _verify_spectrum(
+    img_arr: np.ndarray | None,
+    expected: dict[str, Any],
+    n_detected: int,
+) -> tuple[bool, str]:
+    """spectrum: find_peaks 峰位数量检查."""
+    # A2: find_peaks 峰位数量检查
+    n_expected_peaks = int(expected.get("n_peaks", 0))
+    n_detected_peaks = n_detected  # fallback
+    if img_arr is not None:
+        peak_analysis = _analyze_spectrum_peaks(img_arr)
+        n_detected_peaks = peak_analysis.get("n_peaks", n_detected)
+    tol = max(1, n_expected_peaks // 3)
+    verified = abs(n_detected_peaks - n_expected_peaks) <= tol
+    note = f"spectrum expected={n_expected_peaks} peaks, detected={n_detected_peaks}, tol=±{tol}"
+    return verified, note
 
 
 # ── mental_imagery_loop: sketch → verify 闭环 ─────────────────────────────
@@ -366,6 +443,15 @@ def mental_imagery_loop(spec: str, max_iter: int = 1) -> dict[str, Any]:
 
 def _selfcheck() -> None:
     """L10 selfcheck: sketch → verify 闭环 (3 种模板 × 各 1 场景)."""
+    _selfcheck_templates()
+    _selfcheck_a2_analysis()
+    _selfcheck_a2_utils()
+
+    print("L10 ALL CHECKS PASSED (A2 shape/FFT/peaks OK)")
+
+
+def _selfcheck_templates() -> None:
+    """场景 1-5: 三种模板 + 未知 spec + 解耦调用."""
     # 1. sketch particles 10 → verify 检测到 ~10 个连通域
     out1 = mental_imagery_loop("particles 10")
     assert out1["expected"] == {"kind": "particles", "n": 10}, out1["expected"]
@@ -404,6 +490,9 @@ def _selfcheck() -> None:
     assert "verified" in v5
     print(f"5. standalone sketch+verify → detected={v5['n_regions_detected']}")
 
+
+def _selfcheck_a2_analysis() -> None:
+    """场景 6-8: A2 numpy 级分析 (shape/FFT/peaks)."""
     # 6. A2: particles 形状检查 — shape_analysis 字段
     img = sketch("particles 10")
     v6 = verify(img, {"kind": "particles", "n": 10})
@@ -413,23 +502,32 @@ def _selfcheck() -> None:
     assert "diameters" in sa, "shape_analysis must have diameters"
     if sa["circularities"]:
         # 合成粒子是圆形, 圆度均值应 >0.5
-        assert sa["mean_circularity"] > 0.3, f"synthetic particles should be circular: {sa['mean_circularity']}"
+        assert sa["mean_circularity"] > 0.3, (
+            f"synthetic particles should be circular: {sa['mean_circularity']}"
+        )
     print(f"6. A2 particles shape: n={sa['n']}, mean_circ={sa['mean_circularity']:.2f}")
 
     # 7. A2: lattice FFT 周期性检查
     img = sketch("lattice 4Å cubic")
     v7 = verify(img, {"kind": "lattice"})
     # lattice verify 应该包含 FFT 分析的 note
-    assert "FFT" in v7["note"] or "period" in v7["note"], f"A2: lattice note should mention FFT: {v7['note']}"
+    assert "FFT" in v7["note"] or "period" in v7["note"], (
+        f"A2: lattice note should mention FFT: {v7['note']}"
+    )
     print(f"7. A2 lattice FFT: {v7['note']}")
 
     # 8. A2: spectrum find_peaks 检查
     img = sketch("spectrum 3 peaks")
     v8 = verify(img, {"kind": "spectrum", "n_peaks": 3})
     # spectrum verify 应该用 find_peaks 的数量
-    assert "detected=" in v8["note"], f"A2: spectrum note should mention detected peaks: {v8['note']}"
+    assert "detected=" in v8["note"], (
+        f"A2: spectrum note should mention detected peaks: {v8['note']}"
+    )
     print(f"8. A2 spectrum peaks: {v8['note']}")
 
+
+def _selfcheck_a2_utils() -> None:
+    """场景 9-10: A2 工具函数 (_decode_to_gray / _analyze_particles)."""
     # 9. A2: _decode_to_gray 工具函数
     img = sketch("particles 5")
     arr = _decode_to_gray(img)
@@ -441,13 +539,12 @@ def _selfcheck() -> None:
     # 白图无暗粒子
     white_img = np.full((50, 50), 255, dtype=np.uint8)
     from PIL import Image as _PILImage
+
     buf = io.BytesIO()
     _PILImage.fromarray(white_img).save(buf, format="PNG")
     result = _analyze_particles(_decode_to_gray(buf.getvalue()))
     assert result["n"] == 0, f"white image should have 0 particles: {result['n']}"
     print("10. A2 white image: 0 particles (OK)")
-
-    print("L10 ALL CHECKS PASSED (A2 shape/FFT/peaks OK)")
 
 
 if __name__ == "__main__":

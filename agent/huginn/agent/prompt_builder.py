@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import logging
 
+from huginn.agent_modes import PROMPT_MODES
+
 logger = logging.getLogger(__name__)
 
 
@@ -57,6 +59,11 @@ _MODE_INSTRUCTIONS = {
         "literature into a coherent conclusion; reconcile contradictions explicitly."
     ),
 }
+
+# 词表单一来源 (A3): 键集必须等于 agent_modes.PROMPT_MODES, 增删 mode 时一处改.
+assert set(_MODE_INSTRUCTIONS) == set(PROMPT_MODES), (
+    "mode 词表漂移: _MODE_INSTRUCTIONS 键集 != agent_modes.PROMPT_MODES"
+)
 
 
 def mode_segment(mode: str) -> str:

@@ -15,12 +15,14 @@
   - 目标级留出: span predictor 前向 surprise 与 句子级检出混淆。
   - 全程配对混淆率: 每个 预测span前向 的最邻近真实span 是否来自本pair (=是否被别的目标吸走).
 """
+
 from __future__ import annotations
 
 import argparse
 import re
 import statistics
 from collections import defaultdict
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -31,6 +33,32 @@ from scripts.train_jepa_predictor import JEPA_EMBED_MODEL, load_encoder, load_pa
 K = 8
 
 _NUM_RE = re.compile(r"-?\d+\.\d+(?:[eE][+-]?\d+)?|-?\d+[eE][+-]?\d+")
+
+
+@dataclass
+class _Data:
+    """Prepared span tensors + sentence baselines + objective grouping."""
+
+    X: np.ndarray
+    A: np.ndarray
+    M: np.ndarray
+    asl: list
+    sent_p: np.ndarray
+    sent_a: np.ndarray
+    objs: list
+    by_obj: dict
+    dim: int
+
+
+@dataclass
+class _Acc:
+    """Running accumulators across held-out splits."""
+
+    met: list = field(default_factory=list)
+    baseline: list = field(default_factory=list)
+    chance: list = field(default_factory=list)
+    win_split: int = 0
+    win_sample: int = 0
 
 
 def _canon(text: str) -> str:
@@ -78,8 +106,8 @@ def _train_mlp(X, T, M, d, steps=200, lr=1e-3, seed=0) -> dict:
         gradW2 = H.transpose(0, 2, 1) @ g2
         gradb2 = g2.sum(axis=(0, 1))
         gradH = g2 @ W2.T
-        gradb1_nk = gradH * (1 - H * H)          # (N,K,64)
-        gradb1 = gradb1_nk.sum(axis=(0, 1))       # (64,)
+        gradb1_nk = gradH * (1 - H * H)  # (N,K,64)
+        gradb1 = gradb1_nk.sum(axis=(0, 1))  # (64,)
         gradW1 = np.einsum("nke,nkd->ed", gradb1_nk, X)  # (64,d)
         W1 -= lr * gradW1.T
         b1 -= lr * gradb1
@@ -104,43 +132,50 @@ def _nearest_target(Xi, Ai, Mi, ass_i_len):
     return T
 
 
-def main() -> None:
+def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", default=None)
     ap.add_argument("--steps", type=int, default=200)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--splits", type=int, default=12)
     ap.add_argument("--holdout-frac", type=float, default=0.25)
-    ap.add_argument("--canon", action="store_true", help="结构化数值规范化: 统一数字 token 格式")
-    ap.add_argument("--fields", action="store_true", help="标签/单位字段分离: [整行|前缀|数值] 三通道")
-    ap.add_argument("--persist", action="store_true",
-                    help="把表现最佳的 base(纯行切分) span predictor 落盘供运行时接入")
-    args = ap.parse_args()
-    if args.persist:
-        # 运行时接入接口按 base 表示实现, 持久化前强制回 base(canon/fields 另有研究价值, 不落盘)
-        args.canon = False
-        args.fields = False
+    ap.add_argument(
+        "--canon", action="store_true", help="结构化数值规范化: 统一数字 token 格式"
+    )
+    ap.add_argument(
+        "--fields",
+        action="store_true",
+        help="标签/单位字段分离: [整行|前缀|数值] 三通道",
+    )
+    ap.add_argument(
+        "--persist",
+        action="store_true",
+        help="把表现最佳的 base(纯行切分) span predictor 落盘供运行时接入",
+    )
+    return ap
 
-    corpus = Path(args.corpus) if args.corpus else (get_runtime_home() / "corpus" / "jepa_pairs.jsonl")
-    pairs = load_pairs(corpus)
-    n = len(pairs)
-    enc = load_encoder()
-    d = int(enc.get_embedding_dimension())
 
-    pred_span_list = [_spans(p["prediction"]) for p in pairs]
-    act_span_list = [_spans(p["actual"]) for p in pairs]
-    asl = [len(a) for a in act_span_list]  # 每 pair 真实 span 数
-    if args.canon:
-        pred_span_list = [[_canon(s) for s in r] for r in pred_span_list]
-        act_span_list = [[_canon(s) for s in r] for r in act_span_list]
+def _span_vec(s: str, emap: dict, d: int, fields: bool) -> np.ndarray:
+    v = emap[s]
+    if not fields:
+        return v
+    pf, num = _field_pieces(s)
+    ef = emap[pf] if pf else np.zeros(d, dtype=np.float32)
+    ev = emap[num] if num else np.zeros(d, dtype=np.float32)
+    return np.concatenate([v, ef, ev])
 
-    DD = 3 * d if args.fields else d  # fields 模式: [整行 | 标签/单位前缀 | 数值 token] 三通道
+
+def _encode(enc, pred_span_list, act_span_list, d: int, fields: bool) -> tuple:
+    n = len(pred_span_list)
+    DD = (
+        3 * d if fields else d
+    )  # fields 模式: [整行 | 标签/单位前缀 | 数值 token] 三通道
     # 需编码的文本单元集合: 整行 span; fields 模式下还含每行的标签前缀与数值 token
     pieces = set()
     for i in range(n):
         for s in pred_span_list[i] + act_span_list[i]:
             pieces.add(s)
-            if args.fields:
+            if fields:
                 pf, num = _field_pieces(s)
                 if pf:
                     pieces.add(pf)
@@ -149,121 +184,227 @@ def main() -> None:
     pieces = sorted(pieces)
     vs = enc.encode(pieces, normalize_embeddings=True)
     emap = {s: np.asarray(v, dtype=np.float32) for s, v in zip(pieces, vs)}
+    X = np.stack(
+        [
+            _padded([_span_vec(s, emap, d, fields) for s in pred_span_list[i]], DD)
+            for i in range(n)
+        ]
+    )
+    A = np.stack(
+        [
+            _padded([_span_vec(s, emap, d, fields) for s in act_span_list[i]], DD)
+            for i in range(n)
+        ]
+    )
+    M = np.stack(
+        [
+            np.concatenate(
+                [
+                    np.ones(min(len(pred_span_list[i]), K), bool),
+                    np.zeros(K - min(len(pred_span_list[i]), K), bool),
+                ]
+            )
+            for i in range(n)
+        ]
+    )
+    return X, A, M, DD
 
-    def _span_vec(s: str) -> np.ndarray:
-        v = emap[s]
-        if not args.fields:
-            return v
-        pf, num = _field_pieces(s)
-        ef = emap[pf] if pf else np.zeros(d, dtype=np.float32)
-        ev = emap[num] if num else np.zeros(d, dtype=np.float32)
-        return np.concatenate([v, ef, ev])
 
-    X = np.stack([_padded([_span_vec(s) for s in pred_span_list[i]], DD) for i in range(n)])
-    A = np.stack([_padded([_span_vec(s) for s in act_span_list[i]], DD) for i in range(n)])
-    M = np.stack([np.concatenate([np.ones(min(len(pred_span_list[i]), K), bool), np.zeros(K - min(len(pred_span_list[i]), K), bool)]) for i in range(n)])
-    d = DD
-
-    # 句子级对照基线 (同一预处理: canon 时同样规范化)
+def _sentence_baseline(pairs, enc, canon: bool) -> tuple:
     _sp = [p["prediction"] for p in pairs]
     _sa = [p["actual"] for p in pairs]
-    if args.canon:
+    if canon:
         _sp = [_canon(t) for t in _sp]
         _sa = [_canon(t) for t in _sa]
     sent_p = np.asarray(enc.encode(_sp, normalize_embeddings=True), dtype=np.float32)
     sent_a = np.asarray(enc.encode(_sa, normalize_embeddings=True), dtype=np.float32)
+    return sent_p, sent_a
 
+
+def _group(pairs) -> tuple:
     objs = list({p.get("objective", f"o{i}") for i, p in enumerate(pairs)})
     by_obj = defaultdict(list)
     for i, p in enumerate(pairs):
         by_obj[p.get("objective", f"o{i}")].append(i)
+    return objs, by_obj
 
+
+def _prepare(pairs, enc, d: int, args) -> _Data:
+    pred_span_list = [_spans(p["prediction"]) for p in pairs]
+    act_span_list = [_spans(p["actual"]) for p in pairs]
+    asl = [len(a) for a in act_span_list]  # 每 pair 真实 span 数
+    if args.canon:
+        pred_span_list = [[_canon(s) for s in r] for r in pred_span_list]
+        act_span_list = [[_canon(s) for s in r] for r in act_span_list]
+    X, A, M, dim = _encode(enc, pred_span_list, act_span_list, d, args.fields)
+    sent_p, sent_a = _sentence_baseline(pairs, enc, args.canon)
+    objs, by_obj = _group(pairs)
+    return _Data(X, A, M, asl, sent_p, sent_a, objs, by_obj, dim)
+
+
+def _span_surprises(data: _Data, te, fwd) -> list:
+    pm = []
+    for i in te:
+        ds = []
+        kk = min(data.asl[i], K)
+        for k in range(K):
+            if data.M[i][k] and kk > 0:
+                ds.append(
+                    min(_dist(fwd[te.index(i), k], data.A[i][j]) for j in range(kk))
+                )
+        if ds:
+            pm.append(float(np.mean(ds)))
+    return pm
+
+
+def _run_splits(data: _Data, args, acc: _Acc, n_ho: int) -> None:
     rng = np.random.default_rng(args.seed)
-    met, baseline, chance, win_split, win_sample = [], [], [], 0, 0
-    n_ho = max(1, int(round(len(objs) * args.holdout_frac)))
     for _ in range(args.splits):
-        ho = set(rng.choice(objs, size=n_ho, replace=False))
-        tr = [i for o, ids in by_obj.items() if o not in ho for i in ids]
-        te = [i for o, ids in by_obj.items() if o in ho for i in ids]
+        ho = set(rng.choice(data.objs, size=n_ho, replace=False))
+        tr = [i for o, ids in data.by_obj.items() if o not in ho for i in ids]
+        te = [i for o, ids in data.by_obj.items() if o in ho for i in ids]
         if len(tr) < 5 or not te:
             continue
-        Tt = np.array([_nearest_target(X[i], A[i], M[i], asl[i]) for i in tr])
-        pack = _train_mlp(X[tr], Tt, M[tr], d, steps=args.steps, seed=int(rng.integers(1, 1 << 30)))
-        fwd = _fwd(pack, X[te])
-        pm = []
-        for i in te:
-            ds = []
-            kk = min(asl[i], K)
-            for k in range(K):
-                if M[i][k] and kk > 0:
-                    ds.append(min(_dist(fwd[te.index(i), k], A[i][j]) for j in range(kk)))
-            if ds:
-                pm.append(float(np.mean(ds)))
-        met.append(float(np.mean(pm)) if pm else 1.0)
-        ba = float(np.mean([_dist(sent_p[i], sent_a[i]) for i in te]))
-        baseline.append(ba)
-        chance.append(float(np.mean([_dist(sent_p[i], sent_a[j]) for i in te for j in tr])))
+        Tt = np.array(
+            [_nearest_target(data.X[i], data.A[i], data.M[i], data.asl[i]) for i in tr]
+        )
+        pack = _train_mlp(
+            data.X[tr],
+            Tt,
+            data.M[tr],
+            data.dim,
+            steps=args.steps,
+            seed=int(rng.integers(1, 1 << 30)),
+        )
+        fwd = _fwd(pack, data.X[te])
+        pm = _span_surprises(data, te, fwd)
+        acc.met.append(float(np.mean(pm)) if pm else 1.0)
+        ba = float(np.mean([_dist(data.sent_p[i], data.sent_a[i]) for i in te]))
+        acc.baseline.append(ba)
+        acc.chance.append(
+            float(
+                np.mean([_dist(data.sent_p[i], data.sent_a[j]) for i in te for j in tr])
+            )
+        )
         for idx, i in enumerate(te):
-            if idx < len(pm) and pm[idx] < _dist(sent_p[i], sent_a[i]):
-                win_sample += 1
+            if idx < len(pm) and pm[idx] < _dist(data.sent_p[i], data.sent_a[i]):
+                acc.win_sample += 1
         if float(np.mean(pm)) < ba:
-            win_split += 1
+            acc.win_split += 1
 
-    nv = len(met)
-    print(f"[span] 目标级留出 {args.holdout_frac:.0%} ({n_ho}/{len(objs)}), {args.splits} 次")
-    print(f"[span] span predictor 前向 surprise: mean={sum(met)/nv:.3f} ±{statistics.stdev(met)/(nv**0.5):.3f} (split 胜句子基线 {win_split}/{nv})")
-    print(f"[span] 基线(直接用 pred 句向量取 actual): mean={sum(baseline)/nv:.3f}")
-    print(f"[span] 转机(跨配 chance): mean={sum(chance)/nv:.3f}")
-    print(f"[span] 逐留出样本上 span<句子基线 次数: {win_sample}")
 
+def _report(args, acc: _Acc, n_ho: int, n_objs: int) -> None:
+    nv = len(acc.met)
+    print(
+        f"[span] 目标级留出 {args.holdout_frac:.0%} ({n_ho}/{n_objs}), {args.splits} 次"
+    )
+    print(
+        f"[span] span predictor 前向 surprise: mean={sum(acc.met) / nv:.3f} ±{statistics.stdev(acc.met) / (nv**0.5):.3f} (split 胜句子基线 {acc.win_split}/{nv})"
+    )
+    print(
+        f"[span] 基线(直接用 pred 句向量取 actual): mean={sum(acc.baseline) / nv:.3f}"
+    )
+    print(f"[span] 转机(跨配 chance): mean={sum(acc.chance) / nv:.3f}")
+    print(f"[span] 逐留出样本上 span<句子基线 次数: {acc.win_sample}")
+
+
+def _confusion_diag(data: _Data, args) -> None:
+    n = len(data.asl)
     # 全程配对混淆诊断: 预测 span 前向的最近真实 span 是否来自本 pair (向量化)
-    T_full = np.array([_nearest_target(X[i], A[i], M[i], asl[i]) for i in range(n)])
-    pack_full = _train_mlp(X, T_full, M, d, steps=args.steps, seed=args.seed)
-    fwdf = _fwd(pack_full, X)
+    T_full = np.array(
+        [
+            _nearest_target(data.X[i], data.A[i], data.M[i], data.asl[i])
+            for i in range(n)
+        ]
+    )
+    pack_full = _train_mlp(
+        data.X, T_full, data.M, data.dim, steps=args.steps, seed=args.seed
+    )
+    fwdf = _fwd(pack_full, data.X)
     # 收集非掩码预测 span 与全部真实 span, 用矩阵乘法算最邻近
     FA = []  # (all_span, d)
     f_labels = []  # 每行对应 pair i
     AA = []  # (all_real, d)
     for i in range(n):
-        kk = min(asl[i], K)
+        kk = min(data.asl[i], K)
         for k in range(K):
-            if M[i][k]:
+            if data.M[i][k]:
                 FA.append(fwdf[i, k])
                 f_labels.append(i)
-        AA.extend(A[i][:kk])
+        AA.extend(data.A[i][:kk])
     F = np.stack(FA)
     Ast = np.stack(AA)
     Dmat = 1.0 - (F @ Ast.T) / (
-        (np.linalg.norm(F, axis=1, keepdims=True) + 1e-12) * (np.linalg.norm(Ast, axis=1, keepdims=True).T + 1e-12)
+        (np.linalg.norm(F, axis=1, keepdims=True) + 1e-12)
+        * (np.linalg.norm(Ast, axis=1, keepdims=True).T + 1e-12)
     )
     # 每真实 span 的来源 pair
-    a_owner = np.concatenate([[i] * min(asl[i], K) for i in range(n)])
+    a_owner = np.concatenate([[i] * min(data.asl[i], K) for i in range(n)])
     nearest = np.argmin(Dmat, axis=1)
     self_confused = int(np.sum(a_owner[nearest] != np.asarray(f_labels)))
     all_span = len(FA)
-    print(f"[span-混淆] 全程: {self_confused}/{all_span} 预测span 最近真实span 来自别的 pair "
-          f"({100*self_confused/max(1,all_span):.1f}%).  (句子级阶段2-C 时对抗样本 10/10 confused)")
+    print(
+        f"[span-混淆] 全程: {self_confused}/{all_span} 预测span 最近真实span 来自别的 pair "
+        f"({100 * self_confused / max(1, all_span):.1f}%).  (句子级阶段2-C 时对抗样本 10/10 confused)"
+    )
+
+
+def _persist(data: _Data, args) -> None:
+    try:
+        import json
+
+        n = len(data.asl)
+        out = get_runtime_home() / "models" / "jepa_span_predictor.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        T_full = np.array(
+            [
+                _nearest_target(data.X[i], data.A[i], data.M[i], data.asl[i])
+                for i in range(n)
+            ]
+        )
+        pack = _train_mlp(
+            data.X, T_full, data.M, data.dim, steps=args.steps, seed=args.seed
+        )
+        payload = {
+            "embed_model": JEPA_EMBED_MODEL,
+            "dim": int(data.dim),
+            "K": int(K),
+            "mode": "span",
+            "num_objs": int(n),
+            "weights": {k: v.tolist() for k, v in pack.items()},
+            "note": "离线 span predictor(纯行切分 base). 运行时逐 span 前向 → 掩码均值近邻真实 span 距离.",
+        }
+        out.write_text(json.dumps(payload), encoding="utf-8")
+        print(f"[span-persist] 已落盘: {out} ({data.dim} 维, K={K})")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[span-persist] 失败: {exc!r}")
+
+
+def main() -> None:
+    args = _build_parser().parse_args()
+    if args.persist:
+        # 运行时接入接口按 base 表示实现, 持久化前强制回 base(canon/fields 另有研究价值, 不落盘)
+        args.canon = False
+        args.fields = False
+
+    corpus = (
+        Path(args.corpus)
+        if args.corpus
+        else (get_runtime_home() / "corpus" / "jepa_pairs.jsonl")
+    )
+    pairs = load_pairs(corpus)
+    enc = load_encoder()
+    d = int(enc.get_embedding_dimension())
+    data = _prepare(pairs, enc, d, args)
+
+    n_ho = max(1, int(round(len(data.objs) * args.holdout_frac)))
+    acc = _Acc()
+    _run_splits(data, args, acc, n_ho)
+    _report(args, acc, n_ho, len(data.objs))
+    _confusion_diag(data, args)
 
     if args.persist:
-        try:
-            import json
-            out = get_runtime_home() / "models" / "jepa_span_predictor.json"
-            out.parent.mkdir(parents=True, exist_ok=True)
-            T_full = np.array([_nearest_target(X[i], A[i], M[i], asl[i]) for i in range(n)])
-            pack = _train_mlp(X, T_full, M, d, steps=args.steps, seed=args.seed)
-            payload = {
-                "embed_model": JEPA_EMBED_MODEL,
-                "dim": int(d),
-                "K": int(K),
-                "mode": "span",
-                "num_objs": int(n),
-                "weights": {k: v.tolist() for k, v in pack.items()},
-                "note": "离线 span predictor(纯行切分 base). 运行时逐 span 前向 → 掩码均值近邻真实 span 距离.",
-            }
-            out.write_text(json.dumps(payload), encoding="utf-8")
-            print(f"[span-persist] 已落盘: {out} ({d} 维, K={K})")
-        except Exception as exc:  # noqa: BLE001
-            print(f"[span-persist] 失败: {exc!r}")
+        _persist(data, args)
 
 
 if __name__ == "__main__":

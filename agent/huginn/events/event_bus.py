@@ -63,6 +63,77 @@ class AgentEvent:
         return asdict(self)
 
 
+def _resolve_request_id(event: AgentEvent) -> None:
+    """没带 request_id 时从当前请求上下文补一个，方便跨日志/SSE 串联."""
+    if not event.request_id:
+        try:
+            from huginn.utils.json_logging import request_id_var
+
+            event.request_id = request_id_var.get("")
+        except Exception:
+            logger.debug("request id contextvar lookup failed", exc_info=True)
+
+
+def _deliver_to_subscribers(callbacks: list[Callable], event: AgentEvent) -> None:
+    """Fan out to typed subscribers + wildcard subscribers."""
+    for cb in callbacks:
+        try:
+            result = cb(event)
+            if asyncio.iscoroutine(result):
+                # Fire-and-forget async subscriber. We don't await
+                # because a slow subscriber would block the publisher.
+                asyncio.ensure_future(result)
+        except Exception:
+            logger.exception("subscriber %r failed for event %s", cb, event.type)
+
+
+def _push_to_sse_queues(
+    queues: list[asyncio.Queue[AgentEvent | None]], event: AgentEvent
+) -> tuple[list[asyncio.Queue], int]:
+    """Push to SSE queues; return (dead queues, dropped count)."""
+    # Push to SSE queues. None sentinel means "stream closed" to consumers.
+    dead: list[asyncio.Queue] = []
+    dropped_count = 0
+    for q in queues:
+        try:
+            q.put_nowait(event)
+        except asyncio.QueueFull:
+            # Consumer is too slow. Drop oldest and push — better to
+            # lose an old event than block the whole bus.
+            # v6: 计数丢弃, 后面发 event_dropped 通知, 不再静默.
+            dropped_count += 1
+            try:
+                q.get_nowait()
+                q.put_nowait(event)
+            except Exception:
+                dead.append(q)
+        except Exception:
+            dead.append(q)
+    return dead, dropped_count
+
+
+def _notify_dropped(
+    history: deque[AgentEvent],
+    queues: list[asyncio.Queue[AgentEvent | None]],
+    dropped_count: int,
+    victim_type: str,
+) -> None:
+    """v6: 丢事件后发 event_dropped 通知, 让 SSE consumer 知道有事件被丢."""
+    # ponytail: 通知本身也可能被丢 (queue 满), 这是 best-effort. 升级路径是
+    # 加 per-consumer drop counter + /events/stats 端点查询.
+    drop_event = AgentEvent(
+        type="event_bus.dropped",
+        timestamp=time.time(),
+        data={"dropped_count": dropped_count, "victim_type": victim_type},
+        source="event_bus",
+    )
+    history.append(drop_event)
+    for q in queues:
+        with contextlib.suppress(asyncio.QueueFull):
+            # 通知也满了就算了, best-effort
+            q.put_nowait(drop_event)
+
+
 class EventBus:
     """Async event bus with subscription support.
 
@@ -107,13 +178,7 @@ class EventBus:
         caught and logged — one bad subscriber must not break the bus.
         """
         # 没带 request_id 时从当前请求上下文补一个，方便跨日志/SSE 串联
-        if not event.request_id:
-            try:
-                from huginn.utils.json_logging import request_id_var
-
-                event.request_id = request_id_var.get("")
-            except Exception:
-                logger.debug("request id contextvar lookup failed", exc_info=True)
+        _resolve_request_id(event)
 
         # History first — even if a subscriber blows up, the event is recorded.
         self._history.append(event)
@@ -122,54 +187,18 @@ class EventBus:
         self._audit_contract(event)
 
         # Fan out to typed subscribers + wildcard subscribers.
-        callbacks = self._subscribers.get(event.type, []) + self._subscribers.get(ALL, [])
-        for cb in callbacks:
-            try:
-                result = cb(event)
-                if asyncio.iscoroutine(result):
-                    # Fire-and-forget async subscriber. We don't await
-                    # because a slow subscriber would block the publisher.
-                    asyncio.ensure_future(result)
-            except Exception:
-                logger.exception("subscriber %r failed for event %s", cb, event.type)
+        callbacks = self._subscribers.get(event.type, []) + self._subscribers.get(
+            ALL, []
+        )
+        _deliver_to_subscribers(callbacks, event)
 
-        # Push to SSE queues. None sentinel means "stream closed" to consumers.
-        dead: list[asyncio.Queue] = []
-        dropped_count = 0
-        for q in self._sse_queues:
-            try:
-                q.put_nowait(event)
-            except asyncio.QueueFull:
-                # Consumer is too slow. Drop oldest and push — better to
-                # lose an old event than block the whole bus.
-                # v6: 计数丢弃, 后面发 event_dropped 通知, 不再静默.
-                dropped_count += 1
-                try:
-                    q.get_nowait()
-                    q.put_nowait(event)
-                except Exception:
-                    dead.append(q)
-            except Exception:
-                dead.append(q)
+        dead, dropped_count = _push_to_sse_queues(self._sse_queues, event)
 
         if dead:
             self._sse_queues = [q for q in self._sse_queues if q not in dead]
 
-        # v6: 丢事件后发 event_dropped 通知, 让 SSE consumer 知道有事件被丢.
-        # ponytail: 通知本身也可能被丢 (queue 满), 这是 best-effort. 升级路径是
-        # 加 per-consumer drop counter + /events/stats 端点查询.
         if dropped_count > 0:
-            drop_event = AgentEvent(
-                type="event_bus.dropped",
-                timestamp=time.time(),
-                data={"dropped_count": dropped_count, "victim_type": event.type},
-                source="event_bus",
-            )
-            self._history.append(drop_event)
-            for q in self._sse_queues:
-                with contextlib.suppress(asyncio.QueueFull):
-                    # 通知也满了就算了, best-effort
-                    q.put_nowait(drop_event)
+            _notify_dropped(self._sse_queues, dropped_count, event.type)
 
     def _audit_contract(self, event: AgentEvent) -> None:
         """通信契约审计 (advisory)。
@@ -190,7 +219,9 @@ class EventBus:
                 self.contract_violations[v.rule] += 1
                 if v.severity == "hard" and v.rule not in self._contract_warned:
                     self._contract_warned.add(v.rule)
-                    logger.warning("comms contract: %s [type=%s]", v.message, event.type)
+                    logger.warning(
+                        "comms contract: %s [type=%s]", v.message, event.type
+                    )
         except Exception:  # — 原因: 契约审计是 advisory, 绝不能拖垮事件主路径
             logger.debug("comms contract audit failed", exc_info=True)
 

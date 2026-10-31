@@ -87,6 +87,42 @@ _PROVIDER_NOTES: dict[str, str] = {
     "default": "未配置, 退回环境变量",
 }
 
+# 关键词 → provider 候选, 按匹配度排序 (recommend_provider 用)
+_PROVIDER_RECOMMEND_RULES: list[tuple[list[str], str]] = [
+    (
+        [
+            "本地",
+            "local",
+            "离线",
+            "offline",
+            "自己机器",
+            "无 key",
+            "免费",
+            "隐私",
+        ],
+        "ollama",
+    ),
+    (["vllm", "高吞吐", "生产部署", "gpu 集群"], "vllm"),
+    (["llama.cpp", "gguf", "cpu", "单机"], "local"),
+    (["便宜", "性价比", "低价", "省钱", "免费额度"], "deepseek"),
+    (
+        ["最强推理", "推理强", "reasoning", "o1", "o3", "deepseek-reasoner"],
+        "deepseek",
+    ),
+    (["claude", "anthropic", "代码", "extended thinking"], "anthropic"),
+    (["gpt", "openai", "生态全", "function calling"], "openai"),
+    (["gemini", "google", "多模态", "长上下文", "免费"], "google-genai"),
+    (["聚合", "一个 key", "多模型", "openrouter"], "openrouter"),
+    (["国产", "中文", "国内"], "siliconflow"),
+    (["kimi", "长文档", "200k"], "moonshot"),
+    (["glm", "智谱"], "zhipu"),
+    (["通义", "qwen", "阿里"], "dashscope"),
+    (["ernie", "百度", "千帆"], "qianfan"),
+    (["豆包", "字节", "极低价"], "doubao"),
+    (["混元", "腾讯"], "hunyuan"),
+    (["百川", "baichuan"], "baichuan"),
+]
+
 # 本地模型方案 → 默认端口 / 走哪个 provider
 _LOCAL_MODEL_PRESETS: dict[str, dict[str, Any]] = {
     "ollama": {
@@ -220,6 +256,293 @@ def _provider_full_info(provider: str) -> dict[str, Any]:
     return info
 
 
+def _match_requirement(req: str) -> list[tuple[str, str]]:
+    """按 rules 顺序返回命中列表 [(匹配到的关键词, provider)]。"""
+    hits: list[tuple[str, str]] = []
+    for keywords, provider in _PROVIDER_RECOMMEND_RULES:
+        for kw in keywords:
+            if kw in req:
+                hits.append((kw, provider))
+                break
+    return hits
+
+
+def _build_config_example(recommended: str, info: dict[str, Any]) -> dict[str, Any]:
+    """拼一个配置示例, 让用户照着填。"""
+    return {
+        "alias": recommended.replace("-", "_"),
+        "provider": recommended,
+        "model": info["default_model"] or "<模型名>",
+        "base_url": info["default_base_url"] or "<自定义>",
+        "api_key": f"<env:{info['env_var']}>" if info["needs_api_key"] else None,
+    }
+
+
+def _collect_model_issues(cfg: HuginnConfig) -> list[dict[str, Any]]:
+    """检查模型池: 空池 / 每个 model 的 alias / model 名 / key / base_url。"""
+    if not cfg.models:
+        return [
+            {
+                "severity": "warn",
+                "field": "models",
+                "message": "模型池为空, agent 无法启动. 用 setup_local_model 或前端添加模型.",
+            }
+        ]
+    issues: list[dict[str, Any]] = []
+    for m in cfg.models:
+        issues.extend(_model_issues_for(m))
+    return issues
+
+
+def _model_issues_for(m: ModelConfig) -> list[dict[str, Any]]:
+    """单个 model 的配置问题 (本地 provider 只校验 alias / model 名)。"""
+    issues: list[dict[str, Any]] = []
+    if not m.alias:
+        issues.append(
+            {
+                "severity": "error",
+                "field": "models[].alias",
+                "message": "alias 为空",
+            }
+        )
+    if not m.model and m.provider not in ("default",):
+        issues.append(
+            {
+                "severity": "warn",
+                "field": f"models[{m.alias}].model",
+                "message": f"model 名为空, provider={m.provider}",
+            }
+        )
+    # 本地 provider 不需要 key, 跳过
+    if m.provider in ("ollama", "vllm", "local"):
+        return issues
+    resolved = resolve_provider_key(m.provider, m.api_key)  # type: ignore[arg-type]
+    if not resolved:
+        env_var = _PROVIDER_KEY_ENV.get(m.provider, "?")
+        issues.append(
+            {
+                "severity": "error",
+                "field": f"models[{m.alias}].api_key",
+                "message": f"未配置 api_key (env:{env_var} 也没设)",
+            }
+        )
+    # 检查 base_url 格式
+    if m.base_url and not re.match(r"^https?://", m.base_url):
+        issues.append(
+            {
+                "severity": "warn",
+                "field": f"models[{m.alias}].base_url",
+                "message": f"base_url 不是 http(s):// 开头: {m.base_url}",
+            }
+        )
+    return issues
+
+
+def _active_model_issues(cfg: HuginnConfig, lead: Any) -> list[dict[str, Any]]:
+    """检查 lead agent 的活跃 model 是否存在且启用。"""
+    if lead and lead.model_alias:
+        if not any(m.alias == lead.model_alias and m.enabled for m in cfg.models):
+            return [
+                {
+                    "severity": "error",
+                    "field": "agents[lead].model_alias",
+                    "message": f"活跃 model '{lead.model_alias}' 不存在或未启用",
+                }
+            ]
+        return []
+    if cfg.models:
+        return [
+            {
+                "severity": "warn",
+                "field": "agents[lead].model_alias",
+                "message": "未设置活跃 model, 会用第一个 enabled 的 model",
+            }
+        ]
+    return []
+
+
+def _scan_env_keys(cfg: HuginnConfig) -> list[dict[str, Any]]:
+    """扫所有 provider 对应的环境变量, 把找到的 key 写进 cfg.models。
+
+    返回每个 provider 的扫描记录 (migrated / skipped), 已存在的 provider 不重复添加。
+    """
+    found: list[dict[str, Any]] = []
+    existing_aliases = {m.alias for m in cfg.models}
+    existing_keys = {m.provider for m in cfg.models if m.api_key}
+
+    for provider, env_var in _PROVIDER_KEY_ENV.items():
+        if not env_var:
+            continue
+        val = os.environ.get(env_var)
+        if not val:
+            continue
+        found.append(
+            _migrate_one_provider(
+                provider, env_var, cfg, existing_aliases, existing_keys
+            )
+        )
+    return found
+
+
+def _migrate_one_provider(
+    provider: str,
+    env_var: str,
+    cfg: HuginnConfig,
+    existing_aliases: set[str],
+    existing_keys: set[str],
+) -> dict[str, Any]:
+    """迁移单个 provider 的环境变量 key; 返回该 provider 的扫描记录。"""
+    # 已有同 provider 的 key 就跳过, 不重复添加
+    if provider in existing_keys:
+        return {
+            "provider": provider,
+            "env_var": env_var,
+            "status": "skipped",
+            "reason": "config 里已有该 provider 的 key",
+        }
+    # 用 env: 引用, 不把明文 key 写进文件
+    alias = provider.replace("-", "_")
+    # alias 去重
+    base_alias = alias
+    n = 2
+    while alias in existing_aliases:
+        alias = f"{base_alias}_{n}"
+        n += 1
+    existing_aliases.add(alias)
+    cfg.models.append(
+        ModelConfig(
+            alias=alias,
+            provider=provider,  # type: ignore[arg-type]
+            model=_PROVIDER_DEFAULTS.get(provider),
+            api_key=f"env:{env_var}",
+        )
+    )
+    return {
+        "provider": provider,
+        "env_var": env_var,
+        "status": "migrated",
+        "alias": alias,
+    }
+
+
+def _build_local_model_config(
+    inp: ConfigWizardInput, preset: dict[str, Any]
+) -> tuple[ModelConfig, str, str]:
+    """按 preset 生成本地模型的 ModelConfig; 返回 (config, base_url, alias)。"""
+    host = inp.host or "localhost"
+    port = inp.port or preset["default_port"]
+    base_url = preset["base_url_template"].format(host=host, port=port)
+    provider = preset["provider"]
+    model_name = inp.model_name or ""
+    # alias 不传就用 model_name 推断 (去特殊字符)
+    alias = inp.alias or re.sub(r"[^a-zA-Z0-9_-]", "_", model_name)[:32]
+
+    # 构造 ModelConfig
+    config = ModelConfig(
+        alias=alias,
+        provider=provider,  # type: ignore[arg-type]
+        model=model_name,
+        api_key=None,  # 本地模型不需要 key
+        base_url=base_url,
+        temperature=0.7,
+        enabled=True,
+    )
+    return config, base_url, alias
+
+
+def _ensure_lead_active(cfg: HuginnConfig, alias: str) -> bool:
+    """如果没有活跃 model, 把 alias 设为活跃; 返回是否做了设置。"""
+    lead = next((a for a in cfg.agents if a.id == "lead"), None)
+    if lead is not None and lead.model_alias:
+        return False
+    from huginn.config import AgentProfileConfig
+
+    if lead is None:
+        cfg.agents.append(AgentProfileConfig(id="lead", name="Lead", model_alias=alias))
+    else:
+        lead.model_alias = alias
+    return True
+
+
+def _upsert_local_model(cfg: HuginnConfig, config: ModelConfig, alias: str) -> bool:
+    """把 config 写入模型池 (同 alias 覆盖后追加), 并确保存在活跃 model。"""
+    # alias 已存在就覆盖, 否则追加
+    idx = next((i for i, m in enumerate(cfg.models) if m.alias == alias), None)
+    if idx is not None:
+        cfg.models[idx] = config
+    else:
+        cfg.models.append(config)
+
+    # 如果没有活跃 model, 把这个设为活跃
+    return _ensure_lead_active(cfg, alias)
+
+
+def _local_model_recommendations(
+    test_result: dict[str, Any],
+    model_type: str,
+    base_url: str,
+    alias: str,
+    set_active: bool,
+) -> list[str]:
+    """给点后续建议。"""
+    recommendations: list[str] = []
+    if not test_result["success"]:
+        recommendations.append(
+            f"连通性测试失败: {test_result['error']}. "
+            f"确认 {model_type} 服务已启动 (检查 {base_url}), 模型已加载."
+        )
+    if model_type == "ollama":
+        recommendations.append(
+            "用 `ollama list` 查看已安装的模型, `ollama pull <model>` 下载新模型."
+        )
+    if model_type == "vllm":
+        recommendations.append(
+            "vLLM 启动示例: `python -m vllm.entrypoints.openai.api_server --model <path> --port 8000`"
+        )
+    if model_type == "llama.cpp":
+        recommendations.append(
+            "llama.cpp 启动示例: `./server -m model.gguf --port 8080`"
+        )
+    if set_active:
+        recommendations.append(f"已将 {alias} 设为活跃 model.")
+    return recommendations
+
+
+def _local_model_result(
+    *,
+    config: ModelConfig,
+    test_result: dict[str, Any],
+    path: Path,
+    set_active: bool,
+    recommendations: list[str],
+    model_type: str,
+    model_name: str,
+    alias: str,
+) -> ToolResult:
+    """组装 setup_local_model 的返回结构。"""
+    return ToolResult(
+        data={
+            "config": {
+                "alias": config.alias,
+                "provider": config.provider,
+                "model": config.model,
+                "base_url": config.base_url,
+                "api_key": None,
+            },
+            "test_result": test_result,
+            "config_path": str(path),
+            "set_as_active": set_active,
+            "recommendations": recommendations,
+            "message": (
+                f"已配置本地 {model_type} 模型 {model_name} (alias={alias}). "
+                f"连通性: {'✅ 通' if test_result['success'] else '❌ 未通, 见 recommendations'}. "
+                f"配置已写入 {path}."
+            ),
+        },
+        success=True,
+    )
+
+
 class ConfigWizardTool(HuginnTool):
     """配置向导: 选 provider / 校验 / 迁移 / 接本地模型。"""
 
@@ -348,48 +671,7 @@ class ConfigWizardTool(HuginnTool):
     def _recommend_provider(self, requirement: str) -> ToolResult:
         """按关键词匹配需求, 返回推荐 + 配置示例。"""
         req = requirement.lower()
-        # 关键词 → provider 候选, 按匹配度排序
-        rules = [
-            (
-                [
-                    "本地",
-                    "local",
-                    "离线",
-                    "offline",
-                    "自己机器",
-                    "无 key",
-                    "免费",
-                    "隐私",
-                ],
-                "ollama",
-            ),
-            (["vllm", "高吞吐", "生产部署", "gpu 集群"], "vllm"),
-            (["llama.cpp", "gguf", "cpu", "单机"], "local"),
-            (["便宜", "性价比", "低价", "省钱", "免费额度"], "deepseek"),
-            (
-                ["最强推理", "推理强", "reasoning", "o1", "o3", "deepseek-reasoner"],
-                "deepseek",
-            ),
-            (["claude", "anthropic", "代码", "extended thinking"], "anthropic"),
-            (["gpt", "openai", "生态全", "function calling"], "openai"),
-            (["gemini", "google", "多模态", "长上下文", "免费"], "google-genai"),
-            (["聚合", "一个 key", "多模型", "openrouter"], "openrouter"),
-            (["国产", "中文", "国内"], "siliconflow"),
-            (["kimi", "长文档", "200k"], "moonshot"),
-            (["glm", "智谱"], "zhipu"),
-            (["通义", "qwen", "阿里"], "dashscope"),
-            (["ernie", "百度", "千帆"], "qianfan"),
-            (["豆包", "字节", "极低价"], "doubao"),
-            (["混元", "腾讯"], "hunyuan"),
-            (["百川", "baichuan"], "baichuan"),
-        ]
-
-        hits: list[tuple[str, str]] = []
-        for keywords, provider in rules:
-            for kw in keywords:
-                if kw in req:
-                    hits.append((kw, provider))
-                    break
+        hits = _match_requirement(req)
 
         if not hits:
             # 没匹配上, 给个默认推荐
@@ -402,14 +684,7 @@ class ConfigWizardTool(HuginnTool):
             reason = f"识别到关键词 '{matched_kw}', 推荐 {recommended}"
 
         info = _provider_full_info(recommended)
-        # 拼一个配置示例, 让用户照着填
-        example = {
-            "alias": recommended.replace("-", "_"),
-            "provider": recommended,
-            "model": info["default_model"] or "<模型名>",
-            "base_url": info["default_base_url"] or "<自定义>",
-            "api_key": f"<env:{info['env_var']}>" if info["needs_api_key"] else None,
-        }
+        example = _build_config_example(recommended, info)
         return ToolResult(
             data={
                 "recommended_provider": recommended,
@@ -431,76 +706,11 @@ class ConfigWizardTool(HuginnTool):
         """检查当前配置: 缺 key / base_url 空 / model 名空 / 活跃 model 是否存在。"""
         path = _resolve_config_path(config_path)
         cfg = _load_config(path)
-        issues: list[dict[str, Any]] = []
-
-        if not cfg.models:
-            issues.append(
-                {
-                    "severity": "warn",
-                    "field": "models",
-                    "message": "模型池为空, agent 无法启动. 用 setup_local_model 或前端添加模型.",
-                }
-            )
-        else:
-            for m in cfg.models:
-                if not m.alias:
-                    issues.append(
-                        {
-                            "severity": "error",
-                            "field": "models[].alias",
-                            "message": "alias 为空",
-                        }
-                    )
-                if not m.model and m.provider not in ("default",):
-                    issues.append(
-                        {
-                            "severity": "warn",
-                            "field": f"models[{m.alias}].model",
-                            "message": f"model 名为空, provider={m.provider}",
-                        }
-                    )
-                # 本地 provider 不需要 key, 跳过
-                if m.provider in ("ollama", "vllm", "local"):
-                    continue
-                resolved = resolve_provider_key(m.provider, m.api_key)  # type: ignore[arg-type]
-                if not resolved:
-                    env_var = _PROVIDER_KEY_ENV.get(m.provider, "?")
-                    issues.append(
-                        {
-                            "severity": "error",
-                            "field": f"models[{m.alias}].api_key",
-                            "message": f"未配置 api_key (env:{env_var} 也没设)",
-                        }
-                    )
-                # 检查 base_url 格式
-                if m.base_url and not re.match(r"^https?://", m.base_url):
-                    issues.append(
-                        {
-                            "severity": "warn",
-                            "field": f"models[{m.alias}].base_url",
-                            "message": f"base_url 不是 http(s):// 开头: {m.base_url}",
-                        }
-                    )
+        issues: list[dict[str, Any]] = _collect_model_issues(cfg)
 
         # 检查活跃 model 是否存在
         lead = next((a for a in cfg.agents if a.id == "lead"), None)
-        if lead and lead.model_alias:
-            if not any(m.alias == lead.model_alias and m.enabled for m in cfg.models):
-                issues.append(
-                    {
-                        "severity": "error",
-                        "field": "agents[lead].model_alias",
-                        "message": f"活跃 model '{lead.model_alias}' 不存在或未启用",
-                    }
-                )
-        elif cfg.models:
-            issues.append(
-                {
-                    "severity": "warn",
-                    "field": "agents[lead].model_alias",
-                    "message": "未设置活跃 model, 会用第一个 enabled 的 model",
-                }
-            )
+        issues.extend(_active_model_issues(cfg, lead))
 
         ok = not any(i["severity"] == "error" for i in issues)
         return ToolResult(
@@ -514,7 +724,7 @@ class ConfigWizardTool(HuginnTool):
                 "message": (
                     "配置有效, 可以正常使用"
                     if ok
-                    else f"发现 {sum(1 for i in issues if i['severity']=='error')} 个错误, 需修复"
+                    else f"发现 {sum(1 for i in issues if i['severity'] == 'error')} 个错误, 需修复"
                 ),
             },
             success=True,
@@ -527,53 +737,7 @@ class ConfigWizardTool(HuginnTool):
         path = _resolve_config_path(config_path)
         cfg = _load_config(path)
 
-        # 扫所有 provider 对应的环境变量
-        found: list[dict[str, Any]] = []
-        existing_aliases = {m.alias for m in cfg.models}
-        existing_keys = {m.provider for m in cfg.models if m.api_key}
-
-        for provider, env_var in _PROVIDER_KEY_ENV.items():
-            if not env_var:
-                continue
-            val = os.environ.get(env_var)
-            if not val:
-                continue
-            # 已有同 provider 的 key 就跳过, 不重复添加
-            if provider in existing_keys:
-                found.append(
-                    {
-                        "provider": provider,
-                        "env_var": env_var,
-                        "status": "skipped",
-                        "reason": "config 里已有该 provider 的 key",
-                    }
-                )
-                continue
-            # 用 env: 引用, 不把明文 key 写进文件
-            alias = provider.replace("-", "_")
-            # alias 去重
-            base_alias = alias
-            n = 2
-            while alias in existing_aliases:
-                alias = f"{base_alias}_{n}"
-                n += 1
-            existing_aliases.add(alias)
-            cfg.models.append(
-                ModelConfig(
-                    alias=alias,
-                    provider=provider,  # type: ignore[arg-type]
-                    model=_PROVIDER_DEFAULTS.get(provider),
-                    api_key=f"env:{env_var}",
-                )
-            )
-            found.append(
-                {
-                    "provider": provider,
-                    "env_var": env_var,
-                    "status": "migrated",
-                    "alias": alias,
-                }
-            )
+        found = _scan_env_keys(cfg)
 
         if not any(f["status"] == "migrated" for f in found):
             return ToolResult(
@@ -624,24 +788,8 @@ class ConfigWizardTool(HuginnTool):
                 error=f"不支持的 model_type: {model_type}. 支持: {list(_LOCAL_MODEL_PRESETS)}",
             )
 
-        host = inp.host or "localhost"
-        port = inp.port or preset["default_port"]
-        base_url = preset["base_url_template"].format(host=host, port=port)
-        provider = preset["provider"]
         model_name = inp.model_name or ""
-        # alias 不传就用 model_name 推断 (去特殊字符)
-        alias = inp.alias or re.sub(r"[^a-zA-Z0-9_-]", "_", model_name)[:32]
-
-        # 构造 ModelConfig
-        config = ModelConfig(
-            alias=alias,
-            provider=provider,  # type: ignore[arg-type]
-            model=model_name,
-            api_key=None,  # 本地模型不需要 key
-            base_url=base_url,
-            temperature=0.7,
-            enabled=True,
-        )
+        config, base_url, alias = _build_local_model_config(inp, preset)
 
         # 测连通性 (10s 超时, 跟路由层一致)
         test_result = await self._test_local_connectivity(config)
@@ -649,26 +797,7 @@ class ConfigWizardTool(HuginnTool):
         # 不管测试成功失败都写入配置, 用户可以之后修
         path = _resolve_config_path(inp.config_path)
         cfg = _load_config(path)
-        # alias 已存在就覆盖, 否则追加
-        idx = next((i for i, m in enumerate(cfg.models) if m.alias == alias), None)
-        if idx is not None:
-            cfg.models[idx] = config
-        else:
-            cfg.models.append(config)
-
-        # 如果没有活跃 model, 把这个设为活跃
-        lead = next((a for a in cfg.agents if a.id == "lead"), None)
-        set_active = False
-        if lead is None or not lead.model_alias:
-            from huginn.config import AgentProfileConfig
-
-            if lead is None:
-                cfg.agents.append(
-                    AgentProfileConfig(id="lead", name="Lead", model_alias=alias)
-                )
-            else:
-                lead.model_alias = alias
-            set_active = True
+        set_active = _upsert_local_model(cfg, config, alias)
 
         try:
             self._persist_config(cfg, path)
@@ -679,48 +808,19 @@ class ConfigWizardTool(HuginnTool):
                 error=f"保存配置失败: {e}",
             )
 
-        # 给点后续建议
-        recommendations: list[str] = []
-        if not test_result["success"]:
-            recommendations.append(
-                f"连通性测试失败: {test_result['error']}. "
-                f"确认 {model_type} 服务已启动 (检查 {base_url}), 模型已加载."
-            )
-        if model_type == "ollama":
-            recommendations.append(
-                "用 `ollama list` 查看已安装的模型, `ollama pull <model>` 下载新模型."
-            )
-        if model_type == "vllm":
-            recommendations.append(
-                "vLLM 启动示例: `python -m vllm.entrypoints.openai.api_server --model <path> --port 8000`"
-            )
-        if model_type == "llama.cpp":
-            recommendations.append(
-                "llama.cpp 启动示例: `./server -m model.gguf --port 8080`"
-            )
-        if set_active:
-            recommendations.append(f"已将 {alias} 设为活跃 model.")
+        recommendations = _local_model_recommendations(
+            test_result, model_type, base_url, alias, set_active
+        )
 
-        return ToolResult(
-            data={
-                "config": {
-                    "alias": config.alias,
-                    "provider": config.provider,
-                    "model": config.model,
-                    "base_url": config.base_url,
-                    "api_key": None,
-                },
-                "test_result": test_result,
-                "config_path": str(path),
-                "set_as_active": set_active,
-                "recommendations": recommendations,
-                "message": (
-                    f"已配置本地 {model_type} 模型 {model_name} (alias={alias}). "
-                    f"连通性: {'✅ 通' if test_result['success'] else '❌ 未通, 见 recommendations'}. "
-                    f"配置已写入 {path}."
-                ),
-            },
-            success=True,
+        return _local_model_result(
+            config=config,
+            test_result=test_result,
+            path=path,
+            set_active=set_active,
+            recommendations=recommendations,
+            model_type=model_type,
+            model_name=model_name,
+            alias=alias,
         )
 
     async def _test_local_connectivity(self, config: ModelConfig) -> dict[str, Any]:
@@ -858,8 +958,7 @@ class ConfigWizardTool(HuginnTool):
                 "level_description": g.LEVELS[level],
                 "send_to_cloud": g.should_send_to_cloud(),
                 "message": (
-                    f"隐私级别已设为 '{level}'. "
-                    f"{g.LEVELS[level]}. 运行时改动不写盘."
+                    f"隐私级别已设为 '{level}'. {g.LEVELS[level]}. 运行时改动不写盘."
                 ),
             },
             success=True,

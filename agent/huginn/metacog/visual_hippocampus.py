@@ -28,6 +28,7 @@ Bourbaki 三结构视角 (B 文档化):
   拓扑   (tf-idf 邻域):  recall 的 text_match 定义"相似度邻域".
                          HippocampusView (huginn/experimental/topology_protocol) 适配.
 """
+
 from __future__ import annotations
 
 import json
@@ -155,6 +156,50 @@ def _tfidf_score(query_tokens: list[str], doc: str) -> float:
     return hits / len(query_tokens)
 
 
+def _score_entry(
+    line: str,
+    q_tokens: list[str],
+    now: float,
+    decay: bool,
+    tau_s: float,
+    min_score: float,
+) -> dict[str, Any] | None:
+    """对单条历史算 (text_match, decay, score); 不命中/低于阈值返 None."""
+    try:
+        entry = json.loads(line)
+    except (json.JSONDecodeError, TypeError):
+        logger.debug("best-effort op failed", exc_info=True)
+        return None
+    primitives = entry.get("primitives", "")
+    ts = float(entry.get("ts", 0.0))
+
+    # text match
+    if q_tokens:
+        text_match = _tfidf_score(q_tokens, primitives)
+        if text_match <= 0.0:
+            return None  # query 有 token 但无命中, 跳过
+    else:
+        text_match = 1.0  # 无 query 时所有条目等权
+
+    # decay
+    age_s = max(0.0, now - ts)
+    if decay:
+        decay_factor = math.exp(-age_s / tau_s) if tau_s > 0 else 1.0
+    else:
+        decay_factor = 1.0
+
+    score = text_match * decay_factor
+    if score < min_score:
+        return None
+    return {
+        "entry": entry,
+        "score": score,
+        "text_match": text_match,
+        "decay_factor": decay_factor,
+        "age_s": age_s,
+    }
+
+
 def recall(
     history: list[str],
     query: str | None = None,
@@ -196,39 +241,9 @@ def recall(
 
     scored: list[dict[str, Any]] = []
     for line in history:
-        try:
-            entry = json.loads(line)
-        except (json.JSONDecodeError, TypeError):
-            logger.debug("best-effort op failed", exc_info=True)
-            continue
-        primitives = entry.get("primitives", "")
-        ts = float(entry.get("ts", 0.0))
-
-        # text match
-        if q_tokens:
-            text_match = _tfidf_score(q_tokens, primitives)
-            if text_match <= 0.0:
-                continue  # query 有 token 但无命中, 跳过
-        else:
-            text_match = 1.0  # 无 query 时所有条目等权
-
-        # decay
-        age_s = max(0.0, now - ts)
-        if decay:
-            decay_factor = math.exp(-age_s / tau_s) if tau_s > 0 else 1.0
-        else:
-            decay_factor = 1.0
-
-        score = text_match * decay_factor
-        if score < min_score:
-            continue
-        scored.append({
-            "entry": entry,
-            "score": score,
-            "text_match": text_match,
-            "decay_factor": decay_factor,
-            "age_s": age_s,
-        })
+        item = _score_entry(line, q_tokens, now, decay, tau_s, min_score)
+        if item is not None:
+            scored.append(item)
 
     # 排序: score 降序, 同分时 age_s 升序 (新优先)
     scored.sort(key=lambda x: (-x["score"], x["age_s"]))
@@ -292,8 +307,7 @@ def forget(
 # ── selfcheck ──────────────────────────────────────────────────────────────
 
 
-def _selfcheck() -> None:
-    """L13 selfcheck: record → recall → forget 全链路."""
+def _sc_record() -> list[str]:
     # 1. record 3 条 → history 长度 = 3
     h: list[str] = []
     record(h, "[bands] peak=2.5", session_id="s1", ts=100.0)
@@ -304,24 +318,41 @@ def _selfcheck() -> None:
     e1 = json.loads(h[0])
     assert e1["ts"] == 100.0 and e1["session_id"] == "s1" and "peak" in e1["primitives"]
     print(f"1. record 3 → len={len(h)}, e1.ts={e1['ts']}")
+    return h
 
+
+def _sc_recall_noquery(h: list[str]) -> None:
     # 2. recall 无 query → 返回 top_k (按 decay 排序, 最新优先)
     r2 = recall(h, top_k=3, now_ts=400.0, tau_s=3600.0)
     assert len(r2) == 3, f"expected 3, got {len(r2)}"
     # 最新 (ts=300) 应排第一
-    assert r2[0]["entry"]["ts"] == 300.0, f"newest first expected, got ts={r2[0]['entry']['ts']}"
+    assert r2[0]["entry"]["ts"] == 300.0, (
+        f"newest first expected, got ts={r2[0]['entry']['ts']}"
+    )
     # decay_factor < 1 (因为 age > 0)
-    assert 0 < r2[0]["decay_factor"] < 1, f"decay_factor should be (0,1): {r2[0]['decay_factor']}"
-    print(f"2. recall no query → top1 ts={r2[0]['entry']['ts']}, decay={r2[0]['decay_factor']:.3f}")
+    assert 0 < r2[0]["decay_factor"] < 1, (
+        f"decay_factor should be (0,1): {r2[0]['decay_factor']}"
+    )
+    print(
+        f"2. recall no query → top1 ts={r2[0]['entry']['ts']}, "
+        f"decay={r2[0]['decay_factor']:.3f}"
+    )
 
+
+def _sc_recall_text(h: list[str]) -> None:
     # 3. recall text_query="lattice" → 只返回含 lattice 的
     r3 = recall(h, text_query="lattice", top_k=5, now_ts=400.0, decay=False)
     assert len(r3) == 1, f"expected 1 lattice match, got {len(r3)}"
     assert "lattice" in r3[0]["entry"]["primitives"]
     # decay=False → decay_factor=1.0
     assert r3[0]["decay_factor"] == 1.0
-    print(f"3. recall text_query='lattice' → {len(r3)} match, score={r3[0]['text_match']:.2f}")
+    print(
+        f"3. recall text_query='lattice' → {len(r3)} match, "
+        f"score={r3[0]['text_match']:.2f}"
+    )
 
+
+def _sc_decay(h: list[str]) -> None:
     # 4. decay 验证: 旧记录权重 < 新记录
     r4 = recall(h, top_k=3, now_ts=1e9, tau_s=100.0)  # now 非常大, 全部衰减很多
     # 全部 decay_factor 应该非常小
@@ -332,6 +363,8 @@ def _selfcheck() -> None:
     _factors = [f"{s['decay_factor']:.4f}" for s in r4]
     print(f"4. decay large Δt → factors={_factors}")
 
+
+def _sc_forget(h: list[str]) -> None:
     # 5. forget max_age_s=150 (now=400) → 删 ts=100, 200 (age>150), 留 ts=300
     h5 = list(h)  # 复制避免污染
     n_removed = forget(h5, max_age_s=150.0, now_ts=400.0)
@@ -341,6 +374,8 @@ def _selfcheck() -> None:
     assert kept_ts == 300.0, f"expected ts=300 kept, got {kept_ts}"
     print(f"5. forget max_age=150 → removed={n_removed}, kept ts={kept_ts}")
 
+
+def _sc_lru() -> None:
     # 6. LRU 截断: max_history=2 时 record 第 3 条会丢最旧
     h6: list[str] = []
     record(h6, "a", ts=1.0, max_history=2)
@@ -351,6 +386,8 @@ def _selfcheck() -> None:
     assert ts6 == [2.0, 3.0], f"oldest dropped expected, got {ts6}"
     print(f"6. LRU max_history=2 → kept ts={ts6}")
 
+
+def _sc_corrupt() -> None:
     # 7. 空 history → recall 返回 []
     assert recall([], top_k=5) == []
     # 损坏 entry 被 recall 跳过
@@ -358,6 +395,17 @@ def _selfcheck() -> None:
     r7 = recall(h7, top_k=5, decay=False)
     assert len(r7) == 1, f"corrupt entry skipped expected, got {len(r7)}"
     print(f"7. corrupt entry skipped → {len(r7)} valid")
+
+
+def _selfcheck() -> None:
+    """L13 selfcheck: record → recall → forget 全链路."""
+    h = _sc_record()
+    _sc_recall_noquery(h)
+    _sc_recall_text(h)
+    _sc_decay(h)
+    _sc_forget(h)
+    _sc_lru()
+    _sc_corrupt()
 
     print("L13 ALL CHECKS PASSED")
 

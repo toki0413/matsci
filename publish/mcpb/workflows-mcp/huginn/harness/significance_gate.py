@@ -23,6 +23,7 @@
 
 toggle: cfg.feature_flags.harness_significance_gate (默认 off).
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -222,86 +223,16 @@ class SignificanceGate:
         all_positive = all(d > 0 for d in non_zero_diffs)
         all_negative = all(d < 0 for d in non_zero_diffs)
 
-        if all_positive:
-            # 全正 → 显著优于, p-value 趋近 0
-            return GateDecision(
-                config_id=config_id,
-                passed=True,
-                reason="all differences positive (exact test p≈0)",
-                n_samples=n,
-                p_value=0.0,
-                median_diff=median_diff,
-                alpha=alpha,
-            )
-
-        if all_negative:
-            return GateDecision(
-                config_id=config_id,
-                passed=False,
-                reason="all differences negative (candidate worse)",
-                n_samples=n,
-                p_value=1.0,
-                median_diff=median_diff,
-                alpha=alpha,
-            )
+        sign_decision = _sign_direction_decision(
+            config_id, all_positive, all_negative, median_diff, n, alpha
+        )
+        if sign_decision is not None:
+            return sign_decision
 
         # 混合符号 → 用 scipy Wilcoxon signed-rank
-        try:
-            from scipy.stats import wilcoxon
-
-            # scipy 1.10+ 支持 alternative 参数
-            stat, p_value = wilcoxon(
-                diffs,
-                alternative="greater",
-                zero_method="wilcox",
-            )
-            passed = p_value < alpha and median_diff > 0
-            reason = (
-                f"Wilcoxon p={p_value:.4f} {'<' if passed else '>='} α={alpha}"
-            )
-            return GateDecision(
-                config_id=config_id,
-                passed=passed,
-                reason=reason,
-                n_samples=n,
-                p_value=float(p_value),
-                median_diff=median_diff,
-                alpha=alpha,
-            )
-        except ImportError:
-            # scipy 不可用 → 降级到符号检验 (sign test)
-            n_pos = sum(1 for d in non_zero_diffs if d > 0)
-            n_neg = sum(1 for d in non_zero_diffs if d < 0)
-            n_total = n_pos + n_neg
-            # 二项检验: P(X >= n_pos | p=0.5)
-            from math import comb
-
-            p_value = sum(
-                comb(n_total, k) for k in range(n_pos, n_total + 1)
-            ) / (2**n_total)
-            passed = p_value < alpha and median_diff > 0
-            reason = (
-                f"sign test p={p_value:.4f} (scipy unavailable) "
-                f"{'<' if passed else '>='} α={alpha}"
-            )
-            return GateDecision(
-                config_id=config_id,
-                passed=passed,
-                reason=reason,
-                n_samples=n,
-                p_value=float(p_value),
-                median_diff=median_diff,
-                alpha=alpha,
-            )
-        except Exception:
-            logger.warning("gate_decision failed", exc_info=True)
-            return GateDecision(
-                config_id=config_id,
-                passed=False,
-                reason="internal error",
-                n_samples=n,
-                alpha=alpha,
-            )
+        return _mixed_sign_decision(
+            config_id, diffs, non_zero_diffs, median_diff, n, alpha
+        )
 
     def clear(self, config_id: str | None = None) -> None:
         """清除配对观测. config_id=None 清除全部."""
@@ -319,10 +250,123 @@ class SignificanceGate:
         with self._lock:
             return {
                 "total_configs": len(self._pairs),
-                "configs": {
-                    cid: len(pairs) for cid, pairs in self._pairs.items()
-                },
+                "configs": {cid: len(pairs) for cid, pairs in self._pairs.items()},
             }
+
+
+def _sign_direction_decision(
+    config_id: str,
+    all_positive: bool,
+    all_negative: bool,
+    median_diff: float,
+    n: int,
+    alpha: float,
+) -> GateDecision | None:
+    """全正/全负差值直接判定; 混合符号返回 None."""
+    if all_positive:
+        # 全正 → 显著优于, p-value 趋近 0
+        return GateDecision(
+            config_id=config_id,
+            passed=True,
+            reason="all differences positive (exact test p≈0)",
+            n_samples=n,
+            p_value=0.0,
+            median_diff=median_diff,
+            alpha=alpha,
+        )
+
+    if all_negative:
+        return GateDecision(
+            config_id=config_id,
+            passed=False,
+            reason="all differences negative (candidate worse)",
+            n_samples=n,
+            p_value=1.0,
+            median_diff=median_diff,
+            alpha=alpha,
+        )
+    return None
+
+
+def _mixed_sign_decision(
+    config_id: str,
+    diffs: list[float],
+    non_zero_diffs: list[float],
+    median_diff: float,
+    n: int,
+    alpha: float,
+) -> GateDecision:
+    """混合符号: 优先 scipy Wilcoxon, 不可用时降级符号检验."""
+    try:
+        return _wilcoxon_decision(config_id, diffs, median_diff, n, alpha)
+    except ImportError:
+        # scipy 不可用 → 降级到符号检验 (sign test)
+        return _sign_test_decision(config_id, non_zero_diffs, median_diff, n, alpha)
+    except Exception:
+        logger.warning("gate_decision failed", exc_info=True)
+        return GateDecision(
+            config_id=config_id,
+            passed=False,
+            reason="internal error",
+            n_samples=n,
+            alpha=alpha,
+        )
+
+
+def _wilcoxon_decision(
+    config_id: str, diffs: list[float], median_diff: float, n: int, alpha: float
+) -> GateDecision:
+    """scipy Wilcoxon signed-rank 单侧检验 (scipy 缺失时抛 ImportError)."""
+    from scipy.stats import wilcoxon
+
+    # scipy 1.10+ 支持 alternative 参数
+    stat, p_value = wilcoxon(
+        diffs,
+        alternative="greater",
+        zero_method="wilcox",
+    )
+    passed = p_value < alpha and median_diff > 0
+    reason = f"Wilcoxon p={p_value:.4f} {'<' if passed else '>='} α={alpha}"
+    return GateDecision(
+        config_id=config_id,
+        passed=passed,
+        reason=reason,
+        n_samples=n,
+        p_value=float(p_value),
+        median_diff=median_diff,
+        alpha=alpha,
+    )
+
+
+def _sign_test_decision(
+    config_id: str,
+    non_zero_diffs: list[float],
+    median_diff: float,
+    n: int,
+    alpha: float,
+) -> GateDecision:
+    """符号检验 (sign test) 降级路径."""
+    n_pos = sum(1 for d in non_zero_diffs if d > 0)
+    n_neg = sum(1 for d in non_zero_diffs if d < 0)
+    n_total = n_pos + n_neg
+    # 二项检验: P(X >= n_pos | p=0.5)
+    from math import comb
+
+    p_value = sum(comb(n_total, k) for k in range(n_pos, n_total + 1)) / (2**n_total)
+    passed = p_value < alpha and median_diff > 0
+    reason = (
+        f"sign test p={p_value:.4f} (scipy unavailable) "
+        f"{'<' if passed else '>='} α={alpha}"
+    )
+    return GateDecision(
+        config_id=config_id,
+        passed=passed,
+        reason=reason,
+        n_samples=n,
+        p_value=float(p_value),
+        median_diff=median_diff,
+        alpha=alpha,
+    )
 
 
 def _selfcheck() -> None:
@@ -338,6 +382,51 @@ def _selfcheck() -> None:
 
     gate = sg.SignificanceGate.get_instance()
 
+    _selfcheck_gate_cases(gate)
+
+    # 5. 持久化 reload
+    sg.SignificanceGate._instance = None
+    gate2 = sg.SignificanceGate.get_instance()
+    _selfcheck_persistence(gate2)
+
+    shutil.rmtree(tmp, ignore_errors=True)
+    del os.environ["HUGINN_CACHE_DIR"]
+    sg.SignificanceGate._instance = None
+    print("\nH5 significance_gate selfcheck OK (7/7)")
+
+
+def _selfcheck_wilcoxon_case(gate: Any) -> None:
+    """selfcheck 4: 混合差值 → Wilcoxon."""
+    # 4. 混合差值 → Wilcoxon
+    # 构造 15 正 1 负, n=16, p-value 远低于 0.05 (scipy 版本无关)
+    pairs = [
+        (0.3, 0.6),
+        (0.4, 0.7),
+        (0.5, 0.8),
+        (0.2, 0.5),
+        (0.3, 0.6),
+        (0.4, 0.7),
+        (0.5, 0.8),
+        (0.2, 0.5),
+        (0.3, 0.6),
+        (0.4, 0.7),
+        (0.5, 0.8),
+        (0.2, 0.5),
+        (0.3, 0.6),
+        (0.4, 0.7),
+        (0.5, 0.8),
+        (0.9, 0.5),  # -0.4 (一个离群)
+    ]
+    for i, (b, c) in enumerate(pairs):
+        gate.record_pair("cfg_d", baseline_score=b, candidate_score=c, task_id=f"t{i}")
+    d = gate.gate_decision("cfg_d")
+    assert d.p_value is not None, "should have p_value"
+    assert d.passed, f"15-positive-1-negative should pass: {d}"
+    print(f"4. Wilcoxon mixed (15+, 1-) → pass (p={d.p_value:.4f}) OK")
+
+
+def _selfcheck_gate_cases(gate: Any) -> None:
+    """selfcheck 1-4: 样本不足 / 全正 / 全负 / 混合差值."""
     # 1. 样本不足 → 不通过
     gate.record_pair("cfg_a", baseline_score=0.5, candidate_score=0.6, task_id="t1")
     gate.record_pair("cfg_a", baseline_score=0.5, candidate_score=0.6, task_id="t2")
@@ -368,25 +457,11 @@ def _selfcheck() -> None:
     assert d.p_value == 1.0, d.p_value
     print("3. all-negative diffs → fail (p=1.0) OK")
 
-    # 4. 混合差值 → Wilcoxon
-    # 构造 15 正 1 负, n=16, p-value 远低于 0.05 (scipy 版本无关)
-    pairs = [
-        (0.3, 0.6), (0.4, 0.7), (0.5, 0.8), (0.2, 0.5),
-        (0.3, 0.6), (0.4, 0.7), (0.5, 0.8), (0.2, 0.5),
-        (0.3, 0.6), (0.4, 0.7), (0.5, 0.8), (0.2, 0.5),
-        (0.3, 0.6), (0.4, 0.7), (0.5, 0.8),
-        (0.9, 0.5),  # -0.4 (一个离群)
-    ]
-    for i, (b, c) in enumerate(pairs):
-        gate.record_pair("cfg_d", baseline_score=b, candidate_score=c, task_id=f"t{i}")
-    d = gate.gate_decision("cfg_d")
-    assert d.p_value is not None, "should have p_value"
-    assert d.passed, f"15-positive-1-negative should pass: {d}"
-    print(f"4. Wilcoxon mixed (15+, 1-) → pass (p={d.p_value:.4f}) OK")
+    _selfcheck_wilcoxon_case(gate)
 
-    # 5. 持久化 reload
-    sg.SignificanceGate._instance = None
-    gate2 = sg.SignificanceGate.get_instance()
+
+def _selfcheck_persistence(gate2: Any) -> None:
+    """selfcheck 5-7: 持久化 reload / passes_gate / clear."""
     pairs_b = gate2.get_pairs("cfg_b")
     assert len(pairs_b) == 5, f"persisted wrong: {len(pairs_b)}"
     assert all(p.candidate_score == 0.7 for p in pairs_b), "data corrupted"
@@ -401,11 +476,6 @@ def _selfcheck() -> None:
     gate2.clear("cfg_b")
     assert len(gate2.get_pairs("cfg_b")) == 0, "clear failed"
     print("7. clear OK")
-
-    shutil.rmtree(tmp, ignore_errors=True)
-    del os.environ["HUGINN_CACHE_DIR"]
-    sg.SignificanceGate._instance = None
-    print("\nH5 significance_gate selfcheck OK (7/7)")
 
 
 if __name__ == "__main__":

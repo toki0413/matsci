@@ -16,6 +16,7 @@ Communication Between Large Language Models", ICLR'26), Apache-2.0 许可.
 
 Apache-2.0 来源声明与重分发条件见仓库 LICENSE; 本文件是作者重写, 非逐字拷贝.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -118,41 +119,28 @@ class C2CProjector(nn.Module):
         out_dim = target_dim * target_num_heads
 
         # 1) 拼接 source+target 特征 → 投影到 hidden_dim
-        self.key_in = nn.Linear(in_dim + out_dim, hidden_dim, bias=True, dtype=dtype)
-        self.value_in = nn.Linear(in_dim + out_dim, hidden_dim, bias=True, dtype=dtype)
+        _init_c2c_input_proj(self, in_dim, out_dim, hidden_dim, dtype)
         # 2) 一层公共嵌入 MLP
-        self.key_mlp1 = RegularMLP(hidden_dim, intermediate_dim, num_layers=1, dropout=dropout, dtype=dtype)
-        self.value_mlp1 = RegularMLP(hidden_dim, intermediate_dim, num_layers=1, dropout=dropout, dtype=dtype)
+        _init_c2c_embed_mlps(self, hidden_dim, intermediate_dim, dropout, dtype)
         # 3a) 加权标量路径 → head 维
-        self.key_scalar_mlp2 = RegularMLP(hidden_dim, hidden_dim, num_layers=1, dropout=dropout, dtype=dtype)
-        self.value_scalar_mlp2 = RegularMLP(hidden_dim, hidden_dim, num_layers=1, dropout=dropout, dtype=dtype)
-        self.key_scalar_head = nn.Linear(hidden_dim, target_num_heads, dtype=dtype)
-        self.value_scalar_head = nn.Linear(hidden_dim, target_num_heads, dtype=dtype)
+        _init_c2c_scalar_path(self, hidden_dim, target_num_heads, dropout, dtype)
         # 3b) 投影特征路径 → target 头维
-        self.key_proj_mlp2 = RegularMLP(hidden_dim, intermediate_dim, num_layers=num_layers - 2, dropout=dropout, dtype=dtype)
-        self.value_proj_mlp2 = RegularMLP(hidden_dim, intermediate_dim, num_layers=num_layers - 2, dropout=dropout, dtype=dtype)
-        self.key_proj_out = nn.Linear(hidden_dim, out_dim, bias=True, dtype=dtype)
-        self.value_proj_out = nn.Linear(hidden_dim, out_dim, bias=True, dtype=dtype)
+        _init_c2c_proj_path(
+            self, hidden_dim, intermediate_dim, num_layers, out_dim, dropout, dtype
+        )
 
         if zero_init:
-            nn.init.zeros_(self.key_proj_out.weight)
-            nn.init.zeros_(self.key_proj_out.bias)
-            nn.init.zeros_(self.value_proj_out.weight)
-            nn.init.zeros_(self.value_proj_out.bias)
+            _init_c2c_zero_out(self)
 
         # 逐层门控: 标量 logit + 温度淬火
-        self.key_gate_logit = nn.Parameter(torch.tensor(0.0, dtype=dtype))
-        self.value_gate_logit = nn.Parameter(torch.tensor(0.0, dtype=dtype))
-        self.use_gumbel = True
-        self.initial_temperature = 1.0
-        self.final_temperature = 0.001
-        self.anneal_steps = 1929
-        self.register_buffer("gate_temperature", torch.tensor(self.initial_temperature, dtype=dtype))
-        self.scalar_temperature = 1.0
+        _init_c2c_gate_params(self, dtype)
 
     def update_temperature(self, step: int) -> None:
         ratio = min(step / self.anneal_steps, 1.0)
-        self.gate_temperature.fill_(self.initial_temperature * (self.final_temperature / self.initial_temperature) ** ratio)
+        self.gate_temperature.fill_(
+            self.initial_temperature
+            * (self.final_temperature / self.initial_temperature) ** ratio
+        )
 
     def forward(
         self,
@@ -177,29 +165,180 @@ class C2CProjector(nn.Module):
         value_hidden = self.value_mlp1(self.value_in(value_cat))
 
         # 投影特征路径
-        projected_key = self.key_proj_out(self.key_proj_mlp2(key_hidden)).view(B, N, Ht, Dt).transpose(1, 2)
-        projected_value = self.value_proj_out(self.value_proj_mlp2(value_hidden)).view(B, N, Ht, Dt).transpose(1, 2)
+        projected_key = _c2c_project_out(
+            self.key_proj_mlp2, self.key_proj_out, key_hidden, B, N, Ht, Dt
+        )
+        projected_value = _c2c_project_out(
+            self.value_proj_mlp2, self.value_proj_out, value_hidden, B, N, Ht, Dt
+        )
 
         # 标量加权路径
-        key_scalar = self.key_scalar_head(self.key_scalar_mlp2(key_hidden)).permute(0, 2, 1).unsqueeze(-1)
-        value_scalar = self.value_scalar_head(self.value_scalar_mlp2(value_hidden)).permute(0, 2, 1).unsqueeze(-1)
+        key_scalar = _c2c_scalar_out(
+            self.key_scalar_mlp2, self.key_scalar_head, key_hidden
+        )
+        value_scalar = _c2c_scalar_out(
+            self.value_scalar_mlp2, self.value_scalar_head, value_hidden
+        )
 
         # 门控 (Gumbel-sigmoid 训练 / 二值推断)
-        if self.training and self.use_gumbel:
-            g1 = _gumbel_noise(B, Ht, N, key_gate_logit=self.key_gate_logit, device=source_key.device, dtype=source_key.dtype)
-            g2 = _gumbel_noise(B, Ht, N, key_gate_logit=self.value_gate_logit, device=source_key.device, dtype=source_key.dtype)
-            key_gate = torch.sigmoid((self.key_gate_logit + g1) / self.gate_temperature)
-            value_gate = torch.sigmoid((self.value_gate_logit + g2) / self.gate_temperature)
-        else:
-            key_gate = (self.key_gate_logit > 0).to(torch.float32)
-            value_gate = (self.value_gate_logit > 0).to(torch.float32)
+        key_gate, value_gate = _c2c_gates(self, B, Ht, N, source_key)
 
         output_key = target_key + key_gate * torch.sigmoid(key_scalar) * projected_key
-        output_value = target_value + value_gate * torch.sigmoid(value_scalar) * projected_value
+        output_value = (
+            target_value + value_gate * torch.sigmoid(value_scalar) * projected_value
+        )
         return output_key, output_value
 
 
-def _gumbel_noise(batch: int, heads: int, seq: int, key_gate_logit: Tensor, device: torch.device, dtype: torch.dtype) -> Tensor:
+def _init_c2c_input_proj(
+    m: nn.Module, in_dim: int, out_dim: int, hidden_dim: int, dtype: torch.dtype
+) -> None:
+    """1) 拼接 source+target 特征 → 投影到 hidden_dim."""
+    m.key_in = nn.Linear(in_dim + out_dim, hidden_dim, bias=True, dtype=dtype)
+    m.value_in = nn.Linear(in_dim + out_dim, hidden_dim, bias=True, dtype=dtype)
+
+
+def _init_c2c_embed_mlps(
+    m: nn.Module,
+    hidden_dim: int,
+    intermediate_dim: int,
+    dropout: float,
+    dtype: torch.dtype,
+) -> None:
+    """2) 一层公共嵌入 MLP."""
+    m.key_mlp1 = RegularMLP(
+        hidden_dim, intermediate_dim, num_layers=1, dropout=dropout, dtype=dtype
+    )
+    m.value_mlp1 = RegularMLP(
+        hidden_dim, intermediate_dim, num_layers=1, dropout=dropout, dtype=dtype
+    )
+
+
+def _init_c2c_scalar_path(
+    m: nn.Module,
+    hidden_dim: int,
+    target_num_heads: int,
+    dropout: float,
+    dtype: torch.dtype,
+) -> None:
+    """3a) 加权标量路径 → head 维."""
+    m.key_scalar_mlp2 = RegularMLP(
+        hidden_dim, hidden_dim, num_layers=1, dropout=dropout, dtype=dtype
+    )
+    m.value_scalar_mlp2 = RegularMLP(
+        hidden_dim, hidden_dim, num_layers=1, dropout=dropout, dtype=dtype
+    )
+    m.key_scalar_head = nn.Linear(hidden_dim, target_num_heads, dtype=dtype)
+    m.value_scalar_head = nn.Linear(hidden_dim, target_num_heads, dtype=dtype)
+
+
+def _init_c2c_proj_path(
+    m: nn.Module,
+    hidden_dim: int,
+    intermediate_dim: int,
+    num_layers: int,
+    out_dim: int,
+    dropout: float,
+    dtype: torch.dtype,
+) -> None:
+    """3b) 投影特征路径 → target 头维."""
+    m.key_proj_mlp2 = RegularMLP(
+        hidden_dim,
+        intermediate_dim,
+        num_layers=num_layers - 2,
+        dropout=dropout,
+        dtype=dtype,
+    )
+    m.value_proj_mlp2 = RegularMLP(
+        hidden_dim,
+        intermediate_dim,
+        num_layers=num_layers - 2,
+        dropout=dropout,
+        dtype=dtype,
+    )
+    m.key_proj_out = nn.Linear(hidden_dim, out_dim, bias=True, dtype=dtype)
+    m.value_proj_out = nn.Linear(hidden_dim, out_dim, bias=True, dtype=dtype)
+
+
+def _init_c2c_zero_out(m: nn.Module) -> None:
+    """zero_init: 把两条投影输出层的权重/偏置置零."""
+    nn.init.zeros_(m.key_proj_out.weight)
+    nn.init.zeros_(m.key_proj_out.bias)
+    nn.init.zeros_(m.value_proj_out.weight)
+    nn.init.zeros_(m.value_proj_out.bias)
+
+
+def _init_c2c_gate_params(m: nn.Module, dtype: torch.dtype) -> None:
+    """逐层门控: 标量 logit + 温度淬火."""
+    m.key_gate_logit = nn.Parameter(torch.tensor(0.0, dtype=dtype))
+    m.value_gate_logit = nn.Parameter(torch.tensor(0.0, dtype=dtype))
+    m.use_gumbel = True
+    m.initial_temperature = 1.0
+    m.final_temperature = 0.001
+    m.anneal_steps = 1929
+    m.register_buffer(
+        "gate_temperature", torch.tensor(m.initial_temperature, dtype=dtype)
+    )
+    m.scalar_temperature = 1.0
+
+
+def _c2c_project_out(
+    proj_mlp: nn.Module,
+    proj_out: nn.Module,
+    hidden: Tensor,
+    batch: int,
+    seq: int,
+    heads: int,
+    head_dim: int,
+) -> Tensor:
+    """投影特征路径: hidden → (B, Ht, N, Dt)."""
+    return proj_out(proj_mlp(hidden)).view(batch, seq, heads, head_dim).transpose(1, 2)
+
+
+def _c2c_scalar_out(
+    scalar_mlp: nn.Module, scalar_head: nn.Module, hidden: Tensor
+) -> Tensor:
+    """标量加权路径: hidden → (B, 1, N, 1) 加权标量."""
+    return scalar_head(scalar_mlp(hidden)).permute(0, 2, 1).unsqueeze(-1)
+
+
+def _c2c_gates(
+    m: C2CProjector, batch: int, heads: int, seq: int, ref: Tensor
+) -> tuple[Tensor, Tensor]:
+    """门控 (Gumbel-sigmoid 训练 / 二值推断)."""
+    if m.training and m.use_gumbel:
+        g1 = _gumbel_noise(
+            batch,
+            heads,
+            seq,
+            key_gate_logit=m.key_gate_logit,
+            device=ref.device,
+            dtype=ref.dtype,
+        )
+        g2 = _gumbel_noise(
+            batch,
+            heads,
+            seq,
+            key_gate_logit=m.value_gate_logit,
+            device=ref.device,
+            dtype=ref.dtype,
+        )
+        key_gate = torch.sigmoid((m.key_gate_logit + g1) / m.gate_temperature)
+        value_gate = torch.sigmoid((m.value_gate_logit + g2) / m.gate_temperature)
+        return key_gate, value_gate
+    key_gate = (m.key_gate_logit > 0).to(torch.float32)
+    value_gate = (m.value_gate_logit > 0).to(torch.float32)
+    return key_gate, value_gate
+
+
+def _gumbel_noise(
+    batch: int,
+    heads: int,
+    seq: int,
+    key_gate_logit: Tensor,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> Tensor:
     """Gumbel 噪声重参数 (与上游一致)."""
     u = torch.rand(batch, heads, seq, 1, device=device, dtype=dtype)
     return -torch.log(-torch.log(u + 1e-20) + 1e-20)
@@ -217,7 +356,11 @@ def make_fusion_channel(projector: C2CProjector) -> Callable[..., Any]:
         有 KV-Cache 访问权 (本地模型精调), API 推理链路拿不到内部表示.
     """
 
-    def fuse(source_kv: tuple[Tensor, Tensor], target_kv: tuple[Tensor, Tensor], **_kwargs: Any) -> tuple[Tensor, Tensor]:
+    def fuse(
+        source_kv: tuple[Tensor, Tensor],
+        target_kv: tuple[Tensor, Tensor],
+        **_kwargs: Any,
+    ) -> tuple[Tensor, Tensor]:
         return projector(source_kv, target_kv)
 
     return fuse

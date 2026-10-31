@@ -18,6 +18,41 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _gp_posterior_verdict(np: Any, data: dict, pred_y_ref: Any) -> dict:
+    """GP 后验一致检验: |y - mu| <= 2σ (95% CI)."""
+    mu = np.asarray(data.get("mean", []), dtype=float)
+    sigma = np.asarray(data.get("std", []), dtype=float)
+    y_ref = np.asarray(pred_y_ref, dtype=float)
+
+    # 后验一致检验: |y - mu| <= 2σ (95% CI)
+    # sigma=0 时退化为 |y - mu| < eps (GP 完全过拟合)
+    n = min(len(mu), len(y_ref))
+    if n == 0:
+        return {
+            "agrees": True,
+            "gp_fit": data,
+            "reason": "GP fit ok, no comparable points",
+        }
+    mu, sigma, y_ref = mu[:n], sigma[:n], y_ref[:n]
+    eps = 1e-8
+    deviation = np.abs(y_ref - mu)
+    tolerance = np.maximum(2.0 * sigma, eps)
+    agrees = bool(np.all(deviation <= tolerance))
+    max_dev = float(np.max(deviation))
+    max_tol = float(np.max(tolerance))
+    return {
+        "agrees": agrees,
+        "gp_fit": data,
+        "max_deviation": max_dev,
+        "max_tolerance": max_tol,
+        "n_points": n,
+        "reason": (
+            f"posterior ±2σ check: max_dev={max_dev:.4g} "
+            f"vs tol={max_tol:.4g} over {n} points"
+        ),
+    }
+
+
 class MathValidator:
     """math_validation 方法族协作对象. 构造收引擎, 经 self.engine 访问状态."""
 
@@ -38,6 +73,108 @@ class MathValidator:
     @property
     def _last_execution_result(self) -> Any:
         return getattr(self.engine, "_last_execution_result", None)
+
+    async def _run_conservation(
+        self, equations: str, domain: str, tool_ctx: Any, out: dict[str, Any]
+    ) -> None:
+        """A. 守恒律 (BourbakiTool.check_conservation) — equations 非空时跑."""
+        if not equations:
+            return
+        try:
+            from huginn.tools.bourbaki_tool import BourbakiTool
+
+            tool = BourbakiTool()
+            raw = await tool.call(
+                {
+                    "task": "check_conservation",
+                    "domain": domain,
+                    "equations": equations,
+                },
+                tool_ctx,
+            )
+            # BourbakiTool.call 可能返回 dict 或 BourbakiResult; 统一成 dict
+            if hasattr(raw, "model_dump"):
+                raw = raw.model_dump()
+            out["conservation"] = {
+                "verified": raw.get("verified"),
+                "message": raw.get("message", ""),
+                "fallback": raw.get("fallback", False),
+                "method": "bourbaki",
+            }
+        except Exception as e:
+            out["conservation_error"] = str(e)
+
+    def _attach_kb_reference(
+        self, out: dict[str, Any], equations: str, lagrangian: str
+    ) -> None:
+        """A2: KB 交叉验证 — 把守恒律方程 + Lagrangian 关键词拿去查 KB."""
+        # 命中的 first-principles 参考块作为 reference_principles 写回, 让下游 reviewer
+        # 能对照已知结论. KB 不可用/空查询都不阻断, 只是不写该字段.
+        kb_ref = self._query_kb_reference(equations, lagrangian)
+        if kb_ref:
+            out["reference_principles"] = kb_ref
+
+    async def _run_variational(
+        self,
+        lagrangian: str,
+        coords: Any,
+        velocities: Any,
+        tool_ctx: Any,
+        out: dict[str, Any],
+    ) -> None:
+        """B. 变分原理 (LeanTool.constitutive/variational_principle)."""
+        if not (lagrangian and coords):
+            return
+        try:
+            from huginn.tools.lean_tool import LeanTool, LeanToolInput
+
+            tool = LeanTool()
+            args = LeanToolInput(
+                action="constitutive",
+                sub_action="variational_principle",
+                lagrangian=lagrangian,
+                coordinates=list(coords),
+                velocities=velocities,
+            )
+            vr = await tool.call(args, tool_ctx)
+            out["variational"] = {
+                "ok": bool(vr.success),
+                "data": vr.data,
+                "error": vr.error,
+                "method": "lean",
+            }
+        except Exception as e:
+            out["variational_error"] = str(e)
+
+    async def _run_autodiff(
+        self, execution_result: dict[str, Any], tool_ctx: Any, out: dict[str, Any]
+    ) -> None:
+        """C. 自动微分 (AutoDiffTool.gradient) — function spec 齐全时跑."""
+        func_spec = execution_result.get("autodiff")
+        if not (isinstance(func_spec, dict) and func_spec.get("function_type")):
+            return
+        try:
+            from huginn.tools.sci.autodiff_tool import (
+                AutoDiffInput,
+                AutoDiffTool,
+            )
+
+            tool = AutoDiffTool()
+            args = AutoDiffInput(
+                action="gradient",
+                function_type=func_spec.get("function_type", "custom"),
+                function_params=func_spec.get("function_params", {}),
+                variables=func_spec.get("variables", {}),
+                target_variable=func_spec.get("target_variable"),
+            )
+            vr = await tool.call(args, tool_ctx)
+            out["autodiff"] = {
+                "ok": bool(vr.success),
+                "data": vr.data,
+                "error": vr.error,
+            }
+        except Exception as e:
+            out["autodiff_error"] = str(e)
 
     async def run(self, execution_result: Any) -> dict[str, Any]:
         """把执行结果里的数学结构抽出来, 用数学工具做形式化校验.
@@ -67,86 +204,30 @@ class MathValidator:
         coords = execution_result.get("coordinates") or []
         velocities = execution_result.get("velocities")
         domain = execution_result.get("conservation_domain") or "continuum_mechanics"
-        if equations:
-            try:
-                from huginn.tools.bourbaki_tool import BourbakiTool
 
-                tool = BourbakiTool()
-                raw = await tool.call(
-                    {
-                        "task": "check_conservation",
-                        "domain": domain,
-                        "equations": equations,
-                    },
-                    tool_ctx,
-                )
-                # BourbakiTool.call 可能返回 dict 或 BourbakiResult; 统一成 dict
-                if hasattr(raw, "model_dump"):
-                    raw = raw.model_dump()
-                out["conservation"] = {
-                    "verified": raw.get("verified"),
-                    "message": raw.get("message", ""),
-                    "fallback": raw.get("fallback", False),
-                    "method": "bourbaki",
-                }
-            except Exception as e:
-                out["conservation_error"] = str(e)
-
-        # A2: KB 交叉验证 — 把守恒律方程 + Lagrangian 关键词拿去查 KB, 命中的
-        # first-principles 参考块作为 reference_principles 写回, 让下游 reviewer
-        # 能对照已知结论. KB 不可用/空查询都不阻断, 只是不写该字段.
-        kb_ref = self._query_kb_reference(equations, lagrangian)
-        if kb_ref:
-            out["reference_principles"] = kb_ref
-
-        if lagrangian and coords:
-            try:
-                from huginn.tools.lean_tool import LeanTool, LeanToolInput
-
-                tool = LeanTool()
-                args = LeanToolInput(
-                    action="constitutive",
-                    sub_action="variational_principle",
-                    lagrangian=lagrangian,
-                    coordinates=list(coords),
-                    velocities=velocities,
-                )
-                vr = await tool.call(args, tool_ctx)
-                out["variational"] = {
-                    "ok": bool(vr.success),
-                    "data": vr.data,
-                    "error": vr.error,
-                    "method": "lean",
-                }
-            except Exception as e:
-                out["variational_error"] = str(e)
-
-        func_spec = execution_result.get("autodiff")
-        if isinstance(func_spec, dict) and func_spec.get("function_type"):
-            try:
-                from huginn.tools.sci.autodiff_tool import (
-                    AutoDiffInput,
-                    AutoDiffTool,
-                )
-
-                tool = AutoDiffTool()
-                args = AutoDiffInput(
-                    action="gradient",
-                    function_type=func_spec.get("function_type", "custom"),
-                    function_params=func_spec.get("function_params", {}),
-                    variables=func_spec.get("variables", {}),
-                    target_variable=func_spec.get("target_variable"),
-                )
-                vr = await tool.call(args, tool_ctx)
-                out["autodiff"] = {
-                    "ok": bool(vr.success),
-                    "data": vr.data,
-                    "error": vr.error,
-                }
-            except Exception as e:
-                out["autodiff_error"] = str(e)
-
+        await MathValidator._run_conservation(self, equations, domain, tool_ctx, out)
+        MathValidator._attach_kb_reference(self, out, equations, lagrangian)
+        await MathValidator._run_variational(
+            self, lagrangian, coords, velocities, tool_ctx, out
+        )
+        await MathValidator._run_autodiff(self, execution_result, tool_ctx, out)
         return out
+
+    @staticmethod
+    def _extract_gp_data(validation: dict, exec_res: Any) -> tuple | None:
+        """从 validation / 上次执行结果里挑出 (X, y, X_test, y_test)."""
+        X = y = X_test = y_test = None
+        for cand in (validation, exec_res if isinstance(exec_res, dict) else {}):
+            X = cand.get("X") or cand.get("x_data") or cand.get("samples")
+            y = cand.get("y") or cand.get("y_data") or cand.get("targets")
+            X_test = cand.get("X_test") or cand.get("x_test")
+            y_test = cand.get("y_test") or cand.get("y_true")
+            if X is not None and y is not None:
+                break
+            X = y = None
+        if X is None or y is None:
+            return None
+        return X, y, X_test, y_test
 
     def verify_via_gp(self, hyp_id: str, validation: dict) -> dict:
         """循环B: 用 GP 数值验证做独立路径. 与符号演绎 (循环A) 基底正交.
@@ -161,17 +242,10 @@ class MathValidator:
         || hypothesis_interval) 代替 ±2σ 检查.
         """
         exec_res = self._last_execution_result
-        X = y = X_test = y_test = None
-        for cand in (validation, exec_res if isinstance(exec_res, dict) else {}):
-            X = cand.get("X") or cand.get("x_data") or cand.get("samples")
-            y = cand.get("y") or cand.get("y_data") or cand.get("targets")
-            X_test = cand.get("X_test") or cand.get("x_test")
-            y_test = cand.get("y_test") or cand.get("y_true")
-            if X is not None and y is not None:
-                break
-            X = y = None
-        if X is None or y is None:
+        extracted = MathValidator._extract_gp_data(validation, exec_res)
+        if extracted is None:
             return {"agrees": False, "reason": "no numeric data for GP fit"}
+        X, y, X_test, y_test = extracted
 
         try:
             import numpy as np
@@ -201,39 +275,163 @@ class MathValidator:
                 }
 
             data = getattr(predict_res, "data", None) or {}
-            mu = np.asarray(data.get("mean", []), dtype=float)
-            sigma = np.asarray(data.get("std", []), dtype=float)
-            y_ref = np.asarray(pred_y_ref, dtype=float)
-
-            # 后验一致检验: |y - mu| <= 2σ (95% CI)
-            # sigma=0 时退化为 |y - mu| < eps (GP 完全过拟合)
-            n = min(len(mu), len(y_ref))
-            if n == 0:
-                return {
-                    "agrees": True,
-                    "gp_fit": data,
-                    "reason": "GP fit ok, no comparable points",
-                }
-            mu, sigma, y_ref = mu[:n], sigma[:n], y_ref[:n]
-            eps = 1e-8
-            deviation = np.abs(y_ref - mu)
-            tolerance = np.maximum(2.0 * sigma, eps)
-            agrees = bool(np.all(deviation <= tolerance))
-            max_dev = float(np.max(deviation))
-            max_tol = float(np.max(tolerance))
-            return {
-                "agrees": agrees,
-                "gp_fit": data,
-                "max_deviation": max_dev,
-                "max_tolerance": max_tol,
-                "n_points": n,
-                "reason": (
-                    f"posterior ±2σ check: max_dev={max_dev:.4g} "
-                    f"vs tol={max_tol:.4g} over {n} points"
-                ),
-            }
+            return _gp_posterior_verdict(np, data, pred_y_ref)
         except Exception as e:
             return {"agrees": False, "reason": f"GP verify error: {e}"}
+
+    @staticmethod
+    def _math_evidence_conservation(
+        math_validation: dict, evidence: dict[str, Any]
+    ) -> None:
+        """1. conservation_law — 从已有 math_validation 透传."""
+        cons = math_validation.get("conservation")
+        if isinstance(cons, dict) and "verified" in cons:
+            evidence["conservation_law"] = {
+                "verified": bool(cons["verified"]),
+                "current": cons.get("message", ""),
+                "symmetry": cons.get("method", ""),
+            }
+
+    async def _math_evidence_dimensional(
+        self, execution_result: dict, tool_ctx: Any, evidence: dict[str, Any]
+    ) -> None:
+        """2. dimensional_consistent — 跑量纲分析, 所有 quantity 都能解析 → True."""
+        equation = (
+            execution_result.get("equation") or execution_result.get("equations") or ""
+        )
+        if not equation:
+            return
+        try:
+            from huginn.tools.symbolic_math.tool import (
+                SymbolicMathInput,
+                SymbolicMathTool,
+            )
+
+            tool = SymbolicMathTool()
+            args = SymbolicMathInput(
+                action="dimensional_analysis",
+                expression=str(equation),
+                target="validate_expression",
+            )
+            vr = await tool.call(args, tool_ctx)
+            if vr.success and vr.data:
+                quantities = vr.data.get("quantities", [])
+                has_error = any("error" in q for q in quantities)
+                evidence["dimensional_consistent"] = (
+                    len(quantities) > 0 and not has_error
+                )
+        except Exception:  # 防御: 量纲分析失败则该证据缺省
+            logger.warning(
+                "error in _collect_math_evidence: dimensional_analysis failed",
+                exc_info=True,
+            )
+
+    async def _math_evidence_pde(
+        self, execution_result: dict, tool_ctx: Any, evidence: dict[str, Any]
+    ) -> None:
+        """3. pde_classification — 跑 pde_classify, 比对 expected vs actual."""
+        pde_coeffs = execution_result.get("pde_coefficients")
+        expected_class = execution_result.get("expected_pde_class")
+        if not (pde_coeffs and expected_class):
+            return
+        try:
+            from huginn.tools.symbolic_math.tool import (
+                SymbolicMathInput,
+                SymbolicMathTool,
+            )
+
+            tool = SymbolicMathTool()
+            args = SymbolicMathInput(
+                action="pde_classify",
+                expression=str(pde_coeffs),
+            )
+            vr = await tool.call(args, tool_ctx)
+            if vr.success and vr.data:
+                actual = vr.data.get("classification", "")
+                evidence["pde_classification"] = {
+                    "consistent": actual.lower() == str(expected_class).lower(),
+                    "expected": str(expected_class),
+                    "actual": actual,
+                }
+        except Exception:  # 防御: PDE 分类失败则该证据缺省
+            logger.warning(
+                "error in _collect_math_evidence: pde_classify failed",
+                exc_info=True,
+            )
+
+    async def _math_evidence_sobol(
+        self, execution_result: dict, tool_ctx: Any, evidence: dict[str, Any]
+    ) -> None:
+        """4. sobol_top_features — top features (S_i>0.1) 须被 hypothesis 覆盖."""
+        sobol_data = execution_result.get("sobol_data")
+        hypothesis_features = execution_result.get("hypothesis_features")
+        if not (sobol_data and hypothesis_features):
+            return
+        try:
+            from huginn.tools.sci.symbolic_regression_tool import (
+                SymbolicRegressionInput,
+                SymbolicRegressionTool,
+            )
+
+            tool = SymbolicRegressionTool()
+            target_col = (
+                sobol_data.get("target", "y") if isinstance(sobol_data, dict) else "y"
+            )
+            args = SymbolicRegressionInput(
+                action="sobol_indices",
+                data_json=sobol_data,
+                target_column=target_col,
+                n_sobol_samples=512,
+            )
+            vr = await tool.call(args, tool_ctx)
+            if vr.success and vr.data:
+                first_order = vr.data.get("first_order", {})
+                if first_order:
+                    top = [f for f, s in first_order.items() if s > 0.1]
+                    evidence["sobol_top_features"] = {
+                        "hypothesis_covers_top": set(top).issubset(
+                            set(hypothesis_features)
+                        ),
+                        "top_features": top,
+                        "hypothesis_features": list(hypothesis_features),
+                    }
+        except Exception:  # 防御: Sobol 失败则该证据缺省
+            logger.warning(
+                "error in _collect_math_evidence: sobol_indices failed",
+                exc_info=True,
+            )
+
+    async def _math_evidence_constraint(
+        self, execution_result: dict, tool_ctx: Any, evidence: dict[str, Any]
+    ) -> None:
+        """5. constraint_check — 跑 constraint_check, 所有先验通过 → all_passed."""
+        expr = execution_result.get("expression")
+        constraints = execution_result.get("constraints")
+        if not (expr and constraints):
+            return
+        try:
+            from huginn.tools.sci.symbolic_regression_tool import (
+                SymbolicRegressionInput,
+                SymbolicRegressionTool,
+            )
+
+            tool = SymbolicRegressionTool()
+            args = SymbolicRegressionInput(
+                action="constraint_check",
+                probe_expression=str(expr),
+                constraints=constraints,
+            )
+            vr = await tool.call(args, tool_ctx)
+            if vr.success and vr.data:
+                evidence["constraint_check"] = {
+                    "all_passed": vr.data.get("all_passed", False),
+                    "violations": vr.data.get("violations", []),
+                }
+        except Exception:  # 防御: 约束校验失败则该证据缺省
+            logger.warning(
+                "error in _collect_math_evidence: constraint_check failed",
+                exc_info=True,
+            )
 
     async def collect_math_evidence(
         self, execution_result: Any, math_validation: dict
@@ -259,13 +457,7 @@ class MathValidator:
             return evidence
 
         # 1. conservation_law — 从已有 math_validation 透传
-        cons = math_validation.get("conservation")
-        if isinstance(cons, dict) and "verified" in cons:
-            evidence["conservation_law"] = {
-                "verified": bool(cons["verified"]),
-                "current": cons.get("message", ""),
-                "symmetry": cons.get("method", ""),
-            }
+        self._math_evidence_conservation(math_validation, evidence)
 
         from huginn.core_types import ToolContext
 
@@ -275,134 +467,8 @@ class MathValidator:
             config=self.settings,
         )
 
-        # 2. dimensional_consistent — 跑量纲分析, 所有 quantity 都能解析 → True
-        equation = (
-            execution_result.get("equation") or execution_result.get("equations") or ""
-        )
-        if equation:
-            try:
-                from huginn.tools.symbolic_math.tool import (
-                    SymbolicMathInput,
-                    SymbolicMathTool,
-                )
-
-                tool = SymbolicMathTool()
-                args = SymbolicMathInput(
-                    action="dimensional_analysis",
-                    expression=str(equation),
-                    target="validate_expression",
-                )
-                vr = await tool.call(args, tool_ctx)
-                if vr.success and vr.data:
-                    quantities = vr.data.get("quantities", [])
-                    has_error = any("error" in q for q in quantities)
-                    evidence["dimensional_consistent"] = (
-                        len(quantities) > 0 and not has_error
-                    )
-            except Exception:  # 防御: 量纲分析失败则该证据缺省
-                logger.warning(
-                    "error in _collect_math_evidence: dimensional_analysis failed",
-                    exc_info=True,
-                )
-
-        # 3. pde_classification — 跑 pde_classify, 比对 expected vs actual
-        pde_coeffs = execution_result.get("pde_coefficients")
-        expected_class = execution_result.get("expected_pde_class")
-        if pde_coeffs and expected_class:
-            try:
-                from huginn.tools.symbolic_math.tool import (
-                    SymbolicMathInput,
-                    SymbolicMathTool,
-                )
-
-                tool = SymbolicMathTool()
-                args = SymbolicMathInput(
-                    action="pde_classify",
-                    expression=str(pde_coeffs),
-                )
-                vr = await tool.call(args, tool_ctx)
-                if vr.success and vr.data:
-                    actual = vr.data.get("classification", "")
-                    evidence["pde_classification"] = {
-                        "consistent": actual.lower() == str(expected_class).lower(),
-                        "expected": str(expected_class),
-                        "actual": actual,
-                    }
-            except Exception:  # 防御: PDE 分类失败则该证据缺省
-                logger.warning(
-                    "error in _collect_math_evidence: pde_classify failed",
-                    exc_info=True,
-                )
-
-        # 4. sobol_top_features — 跑 sobol_indices, top features (S_i>0.1) 必须
-        # 被 hypothesis_features 覆盖
-        sobol_data = execution_result.get("sobol_data")
-        hypothesis_features = execution_result.get("hypothesis_features")
-        if sobol_data and hypothesis_features:
-            try:
-                from huginn.tools.sci.symbolic_regression_tool import (
-                    SymbolicRegressionInput,
-                    SymbolicRegressionTool,
-                )
-
-                tool = SymbolicRegressionTool()
-                target_col = (
-                    sobol_data.get("target", "y")
-                    if isinstance(sobol_data, dict)
-                    else "y"
-                )
-                args = SymbolicRegressionInput(
-                    action="sobol_indices",
-                    data_json=sobol_data,
-                    target_column=target_col,
-                    n_sobol_samples=512,
-                )
-                vr = await tool.call(args, tool_ctx)
-                if vr.success and vr.data:
-                    first_order = vr.data.get("first_order", {})
-                    if first_order:
-                        top = [f for f, s in first_order.items() if s > 0.1]
-                        evidence["sobol_top_features"] = {
-                            "hypothesis_covers_top": set(top).issubset(
-                                set(hypothesis_features)
-                            ),
-                            "top_features": top,
-                            "hypothesis_features": list(hypothesis_features),
-                        }
-            except Exception:  # 防御: Sobol 失败则该证据缺省
-                logger.warning(
-                    "error in _collect_math_evidence: sobol_indices failed",
-                    exc_info=True,
-                )
-
-        # 5. constraint_check — 跑 constraint_check, 所有先验通过 → all_passed
-        expr = execution_result.get("expression")
-        constraints = execution_result.get("constraints")
-        if expr and constraints:
-            try:
-                from huginn.tools.sci.symbolic_regression_tool import (
-                    SymbolicRegressionInput,
-                    SymbolicRegressionTool,
-                )
-
-                tool = SymbolicRegressionTool()
-                args = SymbolicRegressionInput(
-                    action="constraint_check",
-                    probe_expression=str(expr),
-                    constraints=constraints,
-                )
-                vr = await tool.call(args, tool_ctx)
-                if vr.success and vr.data:
-                    evidence["constraint_check"] = {
-                        "all_passed": vr.data.get("all_passed", False),
-                        "violations": vr.data.get("violations", []),
-                    }
-            except Exception:  # 防御: 约束校验失败则该证据缺省
-                logger.warning(
-                    "error in _collect_math_evidence: constraint_check failed",
-                    exc_info=True,
-                )
-
+        await self._math_evidence_dimensional(execution_result, tool_ctx, evidence)
+        await self._math_evidence_pde(execution_result, tool_ctx, evidence)
+        await self._math_evidence_sobol(execution_result, tool_ctx, evidence)
+        await self._math_evidence_constraint(execution_result, tool_ctx, evidence)
         return evidence
-
-

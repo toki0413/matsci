@@ -246,26 +246,8 @@ def recall_failed_directions(
 # 4 场景: 用 in-memory SQLite + 真 LongTermMemory, 不调 LLM. 跟 cluster.py
 # 风格一致 — 真 DB 跑 migration v2, 真 store/retrieve, 只 mock LLM 层.
 
-def _selfcheck() -> None:
-    import sys
-    import tempfile
-    from pathlib import Path
-
-    # 让 huginn.* 可导入 (跟 manager.py / cluster.py 一致做法)
-    _agent_root = Path(__file__).resolve().parents[2]
-    if str(_agent_root) not in sys.path:
-        sys.path.insert(0, str(_agent_root))
-
-    from huginn.memory.longterm import LongTermMemory
-    from huginn.memory.manager import MemoryManager
-
-    # 在临时目录建真 SQLite DB, migration v2 自动跑
-    tmpdir = tempfile.mkdtemp(prefix="huginn_typing_selfcheck_")
-    db_path = Path(tmpdir) / "memory.db"
-    ltm = LongTermMemory(db_path=str(db_path), enable_semantic=False)
-    mm = MemoryManager(longterm=ltm)
-
-    # 场景 1: remember_typed + recall_typed round-trip
+def _st_scenario1(mm) -> None:
+    """remember_typed + recall_typed round-trip."""
     eid = remember_typed(
         mm,
         content="persona dft_expert r_phys=0.78 on GaN band gap",
@@ -293,7 +275,9 @@ def _selfcheck() -> None:
     assert row["category"] == "episode"
     print("1. remember_typed + recall_typed round-trip OK")
 
-    # 场景 2: record_failed_direction + recall_failed_directions
+
+def _st_scenario2(mm) -> None:
+    """record_failed_direction + recall_failed_directions."""
     fid = record_failed_direction(
         mm,
         hypothesis_text="GaN band gap > 4 eV with LDA",
@@ -311,10 +295,10 @@ def _selfcheck() -> None:
     assert mc == "DFT-PZ LDA band gap underestimation"
     print("2. record_failed_direction + recall_failed_directions OK")
 
-    # 场景 3: 跨 session 模拟 (新 MemoryManager 实例 + 同 DB)
+
+def _st_scenario3(mm2) -> None:
+    """跨 session 模拟 (新 MemoryManager 实例 + 同 DB)."""
     # 关键: 不依赖内存 hypothesis_graph, 数据在 SQLite 里持久化
-    ltm2 = LongTermMemory(db_path=str(db_path), enable_semantic=False)
-    mm2 = MemoryManager(longterm=ltm2)
     failed2 = recall_failed_directions(mm2, limit=5)
     assert len(failed2) == 1, (
         f"cross-session recall should find 1 failed, got {len(failed2)}"
@@ -329,7 +313,9 @@ def _selfcheck() -> None:
     assert len(persona_rows) == 1, "cross-session persona_history recall"
     print("3. cross-session recovery OK")
 
-    # 场景 4: NULL 兼容路径 — 旧行 memory_type IS NULL 不参与 typed 查询
+
+def _st_scenario4(mm2) -> None:
+    """NULL 兼容路径 — 旧行 memory_type IS NULL 不参与 typed 查询."""
     # 先写一条 legacy 行 (走 mm.remember, 不调 typed API)
     legacy_id = mm2.remember(
         content="legacy memory without typed fields",
@@ -354,7 +340,9 @@ def _selfcheck() -> None:
         )
     print("4. NULL compatibility (legacy rows excluded from typed query) OK")
 
-    # 场景 5: lazy migrate — legacy 行 tags 含 "autoloop" + "persona:reviewer"
+
+def _st_scenario5(mm2) -> None:
+    """lazy migrate — legacy 行 tags 含 "autoloop" + "persona:reviewer"."""
     # 应被反推为 iteration_result (write-on-read), typed 查询能命中
     legacy_autoloop_id = mm2.remember(
         content="Persona: reviewer, r_phys: 0.85 on GaN band gap",
@@ -388,7 +376,9 @@ def _selfcheck() -> None:
     )
     print("5. lazy migrate (legacy autoloop → iteration_result) OK")
 
-    # 场景 6: 反推规则覆盖 — _infer_memory_type_from_tags 各路径
+
+def _st_scenario6() -> None:
+    """反推规则覆盖 — _infer_memory_type_from_tags 各路径."""
     assert _infer_memory_type_from_tags(["autoloop"], "", "") == "iteration_result"
     assert _infer_memory_type_from_tags(["math_concept:X"], "", "") == "failed_direction"
     assert _infer_memory_type_from_tags(["strategy:Y"], "", "") == "failed_direction"
@@ -398,6 +388,38 @@ def _selfcheck() -> None:
     assert _infer_memory_type_from_tags([], "", "iteration") == "iteration_result"
     assert _infer_memory_type_from_tags(["legacy"], "", "fact") is None
     print("6. _infer_memory_type_from_tags rule coverage OK")
+
+
+def _selfcheck() -> None:
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    # 让 huginn.* 可导入 (跟 manager.py / cluster.py 一致做法)
+    _agent_root = Path(__file__).resolve().parents[2]
+    if str(_agent_root) not in sys.path:
+        sys.path.insert(0, str(_agent_root))
+
+    from huginn.memory.longterm import LongTermMemory
+    from huginn.memory.manager import MemoryManager
+
+    # 在临时目录建真 SQLite DB, migration v2 自动跑
+    tmpdir = tempfile.mkdtemp(prefix="huginn_typing_selfcheck_")
+    db_path = Path(tmpdir) / "memory.db"
+    ltm = LongTermMemory(db_path=str(db_path), enable_semantic=False)
+    mm = MemoryManager(longterm=ltm)
+
+    _st_scenario1(mm)
+    _st_scenario2(mm)
+
+    # 场景 3~5: 新 MemoryManager 实例 + 同 DB, 验证跨 session 持久化
+    ltm2 = LongTermMemory(db_path=str(db_path), enable_semantic=False)
+    mm2 = MemoryManager(longterm=ltm2)
+    _st_scenario3(mm2)
+    _st_scenario4(mm2)
+    _st_scenario5(mm2)
+
+    _st_scenario6()
 
     # 清理临时目录
     import shutil

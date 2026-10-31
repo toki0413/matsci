@@ -489,22 +489,31 @@ class ToolScheduler:
                     sem.release()
             self._live_tasks.pop(job.job_id, None)
             self._factories.pop(job.job_id, None)
-            now = time.time()
-            if record is not None:
-                if cancelled:
-                    record.status = "cancelled"
-                else:
-                    record.status = "failed" if error is not None else "finished"
-                record.finished_at = now
-                record.error = error
-                if result is not None:
-                    import json
+            ToolScheduler._finalize_job(self, record, error, result, cancelled)
 
-                    try:
-                        record.result_json = json.dumps(result, default=str)
-                    except (TypeError, ValueError):
-                        record.result_json = str(result)
-                self.store.upsert_job(record)
+    def _finalize_job(
+        self,
+        record: Any,
+        error: str | None,
+        result: Any,
+        cancelled: bool,
+    ) -> None:
+        now = time.time()
+        if record is not None:
+            if cancelled:
+                record.status = "cancelled"
+            else:
+                record.status = "failed" if error is not None else "finished"
+            record.finished_at = now
+            record.error = error
+            if result is not None:
+                import json
+
+                try:
+                    record.result_json = json.dumps(result, default=str)
+                except (TypeError, ValueError):
+                    record.result_json = str(result)
+            self.store.upsert_job(record)
 
     # ── recovery / observability ────────────────────────────────────────
 

@@ -28,14 +28,59 @@ class GrepToolInput(BaseModel):
     case_insensitive: bool = Field(default=False)
 
 
+def _check_path_access(base: Path, context: ToolContext | None) -> ToolResult | None:
+    """路径存在性 + workspace 逃逸保护."""
+    if not base.exists():
+        return ToolResult(data=None, success=False, error=f"Path not found: {base}")
+
+    # path traversal protection
+    if context and context.workspace:
+        workspace = Path(context.workspace).resolve()
+        try:
+            base.relative_to(workspace)
+        except ValueError:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"Access denied: {base} is outside workspace",
+            )
+    return None
+
+
+def _collect_matches(
+    files: list[Path], regex: re.Pattern, max_results: int, base: Path
+) -> list[dict]:
+    """逐文件逐行匹配, 最多收集 max_results 条."""
+    matches: list[dict] = []
+    for f in files:
+        try:
+            content = f.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        for line_no, line in enumerate(content.splitlines(), 1):
+            if regex.search(line):
+                matches.append(
+                    {
+                        "file": str(
+                            f.relative_to(base.parent) if base.is_dir() else f.name
+                        ),
+                        "line": line_no,
+                        "text": line[:200],  # truncate long lines
+                    }
+                )
+                if len(matches) >= max_results:
+                    break
+        if len(matches) >= max_results:
+            break
+    return matches
+
+
 class GrepTool(HuginnTool):
     """Search file contents with regex."""
 
     name = "grep"
     category = "core"
-    description = (
-        "Search file contents using regex. Returns matching lines with file paths and line numbers."
-    )
+    description = "Search file contents using regex. Returns matching lines with file paths and line numbers."
     input_schema = GrepToolInput
     destructive = False
     read_only = True
@@ -49,20 +94,9 @@ class GrepTool(HuginnTool):
         input_data = GrepToolInput(**args)
         base = Path(input_data.path).resolve()
 
-        if not base.exists():
-            return ToolResult(data=None, success=False, error=f"Path not found: {base}")
-
-        # path traversal protection
-        if context and context.workspace:
-            workspace = Path(context.workspace).resolve()
-            try:
-                base.relative_to(workspace)
-            except ValueError:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"Access denied: {base} is outside workspace",
-                )
+        access_err = _check_path_access(base, context)
+        if access_err is not None:
+            return access_err
 
         flags = re.IGNORECASE if input_data.case_insensitive else 0
         try:
@@ -76,25 +110,7 @@ class GrepTool(HuginnTool):
         else:
             files = [f for f in base.glob(input_data.file_glob) if f.is_file()]
 
-        matches: list[dict] = []
-        for f in files:
-            try:
-                content = f.read_text(encoding="utf-8", errors="replace")
-            except Exception:
-                continue
-            for line_no, line in enumerate(content.splitlines(), 1):
-                if regex.search(line):
-                    matches.append({
-                        "file": str(
-                            f.relative_to(base.parent) if base.is_dir() else f.name
-                        ),
-                        "line": line_no,
-                        "text": line[:200],  # truncate long lines
-                    })
-                    if len(matches) >= input_data.max_results:
-                        break
-            if len(matches) >= input_data.max_results:
-                break
+        matches = _collect_matches(files, regex, input_data.max_results, base)
 
         msg = f"Found {len(matches)} matches."
         if len(matches) >= input_data.max_results:

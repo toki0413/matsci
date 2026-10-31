@@ -158,6 +158,44 @@ class RecursiveCharacterChunker(BaseChunker):
         return chunks
 
 
+def _cif_structure_info(text: str) -> dict[str, Any]:
+    """Extract space group / lattice parameters / atom count from CIF text."""
+    # Extract metadata
+    structure_info: dict[str, Any] = {}
+    for match in re.finditer(
+        r'_symmetry_space_group_name_H-M\s+[\'"]?([^\'"\n]+)[\'"]?', text
+    ):
+        structure_info["space_group"] = match.group(1).strip()
+        break
+    for match in re.finditer(r"_cell_length_a\s+([\d.]+)", text):
+        structure_info["lattice_a"] = float(match.group(1))
+        break
+    for match in re.finditer(r"_cell_length_b\s+([\d.]+)", text):
+        structure_info["lattice_b"] = float(match.group(1))
+        break
+    for match in re.finditer(r"_cell_length_c\s+([\d.]+)", text):
+        structure_info["lattice_c"] = float(match.group(1))
+        break
+
+    # Count atoms in atom_site loop
+    atom_count = len(re.findall(r"_atom_site_fract_x", text))
+    if atom_count > 0:
+        # Count actual atom data lines after the loop
+        loop_match = re.search(
+            r"loop_.*?_atom_site_fract_x.*?\n(.*?)(?:\n\n|\nloop_|\Z)",
+            text,
+            re.DOTALL,
+        )
+        if loop_match:
+            atom_lines = [
+                _l
+                for _l in loop_match.group(1).strip().splitlines()
+                if _l.strip() and not _l.startswith("_")
+            ]
+            structure_info["atom_count"] = len(atom_lines)
+    return structure_info
+
+
 class StructureChunker(BaseChunker):
     """Chunker for crystallographic structure files (CIF, POSCAR).
 
@@ -180,39 +218,7 @@ class StructureChunker(BaseChunker):
         """Chunk a CIF file by logical sections."""
         chunks = []
 
-        # Extract metadata
-        structure_info = {}
-        for match in re.finditer(
-            r'_symmetry_space_group_name_H-M\s+[\'"]?([^\'"\n]+)[\'"]?', text
-        ):
-            structure_info["space_group"] = match.group(1).strip()
-            break
-        for match in re.finditer(r"_cell_length_a\s+([\d.]+)", text):
-            structure_info["lattice_a"] = float(match.group(1))
-            break
-        for match in re.finditer(r"_cell_length_b\s+([\d.]+)", text):
-            structure_info["lattice_b"] = float(match.group(1))
-            break
-        for match in re.finditer(r"_cell_length_c\s+([\d.]+)", text):
-            structure_info["lattice_c"] = float(match.group(1))
-            break
-
-        # Count atoms in atom_site loop
-        atom_count = len(re.findall(r"_atom_site_fract_x", text))
-        if atom_count > 0:
-            # Count actual atom data lines after the loop
-            loop_match = re.search(
-                r"loop_.*?_atom_site_fract_x.*?\n(.*?)(?:\n\n|\nloop_|\Z)",
-                text,
-                re.DOTALL,
-            )
-            if loop_match:
-                atom_lines = [
-                    _l
-                    for _l in loop_match.group(1).strip().splitlines()
-                    if _l.strip() and not _l.startswith("_")
-                ]
-                structure_info["atom_count"] = len(atom_lines)
+        structure_info = _cif_structure_info(text)
 
         # Split by data_ blocks and loop_ sections
         sections = re.split(r"(?=data_|loop_)", text)

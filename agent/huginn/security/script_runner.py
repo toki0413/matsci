@@ -6,6 +6,7 @@ import asyncio
 import io
 import sys
 import traceback
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -84,6 +85,45 @@ _BLOCKED_SUBMODULES = {
 }
 
 
+def _captured_runner(
+    code: Any,
+    sandbox_globals: dict[str, Any],
+    stdout_capture: io.StringIO,
+    stderr_capture: io.StringIO,
+) -> Callable[[], None]:
+    """构造在 exec 期间替换 sys.stdout/stderr 的运行函数 (结束必恢复)."""
+
+    def _run() -> None:
+        old_stdout, old_stderr = sys.stdout, sys.stderr
+        sys.stdout = stdout_capture
+        sys.stderr = stderr_capture
+        try:
+            exec(code, sandbox_globals)
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+
+    return _run
+
+
+def _success_result(
+    sandbox_globals: dict[str, Any],
+    stdout_capture: io.StringIO,
+    stderr_capture: io.StringIO,
+    max_output: int,
+    elapsed: float,
+) -> ScriptResult:
+    """构造成功结果 (取捕获输出与脚本内 ``result`` 变量)."""
+    result_value = sandbox_globals.get("result")
+    return ScriptResult(
+        success=True,
+        stdout=stdout_capture.getvalue()[:max_output],
+        stderr=stderr_capture.getvalue()[:max_output],
+        result_value=str(result_value) if result_value is not None else None,
+        execution_time_ms=elapsed,
+    )
+
+
 class ScriptRunner:
     """Execute Python scripts in a restricted environment."""
 
@@ -118,9 +158,7 @@ class ScriptRunner:
                 )
             # 白名单内的包也可能有危险子模块, 单独拦截
             if name in _BLOCKED_SUBMODULES:
-                raise ImportError(
-                    f"Import of '{name}' is not allowed in live scripts"
-                )
+                raise ImportError(f"Import of '{name}' is not allowed in live scripts")
             return real_import(name, *args, **kwargs)
 
         safe_builtins_dict["__import__"] = safe_import
@@ -130,6 +168,31 @@ class ScriptRunner:
             "__builtins__": safe_builtins_dict,
             "__name__": "__live_script__",
         }
+
+    @staticmethod
+    def _resolve_loop() -> asyncio.AbstractEventLoop:
+        """取当前事件循环; 无运行中循环时新建并设为当前循环."""
+        try:
+            return asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            return loop
+
+    async def _exec_in_loop(
+        self,
+        code: Any,
+        sandbox_globals: dict[str, Any],
+        stdout_capture: io.StringIO,
+        stderr_capture: io.StringIO,
+    ) -> None:
+        """在线程池执行已编译脚本, 受 ``self.timeout`` 约束."""
+        loop = ScriptRunner._resolve_loop()
+        _run = _captured_runner(code, sandbox_globals, stdout_capture, stderr_capture)
+        await asyncio.wait_for(
+            loop.run_in_executor(None, _run),
+            timeout=self.timeout,
+        )
 
     async def execute(
         self, script: str, variables: dict[str, Any] | None = None
@@ -149,43 +212,16 @@ class ScriptRunner:
         try:
             # Compile and exec with timeout
             code = compile(script, "<live_script>", "exec")
-
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
-            def _run() -> None:
-                old_stdout, old_stderr = sys.stdout, sys.stderr
-                sys.stdout = stdout_capture
-                sys.stderr = stderr_capture
-                try:
-                    exec(code, sandbox_globals)
-                finally:
-                    sys.stdout = old_stdout
-                    sys.stderr = old_stderr
-
-            await asyncio.wait_for(
-                loop.run_in_executor(None, _run),
-                timeout=self.timeout,
+            await ScriptRunner._exec_in_loop(
+                self, code, sandbox_globals, stdout_capture, stderr_capture
             )
 
-            elapsed = (time.perf_counter() - start) * 1000
-            stdout_text = stdout_capture.getvalue()[: self.max_output]
-            stderr_text = stderr_capture.getvalue()[: self.max_output]
-
-            # Check for a 'result' variable in the script
-            result_value = sandbox_globals.get("result", None)
-
-            return ScriptResult(
-                success=True,
-                stdout=stdout_text,
-                stderr=stderr_text,
-                result_value=(
-                    str(result_value) if result_value is not None else None
-                ),
-                execution_time_ms=elapsed,
+            return _success_result(
+                sandbox_globals,
+                stdout_capture,
+                stderr_capture,
+                self.max_output,
+                (time.perf_counter() - start) * 1000,
             )
 
         except TimeoutError:

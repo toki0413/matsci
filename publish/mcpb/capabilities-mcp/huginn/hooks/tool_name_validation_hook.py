@@ -65,31 +65,44 @@ class ToolNameValidationHook:
             if not mentioned:
                 return None
 
-            # 对不上的就是可疑工具名, 排个序输出稳定点
-            bad_names = sorted(n for n in mentioned if n not in valid_names)
-            if not bad_names:
-                return None
-
-            # 多个错误名合并成一条提示, 避免刷屏
-            bad_text = ", ".join(bad_names)
-            valid_text = ", ".join(sorted(valid_names))
-            guidance = (
-                f"提示: 用户消息里提到的工具 '{bad_text}' 不在可用工具列表里。"
-                f"可用工具包括: {valid_text}。"
-                f"请在回复里明确告知用户该工具不存在, 并建议最接近的正确工具名。"
-                f"不要默默调 ls 或 web_search 探索。"
+            guidance = ToolNameValidationHook._build_guidance(
+                self, mentioned, valid_names
             )
+            if guidance is None:
+                return None
 
             # 跟其他同事件钩子保持一致: 用 list 累加而不是覆盖,
             # 给先后挂上来的 PromptGuidanceHook / 别的钩子留兼容
-            existing = ctx.metadata.get("prompt_guidance")
-            if isinstance(existing, list):
-                existing.append(guidance)
-            elif isinstance(existing, str) and existing:
-                ctx.metadata["prompt_guidance"] = [existing, guidance]
-            else:
-                ctx.metadata["prompt_guidance"] = guidance
+            ToolNameValidationHook._append_guidance(ctx, guidance)
         except Exception:
             # 校验逻辑本身不该挂, 真挂了也别拖垮 agent
             logger.warning("ToolNameValidationHook raised", exc_info=True)
         return None
+
+    def _build_guidance(self, mentioned: set[str], valid_names: set[str]) -> str | None:
+        """对不上的工具名生成提示文案; 全部合法时返回 None."""
+        # 对不上的就是可疑工具名, 排个序输出稳定点
+        bad_names = sorted(n for n in mentioned if n not in valid_names)
+        if not bad_names:
+            return None
+
+        # 多个错误名合并成一条提示, 避免刷屏
+        bad_text = ", ".join(bad_names)
+        valid_text = ", ".join(sorted(valid_names))
+        return (
+            f"提示: 用户消息里提到的工具 '{bad_text}' 不在可用工具列表里。"
+            f"可用工具包括: {valid_text}。"
+            f"请在回复里明确告知用户该工具不存在, 并建议最接近的正确工具名。"
+            f"不要默默调 ls 或 web_search 探索。"
+        )
+
+    @staticmethod
+    def _append_guidance(ctx: HookContext, guidance: str) -> None:
+        """把提示并入 ``prompt_guidance``, 兼容已有 list/str."""
+        existing = ctx.metadata.get("prompt_guidance")
+        if isinstance(existing, list):
+            existing.append(guidance)
+        elif isinstance(existing, str) and existing:
+            ctx.metadata["prompt_guidance"] = [existing, guidance]
+        else:
+            ctx.metadata["prompt_guidance"] = guidance

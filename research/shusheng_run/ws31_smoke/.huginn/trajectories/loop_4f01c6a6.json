@@ -1,0 +1,151 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-10-29T19:21:57",
+  "metadata": {
+    "run_id": "loop_4f01c6a6",
+    "objective": "Compute 500 N / 0.01 m^2 in MPa and say PASS/FAIL against 250 MPa yield. Keep it to one line.",
+    "phases": [
+      "hypothesize",
+      "hypothesize",
+      "report"
+    ],
+    "total_time": 153.16717100143433
+  },
+  "spans": [
+    {
+      "name": "phase:hypothesize",
+      "span_id": "ab944fe76192",
+      "start_time": 1793272820.1415434,
+      "end_time": 1793272833.7432606,
+      "duration_ms": 13601.72,
+      "memory_start_mb": 238.3203125,
+      "memory_end_mb": 246.328125,
+      "memory_peak_mb": 246.328125,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    },
+    {
+      "name": "phase:hypothesize",
+      "span_id": "0571c2ac3ce4",
+      "start_time": 1793272894.9181364,
+      "end_time": 1793272908.0788157,
+      "duration_ms": 13160.68,
+      "memory_start_mb": 246.328125,
+      "memory_end_mb": 252.74609375,
+      "memory_peak_mb": 252.74609375,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    },
+    {
+      "name": "phase:report",
+      "span_id": "21ae8f8ff1bc",
+      "start_time": 1793272911.359288,
+      "end_time": 1793272917.9041257,
+      "duration_ms": 6544.84,
+      "memory_start_mb": 252.76953125,
+      "memory_end_mb": 252.76953125,
+      "memory_peak_mb": 252.76953125,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": [
+        {
+          "name": "control_trace",
+          "span_id": "4adb5270156f",
+          "start_time": 1793272917.9010615,
+          "end_time": 1793272917.9016564,
+          "duration_ms": 0.59,
+          "memory_start_mb": 252.76953125,
+          "memory_end_mb": 252.76953125,
+          "memory_peak_mb": 252.76953125,
+          "metadata": {
+            "name": "report_citation",
+            "iteration": 2,
+            "evidence": "untraceable=3/3",
+            "action": "annotate"
+          },
+          "children": []
+        },
+        {
+          "name": "control_trace",
+          "span_id": "4f96a8dc73d0",
+          "start_time": 1793272917.9021602,
+          "end_time": 1793272917.9022453,
+          "duration_ms": 0.09,
+          "memory_start_mb": 252.76953125,
+          "memory_end_mb": 252.76953125,
+          "memory_peak_mb": 252.76953125,
+          "metadata": {
+            "name": "report_discrimination",
+            "iteration": 2,
+            "evidence": "contrast=False values=3",
+            "action": "annotate"
+          },
+          "children": []
+        },
+        {
+          "name": "control_trace",
+          "span_id": "3c8e6f20bd06",
+          "start_time": 1793272917.9033484,
+          "end_time": 1793272917.9034195,
+          "duration_ms": 0.07,
+          "memory_start_mb": 252.76953125,
+          "memory_end_mb": 252.76953125,
+          "memory_peak_mb": 252.76953125,
+          "metadata": {
+            "name": "report_decisive",
+            "iteration": 2,
+            "evidence": "binary=False hedge=True",
+            "action": "annotate"
+          },
+          "children": []
+        },
+        {
+          "name": "control_trace",
+          "span_id": "3121b24920e9",
+          "start_time": 1793272917.9035456,
+          "end_time": 1793272917.9036047,
+          "duration_ms": 0.06,
+          "memory_start_mb": 252.76953125,
+          "memory_end_mb": 252.76953125,
+          "memory_peak_mb": 252.76953125,
+          "metadata": {
+            "name": "exec_exit_classes",
+            "iteration": 2,
+            "evidence": "none",
+            "action": "advisory_hint"
+          },
+          "children": []
+        }
+      ]
+    }
+  ],
+  "tool_calls": [],
+  "summary": {
+    "total_spans": 7,
+    "by_name": {
+      "phase:hypothesize": {
+        "count": 2,
+        "duration_ms": 26762.4,
+        "avg_memory_delta_mb": 7.213,
+        "max_memory_peak_mb": 252.746
+      },
+      "phase:report": {
+        "count": 1,
+        "duration_ms": 6544.84,
+        "avg_memory_delta_mb": 0.0,
+        "max_memory_peak_mb": 252.77
+      },
+      "control_trace": {
+        "count": 4,
+        "duration_ms": 0.81,
+        "avg_memory_delta_mb": 0.0,
+        "max_memory_peak_mb": 252.77
+      }
+    }
+  }
+}

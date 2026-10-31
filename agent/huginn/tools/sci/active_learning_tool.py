@@ -64,6 +64,29 @@ class ActiveLearningInput(BaseModel):
     seed: int | None = Field(default=None)
 
 
+def _build_recommendations(
+    ranked: list[tuple[float, float, float, dict[str, Any]]],
+    n_recommendations: int,
+) -> list[dict[str, Any]]:
+    """把排序后的 (EI, mean, std, candidate) 转成推荐行."""
+    recommendations = []
+    for ei_val, mean, std, cand in ranked[:n_recommendations]:
+        row = dict(cand)
+        row["predicted_mean"] = float(mean)
+        row["predicted_std"] = float(std)
+        row["expected_improvement"] = float(ei_val)
+        recommendations.append(row)
+    return recommendations
+
+
+def _render_tool_input(template_dict: dict[str, Any], chosen: dict[str, Any]) -> Any:
+    """把候选参数填进 tool_input_template 并解析回对象."""
+    template = json.dumps(template_dict)
+    for key, val in chosen.items():
+        template = template.replace(f"{{{key}}}", str(val))
+    return json.loads(template)
+
+
 class ActiveLearningTool(HuginnTool):
     """Recommend next experiments using GP-based active learning."""
 
@@ -117,17 +140,9 @@ class ActiveLearningTool(HuginnTool):
         context: ToolContext,
         data: list[dict[str, Any]] | None = None,
     ) -> ToolResult:
-        if data is None:
-            if not args.data_path:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="data_path is required for recommend",
-                )
-            data = self._read_table(args.data_path)
-        features = self._resolve_features(
-            data, args.feature_columns, args.target_column
-        )
+        data, features, failure = self._recommend_inputs(args, data)
+        if failure is not None:
+            return failure
 
         X_train, y_train = self._extract_xy(data, features, args.target_column)
         if len(X_train) < 2:
@@ -147,28 +162,9 @@ class ActiveLearningTool(HuginnTool):
 
         X_candidates = np.array([[float(c[f]) for f in features] for c in candidates])
 
-        gp = NumPyGP(
-            length_scale=args.length_scale,
-            sigma_f=args.sigma_f,
-            sigma_n=args.sigma_n,
-        )
-        gp.fit(X_train, y_train)
-        mu, sigma = gp.predict(X_candidates)
+        ranked = self._rank_candidates(args, X_train, y_train, X_candidates, candidates)
 
-        ei = self._expected_improvement(mu, sigma, y_train, maximize=args.maximize)
-        ranked = sorted(
-            zip(ei, mu, sigma, candidates),
-            key=lambda x: x[0],
-            reverse=True,
-        )
-
-        recommendations = []
-        for ei_val, mean, std, cand in ranked[: args.n_recommendations]:
-            row = dict(cand)
-            row["predicted_mean"] = float(mean)
-            row["predicted_std"] = float(std)
-            row["expected_improvement"] = float(ei_val)
-            recommendations.append(row)
+        recommendations = _build_recommendations(ranked, args.n_recommendations)
 
         return ToolResult(
             data={
@@ -179,12 +175,57 @@ class ActiveLearningTool(HuginnTool):
             }
         )
 
+    def _rank_candidates(
+        self,
+        args: ActiveLearningInput,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        X_candidates: np.ndarray,
+        candidates: list[dict[str, Any]],
+    ) -> list[tuple[float, float, float, dict[str, Any]]]:
+        """拟合 GP 并按 expected improvement 排序候选."""
+        gp = NumPyGP(
+            length_scale=args.length_scale,
+            sigma_f=args.sigma_f,
+            sigma_n=args.sigma_n,
+        )
+        gp.fit(X_train, y_train)
+        mu, sigma = gp.predict(X_candidates)
+
+        ei = self._expected_improvement(mu, sigma, y_train, maximize=args.maximize)
+        return sorted(
+            zip(ei, mu, sigma, candidates),
+            key=lambda x: x[0],
+            reverse=True,
+        )
+
+    def _recommend_inputs(
+        self,
+        args: ActiveLearningInput,
+        data: list[dict[str, Any]] | None,
+    ) -> tuple[list[dict[str, Any]], list[str], ToolResult | None]:
+        """加载数据并解析特征列; 失败返回 (data, [], 错误)."""
+        if data is None:
+            if not args.data_path:
+                return (
+                    [],
+                    [],
+                    ToolResult(
+                        data=None,
+                        success=False,
+                        error="data_path is required for recommend",
+                    ),
+                )
+            data = self._read_table(args.data_path)
+        features = self._resolve_features(
+            data, args.feature_columns, args.target_column
+        )
+        return data, features, None
+
     async def _simulate_loop(
         self, args: ActiveLearningInput, context: ToolContext
     ) -> ToolResult:
         """Iteratively recommend and evaluate via a registered tool."""
-        from huginn.tools.registry import ToolRegistry
-
         if not args.objective_tool:
             return ToolResult(
                 data=None,
@@ -197,49 +238,20 @@ class ActiveLearningTool(HuginnTool):
 
         history: list[dict[str, Any]] = []
         for iteration in range(args.n_iterations):
-            if len(data) >= 2:
-                rec_result = self._recommend(args, context, data=data)
-                if not rec_result.success:
-                    return rec_result
-                recs = rec_result.data.get("recommendations", [])
-            else:
-                recs = self._load_or_generate_candidates(args, features)[:1]
-
+            recs, failure = self._loop_candidates(args, context, data, features)
+            if failure is not None:
+                return failure
             if not recs:
                 break
 
             chosen = recs[0]
-            template = json.dumps(args.tool_input_template)
-            for key, val in chosen.items():
-                template = template.replace(f"{{{key}}}", str(val))
-            tool_input = json.loads(template)
+            tool_input = _render_tool_input(args.tool_input_template, chosen)
 
-            objective_tool = ToolRegistry.get(args.objective_tool)
-            if objective_tool is None:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"Objective tool '{args.objective_tool}' not found",
-                )
-
-            if hasattr(objective_tool, "call"):
-                if inspect.iscoroutinefunction(objective_tool.call):
-                    out = await objective_tool.call(tool_input, context)
-                else:
-                    out = objective_tool.call(tool_input, context)
-            else:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="Objective tool has no callable 'call' method",
-                )
-
-            if not out.success:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"Objective evaluation failed at iteration {iteration}: {out.error}",
-                )
+            out, failure = await self._evaluate_tool(
+                args.objective_tool, tool_input, context, iteration
+            )
+            if failure is not None:
+                return failure
 
             value = self._get_path(out.data, args.objective_path)
             row = {f: chosen[f] for f in features}
@@ -254,6 +266,59 @@ class ActiveLearningTool(HuginnTool):
             )
 
         return ToolResult(data={"history": history, "final_dataset": data})
+
+    def _loop_candidates(
+        self,
+        args: ActiveLearningInput,
+        context: ToolContext,
+        data: list[dict[str, Any]],
+        features: list[str],
+    ) -> tuple[list[dict[str, Any]], ToolResult | None]:
+        """为当前迭代选候选; 推荐失败时返回 (空, 错误)."""
+        if len(data) >= 2:
+            rec_result = self._recommend(args, context, data=data)
+            if not rec_result.success:
+                return [], rec_result
+            return rec_result.data.get("recommendations", []), None
+        return self._load_or_generate_candidates(args, features)[:1], None
+
+    async def _evaluate_tool(
+        self,
+        tool_name: str,
+        tool_input: Any,
+        context: ToolContext,
+        iteration: int,
+    ) -> tuple[Any, ToolResult | None]:
+        """调用 objective tool; 失败返回 (None, 错误)."""
+        from huginn.tools.registry import ToolRegistry
+
+        objective_tool = ToolRegistry.get(tool_name)
+        if objective_tool is None:
+            return None, ToolResult(
+                data=None,
+                success=False,
+                error=f"Objective tool '{tool_name}' not found",
+            )
+
+        if hasattr(objective_tool, "call"):
+            if inspect.iscoroutinefunction(objective_tool.call):
+                out = await objective_tool.call(tool_input, context)
+            else:
+                out = objective_tool.call(tool_input, context)
+        else:
+            return None, ToolResult(
+                data=None,
+                success=False,
+                error="Objective tool has no callable 'call' method",
+            )
+
+        if not out.success:
+            return None, ToolResult(
+                data=None,
+                success=False,
+                error=f"Objective evaluation failed at iteration {iteration}: {out.error}",
+            )
+        return out, None
 
     def _read_table(self, path: str) -> list[dict[str, Any]]:
         p = Path(path)

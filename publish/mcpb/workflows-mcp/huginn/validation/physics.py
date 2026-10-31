@@ -21,6 +21,68 @@ class ValidationCheck:
     score: float | None = None
 
 
+def _charge_not_checked() -> ValidationCheck:
+    return ValidationCheck(
+        "charge_conservation",
+        True,
+        None,
+        "charge conserved",
+        0,
+        "Charge not available; conservation not checked",
+    )
+
+
+def _charge_exceeds_electrons(charge: Any, electrons: Any) -> bool:
+    # 物理界: |net charge| <= total electrons
+    return electrons is not None and abs(float(charge)) > float(electrons) + 1e-9
+
+
+def _charge_unphysical(charge: Any, electrons: Any) -> ValidationCheck:
+    return ValidationCheck(
+        name="charge_conservation",
+        passed=False,
+        value=(charge, electrons),
+        expected="|charge| <= total_electrons",
+        tolerance=0,
+        message=(
+            f"|net charge| {abs(float(charge))} exceeds total electrons "
+            f"{float(electrons)} — unphysical"
+        ),
+    )
+
+
+def _charge_conservation_check(
+    charge: Any, electrons: Any, nuclear: Any, tol: float
+) -> ValidationCheck:
+    lhs = float(charge) + float(electrons)
+    err = abs(lhs - float(nuclear))
+    scale = max(abs(float(nuclear)), 1e-12)
+    passed = (err / scale) <= tol
+    return ValidationCheck(
+        name="charge_conservation",
+        passed=passed,
+        value=(charge, electrons, nuclear),
+        expected=f"charge + electrons = nuclear_charge (±{tol})",
+        tolerance=tol,
+        message=(
+            f"charge+electrons={lhs:.3f} != nuclear_charge={float(nuclear):.3f}"
+            if not passed
+            else "Charge/electron conservation OK"
+        ),
+    )
+
+
+def _charge_partial(charge: Any, electrons: Any, nuclear: Any) -> ValidationCheck:
+    return ValidationCheck(
+        "charge_conservation",
+        True,
+        (charge, electrons, nuclear),
+        "charge conserved",
+        0,
+        "Partial charge data; treated as OK",
+    )
+
+
 class PhysicsValidator:
     """Validates physical reasonableness of calculation results."""
 
@@ -181,49 +243,18 @@ class PhysicsValidator:
         electrons = result.get("total_electrons")
         nuclear = result.get("nuclear_charge")
         if charge is None:
-            return ValidationCheck(
-                "charge_conservation", True, None, "charge conserved", 0,
-                "Charge not available; conservation not checked",
-            )
+            return _charge_not_checked()
 
         # 物理界: |net charge| <= total electrons
-        if electrons is not None and abs(float(charge)) > float(electrons) + 1e-9:
-            return ValidationCheck(
-                name="charge_conservation",
-                passed=False,
-                value=(charge, electrons),
-                expected="|charge| <= total_electrons",
-                tolerance=0,
-                message=(
-                    f"|net charge| {abs(float(charge))} exceeds total electrons "
-                    f"{float(electrons)} — unphysical"
-                ),
-            )
+        if _charge_exceeds_electrons(charge, electrons):
+            return _charge_unphysical(charge, electrons)
 
         # 守恒恒等: charge + electrons == nuclear_charge (净电荷 = 核电荷 - 电子数)
         tol = float(getattr(self, "charge_conservation_tolerance", 0.01))
         if electrons is not None and nuclear is not None:
-            lhs = float(charge) + float(electrons)
-            err = abs(lhs - float(nuclear))
-            scale = max(abs(float(nuclear)), 1e-12)
-            passed = (err / scale) <= tol
-            return ValidationCheck(
-                name="charge_conservation",
-                passed=passed,
-                value=(charge, electrons, nuclear),
-                expected=f"charge + electrons = nuclear_charge (±{tol})",
-                tolerance=tol,
-                message=(
-                    f"charge+electrons={lhs:.3f} != nuclear_charge={float(nuclear):.3f}"
-                    if not passed
-                    else "Charge/electron conservation OK"
-                ),
-            )
+            return _charge_conservation_check(charge, electrons, nuclear, tol)
 
-        return ValidationCheck(
-            "charge_conservation", True, (charge, electrons, nuclear),
-            "charge conserved", 0, "Partial charge data; treated as OK",
-        )
+        return _charge_partial(charge, electrons, nuclear)
 
     def _check_magnetic_moments(self, result: dict) -> ValidationCheck:
         moments = result.get("magnetic_moments", {})

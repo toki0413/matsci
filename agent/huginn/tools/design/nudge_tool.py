@@ -51,8 +51,7 @@ class NudgeInput(BaseModel):
         ),
     )
     checkpoint_state: dict[str, Any] | None = Field(
-        default=None,
-        description="任务关键状态(输入参数/中间产物路径), 用于 restore"
+        default=None, description="任务关键状态(输入参数/中间产物路径), 用于 restore"
     )
 
     # nudge / list_params / restore / snapshot 时必填
@@ -144,9 +143,7 @@ class _NudgeStore:
         task = self._tasks.get(task_id)
         if not task:
             return None
-        task["history"].append(
-            {"ts": time.time(), "action": "restore"}
-        )
+        task["history"].append({"ts": time.time(), "action": "restore"})
         return {
             "task_id": task_id,
             "task_name": task["task_name"],
@@ -207,11 +204,14 @@ class NudgeTool(HuginnTool):
                         result=False,
                         message="每个 param 必须有 name 字段",
                     )
-        if args.action in ("nudge", "list_params", "restore", "snapshot") and not args.task_id:
-                return ValidationResult(
-                    result=False,
-                    message=f"{args.action} 需要 task_id",
-                )
+        if (
+            args.action in ("nudge", "list_params", "restore", "snapshot")
+            and not args.task_id
+        ):
+            return ValidationResult(
+                result=False,
+                message=f"{args.action} 需要 task_id",
+            )
         if args.action == "nudge" and (not args.param_name or args.new_value is None):
             return ValidationResult(
                 result=False,
@@ -227,95 +227,22 @@ class NudgeTool(HuginnTool):
 
         try:
             if input_data.action == "expose_params":
-                task_id = store.register(
-                    input_data.task_name or "untitled",
-                    input_data.params or [],
-                    input_data.checkpoint_state,
-                )
-                return ToolResult(
-                    data={
-                        "task_id": task_id,
-                        "task_name": input_data.task_name,
-                        "params": input_data.params,
-                        "message": (
-                            "已暴露可调参数. 用户可调用 nudge_tool action=nudge "
-                            f"task_id={task_id} param_name=<name> new_value=<value> "
-                            "微调参数, 系统会返回 checkpoint_state 供你恢复重跑."
-                        ),
-                    },
-                    success=True,
-                )
+                return NudgeTool._expose_params_result(self, input_data, store)
 
             if input_data.action == "nudge":
-                result = store.nudge(
-                    input_data.task_id or "",
-                    input_data.param_name or "",
-                    input_data.new_value,
-                )
-                if not result:
-                    return ToolResult(
-                        data=None,
-                        success=False,
-                        error=(
-                            f"task_id={input_data.task_id} 或 "
-                            f"param_name={input_data.param_name} 不存在"
-                        ),
-                    )
-                result["message"] = (
-                    f"参数 {input_data.param_name} 已从 {result['old_value']} "
-                    f"改为 {result['new_value']}. 请基于 checkpoint_state 恢复任务,"
-                    " 用新参数重新执行相关步骤, 其余保持不变."
-                )
-                return ToolResult(data=result, success=True)
+                return NudgeTool._nudge_result(self, input_data, store)
 
             if input_data.action == "list_params":
-                params = store.list_params(input_data.task_id or "")
-                if params is None:
-                    return ToolResult(
-                        data=None,
-                        success=False,
-                        error=f"task_id={input_data.task_id} 不存在",
-                    )
-                return ToolResult(data={"params": params}, success=True)
+                return NudgeTool._list_params_result(self, input_data, store)
 
             if input_data.action == "list_tasks":
-                return ToolResult(
-                    data={"tasks": store.list_tasks()}, success=True
-                )
+                return ToolResult(data={"tasks": store.list_tasks()}, success=True)
 
             if input_data.action == "restore":
-                result = store.restore(input_data.task_id or "")
-                if not result:
-                    return ToolResult(
-                        data=None,
-                        success=False,
-                        error=f"task_id={input_data.task_id} 不存在",
-                    )
-                result["message"] = (
-                    "已恢复到 checkpoint. 请基于 checkpoint_state 和 "
-                    "current_params 重新执行任务."
-                )
-                return ToolResult(data=result, success=True)
+                return NudgeTool._restore_result(self, input_data, store)
 
             if input_data.action == "snapshot":
-                # snapshot 需要新的 state, 走 expose_params 时存的 state 不变.
-                # 这里允许 agent 在执行中主动存档.
-                ok = store.snapshot(
-                    input_data.task_id or "",
-                    # snapshot 没有专门字段, 用 metadata 传递
-                    # 这里简化: snapshot 只标记 history, state 不变
-                    {},
-                )
-                if not ok:
-                    return ToolResult(
-                        data=None,
-                        success=False,
-                        error=f"task_id={input_data.task_id} 不存在",
-                    )
-                return ToolResult(
-                    data={"task_id": input_data.task_id, "snapshot": "ok"},
-                    success=True,
-                )
+                return NudgeTool._snapshot_result(self, input_data, store)
 
             return ToolResult(
                 data=None,
@@ -326,3 +253,95 @@ class NudgeTool(HuginnTool):
         except Exception as e:
             logger.warning("nudge_tool failed: %s", e, exc_info=True)
             return ToolResult(data=None, success=False, error=str(e))
+
+    def _expose_params_result(
+        self, input_data: NudgeInput, store: _NudgeStore
+    ) -> ToolResult:
+        task_id = store.register(
+            input_data.task_name or "untitled",
+            input_data.params or [],
+            input_data.checkpoint_state,
+        )
+        return ToolResult(
+            data={
+                "task_id": task_id,
+                "task_name": input_data.task_name,
+                "params": input_data.params,
+                "message": (
+                    "已暴露可调参数. 用户可调用 nudge_tool action=nudge "
+                    f"task_id={task_id} param_name=<name> new_value=<value> "
+                    "微调参数, 系统会返回 checkpoint_state 供你恢复重跑."
+                ),
+            },
+            success=True,
+        )
+
+    def _nudge_result(self, input_data: NudgeInput, store: _NudgeStore) -> ToolResult:
+        result = store.nudge(
+            input_data.task_id or "",
+            input_data.param_name or "",
+            input_data.new_value,
+        )
+        if not result:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=(
+                    f"task_id={input_data.task_id} 或 "
+                    f"param_name={input_data.param_name} 不存在"
+                ),
+            )
+        result["message"] = (
+            f"参数 {input_data.param_name} 已从 {result['old_value']} "
+            f"改为 {result['new_value']}. 请基于 checkpoint_state 恢复任务,"
+            " 用新参数重新执行相关步骤, 其余保持不变."
+        )
+        return ToolResult(data=result, success=True)
+
+    def _list_params_result(
+        self, input_data: NudgeInput, store: _NudgeStore
+    ) -> ToolResult:
+        params = store.list_params(input_data.task_id or "")
+        if params is None:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"task_id={input_data.task_id} 不存在",
+            )
+        return ToolResult(data={"params": params}, success=True)
+
+    def _restore_result(self, input_data: NudgeInput, store: _NudgeStore) -> ToolResult:
+        result = store.restore(input_data.task_id or "")
+        if not result:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"task_id={input_data.task_id} 不存在",
+            )
+        result["message"] = (
+            "已恢复到 checkpoint. 请基于 checkpoint_state 和 "
+            "current_params 重新执行任务."
+        )
+        return ToolResult(data=result, success=True)
+
+    def _snapshot_result(
+        self, input_data: NudgeInput, store: _NudgeStore
+    ) -> ToolResult:
+        # snapshot 需要新的 state, 走 expose_params 时存的 state 不变.
+        # 这里允许 agent 在执行中主动存档.
+        ok = store.snapshot(
+            input_data.task_id or "",
+            # snapshot 没有专门字段, 用 metadata 传递
+            # 这里简化: snapshot 只标记 history, state 不变
+            {},
+        )
+        if not ok:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"task_id={input_data.task_id} 不存在",
+            )
+        return ToolResult(
+            data={"task_id": input_data.task_id, "snapshot": "ok"},
+            success=True,
+        )

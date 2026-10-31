@@ -13,6 +13,8 @@ import re
 from collections.abc import Iterator
 from typing import Any
 
+from huginn.utils.json_extract import extract_json
+
 
 class TextHandler:
     """字符串 wrapper, 提供 regex / clean / json 链式操作.
@@ -124,22 +126,23 @@ class TextHandler:
             return bool(re.search(pattern, self._text, flags))
         return bool(pattern.search(self._text))
 
+    def _json_from_brackets(self) -> Any | None:
+        """从文本里提取一个 JSON 容器 (先对象后数组), 找不到返回 None."""
+        for opener in ("{", "["):
+            value = extract_json(self._text, prefer="first", openers=(opener,))
+            if value is not None:
+                return value
+        return None
+
     def json(self) -> Any:
         """解析 JSON, 失败抛 ValueError."""
         try:
             return json.loads(self._text)
         except json.JSONDecodeError as e:
             # 尝试从 { 或 [ 开始截取
-            for start_char in ("{", "["):
-                start = self._text.find(start_char)
-                if start != -1:
-                    end_char = "}" if start_char == "{" else "]"
-                    end = self._text.rfind(end_char)
-                    if end > start:
-                        try:
-                            return json.loads(self._text[start : end + 1])
-                        except json.JSONDecodeError:
-                            continue
+            extracted = self._json_from_brackets()
+            if extracted is not None:
+                return extracted
             raise ValueError(f"Invalid JSON: {e}") from e
 
     def truncate(self, max_len: int, suffix: str = "...") -> TextHandler:

@@ -9,6 +9,7 @@
 
 ponytail: 不用 pytest fixture, 直接 mkdtemp + assert, 一个文件搞定.
 """
+
 from __future__ import annotations
 
 import shutil
@@ -143,9 +144,7 @@ def test_pattern_generalization() -> None:
 
     e1 = "Error: File '/tmp/missing.cif' not found"
     e2 = "Error: File '/data/other.csv' not found"
-    assert _generalize_error(e1) == _generalize_error(e2), (
-        "不同路径应泛化到同一模式"
-    )
+    assert _generalize_error(e1) == _generalize_error(e2), "不同路径应泛化到同一模式"
 
     # 端到端: 两次不同路径的失败只产出 1 条规则, 第三次不同路径也能命中
     logger, tmp = _fresh_logger()
@@ -162,7 +161,8 @@ def test_pattern_generalization() -> None:
         assert len(rules) == 1, f"3 条不同路径应只产 1 条规则, got {len(rules)}"
         # 第四个新路径也该命中
         fix = engine.apply_heuristic_fix(
-            "read_file", {"file_path": "/new/x.pkl"},
+            "read_file",
+            {"file_path": "/new/x.pkl"},
             "Error: File '/new/x.pkl' not found",
         )
         assert fix is not None, "新路径应命中泛化后的规则"
@@ -173,16 +173,25 @@ def test_pattern_generalization() -> None:
 def test_principle_quality_gate() -> None:
     """质量门槛: 拒同义反复, 拒超长噪声, 放行合理原则."""
     # 同义反复 — 命中 _BAD_PATTERNS
-    assert _validate_principle("avoid tool failure: Tool 'ls' encountered an issue.") is False
+    assert (
+        _validate_principle("avoid tool failure: Tool 'ls' encountered an issue.")
+        is False
+    )
     # 超长 — 超过 500 字符上限
     assert _validate_principle("x" * 600) is False
     # 合理原则
-    assert _validate_principle(
-        "verify file existence before read_file when path comes from user input"
-    ) is True
-    assert _validate_principle(
-        "check convergence before proceeding to next calculation step"
-    ) is True
+    assert (
+        _validate_principle(
+            "verify file existence before read_file when path comes from user input"
+        )
+        is True
+    )
+    assert (
+        _validate_principle(
+            "check convergence before proceeding to next calculation step"
+        )
+        is True
+    )
 
 
 def test_usage_count_persistence() -> None:
@@ -203,7 +212,8 @@ def test_usage_count_persistence() -> None:
         engine.evolve_from_failures()
         # 命中一次, usage_count 应该 1
         fix = engine.apply_heuristic_fix(
-            "read_file", {"file_path": "/tmp/x.cif"},
+            "read_file",
+            {"file_path": "/tmp/x.cif"},
             "File '/tmp/x.cif' not found",
         )
         assert fix is not None, "规则应命中"
@@ -235,8 +245,8 @@ def test_kwargs_generalization() -> None:
     )
 
     # bash_tool: 不同 command 值应泛化到同一模式
-    e3 = 'Error invoking tool \'bash_tool\' with kwargs {\'command\': \'["ls", "-la"]\'} with error:\n command: Input should be a valid list'
-    e4 = 'Error invoking tool \'bash_tool\' with kwargs {\'command\': \'["pwd"]\'} with error:\n command: Input should be a valid list'
+    e3 = "Error invoking tool 'bash_tool' with kwargs {'command': '[\"ls\", \"-la\"]'} with error:\n command: Input should be a valid list"
+    e4 = "Error invoking tool 'bash_tool' with kwargs {'command': '[\"pwd\"]'} with error:\n command: Input should be a valid list"
     assert _generalize_error(e3) == _generalize_error(e4), (
         f"不同 command 应泛化到同一模式\n  e3={_generalize_error(e3)}\n  e4={_generalize_error(e4)}"
     )
@@ -258,61 +268,82 @@ def test_kwargs_generalization() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _make_meta_skill(name: str) -> None:
+    from huginn.skills.base import SkillDefinition, SkillStep
+    from huginn.skills.registry import SkillRegistry
+
+    skill = SkillDefinition(
+        name=name,
+        description="meta test skill",
+        category="distilled",
+        steps=[
+            SkillStep(
+                name="s1",
+                tool="read_file",
+                input_mapping={},
+                output_key="o",
+                on_failure="skip",
+            )
+        ],
+        required_tools=["read_file"],
+        tags=["test"],
+        metadata={"evolution": {"usage_count": 0, "success_count": 0}},
+    )
+    SkillRegistry.register(skill)
+
+
+def _seed_meta_skill_stats() -> None:
+    """用 record_invocation 的真实现累积统计 (闭环数据输入)."""
+    from huginn.skills.registry import SkillRegistry
+
+    _make_meta_skill("meta_promote_candidate")
+    for _ in range(5):
+        SkillRegistry.record_invocation("meta_promote_candidate", True)
+
+    _make_meta_skill("meta_flag_failure_candidate")
+    SkillRegistry.record_invocation("meta_flag_failure_candidate", True)
+    for _ in range(2):
+        SkillRegistry.record_invocation("meta_flag_failure_candidate", False)
+
+    _make_meta_skill("meta_untested_candidate")  # 从未 record_invocation → usage=0
+
+
+def _assert_meta_report(report: dict) -> None:
+    from huginn.skills.registry import SkillRegistry
+
+    promote_names = {r["name"] for r in report["promote_to_primitive"]}
+    flag_names = {r["name"] for r in report["flag_high_failure"]}
+    assert "meta_promote_candidate" in promote_names, (
+        f"5 次调用全成功应 promote, got promote={promote_names}"
+    )
+    assert "meta_flag_failure_candidate" in flag_names, (
+        f"3 次调用 2 失败应 flag_failure, got flag={flag_names}"
+    )
+    assert "meta_untested_candidate" in report["untested"]
+
+    # 状态已回流到 metadata (非破坏性标记)
+    assert (
+        SkillRegistry.get("meta_promote_candidate").metadata["evolution"]["meta_status"]
+        == "promote"
+    )
+
+
 def test_meta_skill_rules_feedback() -> None:
     """元技能规则反哺: record_invocation 统计 → promote / flag_failure / untested.
 
     复用高+成功率高 → promote; 调用够多但成功率低 → flag_failure;
     从未被调 → untested (信息性, 不删). 并用 record_invocation 走真数据路径.
     """
-    from huginn.skills.base import SkillDefinition, SkillStep
     from huginn.skills.registry import SkillRegistry
 
-    def _mk(name: str) -> None:
-        skill = SkillDefinition(
-            name=name,
-            description="meta test skill",
-            category="distilled",
-            steps=[SkillStep(name="s1", tool="read_file", input_mapping={},
-                             output_key="o", on_failure="skip")],
-            required_tools=["read_file"],
-            tags=["test"],
-            metadata={"evolution": {"usage_count": 0, "success_count": 0}},
-        )
-        SkillRegistry.register(skill)
-
-    # 用 record_invocation 的真实现累积统计 (闭环数据输入)
-    _mk("meta_promote_candidate")
-    for _ in range(5):
-        SkillRegistry.record_invocation("meta_promote_candidate", True)
-
-    _mk("meta_flag_failure_candidate")
-    SkillRegistry.record_invocation("meta_flag_failure_candidate", True)
-    for _ in range(2):
-        SkillRegistry.record_invocation("meta_flag_failure_candidate", False)
-
-    _mk("meta_untested_candidate")  # 从未 record_invocation → usage=0
+    _seed_meta_skill_stats()
 
     try:
         logger, tmp = _fresh_logger()
         engine = EvolutionEngine(logger=logger)
         report = engine.evaluate_meta_skill_rules()
 
-        promote_names = {r["name"] for r in report["promote_to_primitive"]}
-        flag_names = {r["name"] for r in report["flag_high_failure"]}
-        assert "meta_promote_candidate" in promote_names, (
-            f"5 次调用全成功应 promote, got promote={promote_names}"
-        )
-        assert "meta_flag_failure_candidate" in flag_names, (
-            f"3 次调用 2 失败应 flag_failure, got flag={flag_names}"
-        )
-        assert "meta_untested_candidate" in report["untested"]
-
-        # 状态已回流到 metadata (非破坏性标记)
-        assert (
-            SkillRegistry.get("meta_promote_candidate")
-            .metadata["evolution"]["meta_status"]
-            == "promote"
-        )
+        _assert_meta_report(report)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
         for name in (

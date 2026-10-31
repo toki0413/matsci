@@ -25,6 +25,7 @@ import os
 import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -182,13 +183,17 @@ def _get_trust(session_id: str) -> float:
     return _trust_scores.get(session_id, 0.5)
 
 
-def _record_approval(session_id: str, action: str, risk: str, code_preview: str = "") -> float:
+def _record_approval(
+    session_id: str, action: str, risk: str, code_preview: str = ""
+) -> float:
     """记录一次 approval 决策, 更新 trust_score, 返回新值."""
     delta = _TRUST_DELTA.get(action, 0.0)
     new_score = max(0.0, min(1.0, _get_trust(session_id) + delta))
     _trust_scores[session_id] = new_score
     hist = _approval_history.setdefault(session_id, [])
-    hist.append({"action": action, "risk": risk, "ts": time.time(), "code": code_preview[:200]})
+    hist.append(
+        {"action": action, "risk": risk, "ts": time.time(), "code": code_preview[:200]}
+    )
     if len(hist) > 50:
         del hist[: len(hist) - 50]
     return new_score
@@ -321,7 +326,9 @@ def _tool_signature(name: str, tool: Any) -> str:
 
 
 def _build_system_prompt(tools: dict[str, Any]) -> str:
-    sigs = "\n".join(f"- {name}: {_tool_signature(name, t)}" for name, t in tools.items())
+    sigs = "\n".join(
+        f"- {name}: {_tool_signature(name, t)}" for name, t in tools.items()
+    )
     prompt = f"""You are Huginn, a research agent running in CodeAct mode.
 
 In this mode you express every action as a Python code block. The block is
@@ -341,34 +348,111 @@ Rules:
 Remember: one code block per turn, then stop and wait for the execution result."""
     # AtomWorld benchmark functions are injected when HUGINN_USE_ATOMWORLD=1.
     # Surface them in the prompt so the agent knows they exist without dir().
-    if FeatureFlags.shared().is_enabled("use_atomworld"):
-        prompt += (
-            "\n\nAtomWorld benchmark tools (plain Python functions in this "
-            "namespace): atomworld_evaluate(target_cif, generated_output), "
-            "atomworld_apply_action(input_cif, action_name, **params), "
-            "atomworld_list_actions(). You can also `from atomworld import "
-            "evaluate` for the raw upstream API."
-        )
+    prompt += _atomworld_prompt_suffix()
     # Structure Cognitive Map — explicit 3D coords + adjacency + SE(3) equivariant
     # queries, opt-in via HUGINN_USE_COGNITIVE_MAP=1. Returns map_id handles so
     # the agent doesn't dump large structures into the conversation directly.
-    if FeatureFlags.shared().is_enabled("use_cognitive_map"):
-        prompt += (
-            "\n\nStructure Cognitive Map tools (3D spatial reasoning, plain "
-            "Python functions): cognitive_map_from_cif(cif_str) -> map_id, "
-            "cognitive_map_query(map_id, query_type, **params) -> dict "
-            "(query_type in distance/angle/neighbors/subgraph/after_rotation/"
-            "after_translation), cognitive_map_transform(map_id, op, **params) "
-            "-> new_map_id (op in rotate/translate/supercell/remove_atom/"
-            "add_atom/swap_atoms), cognitive_map_to_text(map_id, max_atoms=50) "
-            "-> str. SE(3) equivariant: rotations preserve distances/angles. "
-            "cognitive_map_se3_act(map_id, euler_angles=[rx,ry,rz], "
-            "translation=[tx,ty,tz], order='XYZ', degrees=True) -> dict "
-            "{text, coords, species, n_atoms} applies SE(3) group action "
-            "simultaneously to text <point3d> and 3D coords (semidirect "
-            "product (M×V)⋊SE(3) engineering entry)."
-        )
+    prompt += _cognitive_map_prompt_suffix()
     return prompt
+
+
+def _atomworld_prompt_suffix() -> str:
+    if not FeatureFlags.shared().is_enabled("use_atomworld"):
+        return ""
+    return (
+        "\n\nAtomWorld benchmark tools (plain Python functions in this "
+        "namespace): atomworld_evaluate(target_cif, generated_output), "
+        "atomworld_apply_action(input_cif, action_name, **params), "
+        "atomworld_list_actions(). You can also `from atomworld import "
+        "evaluate` for the raw upstream API."
+    )
+
+
+def _cognitive_map_prompt_suffix() -> str:
+    if not FeatureFlags.shared().is_enabled("use_cognitive_map"):
+        return ""
+    return (
+        "\n\nStructure Cognitive Map tools (3D spatial reasoning, plain "
+        "Python functions): cognitive_map_from_cif(cif_str) -> map_id, "
+        "cognitive_map_query(map_id, query_type, **params) -> dict "
+        "(query_type in distance/angle/neighbors/subgraph/after_rotation/"
+        "after_translation), cognitive_map_transform(map_id, op, **params) "
+        "-> new_map_id (op in rotate/translate/supercell/remove_atom/"
+        "add_atom/swap_atoms), cognitive_map_to_text(map_id, max_atoms=50) "
+        "-> str. SE(3) equivariant: rotations preserve distances/angles. "
+        "cognitive_map_se3_act(map_id, euler_angles=[rx,ry,rz], "
+        "translation=[tx,ty,tz], order='XYZ', degrees=True) -> dict "
+        "{text, coords, species, n_atoms} applies SE(3) group action "
+        "simultaneously to text <point3d> and 3D coords (semidirect "
+        "product (M×V)⋊SE(3) engineering entry)."
+    )
+
+
+def _install_standard_modules(namespace: dict[str, Any]) -> None:
+    """Optional scientific stack — only if the user has them installed."""
+    for mod_name in ("math", "statistics", "numpy", "pandas", "sympy"):
+        with contextlib.suppress(ImportError):
+            namespace[mod_name] = __import__(mod_name)
+
+
+def _install_atomworld(namespace: dict[str, Any]) -> None:
+    """AtomWorld benchmark — opt-in via HUGINN_USE_ATOMWORLD=1 (mirrors
+    BranchIncubator gating). atomworld_tool already no-ops when the
+    atomworld package isn't installed, so we just log and skip."""
+    if FeatureFlags.shared().is_enabled("use_atomworld"):
+        try:
+            from huginn.tools import atomworld_tool as _aw
+
+            if _aw.is_available():
+                namespace["atomworld_evaluate"] = _aw.evaluate
+                namespace["atomworld_apply_action"] = _aw.apply_action
+                namespace["atomworld_list_actions"] = _aw.list_actions
+            else:
+                logger.warning(
+                    "atomworld_tool: atomworld package not installed, "
+                    "skipping CodeAct registration"
+                )
+        except ImportError:
+            logger.warning(
+                "atomworld_tool: module import failed, skipping CodeAct registration"
+            )
+
+
+def _install_cognitive_map(namespace: dict[str, Any]) -> None:
+    """Structure Cognitive Map — opt-in via HUGINN_USE_COGNITIVE_MAP=1.
+    SE(3) equivariant 3D spatial queries for rotation-skill recovery."""
+    if FeatureFlags.shared().is_enabled("use_cognitive_map"):
+        try:
+            from huginn.tools import structure_cognitive_map_tool as _cm
+
+            if _cm.is_available():
+                namespace["cognitive_map_from_cif"] = _cm.cognitive_map_from_cif
+                namespace["cognitive_map_query"] = _cm.cognitive_map_query
+                namespace["cognitive_map_transform"] = _cm.cognitive_map_transform
+                namespace["cognitive_map_to_text"] = _cm.cognitive_map_to_text
+                namespace["cognitive_map_se3_act"] = _cm.cognitive_map_se3_act
+            else:
+                logger.warning(
+                    "structure_cognitive_map_tool: pymatgen/scipy not installed, "
+                    "skipping CodeAct registration"
+                )
+        except ImportError:
+            logger.warning(
+                "structure_cognitive_map_tool: module import failed, "
+                "skipping CodeAct registration"
+            )
+
+
+def _install_tool_wrappers(
+    namespace: dict[str, Any], tools: dict[str, Any], context: ToolContext
+) -> None:
+    """Tool wrappers — sync facade over async tool.call via run_async bridge."""
+    for name, tool in tools.items():
+        if name in _BLOCKED_TOOLS:
+            continue
+        if not tool.active or not tool.is_available():
+            continue
+        namespace[name] = _make_tool_wrapper(tool, context, name)
 
 
 def _build_namespace(
@@ -387,60 +471,10 @@ def _build_namespace(
         "json": json,
     }
 
-    # Optional scientific stack — only if the user has them installed.
-    for mod_name in ("math", "statistics", "numpy", "pandas", "sympy"):
-        with contextlib.suppress(ImportError):
-            namespace[mod_name] = __import__(mod_name)
-
-    # AtomWorld benchmark — opt-in via HUGINN_USE_ATOMWORLD=1 (mirrors
-    # BranchIncubator gating). atomworld_tool already no-ops when the
-    # atomworld package isn't installed, so we just log and skip.
-    if FeatureFlags.shared().is_enabled("use_atomworld"):
-        try:
-            from huginn.tools import atomworld_tool as _aw
-            if _aw.is_available():
-                namespace["atomworld_evaluate"] = _aw.evaluate
-                namespace["atomworld_apply_action"] = _aw.apply_action
-                namespace["atomworld_list_actions"] = _aw.list_actions
-            else:
-                logger.warning(
-                    "atomworld_tool: atomworld package not installed, "
-                    "skipping CodeAct registration"
-                )
-        except ImportError:
-            logger.warning(
-                "atomworld_tool: module import failed, skipping CodeAct registration"
-            )
-
-    # Structure Cognitive Map — opt-in via HUGINN_USE_COGNITIVE_MAP=1.
-    # SE(3) equivariant 3D spatial queries for rotation-skill recovery.
-    if FeatureFlags.shared().is_enabled("use_cognitive_map"):
-        try:
-            from huginn.tools import structure_cognitive_map_tool as _cm
-            if _cm.is_available():
-                namespace["cognitive_map_from_cif"] = _cm.cognitive_map_from_cif
-                namespace["cognitive_map_query"] = _cm.cognitive_map_query
-                namespace["cognitive_map_transform"] = _cm.cognitive_map_transform
-                namespace["cognitive_map_to_text"] = _cm.cognitive_map_to_text
-                namespace["cognitive_map_se3_act"] = _cm.cognitive_map_se3_act
-            else:
-                logger.warning(
-                    "structure_cognitive_map_tool: pymatgen/scipy not installed, "
-                    "skipping CodeAct registration"
-                )
-        except ImportError:
-            logger.warning(
-                "structure_cognitive_map_tool: module import failed, "
-                "skipping CodeAct registration"
-            )
-
-    # Tool wrappers — sync facade over async tool.call via run_async bridge.
-    for name, tool in tools.items():
-        if name in _BLOCKED_TOOLS:
-            continue
-        if not tool.active or not tool.is_available():
-            continue
-        namespace[name] = _make_tool_wrapper(tool, context, name)
+    _install_standard_modules(namespace)
+    _install_atomworld(namespace)
+    _install_cognitive_map(namespace)
+    _install_tool_wrappers(namespace, tools, context)
 
     return namespace
 
@@ -514,12 +548,78 @@ async def run_code_act_turn(
     The loop terminates when the LLM stops emitting code blocks, or after
     _MAX_TURNS iterations, or on degradation.
     """
-    from langchain_core.messages import (
-        AIMessage,
-        HumanMessage,
-        SystemMessage,
-        ToolMessage,
-    )
+    session = _init_code_act_session(agent, message, thread_id)
+    error_streak = 0
+    for turn in range(_MAX_TURNS):
+        result = _TurnResult(error_streak=error_streak)
+        async for event in _run_one_code_act_turn(
+            session, agent, turn, error_streak, result
+        ):
+            yield event
+        error_streak = result.error_streak
+        if result.terminal_content is not None:
+            _unregister_agent(session.context.session_id)
+            yield {"type": "final", "content": result.terminal_content}
+            return
+        if result.degraded_reason:
+            _unregister_agent(session.context.session_id)
+            yield {
+                "type": "code_act_degraded",
+                "reason": result.degraded_reason,
+                "last_error": result.last_error,
+            }
+            return
+
+    # Hit the turn ceiling — emit what we have as final.
+    _unregister_agent(session.context.session_id)
+    yield {
+        "type": "final",
+        "content": f"[CodeAct] reached max turns ({_MAX_TURNS}). Last assistant message above.",
+    }
+
+
+@dataclass
+class _CodeActSession:
+    """一轮 CodeAct 会话的稳定上下文 (tools / workspace / messages / model)."""
+
+    tools: dict[str, Any]
+    context: ToolContext
+    messages: list[Any]
+    model: Any
+
+
+@dataclass
+class _BlockState:
+    """单个 code block 在审批→执行链路上的可变产物."""
+
+    code: str
+    risk: str = "low"
+    risk_reason: str = ""
+    called: Any = None
+    stdout: str = ""
+    error: str | None = None
+    feedback: str = ""
+    denied: bool = False
+    degraded_reason: str = ""
+    suggest_skip: bool = False
+    decision: ApprovalDecision | None = None
+
+
+@dataclass
+class _TurnResult:
+    """单轮结束时的去向: terminal content / degrade / 累计 error streak."""
+
+    error_streak: int = 0
+    terminal_content: str | None = None
+    degraded_reason: str = ""
+    last_error: str | None = None
+
+
+def _init_code_act_session(agent: Any, message: str, thread_id: str) -> _CodeActSession:
+    """注册 agent + 装配工具面 / ToolContext / 初始 messages / model."""
+    import asyncio
+
+    from langchain_core.messages import HumanMessage, SystemMessage
 
     # Collect eligible tools up-front so the system prompt lists a stable set.
     tools: dict[str, Any] = {}
@@ -533,314 +633,492 @@ async def run_code_act_turn(
     context = ToolContext(
         session_id=f"code_act:{thread_id}",
         workspace=str(workspace),
-        audit_logger=getattr(getattr(agent, "session_state", None), "audit_logger", None),
+        audit_logger=getattr(
+            getattr(agent, "session_state", None), "audit_logger", None
+        ),
     )
 
     system_prompt = _build_system_prompt(tools)
-    messages: list[Any] = [SystemMessage(content=system_prompt), HumanMessage(content=message)]
+    messages: list[Any] = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=message),
+    ]
 
-    model = agent.select_model("agent") if hasattr(agent, "select_model") else agent.model
+    model = (
+        agent.select_model("agent") if hasattr(agent, "select_model") else agent.model
+    )
 
     # 注册 agent 供 SUGGEST mode WS handler 唤醒
-    import asyncio
     if not hasattr(agent, "_approval_resume"):
         agent._approval_resume = asyncio.Event()
     _register_agent(context.session_id, agent)
+    return _CodeActSession(
+        tools=tools,
+        context=context,
+        messages=messages,
+        model=model,
+    )
 
-    error_streak = 0
-    for turn in range(_MAX_TURNS):
-        try:
-            resp = await model.ainvoke(messages)
-        except Exception as exc:
-            _unregister_agent(context.session_id)
-            yield {"type": "final", "content": f"[CodeAct] model call failed: {exc}"}
-            return
 
-        content = str(resp.content) if not isinstance(resp.content, list) else "".join(
-            part.get("text", "") if isinstance(part, dict) else str(part)
-            for part in resp.content
+def _extract_response_text(resp: Any) -> str:
+    if not isinstance(resp.content, list):
+        return str(resp.content)
+    return "".join(
+        part.get("text", "") if isinstance(part, dict) else str(part)
+        for part in resp.content
+    )
+
+
+async def _run_one_code_act_turn(
+    session: _CodeActSession,
+    agent: Any,
+    turn: int,
+    error_streak: int,
+    result: _TurnResult,
+) -> AsyncIterator[dict[str, Any]]:
+    """模型调用 → 文本事件 → 逐个 code block 审批/执行 → 回填 ToolMessage."""
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    try:
+        resp = await session.model.ainvoke(session.messages)
+    except Exception as exc:
+        result.terminal_content = f"[CodeAct] model call failed: {exc}"
+        return
+
+    content = _extract_response_text(resp)
+    session.messages.append(AIMessage(content=content))
+    yield {"type": "assistant_text", "content": content, "turn": turn}
+
+    code_blocks = _extract_python_blocks(content)
+    if not code_blocks:
+        # No code → terminal answer
+        result.terminal_content = content
+        return
+
+    # Exec each block in order; feed results back as a single ToolMessage.
+    combined_feedback: list[str] = []
+    async for event in _run_code_blocks(
+        session,
+        agent,
+        code_blocks,
+        turn,
+        error_streak,
+        result,
+        combined_feedback,
+    ):
+        yield event
+
+    if result.terminal_content is not None or result.degraded_reason:
+        return
+
+    session.messages.append(
+        ToolMessage(
+            content="\n\n".join(combined_feedback),
+            name="code_act_executor",
+            tool_call_id=f"code_act_{turn}",
         )
-        messages.append(AIMessage(content=content))
-        yield {"type": "assistant_text", "content": content, "turn": turn}
+    )
 
-        code_blocks = _extract_python_blocks(content)
-        if not code_blocks:
-            # No code → terminal answer
-            _unregister_agent(context.session_id)
-            yield {"type": "final", "content": content}
-            return
 
-        # Exec each block in order; feed results back as a single ToolMessage.
-        combined_feedback: list[str] = []
-        for code in code_blocks:
-            # ── Human-in-the-loop approval gate (Cline 三档模式) ──
-            risk, risk_reason, called = _assess_risk(code, tools)
-            approval_fn: ApprovalFn | None = getattr(agent, "approval_fn", None)
-            session_id = context.session_id
+async def _run_code_blocks(
+    session: _CodeActSession,
+    agent: Any,
+    code_blocks: list[str],
+    turn: int,
+    error_streak: int,
+    result: _TurnResult,
+    combined_feedback: list[str],
+) -> AsyncIterator[dict[str, Any]]:
+    """顺序处理本轮所有 code block, 累计 error streak, 必要时标记 degrade."""
+    for code in code_blocks:
+        state = _BlockState(code=code)
+        async for event in _process_code_block(
+            session, agent, state, turn, error_streak
+        ):
+            yield event
 
-            # ── Dynamic risk threshold (HRI #5: trust-adaptive classification) ──
-            threshold = _compute_risk_threshold(session_id, error_streak)
-            new_risk, adj_reason = _apply_dynamic_threshold(risk, threshold)
-            threshold_evt: dict[str, Any] = {
-                "type": "risk_threshold",
-                "threshold": round(threshold, 2),
-                "risk": new_risk,
-            }
-            if new_risk != risk:
-                threshold_evt["original_risk"] = risk
-                threshold_evt["adjusted_risk"] = new_risk
-                threshold_evt["reason"] = adj_reason
-                risk = new_risk
-                if adj_reason:
-                    risk_reason = f"{risk_reason} | {adj_reason}" if risk_reason else adj_reason
-            yield threshold_evt
-
-            # ── SUGGEST mode (HRI #4: LoA Level 4-6, 强制所有代码先经用户编辑) ──
-            # SUGGEST 批准后设 suggest_skip=True, 跳过下面的 trust/budget gate
-            suggest_skip = False
-            if _is_suggest_mode(session_id):
-                resume_event = agent._approval_resume
-                resume_event.clear()
-                yield {
-                    "type": "suggest_code",
-                    "code": code,
-                    "risk": risk,
-                    "reason": risk_reason,
-                    "turn": turn,
-                }
-                await resume_event.wait()
-                resume_decision = getattr(agent, "_approval_decision", None)
-                agent._approval_decision = None
-                _nt = _record_approval(
-                    session_id,
-                    resume_decision[0] if resume_decision else "deny",
-                    risk,
-                    code[:200],
-                )
-                yield {"type": "trust_update", "trust": _nt, "action": resume_decision[0] if resume_decision else "deny", "risk": risk}
-                if resume_decision is None or resume_decision[0] == "deny":
-                    err = f"用户拒绝 (suggest, risk={risk}): {resume_decision[1] if resume_decision else 'no decision'}"
-                    combined_feedback.append(f"```python\n{code}\n```\n--- DENIED ---\n{err}")
-                    error_streak += 1
-                    continue
-                action, payload = resume_decision
-                if action == "approve_always":
-                    _mark_auto_approved(session_id, risk)
-                    _mark_standing_rule(session_id, called)
-                if action == "edit" and payload:
-                    code = payload
-                suggest_skip = True
-
-            # ── Trust + Budget adaptive threshold ──
-            _get_trust(session_id)
-            budget = _get_budget(session_id)
-            # budget 不足 + 信任度不低 → 自动升级 (避免确认疲劳)
-            budget_escalated = (
-                not suggest_skip
-                and risk != "low"
-                and budget <= _BUDGET_ESCALATION_THRESHOLD
-                and not _should_force_ask(session_id)
-                and not _is_auto_approved(session_id, risk)
-            )
-            if budget_escalated:
-                _mark_auto_approved(session_id, risk)
-
-            skip_approval = suggest_skip or (
-                risk == "low"
-                or _should_auto_medium(session_id, risk)
-                or budget_escalated
-                or (_is_auto_approved(session_id, risk) and not _should_force_ask(session_id))
-                or _is_standing_rule(session_id, called)
-            )
-
-            # standing rule 命中时 yield 事件 (借鉴 OpenWorker Decision.rule 的可观测性)
-            if not suggest_skip and called and _is_standing_rule(session_id, called):
-                yield {"type": "standing_rule_hit", "tools": called}
-
-            if budget_escalated:
-                yield {
-                    "type": "budget_escalation",
-                    "remaining": budget,
-                    "risk": risk,
-                }
-
-            if not skip_approval:
-                new_budget = _decrement_budget(session_id)
-                yield {"type": "budget_update", "remaining": new_budget}
-                if approval_fn is not None:
-                    # 调用方注入了同步/异步审批回调, 直接等结果
-                    action, payload = await approval_fn(code, risk, risk_reason)
-                    if action == "deny":
-                        err = f"用户拒绝执行 (risk={risk}): {payload or risk_reason}"
-                        _audit_code(agent, code, err)
-                        combined_feedback.append(
-                            f"```python\n{code}\n```\n--- DENIED ---\n{err}"
-                        )
-                        error_streak += 1
-                        if error_streak >= _DEGRADE_AFTER_ERRORS:
-                            _unregister_agent(context.session_id)
-                            yield {
-                                "type": "code_act_degraded",
-                                "reason": f"{error_streak} consecutive errors/denials",
-                                "last_error": err,
-                            }
-                            return
-                        continue
-                    if action == "approve_always":
-                        _mark_auto_approved(session_id, risk)
-                        _mark_standing_rule(session_id, called)
-                    if action == "edit" and payload:
-                        code = payload  # 用户改了代码, 用新版执行
-                else:
-                    # 没有回调 → yield approval_request, 调用方 resume 后继续
-                    # ponytail: 简化版 LangGraph interrupt. 调用方拿到事件后
-                    # 决定 approve/deny/edit, 通过 asyncio.Event 或类似机制 resume.
-                    # 这里用 yield + 等待 agent._approval_resume event 的模式.
-                    resume_event = getattr(agent, "_approval_resume", None)
-                    resume_decision: ApprovalDecision | None = None
-
-                    # P2-5 自动 fallback: 无 resume_event (调用方没接 approval 信号)
-                    # 时, 自动转 inbox 跨会话队列. attended session (有 WS handler)
-                    # 会设 _approval_resume, unattended 不会 → 自动走 inbox.
-                    if resume_event is None and os.environ.get(
-                        "HUGINN_APPROVAL_MODE", ""
-                    ) != "disable":
-                        try:
-                            # 用 code 的 hash 做 tool_call_id (CodeAct 没有原生
-                            # tool_call_id), 让同 code 重试时复用 inbox item
-                            import hashlib as _hl
-
-                            from huginn.interaction.inbox import (
-                                get_inbox_store,
-                                inbox_approval_fn,
-                            )
-                            tc_id = f"codeact_{_hl.sha256(code.encode()).hexdigest()[:16]}"
-                            inbox_fn = inbox_approval_fn(
-                                get_inbox_store(),
-                                session_id,
-                                tool_call_id=tc_id,
-                            )
-                            yield {
-                                "type": "approval_request",
-                                "code": code,
-                                "risk": risk,
-                                "reason": risk_reason,
-                                "turn": turn,
-                                "routed_to": "inbox",
-                            }
-                            action, payload = await inbox_fn(code, risk, risk_reason)
-                            resume_decision = (action, payload)
-                        except Exception:  # 防御: inbox 失效则保守拒绝
-                            logger.debug(
-                                "inbox fallback failed, conservative deny",
-                                exc_info=True,
-                            )
-                            resume_decision = None
-
-                    if resume_decision is None and resume_event is not None:
-                        yield {
-                            "type": "approval_request",
-                            "code": code,
-                            "risk": risk,
-                            "reason": risk_reason,
-                            "turn": turn,
-                        }
-                        # 调用方 set event 后把决策放进 agent._approval_decision
-                        await resume_event.wait()
-                        resume_decision = getattr(agent, "_approval_decision", None)
-                        resume_event.clear()
-                    if resume_decision is None:
-                        # 无 resume 机制 → 保守拒绝
-                        err = f"approval required (risk={risk}) but no resume mechanism"
-                        combined_feedback.append(
-                            f"```python\n{code}\n```\n--- DENIED ---\n{err}"
-                        )
-                        error_streak += 1
-                        continue
-                    action, payload = resume_decision
-                    _nt = _record_approval(session_id, action, risk, code[:200])
-                    yield {"type": "trust_update", "trust": _nt, "action": action, "risk": risk}
-                    if action == "deny":
-                        err = f"用户拒绝 (risk={risk}): {payload or risk_reason}"
-                        combined_feedback.append(
-                            f"```python\n{code}\n```\n--- DENIED ---\n{err}"
-                        )
-                        error_streak += 1
-                        continue
-                    if action == "approve_always":
-                        _mark_auto_approved(session_id, risk)
-                        _mark_standing_rule(session_id, called)
-                    if action == "edit" and payload:
-                        code = payload
-
-            stdout_buf = io.StringIO()
-            namespace = _build_namespace(agent, tools, context, stdout_buf)
-            error: str | None = None
-            try:
-                validate_code(code)
-                # ponytail: exec in restricted namespace. validate_code already
-                # rejected forbidden imports/builtins; make_safe_builtins (from
-                # code_act_sandbox) strips dangerous builtins + swaps __import__.
-                # Ceiling: in-process exec shares the interpreter — a sufficiently
-                # clever payload could still escape via attribute traversal.
-                # Upgrade path: Docker sandbox with the same namespace, or E2B.
-                namespace["__builtins__"] = make_safe_builtins()
-                # P4-6: exec 用 wrapper 加 tracemalloc 内存峰值监控
-                # 超阈值抛 MemoryError 而不是让进程 OOM 被杀. 阈值从 env 读, 默认 2GB.
-                # ponytail: tracemalloc 有 ~10% overhead, 但比 OOM 安全.
-                from huginn.security.code_act_sandbox import (
-                    exec_with_mem_cap as _exec_cap,
-                )
-                _mem_cap_bytes = int(os.environ.get("HUGINN_CODEACT_MEM_CAP", "2147483648"))
-
-                _exec_cap(code, namespace, _mem_cap_bytes)
-            except RestrictedPythonError as exc:
-                error = f"RestrictedPython: {exc}"
-            except Exception as exc:  # noqa: BLE001 — exec surface is unbounded
-                error = f"{type(exc).__name__}: {exc}"
-
-            stdout = stdout_buf.getvalue()
-            _audit_code(agent, code, error)
-            yield {
-                "type": "code_executed",
-                "code": code,
-                "stdout": stdout,
-                "error": error,
-                "turn": turn,
-                "risk": risk,
-            }
-
-            if error:
-                error_streak += 1
-                combined_feedback.append(
-                    f"```python\n{code}\n```\n--- stdout ---\n{stdout}\n--- error ---\n{error}"
-                )
-            else:
-                error_streak = 0
-                combined_feedback.append(
-                    f"```python\n{code}\n```\n--- stdout ---\n{stdout}"
-                )
-
-            if error_streak >= _DEGRADE_AFTER_ERRORS:
-                _unregister_agent(context.session_id)
-                yield {
-                    "type": "code_act_degraded",
-                    "reason": f"{error_streak} consecutive code errors",
-                    "last_error": error,
-                }
+        if state.denied:
+            error_streak += 1
+            combined_feedback.append(state.feedback)
+            if state.degraded_reason:
+                result.degraded_reason = state.degraded_reason
+                result.last_error = state.error
+                result.error_streak = error_streak
                 return
+            continue
 
-        messages.append(
-            ToolMessage(
-                content="\n\n".join(combined_feedback),
-                name="code_act_executor",
-                tool_call_id=f"code_act_{turn}",
+        if state.error:
+            error_streak += 1
+        else:
+            error_streak = 0
+        combined_feedback.append(state.feedback)
+
+        if error_streak >= _DEGRADE_AFTER_ERRORS:
+            result.degraded_reason = f"{error_streak} consecutive code errors"
+            result.last_error = state.error
+            result.error_streak = error_streak
+            return
+
+    result.error_streak = error_streak
+
+
+async def _process_code_block(
+    session: _CodeActSession,
+    agent: Any,
+    state: _BlockState,
+    turn: int,
+    error_streak: int,
+) -> AsyncIterator[dict[str, Any]]:
+    """单个 code block 的审批门禁 + 执行 (结果写回 state)."""
+    yield _assess_block_risk(session, state, error_streak)
+
+    # ── SUGGEST mode (HRI #4: LoA Level 4-6, 强制所有代码先经用户编辑) ──
+    # SUGGEST 批准后设 suggest_skip=True, 跳过下面的 trust/budget gate
+    async for event in _run_suggest_mode(session, agent, state, turn):
+        yield event
+    if state.denied:
+        return
+
+    # ── Trust + Budget adaptive threshold ──
+    skip_approval, budget_escalated, budget = _evaluate_skip_approval(session, state)
+
+    # standing rule 命中时 yield 事件 (借鉴 OpenWorker Decision.rule 的可观测性)
+    session_id = session.context.session_id
+    if (
+        not state.suggest_skip
+        and state.called
+        and _is_standing_rule(session_id, state.called)
+    ):
+        yield {"type": "standing_rule_hit", "tools": state.called}
+
+    if budget_escalated:
+        yield {
+            "type": "budget_escalation",
+            "remaining": budget,
+            "risk": state.risk,
+        }
+
+    if not skip_approval:
+        async for event in _run_approval_gate(
+            session, agent, state, turn, error_streak
+        ):
+            yield event
+        if state.denied:
+            return
+
+    async for event in _execute_code_block_events(session, agent, state, turn):
+        yield event
+
+
+def _assess_block_risk(
+    session: _CodeActSession,
+    state: _BlockState,
+    error_streak: int,
+) -> dict[str, Any]:
+    """静态风险 + 动态阈值调整; 返回 risk_threshold 事件并写回 state."""
+    risk, risk_reason, called = _assess_risk(state.code, session.tools)
+
+    # ── Dynamic risk threshold (HRI #5: trust-adaptive classification) ──
+    threshold = _compute_risk_threshold(session.context.session_id, error_streak)
+    new_risk, adj_reason = _apply_dynamic_threshold(risk, threshold)
+    threshold_evt: dict[str, Any] = {
+        "type": "risk_threshold",
+        "threshold": round(threshold, 2),
+        "risk": new_risk,
+    }
+    if new_risk != risk:
+        threshold_evt["original_risk"] = risk
+        threshold_evt["adjusted_risk"] = new_risk
+        threshold_evt["reason"] = adj_reason
+        risk = new_risk
+        if adj_reason:
+            risk_reason = f"{risk_reason} | {adj_reason}" if risk_reason else adj_reason
+    state.risk = risk
+    state.risk_reason = risk_reason
+    state.called = called
+    return threshold_evt
+
+
+async def _run_suggest_mode(
+    session: _CodeActSession,
+    agent: Any,
+    state: _BlockState,
+    turn: int,
+) -> AsyncIterator[dict[str, Any]]:
+    """SUGGEST 模式: 强制用户编辑/确认后才放行, 批准后置 suggest_skip=True."""
+    session_id = session.context.session_id
+    if not _is_suggest_mode(session_id):
+        return
+
+    resume_event = agent._approval_resume
+    resume_event.clear()
+    yield {
+        "type": "suggest_code",
+        "code": state.code,
+        "risk": state.risk,
+        "reason": state.risk_reason,
+        "turn": turn,
+    }
+    await resume_event.wait()
+    resume_decision = getattr(agent, "_approval_decision", None)
+    agent._approval_decision = None
+    action = resume_decision[0] if resume_decision else "deny"
+    _nt = _record_approval(session_id, action, state.risk, state.code[:200])
+    yield {
+        "type": "trust_update",
+        "trust": _nt,
+        "action": action,
+        "risk": state.risk,
+    }
+    if resume_decision is None or action == "deny":
+        err = (
+            f"用户拒绝 (suggest, risk={state.risk}): "
+            f"{resume_decision[1] if resume_decision else 'no decision'}"
+        )
+        state.denied = True
+        state.error = err
+        state.feedback = f"```python\n{state.code}\n```\n--- DENIED ---\n{err}"
+        return
+    _, payload = resume_decision
+    _apply_approval_action(session_id, state, action, payload)
+    state.suggest_skip = True
+
+
+def _evaluate_skip_approval(
+    session: _CodeActSession,
+    state: _BlockState,
+) -> tuple[bool, bool, int]:
+    """信任度/预算自适应判定; 返回 (skip_approval, budget_escalated, budget)."""
+    session_id = session.context.session_id
+    _get_trust(session_id)
+    budget = _get_budget(session_id)
+    # budget 不足 + 信任度不低 → 自动升级 (避免确认疲劳)
+    budget_escalated = (
+        not state.suggest_skip
+        and state.risk != "low"
+        and budget <= _BUDGET_ESCALATION_THRESHOLD
+        and not _should_force_ask(session_id)
+        and not _is_auto_approved(session_id, state.risk)
+    )
+    if budget_escalated:
+        _mark_auto_approved(session_id, state.risk)
+
+    skip_approval = state.suggest_skip or (
+        state.risk == "low"
+        or _should_auto_medium(session_id, state.risk)
+        or budget_escalated
+        or (
+            _is_auto_approved(session_id, state.risk)
+            and not _should_force_ask(session_id)
+        )
+        or _is_standing_rule(session_id, state.called)
+    )
+    return skip_approval, budget_escalated, budget
+
+
+async def _run_approval_gate(
+    session: _CodeActSession,
+    agent: Any,
+    state: _BlockState,
+    turn: int,
+    error_streak: int,
+) -> AsyncIterator[dict[str, Any]]:
+    """未 skip 时的审批门: 回调直调 / inbox 跨会话队列 / resume event."""
+    session_id = session.context.session_id
+    new_budget = _decrement_budget(session_id)
+    yield {"type": "budget_update", "remaining": new_budget}
+
+    approval_fn: ApprovalFn | None = getattr(agent, "approval_fn", None)
+    if approval_fn is not None:
+        # 调用方注入了同步/异步审批回调, 直接等结果
+        await _approval_via_callback(
+            agent, session_id, state, approval_fn, error_streak
+        )
+        return
+
+    async for event in _approval_via_inbox(session, agent, state, turn):
+        yield event
+
+    if state.decision is None:
+        # 无 resume 机制 → 保守拒绝
+        err = f"approval required (risk={state.risk}) but no resume mechanism"
+        state.denied = True
+        state.error = err
+        state.feedback = f"```python\n{state.code}\n```\n--- DENIED ---\n{err}"
+        return
+
+    action, payload = state.decision
+    _nt = _record_approval(session_id, action, state.risk, state.code[:200])
+    yield {"type": "trust_update", "trust": _nt, "action": action, "risk": state.risk}
+    if action == "deny":
+        err = f"用户拒绝 (risk={state.risk}): {payload or state.risk_reason}"
+        state.denied = True
+        state.error = err
+        state.feedback = f"```python\n{state.code}\n```\n--- DENIED ---\n{err}"
+        return
+    _apply_approval_action(session_id, state, action, payload)
+
+
+async def _approval_via_callback(
+    agent: Any,
+    session_id: str,
+    state: _BlockState,
+    approval_fn: ApprovalFn,
+    error_streak: int,
+) -> None:
+    action, payload = await approval_fn(state.code, state.risk, state.risk_reason)
+    if action == "deny":
+        err = f"用户拒绝执行 (risk={state.risk}): {payload or state.risk_reason}"
+        _audit_code(agent, state.code, err)
+        state.denied = True
+        state.error = err
+        state.feedback = f"```python\n{state.code}\n```\n--- DENIED ---\n{err}"
+        if error_streak + 1 >= _DEGRADE_AFTER_ERRORS:
+            state.degraded_reason = f"{error_streak + 1} consecutive errors/denials"
+        return
+    _apply_approval_action(session_id, state, action, payload)
+
+
+async def _approval_via_inbox(
+    session: _CodeActSession,
+    agent: Any,
+    state: _BlockState,
+    turn: int,
+) -> AsyncIterator[dict[str, Any]]:
+    """无回调时: 优先 unattended inbox 队列, 其次 resume event."""
+    # ponytail: 简化版 LangGraph interrupt. 调用方拿到事件后
+    # 决定 approve/deny/edit, 通过 asyncio.Event 或类似机制 resume.
+    # 这里用 yield + 等待 agent._approval_resume event 的模式.
+    resume_event = getattr(agent, "_approval_resume", None)
+
+    # P2-5 自动 fallback: 无 resume_event (调用方没接 approval 信号)
+    # 时, 自动转 inbox 跨会话队列. attended session (有 WS handler)
+    # 会设 _approval_resume, unattended 不会 → 自动走 inbox.
+    if resume_event is None and os.environ.get("HUGINN_APPROVAL_MODE", "") != "disable":
+        try:
+            # 用 code 的 hash 做 tool_call_id (CodeAct 没有原生
+            # tool_call_id), 让同 code 重试时复用 inbox item
+            import hashlib as _hl
+
+            from huginn.interaction.inbox import (
+                get_inbox_store,
+                inbox_approval_fn,
             )
+
+            tc_id = f"codeact_{_hl.sha256(state.code.encode()).hexdigest()[:16]}"
+            inbox_fn = inbox_approval_fn(
+                get_inbox_store(),
+                session.context.session_id,
+                tool_call_id=tc_id,
+            )
+            yield {
+                "type": "approval_request",
+                "code": state.code,
+                "risk": state.risk,
+                "reason": state.risk_reason,
+                "turn": turn,
+                "routed_to": "inbox",
+            }
+            action, payload = await inbox_fn(state.code, state.risk, state.risk_reason)
+            state.decision = (action, payload)
+        except Exception:  # 防御: inbox 失效则保守拒绝
+            logger.debug("inbox fallback failed, conservative deny", exc_info=True)
+            state.decision = None
+
+    if state.decision is None and resume_event is not None:
+        async for event in _approval_via_resume(agent, state, turn, resume_event):
+            yield event
+
+
+async def _approval_via_resume(
+    agent: Any,
+    state: _BlockState,
+    turn: int,
+    resume_event: Any,
+) -> AsyncIterator[dict[str, Any]]:
+    """attended session: yield approval_request 后等调用方 set event."""
+    yield {
+        "type": "approval_request",
+        "code": state.code,
+        "risk": state.risk,
+        "reason": state.risk_reason,
+        "turn": turn,
+    }
+    # 调用方 set event 后把决策放进 agent._approval_decision
+    await resume_event.wait()
+    state.decision = getattr(agent, "_approval_decision", None)
+    resume_event.clear()
+
+
+def _apply_approval_action(
+    session_id: str,
+    state: _BlockState,
+    action: str,
+    payload: str | None,
+) -> None:
+    """approve_always / edit 的共享副作用."""
+    if action == "approve_always":
+        _mark_auto_approved(session_id, state.risk)
+        _mark_standing_rule(session_id, state.called)
+    if action == "edit" and payload:
+        state.code = payload
+
+
+def _execute_code_block(
+    session: _CodeActSession,
+    agent: Any,
+    code: str,
+) -> tuple[str, str | None]:
+    """在受限命名空间内 exec 单块代码, 返回 (stdout, error)."""
+    stdout_buf = io.StringIO()
+    namespace = _build_namespace(agent, session.tools, session.context, stdout_buf)
+    error: str | None = None
+    try:
+        validate_code(code)
+        # ponytail: exec in restricted namespace. validate_code already
+        # rejected forbidden imports/builtins; make_safe_builtins (from
+        # code_act_sandbox) strips dangerous builtins + swaps __import__.
+        # Ceiling: in-process exec shares the interpreter — a sufficiently
+        # clever payload could still escape via attribute traversal.
+        # Upgrade path: Docker sandbox with the same namespace, or E2B.
+        namespace["__builtins__"] = make_safe_builtins()
+        # P4-6: exec 用 wrapper 加 tracemalloc 内存峰值监控
+        # 超阈值抛 MemoryError 而不是让进程 OOM 被杀. 阈值从 env 读, 默认 2GB.
+        # ponytail: tracemalloc 有 ~10% overhead, 但比 OOM 安全.
+        from huginn.security.code_act_sandbox import (
+            exec_with_mem_cap as _exec_cap,
         )
 
-    # Hit the turn ceiling — emit what we have as final.
-    _unregister_agent(context.session_id)
+        _mem_cap_bytes = int(os.environ.get("HUGINN_CODEACT_MEM_CAP", "2147483648"))
+
+        _exec_cap(code, namespace, _mem_cap_bytes)
+    except RestrictedPythonError as exc:
+        error = f"RestrictedPython: {exc}"
+    except Exception as exc:  # noqa: BLE001 — exec surface is unbounded
+        error = f"{type(exc).__name__}: {exc}"
+    return stdout_buf.getvalue(), error
+
+
+async def _execute_code_block_events(
+    session: _CodeActSession,
+    agent: Any,
+    state: _BlockState,
+    turn: int,
+) -> AsyncIterator[dict[str, Any]]:
+    """执行并 yield code_executed 事件, 同时构造回喂给模型的 feedback."""
+    stdout, error = _execute_code_block(session, agent, state.code)
+    state.stdout = stdout
+    state.error = error
+    _audit_code(agent, state.code, error)
     yield {
-        "type": "final",
-        "content": f"[CodeAct] reached max turns ({_MAX_TURNS}). Last assistant message above.",
+        "type": "code_executed",
+        "code": state.code,
+        "stdout": stdout,
+        "error": error,
+        "turn": turn,
+        "risk": state.risk,
     }
+    if error:
+        state.feedback = f"```python\n{state.code}\n```\n--- stdout ---\n{stdout}\n--- error ---\n{error}"
+    else:
+        state.feedback = f"```python\n{state.code}\n```\n--- stdout ---\n{stdout}"

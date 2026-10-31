@@ -15,6 +15,7 @@
   Pass 2  别名交叉: A 主名出现在 B 别名集合 → 合并
   Pass 3  模糊匹配: token Jaccard >= 0.75
 """
+
 from __future__ import annotations
 
 import json
@@ -33,6 +34,7 @@ _FUZZY_THRESHOLD = 0.75
 
 
 # ── 工具函数 (上游 _norm_name / _entity_key / _collect_all_names) ─────────────
+
 
 def _norm_name(s: str | None) -> str:
     """基础归一化: 小写 + 去括号 + 合并空白."""
@@ -121,6 +123,7 @@ def _jaccard(a: set[str], b: set[str]) -> float:
 
 # ── Union-Find ────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class _EntityRecord:
     """聚合中的实体记录 (一个 Union-Find 集合的根)."""
@@ -173,6 +176,7 @@ class UnionFind:
 
 # ── 聚合主流程 ────────────────────────────────────────────────────────────────
 
+
 def _extract_doc_records(doc_id: str, schema_dict: dict) -> list[_EntityRecord]:
     """从一个文档的 schema_dict 抽出实体记录.
 
@@ -221,19 +225,8 @@ def _extract_doc_records(doc_id: str, schema_dict: dict) -> list[_EntityRecord]:
     return [rec]
 
 
-def _match_records(records: list[_EntityRecord]) -> dict[int, list[int]]:
-    """三级匹配, 返回 {group_root_idx: [member_idx, ...]}.
-
-    用 record 在 list 中的 index 作 UF 节点 id.
-    """
-    n = len(records)
-    if n == 0:
-        return {}
-    uf = UnionFind()
-    for i in range(n):
-        uf.find(str(i))  # 初始化
-
-    # Pass 1: 精确主键 (CAS > Chemical Name > Generic full name)
+def _match_exact_keys(uf: UnionFind, records: list[_EntityRecord]) -> None:
+    """Pass 1: 精确主键 (CAS > Chemical Name > Generic full name)."""
     key_to_idx: dict[str, int] = {}
     for i, rec in enumerate(records):
         # 用 _entity_key 逻辑
@@ -250,7 +243,9 @@ def _match_records(records: list[_EntityRecord]) -> dict[int, list[int]]:
             else:
                 key_to_idx[k] = i
 
-    # Pass 2: 别名交叉
+
+def _match_aliases(uf: UnionFind, records: list[_EntityRecord]) -> None:
+    """Pass 2: 别名交叉."""
     alias_to_idx: dict[str, int] = {}
     for i, rec in enumerate(records):
         for alias in rec.aliases:
@@ -259,15 +254,42 @@ def _match_records(records: list[_EntityRecord]) -> dict[int, list[int]]:
             else:
                 alias_to_idx[alias] = i
 
-    # Pass 3: 模糊匹配 (token Jaccard)
+
+def _match_fuzzy(uf: UnionFind, records: list[_EntityRecord]) -> None:
+    """Pass 3: 模糊匹配 (token Jaccard)."""
     # ponytail: O(n²) — n 量级 < 1000 时够用. 升级路径: n > 1000 时换 blocking + LSH.
-    token_sets = [_tokenize(rec.canonical_label + " " + " ".join(rec.aliases)) for rec in records]
+    token_sets = [
+        _tokenize(rec.canonical_label + " " + " ".join(rec.aliases)) for rec in records
+    ]
+    n = len(records)
     for i in range(n):
         for j in range(i + 1, n):
             if uf.find(str(i)) == uf.find(str(j)):
                 continue
             if _jaccard(token_sets[i], token_sets[j]) >= _FUZZY_THRESHOLD:
                 uf.union(str(i), str(j))
+
+
+def _match_records(records: list[_EntityRecord]) -> dict[int, list[int]]:
+    """三级匹配, 返回 {group_root_idx: [member_idx, ...]}.
+
+    用 record 在 list 中的 index 作 UF 节点 id.
+    """
+    n = len(records)
+    if n == 0:
+        return {}
+    uf = UnionFind()
+    for i in range(n):
+        uf.find(str(i))  # 初始化
+
+    # Pass 1: 精确主键 (CAS > Chemical Name > Generic full name)
+    _match_exact_keys(uf, records)
+
+    # Pass 2: 别名交叉
+    _match_aliases(uf, records)
+
+    # Pass 3: 模糊匹配 (token Jaccard)
+    _match_fuzzy(uf, records)
 
     # 输出 groups
     raw_groups = uf.groups()
@@ -277,7 +299,9 @@ def _match_records(records: list[_EntityRecord]) -> dict[int, list[int]]:
     return out
 
 
-def _merge_group(root_idx: int, members: list[int], records: list[_EntityRecord]) -> _EntityRecord:
+def _merge_group(
+    root_idx: int, members: list[int], records: list[_EntityRecord]
+) -> _EntityRecord:
     """合并一组 record 成单个 _EntityRecord (root 作 canonical)."""
     root = records[root_idx]
     merged = _EntityRecord(
@@ -311,26 +335,31 @@ def _merge_group(root_idx: int, members: list[int], records: list[_EntityRecord]
 
 # ── 输出格式 ──────────────────────────────────────────────────────────────────
 
+
 def _to_entities_json(entities: list[_EntityRecord]) -> list[dict]:
     """转成 kg.add_entity 友好的格式."""
     out = []
     for e in entities:
-        out.append({
-            "label": e.canonical_label,
-            "entity_type": "material",
-            "aliases": sorted(a for a in e.aliases if a),
-            "cas": e.cas,
-            "chemical_name": e.chemical_name,
-            "material_type": e.material_type,
-            "docs": sorted(e.docs),
-            "properties_count": len(e.properties),
-        })
+        out.append(
+            {
+                "label": e.canonical_label,
+                "entity_type": "material",
+                "aliases": sorted(a for a in e.aliases if a),
+                "cas": e.cas,
+                "chemical_name": e.chemical_name,
+                "material_type": e.material_type,
+                "docs": sorted(e.docs),
+                "properties_count": len(e.properties),
+            }
+        )
     return out
 
 
 def _to_properties_tsv(entities: list[_EntityRecord]) -> str:
     """扁平化性能数据, TSV (制表符分隔). 带 doc_id 溯源."""
-    header = "doc_id\tentity_label\tcategory\tname\tvalue\tunit\tcondition\toriginal_text"
+    header = (
+        "doc_id\tentity_label\tcategory\tname\tvalue\tunit\tcondition\toriginal_text"
+    )
     lines = [header]
     for e in entities:
         for p in e.properties:
@@ -341,13 +370,25 @@ def _to_properties_tsv(entities: list[_EntityRecord]) -> str:
             unit = p.get("Unit") or p.get("unit") or ""
             cond = p.get("Condition") or p.get("condition") or ""
             ot = p.get("Original text") or p.get("original_text") or ""
+
             # TSV 里 tab/换行替换成空格, 防止破坏列对齐
             def _clean(s: str) -> str:
                 return str(s).replace("\t", " ").replace("\n", " ").strip()
-            lines.append("\t".join([
-                _clean(doc_id), _clean(e.canonical_label), _clean(cat),
-                _clean(name), _clean(val), _clean(unit), _clean(cond), _clean(ot),
-            ]))
+
+            lines.append(
+                "\t".join(
+                    [
+                        _clean(doc_id),
+                        _clean(e.canonical_label),
+                        _clean(cat),
+                        _clean(name),
+                        _clean(val),
+                        _clean(unit),
+                        _clean(cond),
+                        _clean(ot),
+                    ]
+                )
+            )
     return "\n".join(lines)
 
 
@@ -365,13 +406,15 @@ def _to_relationships_json(entities: list[_EntityRecord]) -> list[dict]:
         for app in e.applications:
             field = app.get("Application_field") or app.get("application_field")
             if field:
-                out.append({
-                    "source": e.canonical_label,
-                    "relation": "applied_in",
-                    "target": field,
-                    "doc_id": ",".join(sorted(e.docs)),
-                    "confidence": 0.8,
-                })
+                out.append(
+                    {
+                        "source": e.canonical_label,
+                        "relation": "applied_in",
+                        "target": field,
+                        "doc_id": ",".join(sorted(e.docs)),
+                        "confidence": 0.8,
+                    }
+                )
         # 材料 → 性能 (按 category 聚合, 避免关系爆炸)
         cats: dict[str, set[str]] = {}
         for p in e.properties:
@@ -381,17 +424,50 @@ def _to_relationships_json(entities: list[_EntityRecord]) -> list[dict]:
                 cats.setdefault(cat, set()).add(name)
         for cat, names in cats.items():
             for name in names:
-                out.append({
-                    "source": e.canonical_label,
-                    "relation": f"has_property:{cat.lower()}",
-                    "target": name,
-                    "doc_id": ",".join(sorted(e.docs)),
-                    "confidence": 0.7,
-                })
+                out.append(
+                    {
+                        "source": e.canonical_label,
+                        "relation": f"has_property:{cat.lower()}",
+                        "target": name,
+                        "doc_id": ",".join(sorted(e.docs)),
+                        "confidence": 0.7,
+                    }
+                )
     return out
 
 
 # ── 顶层入口 ─────────────────────────────────────────────────────────────────
+
+
+def _empty_result() -> dict[str, Any]:
+    """无可聚合 record 时的空结果 (含 TSV 表头)."""
+    return {
+        "entities": [],
+        "properties_tsv": "doc_id\tentity_label\tcategory\tname\tvalue\tunit\tcondition\toriginal_text",
+        "relationships": [],
+        "stats": {"docs": 0, "entities": 0, "properties": 0},
+    }
+
+
+def _build_result(
+    extracted: dict[str, dict],
+    records: list[_EntityRecord],
+    merged_entities: list[_EntityRecord],
+) -> dict[str, Any]:
+    """组装最终输出 (entities / properties_tsv / relationships / stats)."""
+    return {
+        "entities": _to_entities_json(merged_entities),
+        "properties_tsv": _to_properties_tsv(merged_entities),
+        "relationships": _to_relationships_json(merged_entities),
+        "stats": {
+            "docs": len(extracted),
+            "raw_records": len(records),
+            "merged_entities": len(merged_entities),
+            "properties": sum(len(e.properties) for e in merged_entities),
+            "relationships": len(_to_relationships_json(merged_entities)),
+        },
+    }
+
 
 def aggregate(
     extracted: dict[str, dict],
@@ -414,8 +490,7 @@ def aggregate(
 
     if not records:
         logger.warning("aggregate: 无可聚合 record")
-        result = {"entities": [], "properties_tsv": "doc_id\tentity_label\tcategory\tname\tvalue\tunit\tcondition\toriginal_text",
-                  "relationships": [], "stats": {"docs": 0, "entities": 0, "properties": 0}}
+        result = _empty_result()
         if output_dir is not None:
             _write_outputs(Path(output_dir), result)
         return result
@@ -429,18 +504,7 @@ def aggregate(
         merged_entities.append(_merge_group(root_idx, members, records))
 
     # 4. 输出
-    result = {
-        "entities": _to_entities_json(merged_entities),
-        "properties_tsv": _to_properties_tsv(merged_entities),
-        "relationships": _to_relationships_json(merged_entities),
-        "stats": {
-            "docs": len(extracted),
-            "raw_records": len(records),
-            "merged_entities": len(merged_entities),
-            "properties": sum(len(e.properties) for e in merged_entities),
-            "relationships": len(_to_relationships_json(merged_entities)),
-        },
-    }
+    result = _build_result(extracted, records, merged_entities)
     if output_dir is not None:
         _write_outputs(Path(output_dir), result)
     return result
@@ -463,24 +527,20 @@ def _write_outputs(output_dir: Path, result: dict) -> None:
     )
     logger.info(
         "aggregate 写入 %s: %d entities, %d relationships",
-        output_dir, len(result["entities"]), len(result["relationships"]),
+        output_dir,
+        len(result["entities"]),
+        len(result["relationships"]),
     )
 
 
 # ── KG 集成: 把聚合结果喂给 huginn ProjectKnowledgeGraph ──────────────────────
 
-def ingest_into_kg(kg: Any, result: dict) -> dict[str, int]:
-    """把 aggregate() 的结果喂给 huginn kg/graph.py 实例.
 
-    kg 需实现 add_entity(label, entity_type, ...) 和 add_relation(src, rel, dst, ...).
-    返回 {entities_added, relations_added} 统计.
-
-    ponytail: 不另建图存储 — 复用 huginn ProjectKnowledgeGraph. 调用方传 kg 实例.
-    """
-    stats = {"entities_added": 0, "relations_added": 0}
-    label_to_id: dict[str, str] = {}
-
-    for ent in result.get("entities") or []:
+def _ingest_entities(
+    kg: Any, entities: list[dict], label_to_id: dict[str, str], stats: dict[str, int]
+) -> None:
+    """逐条把 entity 写进 kg, label → node_id 记到 label_to_id."""
+    for ent in entities:
         label = ent.get("label")
         if not label:
             continue
@@ -501,36 +561,72 @@ def ingest_into_kg(kg: Any, result: dict) -> dict[str, int]:
         except Exception as e:
             logger.warning("kg.add_entity(%s) failed: %s", label, e)
 
-    for rel in result.get("relationships") or []:
+
+def _ensure_relation_node(
+    kg: Any, name: str, entity_type: str, label_to_id: dict[str, str]
+) -> None:
+    """节点不存在时先建 (relation 的 target 可能是新实体如应用领域)."""
+    if name in label_to_id:
+        return
+    try:
+        label_to_id[name] = kg.add_entity(
+            name, entity_type, source="mineru_aggregator", confidence=0.7
+        )
+    except Exception:
+        label_to_id[name] = ""
+
+
+def _ingest_relations(
+    kg: Any,
+    relationships: list[dict],
+    label_to_id: dict[str, str],
+    stats: dict[str, int],
+) -> None:
+    """逐条把 relationship 写进 kg, 两端节点缺失时先补建."""
+    for rel in relationships:
         src = rel.get("source")
         dst = rel.get("target")
         if not src or not dst:
             continue
-        # 节点不存在时先建 (relation 的 target 可能是新实体如应用领域)
-        if src not in label_to_id:
-            try:
-                label_to_id[src] = kg.add_entity(src, "material", source="mineru_aggregator", confidence=0.7)
-            except Exception:
-                label_to_id[src] = ""
-        if dst not in label_to_id:
-            try:
-                label_to_id[dst] = kg.add_entity(dst, "topic", source="mineru_aggregator", confidence=0.7)
-            except Exception:
-                label_to_id[dst] = ""
+        _ensure_relation_node(kg, src, "material", label_to_id)
+        _ensure_relation_node(kg, dst, "topic", label_to_id)
         src_id = label_to_id.get(src, "")
         dst_id = label_to_id.get(dst, "")
         if not src_id or not dst_id:
             continue
         try:
             kg.add_relation(
-                src_id, rel.get("relation", "related_to"), dst_id,
+                src_id,
+                rel.get("relation", "related_to"),
+                dst_id,
                 source="mineru_aggregator",
                 confidence=rel.get("confidence", 0.7),
                 doc_id=rel.get("doc_id", ""),
             )
             stats["relations_added"] += 1
         except Exception as e:
-            logger.warning("kg.add_relation(%s -%s-> %s) failed: %s", src, rel.get("relation"), dst, e)
+            logger.warning(
+                "kg.add_relation(%s -%s-> %s) failed: %s",
+                src,
+                rel.get("relation"),
+                dst,
+                e,
+            )
+
+
+def ingest_into_kg(kg: Any, result: dict) -> dict[str, int]:
+    """把 aggregate() 的结果喂给 huginn kg/graph.py 实例.
+
+    kg 需实现 add_entity(label, entity_type, ...) 和 add_relation(src, rel, dst, ...).
+    返回 {entities_added, relations_added} 统计.
+
+    ponytail: 不另建图存储 — 复用 huginn ProjectKnowledgeGraph. 调用方传 kg 实例.
+    """
+    stats = {"entities_added": 0, "relations_added": 0}
+    label_to_id: dict[str, str] = {}
+
+    _ingest_entities(kg, result.get("entities") or [], label_to_id, stats)
+    _ingest_relations(kg, result.get("relationships") or [], label_to_id, stats)
 
     return stats
 
@@ -540,15 +636,23 @@ if __name__ == "__main__":
     import tempfile
 
     # 1. _norm_name / _entity_key / _collect_all_names
-    assert _norm_name("PVDF (Polyvinylidene Fluoride)") == "pvdf polyvinylidene fluoride"
+    assert (
+        _norm_name("PVDF (Polyvinylidene Fluoride)") == "pvdf polyvinylidene fluoride"
+    )
     assert _norm_name("  Hello  World  ") == "hello world"
     assert _norm_name(None) == ""
     assert _norm_name("") == ""
 
-    m1 = {"CAS RN": "58-08-2", "Chemical Name": "Caffeine",
-           "Generic Name": {"full name": "Caffeine", "Abbreviation": ["咖啡因"]}}
+    m1 = {
+        "CAS RN": "58-08-2",
+        "Chemical Name": "Caffeine",
+        "Generic Name": {"full name": "Caffeine", "Abbreviation": ["咖啡因"]},
+    }
     assert _entity_key(m1) == "CAS:58-08-2"
-    m2 = {"Chemical Name": "PVDF", "Generic Name": {"full name": "Polyvinylidene Fluoride"}}
+    m2 = {
+        "Chemical Name": "PVDF",
+        "Generic Name": {"full name": "Polyvinylidene Fluoride"},
+    }
     assert _entity_key(m2) == "CHEM:pvdf"
     m3 = {"Generic Name": {"full name": "PEO"}}
     assert _entity_key(m3) == "GEN:peo"
@@ -574,29 +678,54 @@ if __name__ == "__main__":
     # 3. 三级匹配: 同一材料不同表达应合并
     extracted = {
         "doc1": {
-            "Material": {"CAS RN": "58-08-2", "Chemical Name": "Caffeine",
-                          "Generic Name": {"full name": "Caffeine", "Abbreviation": ["咖啡因"]}},
-            "Properties": [{"Property_category": "THERMAL", "Property_name": "melting_point",
-                             "Value": "235", "Unit": "℃", "Original text": "mp 235"}],
+            "Material": {
+                "CAS RN": "58-08-2",
+                "Chemical Name": "Caffeine",
+                "Generic Name": {"full name": "Caffeine", "Abbreviation": ["咖啡因"]},
+            },
+            "Properties": [
+                {
+                    "Property_category": "THERMAL",
+                    "Property_name": "melting_point",
+                    "Value": "235",
+                    "Unit": "℃",
+                    "Original text": "mp 235",
+                }
+            ],
             "Application": {"Application_field": "食品"},
         },
         "doc2": {
             # 同一材料, 不同 doc, CAS 一样 → Pass 1 精确合并
-            "Material": {"CAS RN": "58-08-2", "Chemical Name": "Caffeine",
-                          "Generic Name": {"full name": "Caffeine"}},
-            "Properties": [{"Property_category": "THERMAL", "Property_name": "density",
-                             "Value": "1.23", "Unit": "g/cm³"}],
+            "Material": {
+                "CAS RN": "58-08-2",
+                "Chemical Name": "Caffeine",
+                "Generic Name": {"full name": "Caffeine"},
+            },
+            "Properties": [
+                {
+                    "Property_category": "THERMAL",
+                    "Property_name": "density",
+                    "Value": "1.23",
+                    "Unit": "g/cm³",
+                }
+            ],
             "Application": {"Application_field": "医药"},
         },
         "doc3": {
             # 不同材料, 别名交叉 → Pass 2 合并
-            "Material": {"Generic Name": {"full name": "PVDF", "Abbreviation": ["聚偏氟乙烯"]}},
+            "Material": {
+                "Generic Name": {"full name": "PVDF", "Abbreviation": ["聚偏氟乙烯"]}
+            },
             "Properties": [],
         },
         "doc4": {
             # 同 PVDF, 但用全称, 别名包含 "PVDF" → Pass 2 合并
-            "Material": {"Generic Name": {"full name": "Polyvinylidene Fluoride",
-                                           "Abbreviation": ["PVDF"]}},
+            "Material": {
+                "Generic Name": {
+                    "full name": "Polyvinylidene Fluoride",
+                    "Abbreviation": ["PVDF"],
+                }
+            },
         },
         "doc5": {
             # 完全无关材料
@@ -606,7 +735,9 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as td:
         result = aggregate(extracted, output_dir=Path(td))
         # 应该聚成 3 个实体: Caffeine / PVDF / PEO
-        assert result["stats"]["merged_entities"] == 3, f"expected 3, got {result['stats']['merged_entities']}"
+        assert result["stats"]["merged_entities"] == 3, (
+            f"expected 3, got {result['stats']['merged_entities']}"
+        )
         labels = [e["label"] for e in result["entities"]]
         assert "Caffeine" in labels
         # PVDF 或 Polyvinylidene Fluoride 之一作 canonical
@@ -635,10 +766,12 @@ if __name__ == "__main__":
         def __init__(self):
             self.entities = []
             self.relations = []
+
         def add_entity(self, label, entity_type, **kw):
             eid = f"node_{len(self.entities)}"
             self.entities.append({"id": eid, "label": label, "type": entity_type, **kw})
             return eid
+
         def add_relation(self, src, rel, dst, **kw):
             self.relations.append({"src": src, "rel": rel, "dst": dst, **kw})
 

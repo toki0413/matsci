@@ -6,6 +6,7 @@ agent 工作流和 RCBench 评分共用同一套算子, 打通"生成图-评分"
 
 Source: 用户要求 vision LLM 之前 CV 一样做图像评分, 工作流必须包含 CV.
 """
+
 from __future__ import annotations
 
 import logging
@@ -14,21 +15,123 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def _load_cv_modules() -> tuple:
+    """加载 cv2 + skimage SSIM; cv2 缺失时返回 (None, None)."""
+    try:
+        import cv2
+    except ImportError:
+        return None, None
+    try:
+        from skimage.metrics import structural_similarity as _ssim
+    except ImportError:
+        logger.debug("best-effort op failed", exc_info=True)
+        _ssim = None
+    return cv2, _ssim
+
+
+def _ssim_score(_ssim, tg_gray, gg_gray) -> float | None:
+    """SSIM 结构相似度, 失败返回 None."""
+    if _ssim is None:
+        return None
+    try:
+        s = _ssim(tg_gray, gg_gray, data_range=255)
+        return max(0.0, float(s))
+    except Exception:
+        logger.debug("ssim compare failed", exc_info=True)
+        return None
+
+
+def _histogram_score(cv2, tg, gg_r) -> float | None:
+    """HSV histogram correlation, 失败返回 None."""
+    try:
+        tg_hsv = cv2.cvtColor(tg, cv2.COLOR_BGR2HSV)
+        gg_hsv = cv2.cvtColor(gg_r, cv2.COLOR_BGR2HSV)
+        corr_sum = 0.0
+        for ch in range(3):
+            h_t_ = cv2.calcHist([tg_hsv], [ch], None, [64], [0, 256])
+            h_g_ = cv2.calcHist([gg_hsv], [ch], None, [64], [0, 256])
+            cv2.normalize(h_t_, h_t_, 0, 1, cv2.NORM_MINMAX)
+            cv2.normalize(h_g_, h_g_, 0, 1, cv2.NORM_MINMAX)
+            corr_sum += float(cv2.compareHist(h_t_, h_g_, cv2.HISTCMP_CORREL))
+        return max(0.0, corr_sum / 3.0)
+    except Exception:
+        logger.debug("histogram compare failed", exc_info=True)
+        return None
+
+
+def _hog_score(cv2, np, tg_gray, gg_gray) -> float | None:
+    """HOG cosine, 失败或无有效特征返回 None."""
+    try:
+        win_size = (64, 128)
+        tg_rz = cv2.resize(tg_gray, win_size)
+        gg_rz = cv2.resize(gg_gray, win_size)
+        hog = cv2.HOGDescriptor(win_size, (16, 16), (8, 8), (8, 8), 9)
+        h_t_ = hog.compute(tg_rz).flatten()
+        h_g_ = hog.compute(gg_rz).flatten()
+        if h_t_.size and h_g_.size:
+            cos = float(
+                np.dot(h_t_, h_g_)
+                / (np.linalg.norm(h_t_) * np.linalg.norm(h_g_) + 1e-9)
+            )
+            return max(0.0, cos)
+    except Exception:
+        logger.debug("hog compare failed", exc_info=True)
+    return None
+
+
+def _orb_score(cv2, tg_gray, gg_gray) -> float | None:
+    """ORB 关键点匹配率, 失败或无描述子返回 None."""
+    try:
+        orb = cv2.ORB_create(nfeatures=500)
+        kp1, des1 = orb.detectAndCompute(tg_gray, None)
+        kp2, des2 = orb.detectAndCompute(gg_gray, None)
+        if des1 is not None and des2 is not None and len(des1) > 0 and len(des2) > 0:
+            bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+            matches = bf.match(des1, des2)
+            ratio = len(matches) / max(len(kp1), len(kp2))
+            return min(1.0, ratio)
+    except Exception:
+        logger.debug("orb compare failed", exc_info=True)
+    return None
+
+
+def _collect_scores(cv2, np, _ssim, tg, gg_r, tg_gray, gg_gray) -> dict[str, float]:
+    """依次跑四个 CV 算子, 只收录成功的分数 (顺序即加权顺序)."""
+    scores: dict[str, float] = {}
+
+    # 1. SSIM — 结构相似度, 抓 layout/edge
+    ssim = _ssim_score(_ssim, tg_gray, gg_gray)
+    if ssim is not None:
+        scores["ssim"] = ssim
+
+    # 2. HSV histogram correlation — 配色一致性
+    histogram = _histogram_score(cv2, tg, gg_r)
+    if histogram is not None:
+        scores["histogram"] = histogram
+
+    # 3. HOG cosine — 梯度方向直方图, 抓形状/纹理
+    hog = _hog_score(cv2, np, tg_gray, gg_gray)
+    if hog is not None:
+        scores["hog"] = hog
+
+    # 4. ORB keypoint match ratio — 关键点匹配
+    orb = _orb_score(cv2, tg_gray, gg_gray)
+    if orb is not None:
+        scores["orb"] = orb
+
+    return scores
+
+
 def cv_image_similarity(target_path: Path, generated_path: Path) -> dict:
     """对比 target 和 generated, 返回 {score, details, avg}.
 
     score ∈ [0, 100], sigmoid 拉伸让中段敏感. 单算子失败跳过, 全失败 → None.
     """
     import numpy as np
-    try:
-        import cv2
-    except ImportError:
+
+    cv2, _ssim = _load_cv_modules()
+    if cv2 is None:
         return {"score": None, "details": "cv2 not installed"}
-    try:
-        from skimage.metrics import structural_similarity as _ssim
-    except ImportError:
-        logger.debug("best-effort op failed", exc_info=True)
-        _ssim = None
 
     try:
         tg = cv2.imread(str(target_path))
@@ -40,57 +143,7 @@ def cv_image_similarity(target_path: Path, generated_path: Path) -> dict:
         tg_gray = cv2.cvtColor(tg, cv2.COLOR_BGR2GRAY)
         gg_gray = cv2.cvtColor(gg_r, cv2.COLOR_BGR2GRAY)
 
-        scores: dict[str, float] = {}
-
-        # 1. SSIM — 结构相似度, 抓 layout/edge
-        if _ssim is not None:
-            try:
-                s = _ssim(tg_gray, gg_gray, data_range=255)
-                scores["ssim"] = max(0.0, float(s))
-            except Exception:
-                logger.debug("ssim compare failed", exc_info=True)
-
-        # 2. HSV histogram correlation — 配色一致性
-        try:
-            tg_hsv = cv2.cvtColor(tg, cv2.COLOR_BGR2HSV)
-            gg_hsv = cv2.cvtColor(gg_r, cv2.COLOR_BGR2HSV)
-            corr_sum = 0.0
-            for ch in range(3):
-                h_t_ = cv2.calcHist([tg_hsv], [ch], None, [64], [0, 256])
-                h_g_ = cv2.calcHist([gg_hsv], [ch], None, [64], [0, 256])
-                cv2.normalize(h_t_, h_t_, 0, 1, cv2.NORM_MINMAX)
-                cv2.normalize(h_g_, h_g_, 0, 1, cv2.NORM_MINMAX)
-                corr_sum += float(cv2.compareHist(h_t_, h_g_, cv2.HISTCMP_CORREL))
-            scores["histogram"] = max(0.0, corr_sum / 3.0)
-        except Exception:
-            logger.debug("histogram compare failed", exc_info=True)
-
-        # 3. HOG cosine — 梯度方向直方图, 抓形状/纹理
-        try:
-            win_size = (64, 128)
-            tg_rz = cv2.resize(tg_gray, win_size)
-            gg_rz = cv2.resize(gg_gray, win_size)
-            hog = cv2.HOGDescriptor(win_size, (16, 16), (8, 8), (8, 8), 9)
-            h_t_ = hog.compute(tg_rz).flatten()
-            h_g_ = hog.compute(gg_rz).flatten()
-            if h_t_.size and h_g_.size:
-                cos = float(np.dot(h_t_, h_g_) / (np.linalg.norm(h_t_) * np.linalg.norm(h_g_) + 1e-9))
-                scores["hog"] = max(0.0, cos)
-        except Exception:
-            logger.debug("hog compare failed", exc_info=True)
-
-        # 4. ORB keypoint match ratio — 关键点匹配
-        try:
-            orb = cv2.ORB_create(nfeatures=500)
-            kp1, des1 = orb.detectAndCompute(tg_gray, None)
-            kp2, des2 = orb.detectAndCompute(gg_gray, None)
-            if des1 is not None and des2 is not None and len(des1) > 0 and len(des2) > 0:
-                bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-                matches = bf.match(des1, des2)
-                ratio = len(matches) / max(len(kp1), len(kp2))
-                scores["orb"] = min(1.0, ratio)
-        except Exception:
-            logger.debug("orb compare failed", exc_info=True)
+        scores = _collect_scores(cv2, np, _ssim, tg, gg_r, tg_gray, gg_gray)
 
         if not scores:
             return {"score": None, "details": "all CV operators failed"}
@@ -114,9 +167,11 @@ def cv_best_match(target_path: Path, generated_images: list[Path]) -> dict:
             continue
         r = cv_image_similarity(target_path, img)
         best["details"].append({"img": str(img), **r})
-        if r.get("score") is not None and (best["score"] is None or r["score"] > best["score"]):
-                best["score"] = r["score"]
-                best["best_path"] = str(img)
+        if r.get("score") is not None and (
+            best["score"] is None or r["score"] > best["score"]
+        ):
+            best["score"] = r["score"]
+            best["best_path"] = str(img)
     return best
 
 
@@ -126,6 +181,7 @@ def _self_check() -> int:
     import tempfile
 
     import numpy as np
+
     try:
         import cv2
     except ImportError:
@@ -164,4 +220,5 @@ def _self_check() -> int:
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(_self_check())

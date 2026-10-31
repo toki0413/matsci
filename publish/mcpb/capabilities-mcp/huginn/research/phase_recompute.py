@@ -21,6 +21,7 @@
   - 分配·默认相位映射缺省只把每个拓扑层当作自身唯一相位 (逐层), 不改变现有层义 ——
     启用相位命名只是"给层贴标签", 不改变层的结构。
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -36,8 +37,11 @@ from typing import Any
 #   4 SYNTHESIS         综合/结论 (最投机, 后结算)
 # 调用方可传自定义 "实验名 -> 相位索引" 映射; 缺省把每个拓扑层映射为递增的独一相位。
 PHASE_NAMES: tuple[str, ...] = (
-    "FORMAT_FORM", "DATA_ACQUISITION", "HYPOTHESIS",
-    "EXPERIMENT", "SYNTHESIS",
+    "FORMAT_FORM",
+    "DATA_ACQUISITION",
+    "HYPOTHESIS",
+    "EXPERIMENT",
+    "SYNTHESIS",
 )
 
 # 缺省相位分配: 拓扑层 idx -> phase idx (逐层自 0 递增, 不改变层结构)
@@ -56,7 +60,9 @@ def assign_phases(
                      相位索引越靠前 = 越基础/确定, 越靠后 = 越投机/高阶.
     """
     if phase_by_layer is None:
-        pb: dict[int, int] = {i: min(i, len(PHASE_NAMES) - 1) for i in range(len(layers))}
+        pb: dict[int, int] = {
+            i: min(i, len(PHASE_NAMES) - 1) for i in range(len(layers))
+        }
     elif isinstance(phase_by_layer, dict):
         pb = {int(k): int(v) for k, v in phase_by_layer.items()}
     else:
@@ -77,6 +83,7 @@ def phase_total_order(phases: dict[str, int] | None = None) -> list[int]:
 
 
 # ═══════════════════ 2. 增量边重算 (Incremental Downstream Recompute) ═══════════════════
+
 
 def downstream_closure(
     deps: list[tuple[str, str]],
@@ -148,10 +155,32 @@ def recompute_plan(
     affected = downstream_closure(deps, changed)
     # 分层: 受影响但只重算"相对被变更上游相位更靠后"的实验 (Ghidra added/removed 只在
     # 低相位触发, 不再回溯已确定的基础相位). changed 自身不重列.
+    layer_of = _layer_index(layers)
+    recompute = _select_recompute(affected, changed, layer_of)
+    return {
+        "changed": sorted(changed),
+        "affected_set": sorted(affected),
+        "recompute": recompute,
+        "phases": phases,
+        "total_order": phase_total_order(phases),
+        "note": (
+            "增量重算: 仅受影响且位于上游相位之后的下游子集; "
+            "范围由 DAG 边确定性推出, 不做质量判断, 不伪造证据."
+        ),
+    }
+
+
+def _layer_index(layers: list[list[str]]) -> dict[str, int]:
     layer_of: dict[str, int] = {}
     for i, layer in enumerate(layers):
         for name in layer:
             layer_of[name] = i
+    return layer_of
+
+
+def _select_recompute(
+    affected: set[str], changed: Iterable[str], layer_of: dict[str, int]
+) -> list[str]:
     recompute: list[str] = []
     for u in sorted(affected):
         if u in changed:
@@ -161,21 +190,17 @@ def recompute_plan(
         up_layer = min((layer_of.get(c, 0) for c in changed), default=0)
         if u_layer > up_layer:
             recompute.append(u)
-    return {
-        "changed": sorted(changed),
-        "affected_set": sorted(affected),
-        "recompute": recompute,
-        "phases": phases,
-        "total_order": phase_total_order(phases),
-        "note": ("增量重算: 仅受影响且位于上游相位之后的下游子集; "
-                 "范围由 DAG 边确定性推出, 不做质量判断, 不伪造证据."),
-    }
+    return recompute
 
 
 __all__ = [
-    "PHASE_NAMES", "DEFAULT_PHASE_BY_LAYER",
-    "assign_phases", "phase_total_order",
-    "downstream_closure", "affected_within", "recompute_plan",
+    "PHASE_NAMES",
+    "DEFAULT_PHASE_BY_LAYER",
+    "assign_phases",
+    "phase_total_order",
+    "downstream_closure",
+    "affected_within",
+    "recompute_plan",
 ]
 
 

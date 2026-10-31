@@ -40,6 +40,7 @@ def _torch_available() -> bool:
     """
     try:
         import torch  # noqa: F401
+
         return True
     except Exception:  # noqa: BLE001
         return False
@@ -115,7 +116,9 @@ def test_list_models_uses_workspace_relative_dir():
 # ── graceful degradation ─────────────────────────────────────────
 
 
-@pytest.mark.skipif(_TORCH_AVAILABLE, reason="torch is installed; install-hint path skipped")
+@pytest.mark.skipif(
+    _TORCH_AVAILABLE, reason="torch is installed; install-hint path skipped"
+)
 def test_predict_returns_install_hint_without_torch():
     tool = TransolverTool()
     args = TransolverToolInput(
@@ -129,7 +132,9 @@ def test_predict_returns_install_hint_without_torch():
     assert "github.com/thuml/Transolver_plus" in res.error
 
 
-@pytest.mark.skipif(_TORCH_AVAILABLE, reason="torch is installed; install-hint path skipped")
+@pytest.mark.skipif(
+    _TORCH_AVAILABLE, reason="torch is installed; install-hint path skipped"
+)
 def test_train_returns_install_hint_without_torch():
     tool = TransolverTool()
     args = TransolverToolInput(
@@ -225,10 +230,8 @@ class _FakeTensor(list):
         return (1,)
 
 
-def _build_fake_torch():
-    mod = types.ModuleType("torch")
-    mod.__path__ = []  # 让 torch 可被当作包, 支持 `import torch.nn`
-    sys.modules["torch"] = mod
+def _fake_torch_core(mod):
+    """填充 torch 顶层 API: float32 / tensor / no_grad / cuda / load / save."""
 
     class _Float32:
         pass
@@ -263,6 +266,10 @@ def _build_fake_torch():
 
     mod.save = _save
 
+
+def _fake_torch_module_classes():
+    """伪造 torch.nn.Module 与其参数类, 返回 Module 类."""
+
     class _FakeParam:
         def __init__(self, tensor):
             self._t = tensor
@@ -295,6 +302,12 @@ def _build_fake_torch():
         def __call__(self, inp):
             return _FakeTensor([[0.5]])
 
+    return _FakeModule
+
+
+def _fake_torch_optim():
+    """伪造 torch.optim 子模块."""
+
     class _Optim:
         def __init__(self, params, lr=None):
             self.params = params
@@ -305,18 +318,37 @@ def _build_fake_torch():
         def step(self):
             return None
 
-    # torch.optim / torch.nn 作为独立子模块注册, 支持 `import torch.nn as nn`
     optim_mod = types.ModuleType("torch.optim")
     optim_mod.Adam = lambda params, lr=0.001: _Optim(params, lr)
+    return optim_mod
+
+
+def _fake_torch_nn():
+    """伪造 torch.nn 子模块."""
+    nn_mod = types.ModuleType("torch.nn")
+    nn_mod.MSELoss = lambda: lambda pred, y: _FakeTensor([0.1])
+    return nn_mod
+
+
+def _build_fake_torch():
+    mod = types.ModuleType("torch")
+    mod.__path__ = []  # 让 torch 可被当作包, 支持 `import torch.nn`
+    sys.modules["torch"] = mod
+
+    _fake_torch_core(mod)
+
+    # torch.optim / torch.nn 作为独立子模块注册, 支持 `import torch.nn as nn`
+    optim_mod = _fake_torch_optim()
     mod.optim = optim_mod
     sys.modules["torch.optim"] = optim_mod
 
-    nn_mod = types.ModuleType("torch.nn")
-    nn_mod.MSELoss = lambda: (lambda pred, y: _FakeTensor([0.1]))
+    fake_module = _fake_torch_module_classes()
+
+    nn_mod = _fake_torch_nn()
     mod.nn = nn_mod
     sys.modules["torch.nn"] = nn_mod
 
-    return mod, _FakeModule
+    return mod, fake_module
 
 
 def _install_fake_torch(monkeypatch):
@@ -404,6 +436,7 @@ def test_load_model_class_all_fail(monkeypatch):
 
 def test_load_model_class_skip_failed_then_hit(monkeypatch):
     """第一个 import 路径抛错, 跳到第二个命中."""
+
     class _M:
         pass
 
@@ -449,7 +482,9 @@ def test_call_unknown_action(monkeypatch):
 
 def test_call_list_models_no_torch(tmp_path):
     tool = _tool()
-    res = _run(tool, TransolverToolInput(action="list_models", checkpoint_dir=str(tmp_path)))
+    res = _run(
+        tool, TransolverToolInput(action="list_models", checkpoint_dir=str(tmp_path))
+    )
     assert res.success is True
     assert res.data["status"] == "no_models"
 
@@ -457,7 +492,9 @@ def test_call_list_models_no_torch(tmp_path):
 def test_call_predict_no_torch(monkeypatch):
     monkeypatch.setitem(sys.modules, "torch", None)
     tool = _tool()
-    res = _run(tool, TransolverToolInput(action="predict", coords=[[0.0]], features=[[1.0]]))
+    res = _run(
+        tool, TransolverToolInput(action="predict", coords=[[0.0]], features=[[1.0]])
+    )
     assert res.success is False
     assert "Transolver++" in res.error
 
@@ -511,7 +548,9 @@ def test_predict_ckpt_missing_pt_falls_to_pth(monkeypatch, tmp_path):
     ckpt.write_bytes(b"x")
     tool = _tool()
     tool._torch_ok = True
-    res = tool._predict(_model(coords=[[0.0]], features=[[1.0]], checkpoint_dir=str(tmp_path)))
+    res = tool._predict(
+        _model(coords=[[0.0]], features=[[1.0]], checkpoint_dir=str(tmp_path))
+    )
     assert res.success is False  # load 失败 → checkpoint load failed
     assert "checkpoint load failed" in res.error
 
@@ -675,7 +714,9 @@ def test_train_no_model_class(monkeypatch):
     monkeypatch.setattr(TransolverTool, "_load_model_class", lambda self: None)
     tool = _tool()
     tool._torch_ok = True
-    res = tool._train(_model(action="train", coords=[[0.0]], features=[[1.0]], target=[[2.0]]))
+    res = tool._train(
+        _model(action="train", coords=[[0.0]], features=[[1.0]], target=[[2.0]])
+    )
     assert res.success is False
     assert "Transolver++" in res.error
 
@@ -690,7 +731,9 @@ def test_train_build_fail(monkeypatch):
     _install_model_cls(monkeypatch, _M)
     tool = _tool()
     tool._torch_ok = True
-    res = tool._train(_model(action="train", coords=[[0.0]], features=[[1.0]], target=[[2.0]]))
+    res = tool._train(
+        _model(action="train", coords=[[0.0]], features=[[1.0]], target=[[2.0]])
+    )
     assert res.success is False
     assert "model build failed" in res.error
 
@@ -800,11 +843,20 @@ def test_train_tensor_prep_fail(monkeypatch, tmp_path):
     tool._torch_ok = True
     # 让 _to_tensor 抛错
     monkeypatch.setattr(
-        TransolverTool, "_to_tensor",
-        lambda self, arr, device, dtype: (_ for _ in ()).throw(RuntimeError("prep boom")),
+        TransolverTool,
+        "_to_tensor",
+        lambda self, arr, device, dtype: (_ for _ in ()).throw(
+            RuntimeError("prep boom")
+        ),
     )
     res = tool._train(
-        _model(action="train", coords=[[0.0]], features=[[1.0]], target=[[2.0]], checkpoint_dir=str(tmp_path))
+        _model(
+            action="train",
+            coords=[[0.0]],
+            features=[[1.0]],
+            target=[[2.0]],
+            checkpoint_dir=str(tmp_path),
+        )
     )
     assert res.success is False
     assert "tensor prep failed" in res.error
@@ -836,11 +888,19 @@ def test_train_save_fail(monkeypatch, tmp_path):
     tool = _tool()
     tool._torch_ok = True
     monkeypatch.setattr(
-        sys.modules["torch"], "save",
+        sys.modules["torch"],
+        "save",
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("save boom")),
     )
     res = tool._train(
-        _model(action="train", coords=[[0.0]], features=[[1.0]], target=[[2.0]], epochs=1, checkpoint_dir=str(tmp_path))
+        _model(
+            action="train",
+            coords=[[0.0]],
+            features=[[1.0]],
+            target=[[2.0]],
+            epochs=1,
+            checkpoint_dir=str(tmp_path),
+        )
     )
     assert res.success is False
     assert "save failed" in res.error
@@ -880,7 +940,14 @@ def test_train_audit_exception_swallowed(monkeypatch, tmp_path):
     tool = _tool()
     tool._torch_ok = True
     res = tool._train(
-        _model(action="train", coords=[[0.0]], features=[[1.0]], target=[[2.0]], epochs=1, checkpoint_dir=str(tmp_path))
+        _model(
+            action="train",
+            coords=[[0.0]],
+            features=[[1.0]],
+            target=[[2.0]],
+            epochs=1,
+            checkpoint_dir=str(tmp_path),
+        )
     )
     assert res.success is True
     assert "physics_audit" not in res.data
@@ -891,7 +958,9 @@ def test_train_audit_exception_swallowed(monkeypatch, tmp_path):
 
 def test_estimate_cost_all_branches():
     tool = _tool()
-    assert tool.estimate_cost(_model(action="train", epochs=3))["gpu_hours"] == pytest.approx(0.15)
+    assert tool.estimate_cost(_model(action="train", epochs=3))[
+        "gpu_hours"
+    ] == pytest.approx(0.15)
     assert tool.estimate_cost(_model(action="predict"))["gpu_hours"] == 0.01
     assert tool.estimate_cost(_model(action="list_models")) is None
 

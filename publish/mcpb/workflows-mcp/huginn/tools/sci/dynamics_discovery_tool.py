@@ -55,7 +55,9 @@ class DynamicsDiscoveryInput(BaseModel):
     )
     # 候选库控制
     max_order: int = Field(
-        default=2, ge=1, le=5,
+        default=2,
+        ge=1,
+        le=5,
         description="多项式最高次数 (含交叉项, 如 2 会生成 x0*x1)",
     )
     include_trig: bool = Field(
@@ -68,7 +70,9 @@ class DynamicsDiscoveryInput(BaseModel):
     )
     # 稀疏化 / 导数
     threshold: float = Field(
-        default=0.05, ge=0.0, le=1.0,
+        default=0.05,
+        ge=0.0,
+        le=1.0,
         description=(
             "稀疏阈值, 相对量: 每个变量保留系数 >= threshold * 该变量最大系数的项 "
             "(0.05 = 砍掉不到最大系数 5% 的项). 同时映射成 Lasso alpha"
@@ -80,12 +84,164 @@ class DynamicsDiscoveryInput(BaseModel):
     )
     # validate 专用: discover 返回的 terms + coefficients
     terms: list[str] | None = Field(
-        default=None, description="discover 返回的候选项名列表",
+        default=None,
+        description="discover 返回的候选项名列表",
     )
     coefficients: dict[str, list[float]] | None = Field(
         default=None,
         description="各状态变量对 terms 的系数, {变量名: [与 terms 对齐的系数]}",
     )
+
+
+def _series_from_json(
+    args: DynamicsDiscoveryInput,
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """从 data_json 读取 (t, X, col_names)."""
+    d = args.data_json
+    tkey = args.time_column or "t"
+    if tkey not in d:
+        raise ValueError(f"time column '{tkey}' not in data_json keys {list(d)}")
+    t = np.asarray(d[tkey], dtype=np.float64)
+    cols = args.value_columns or [k for k in d if k != tkey]
+    if not cols:
+        raise ValueError("no value columns found (only time column present)")
+    X = np.column_stack([np.asarray(d[c], dtype=np.float64) for c in cols])
+    return t, X, list(cols)
+
+
+def _series_from_npy(
+    path: Path, args: DynamicsDiscoveryInput
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """从 2D .npy 读取 (t, X, col_names)."""
+    arr = np.load(path, allow_pickle=False)
+    if arr.ndim != 2:
+        raise ValueError(f".npy must be 2D, got {arr.ndim}D")
+    tidx = int(args.time_column) if args.time_column else 0
+    t = arr[:, tidx].astype(np.float64)
+    if args.value_columns:
+        vidx = [int(c) for c in args.value_columns]
+    else:
+        vidx = [i for i in range(arr.shape[1]) if i != tidx]
+    X = arr[:, vidx].astype(np.float64)
+    return t, X, [f"x{i}" for i in vidx]
+
+
+def _series_from_csv(
+    path: Path, args: DynamicsDiscoveryInput
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """从 CSV 读取 (t, X, col_names)."""
+    with open(path, encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+    if not rows:
+        raise ValueError("CSV is empty")
+    fields = reader.fieldnames or []
+    tkey = args.time_column or fields[0]
+    if tkey not in fields:
+        raise ValueError(f"time column '{tkey}' not in CSV header {fields}")
+    t = np.array([float(r[tkey]) for r in rows], dtype=np.float64)
+    cols = args.value_columns or [c for c in fields if c != tkey]
+    if not cols:
+        raise ValueError("no value columns (only time column present)")
+    X = np.column_stack(
+        [np.array([float(r[c]) for r in rows], dtype=np.float64) for c in cols]
+    )
+    return t, X, list(cols)
+
+
+def _variable_fit_metrics(
+    dXdt_col: np.ndarray, Theta: np.ndarray, xi_col: np.ndarray, N: float
+) -> tuple[float, float, float, int]:
+    """单个状态变量的 NLL / BIC / 噪声标准差 / 非零项数."""
+    resid = dXdt_col - Theta @ xi_col
+    ss_res = float(np.sum(resid**2))
+    sigma2 = ss_res / N if N > 0 else 0.0
+    k = int(np.sum(np.abs(xi_col) > 0.0))
+    if sigma2 > 1e-300:
+        nll_value = 0.5 * N * (np.log(2.0 * np.pi * sigma2) + 1.0)
+    else:
+        # 零残差 → 完美拟合; 数值上给一个大下界 NLL 避免 -inf.
+        nll_value = -1e12 * float(N) if N > 0 else 0.0
+    bic_value = float(2.0 * nll_value + k * np.log(N)) if N > 1 else float(nll_value)
+    noise_std = float(np.sqrt(sigma2)) if sigma2 > 0 else 0.0
+    return float(nll_value), bic_value, noise_std, k
+
+
+def _compute_ceiling(Theta: np.ndarray):
+    """预飞辨识度天花板, 失败时返回 None (非致命)."""
+    try:
+        return identifiability_ceiling(Theta)
+    except Exception as e:
+        logger.debug("identifiability ceiling failed (non-fatal): %s", e)
+        return None
+
+
+def _discovery_payload(
+    t: np.ndarray,
+    X: np.ndarray,
+    terms: list[str],
+    Xi: np.ndarray,
+    col_names: list[str],
+    equations: list[str],
+    r2: dict[str, float],
+    residuals: dict[str, list[float]],
+    fit_metrics: dict[str, Any],
+    ceiling,
+) -> dict[str, Any]:
+    """组装 discover 结果字典."""
+    return {
+        "equations": equations,
+        "terms": terms,
+        "coefficients": {f"x{j}": Xi[:, j].tolist() for j in range(X.shape[1])},
+        "r2_score": r2,
+        "residuals": residuals,
+        "fit_metrics": fit_metrics,
+        "variables": col_names,
+        "n_samples": int(X.shape[0]),
+        "dt": float(np.mean(np.diff(t))),
+        "library_size": len(terms),
+        "identifiability": {
+            "lambda_min": ceiling.lambda_min,
+            "lambda_min_rel": ceiling.lambda_min_rel,
+            "level": ceiling.level,
+            "coverage_ratio": ceiling.coverage_ratio,
+            "note": ceiling.note,
+        }
+        if ceiling
+        else None,
+    }
+
+
+def _validate_scores(
+    X: np.ndarray, pred: np.ndarray, var_names: list[str]
+) -> tuple[dict[str, float], dict[str, list[float]]]:
+    """逐变量计算积分预测的 R² 与残差."""
+    r2: dict[str, float] = {}
+    residuals: dict[str, list[float]] = {}
+    for j in range(len(var_names)):
+        ss_res = float(np.sum((X[:, j] - pred[:, j]) ** 2))
+        ss_tot = float(np.sum((X[:, j] - np.mean(X[:, j])) ** 2))
+        r2[var_names[j]] = float(1.0 - ss_res / ss_tot) if ss_tot > 1e-15 else 0.0
+        residuals[var_names[j]] = (X[:, j] - pred[:, j]).tolist()
+    return r2, residuals
+
+
+def _identifiability_payload(
+    ceiling, col_names: list[str], recommended_action: str
+) -> dict[str, Any]:
+    """组装 identifiability action 的 data."""
+    return {
+        "lambda_min": ceiling.lambda_min,
+        "lambda_max": ceiling.lambda_max,
+        "lambda_min_rel": ceiling.lambda_min_rel,
+        "level": ceiling.level,
+        "coverage_ratio": ceiling.coverage_ratio,
+        "library_size": ceiling.n_terms,
+        "n_samples": ceiling.n_samples,
+        "note": ceiling.note,
+        "variables": col_names,
+        "recommended_action": recommended_action,
+    }
 
 
 class DynamicsDiscoveryTool(HuginnTool):
@@ -111,16 +267,7 @@ class DynamicsDiscoveryTool(HuginnTool):
     ) -> tuple[np.ndarray, np.ndarray, list[str]]:
         """返回 (t, X, col_names). t 形状 (n,), X 形状 (n, m)."""
         if args.data_json:
-            d = args.data_json
-            tkey = args.time_column or "t"
-            if tkey not in d:
-                raise ValueError(f"time column '{tkey}' not in data_json keys {list(d)}")
-            t = np.asarray(d[tkey], dtype=np.float64)
-            cols = args.value_columns or [k for k in d if k != tkey]
-            if not cols:
-                raise ValueError("no value columns found (only time column present)")
-            X = np.column_stack([np.asarray(d[c], dtype=np.float64) for c in cols])
-            return t, X, list(cols)
+            return _series_from_json(args)
 
         if not args.data_file:
             raise ValueError("either data_file or data_json must be provided")
@@ -130,36 +277,9 @@ class DynamicsDiscoveryTool(HuginnTool):
             raise FileNotFoundError(f"data file not found: {path}")
 
         if path.suffix == ".npy":
-            arr = np.load(path, allow_pickle=False)
-            if arr.ndim != 2:
-                raise ValueError(f".npy must be 2D, got {arr.ndim}D")
-            tidx = int(args.time_column) if args.time_column else 0
-            t = arr[:, tidx].astype(np.float64)
-            if args.value_columns:
-                vidx = [int(c) for c in args.value_columns]
-            else:
-                vidx = [i for i in range(arr.shape[1]) if i != tidx]
-            X = arr[:, vidx].astype(np.float64)
-            return t, X, [f"x{i}" for i in vidx]
+            return _series_from_npy(path, args)
 
-        # CSV
-        with open(path, encoding="utf-8", newline="") as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
-        if not rows:
-            raise ValueError("CSV is empty")
-        fields = reader.fieldnames or []
-        tkey = args.time_column or fields[0]
-        if tkey not in fields:
-            raise ValueError(f"time column '{tkey}' not in CSV header {fields}")
-        t = np.array([float(r[tkey]) for r in rows], dtype=np.float64)
-        cols = args.value_columns or [c for c in fields if c != tkey]
-        if not cols:
-            raise ValueError("no value columns (only time column present)")
-        X = np.column_stack(
-            [np.array([float(r[c]) for r in rows], dtype=np.float64) for c in cols]
-        )
-        return t, X, list(cols)
+        return _series_from_csv(path, args)
 
     # ── 候选函数库 ──────────────────────────────────────────────────
 
@@ -328,7 +448,7 @@ class DynamicsDiscoveryTool(HuginnTool):
         for fn in ("sin", "cos", "exp"):
             tag = f"{fn}(x"
             if name.startswith(tag) and name.endswith(")"):
-                idx = int(name[len(tag):-1])
+                idx = int(name[len(tag) : -1])
                 return float(getattr(np, fn)(x[idx]))
         result = 1.0
         for factor in name.split("*"):
@@ -379,15 +499,19 @@ class DynamicsDiscoveryTool(HuginnTool):
             data=None, success=False, error=f"unknown action: {args.action}"
         )
 
-    def _discover(self, args: DynamicsDiscoveryInput) -> ToolResult:
+    def _prepare_discovery(self, args: DynamicsDiscoveryInput):
+        """加载数据并拟合稀疏方程, 失败时返回失败的 ToolResult."""
         try:
             t, X, col_names = self._load_series(args)
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"data loading failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"data loading failed: {e}"
+            )
 
         if X.shape[0] < 5:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"need >=5 samples for derivatives, got {X.shape[0]}",
             )
 
@@ -400,13 +524,17 @@ class DynamicsDiscoveryTool(HuginnTool):
         except Exception as e:
             return ToolResult(data=None, success=False, error=f"discovery failed: {e}")
 
+        return t, X, col_names, dXdt, terms, Theta, Xi
+
+    def _discover(self, args: DynamicsDiscoveryInput) -> ToolResult:
+        prepared = DynamicsDiscoveryTool._prepare_discovery(self, args)
+        if isinstance(prepared, ToolResult):
+            return prepared
+        t, X, col_names, dXdt, terms, Theta, Xi = prepared
+
         # 预飞辨识度天花板: 同一个候选库 Theta 的 λ_min(M), 告诉 agent 这个
         # 吸引子几何上允不允许独特恢复. R² 高 ≠ 唯一; λ_min≈0 时拟合不可辨识.
-        try:
-            ceiling = identifiability_ceiling(Theta)
-        except Exception as e:
-            ceiling = None
-            logger.debug("identifiability ceiling failed (non-fatal): %s", e)
+        ceiling = _compute_ceiling(Theta)
 
         # 拟合质量: 每个状态变量一个 R² (基于残差 dXdt - Theta@Xi)
         r2: dict[str, float] = {}
@@ -426,27 +554,18 @@ class DynamicsDiscoveryTool(HuginnTool):
         fit_metrics = self._fit_metrics(Xi, Theta, dXdt, r2)
 
         return ToolResult(
-            data={
-                "equations": equations,
-                "terms": terms,
-                "coefficients": {
-                    f"x{j}": Xi[:, j].tolist() for j in range(X.shape[1])
-                },
-                "r2_score": r2,
-                "residuals": residuals,
-                "fit_metrics": fit_metrics,
-                "variables": col_names,
-                "n_samples": int(X.shape[0]),
-                "dt": float(np.mean(np.diff(t))),
-                "library_size": len(terms),
-                "identifiability": {
-                    "lambda_min": ceiling.lambda_min,
-                    "lambda_min_rel": ceiling.lambda_min_rel,
-                    "level": ceiling.level,
-                    "coverage_ratio": ceiling.coverage_ratio,
-                    "note": ceiling.note,
-                } if ceiling else None,
-            },
+            data=_discovery_payload(
+                t,
+                X,
+                terms,
+                Xi,
+                col_names,
+                equations,
+                r2,
+                residuals,
+                fit_metrics,
+                ceiling,
+            ),
             success=True,
         )
 
@@ -477,18 +596,12 @@ class DynamicsDiscoveryTool(HuginnTool):
         active: dict[str, int] = {}
         for j in range(dXdt.shape[1]):
             key = f"x{j}"
-            resid = dXdt[:, j] - Theta @ Xi[:, j]
-            ss_res = float(np.sum(resid ** 2))
-            sigma2 = ss_res / N if N > 0 else 0.0
-            k = int(np.sum(np.abs(Xi[:, j]) > 0.0))
-            if sigma2 > 1e-300:
-                nll_value = 0.5 * N * (np.log(2.0 * np.pi * sigma2) + 1.0)
-            else:
-                # 零残差 → 完美拟合; 数值上给一个大下界 NLL 避免 -inf.
-                nll_value = -1e12 * float(N) if N > 0 else 0.0
-            nll[key] = float(nll_value)
-            bic[key] = float(2.0 * nll_value + k * np.log(N)) if N > 1 else float(nll_value)
-            noise_std[key] = float(np.sqrt(sigma2)) if sigma2 > 0 else 0.0
+            nll_v, bic_v, std_v, k = _variable_fit_metrics(
+                dXdt[:, j], Theta, Xi[:, j], N
+            )
+            nll[key] = nll_v
+            bic[key] = bic_v
+            noise_std[key] = std_v
             active[key] = k
         return {
             "nll": nll,
@@ -513,10 +626,13 @@ class DynamicsDiscoveryTool(HuginnTool):
         try:
             t, X, col_names = self._load_series(args)
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"data loading failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"data loading failed: {e}"
+            )
         if X.shape[0] < 3:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"need >=3 samples for a ceiling estimate, got {X.shape[0]}",
             )
         try:
@@ -525,20 +641,13 @@ class DynamicsDiscoveryTool(HuginnTool):
             )
             ceiling = identifiability_ceiling(Theta)
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"identifiability failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"identifiability failed: {e}"
+            )
         return ToolResult(
-            data={
-                "lambda_min": ceiling.lambda_min,
-                "lambda_max": ceiling.lambda_max,
-                "lambda_min_rel": ceiling.lambda_min_rel,
-                "level": ceiling.level,
-                "coverage_ratio": ceiling.coverage_ratio,
-                "library_size": ceiling.n_terms,
-                "n_samples": ceiling.n_samples,
-                "note": ceiling.note,
-                "variables": col_names,
-                "recommended_action": self._ident_action(ceiling.level),
-            },
+            data=_identifiability_payload(
+                ceiling, col_names, self._ident_action(ceiling.level)
+            ),
             success=True,
             metadata={
                 "preflight": True,
@@ -571,59 +680,73 @@ class DynamicsDiscoveryTool(HuginnTool):
             "condition trajectories) before symbolic regression."
         )
 
-    def _validate(self, args: DynamicsDiscoveryInput) -> ToolResult:
-        """用 discover 出的方程积分, 跟真实数据对比."""
+    def _validate_inputs(self, args: DynamicsDiscoveryInput):
+        """校验 validate 参数并准备系数向量, 失败时返回失败的 ToolResult."""
         if not args.terms or not args.coefficients:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="validate needs terms + coefficients from discover",
             )
         try:
             t, X, col_names = self._load_series(args)
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"data loading failed: {e}")
-
-        from scipy.integrate import solve_ivp
+            return ToolResult(
+                data=None, success=False, error=f"data loading failed: {e}"
+            )
 
         terms = args.terms
         var_names = list(args.coefficients.keys())  # x0, x1, ...
         n_vars = len(var_names)
         if X.shape[1] != n_vars:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"value columns ({X.shape[1]}) != coefficients vars ({n_vars})",
             )
 
         # 每个变量的系数向量, 对齐到 terms
-        coef_rows = [np.asarray(args.coefficients[v], dtype=np.float64) for v in var_names]
+        coef_rows = [
+            np.asarray(args.coefficients[v], dtype=np.float64) for v in var_names
+        ]
         if any(len(c) != len(terms) for c in coef_rows):
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="coefficient length must match terms length",
             )
+        return t, X, col_names, terms, var_names, coef_rows
+
+    def _validate(self, args: DynamicsDiscoveryInput) -> ToolResult:
+        """用 discover 出的方程积分, 跟真实数据对比."""
+        prepared = DynamicsDiscoveryTool._validate_inputs(self, args)
+        if isinstance(prepared, ToolResult):
+            return prepared
+        t, X, col_names, terms, var_names, coef_rows = prepared
+
+        from scipy.integrate import solve_ivp
 
         def rhs(_t, x) -> list:
             vals = np.array([self._eval_term(name, x) for name in terms])
             return [float(coef @ vals) for coef in coef_rows]
 
         sol = solve_ivp(
-            rhs, (float(t[0]), float(t[-1])), X[0].tolist(),
-            t_eval=t.tolist(), method="RK45", max_step=float(np.mean(np.diff(t))),
+            rhs,
+            (float(t[0]), float(t[-1])),
+            X[0].tolist(),
+            t_eval=t.tolist(),
+            method="RK45",
+            max_step=float(np.mean(np.diff(t))),
         )
         if not sol.success:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"integration failed: {sol.message}",
             )
 
         pred = sol.y.T  # (n, n_vars)
-        r2: dict[str, float] = {}
-        residuals: dict[str, list[float]] = {}
-        for j in range(n_vars):
-            ss_res = float(np.sum((X[:, j] - pred[:, j]) ** 2))
-            ss_tot = float(np.sum((X[:, j] - np.mean(X[:, j])) ** 2))
-            r2[var_names[j]] = float(1.0 - ss_res / ss_tot) if ss_tot > 1e-15 else 0.0
-            residuals[var_names[j]] = (X[:, j] - pred[:, j]).tolist()
+        r2, residuals = _validate_scores(X, pred, var_names)
 
         return ToolResult(
             data={
@@ -730,7 +853,8 @@ class DynamicsDiscoveryTool(HuginnTool):
         """读 LAMMPS dump -> 抽物理量 -> 复用 _discover 跑 SINDy 方程发现."""
         if not args.data_file:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="load_lammps_dump needs data_file (dump 路径)",
             )
         path = Path(args.data_file)
@@ -742,9 +866,7 @@ class DynamicsDiscoveryTool(HuginnTool):
             frames = self._parse_lammps_dump(path)
             t, Y, col_names = self._extract_lammps_quantities(frames)
         except Exception as e:
-            return ToolResult(
-                data=None, success=False, error=f"dump parse failed: {e}"
-            )
+            return ToolResult(data=None, success=False, error=f"dump parse failed: {e}")
 
         # 提取出的物理量塞进 data_json, 复用 discover 的 SINDy 流程
         payload: dict[str, list[float]] = {"t": t.tolist()}
@@ -792,10 +914,14 @@ if __name__ == "__main__":
     X = sol.y.T + rng.normal(0, 0.01, (n, 2))  # 加 1% 噪声
 
     tool = DynamicsDiscoveryTool()
-    res = tool._discover(DynamicsDiscoveryInput(
-        data_json={"t": t.tolist(), "x0": X[:, 0].tolist(), "x1": X[:, 1].tolist()},
-        max_order=2, threshold=0.05, smooth=True,
-    ))
+    res = tool._discover(
+        DynamicsDiscoveryInput(
+            data_json={"t": t.tolist(), "x0": X[:, 0].tolist(), "x1": X[:, 1].tolist()},
+            max_order=2,
+            threshold=0.05,
+            smooth=True,
+        )
+    )
     assert res.success, res.error
     data = res.data
     print("equations:")
@@ -815,11 +941,14 @@ if __name__ == "__main__":
     print("OK: recovered dx0/dt~=x1, dx1/dt~-x0-0.2x1, R2>0.9")
 
     # 用发现的方程积分, 跟原轨迹对比
-    vres = tool._validate(DynamicsDiscoveryInput(
-        action="validate",
-        data_json={"t": t.tolist(), "x0": X[:, 0].tolist(), "x1": X[:, 1].tolist()},
-        terms=data["terms"], coefficients=data["coefficients"],
-    ))
+    vres = tool._validate(
+        DynamicsDiscoveryInput(
+            action="validate",
+            data_json={"t": t.tolist(), "x0": X[:, 0].tolist(), "x1": X[:, 1].tolist()},
+            terms=data["terms"],
+            coefficients=data["coefficients"],
+        )
+    )
     assert vres.success, vres.error
     print("validate R2:", {k: round(v, 4) for k, v in vres.data["r2_score"].items()})
     assert vres.data["r2_score"]["x0"] > 0.9, "validate x0 R2 low"

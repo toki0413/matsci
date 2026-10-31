@@ -22,7 +22,6 @@ from huginn.memory.manager import MemoryManager
 logger = logging.getLogger(__name__)
 
 
-
 @dataclass
 class SubTask:
     task_id: str
@@ -68,6 +67,29 @@ Rules:
 - Use depends_on only when a task truly needs the output of another task (list task_ids).
 - If the objective is simple, return a single task for the lead agent.
 """
+
+
+def _build_task_prompt(task: SubTask, result: OrchestratorResult) -> str:
+    """Build context from dependencies."""
+    dep_context = ""
+    for dep_id in task.depends_on:
+        dep_out = result.outputs.get(dep_id, "")
+        if dep_out:
+            dep_context += f"\n\nOutput from {dep_id}:\n{dep_out}"
+    return f"{task.prompt}{dep_context}"
+
+
+def _mark_running(task: SubTask, on_status: Any | None) -> None:
+    task.status = "running"
+    if on_status:
+        with contextlib.suppress(Exception):
+            on_status(task)
+
+
+def _notify_status(task: SubTask, on_status: Any | None) -> None:
+    if on_status:
+        with contextlib.suppress(Exception):
+            on_status(task)
 
 
 # 结构化计划 prompt — 产出 PlanStep 列表, 会持久化到 PlanStore.
@@ -188,14 +210,16 @@ class Orchestrator:
             data = json.loads(text)
             steps = []
             for s in data.get("steps", []):
-                steps.append(PlanStep(
-                    id=s["id"],
-                    description=s.get("description", ""),
-                    tool=s.get("tool"),
-                    parameters=s.get("parameters", {}),
-                    dependencies=s.get("dependencies", []),
-                    agent_id=s.get("agent_id", "lead"),
-                ))
+                steps.append(
+                    PlanStep(
+                        id=s["id"],
+                        description=s.get("description", ""),
+                        tool=s.get("tool"),
+                        parameters=s.get("parameters", {}),
+                        dependencies=s.get("dependencies", []),
+                        agent_id=s.get("agent_id", "lead"),
+                    )
+                )
             if steps:
                 return steps
         except Exception:  # 防御: 计划解析失败则回退单步
@@ -207,12 +231,14 @@ class Orchestrator:
         """Convert a persisted Plan to the in-memory TaskPlan for execution."""
         tasks = []
         for step in plan.steps:
-            tasks.append(SubTask(
-                task_id=step.id,
-                agent_id=step.agent_id,
-                prompt=self._step_to_prompt(step),
-                depends_on=list(step.dependencies),
-            ))
+            tasks.append(
+                SubTask(
+                    task_id=step.id,
+                    agent_id=step.agent_id,
+                    prompt=self._step_to_prompt(step),
+                    depends_on=list(step.dependencies),
+                )
+            )
         return TaskPlan(objective=plan.objective, tasks=tasks)
 
     @staticmethod
@@ -222,7 +248,9 @@ class Orchestrator:
         if step.tool:
             parts.append(f"Use tool: {step.tool}")
             if step.parameters:
-                parts.append(f"Parameters: {json.dumps(step.parameters, ensure_ascii=False)}")
+                parts.append(
+                    f"Parameters: {json.dumps(step.parameters, ensure_ascii=False)}"
+                )
         return "\n".join(parts)
 
     def _sync_step_statuses(self, plan_id: str, task_plan: TaskPlan) -> None:
@@ -314,30 +342,10 @@ class Orchestrator:
 
         async def run_task(task: SubTask) -> None:
             async with semaphore:
-                task.status = "running"
-                if on_status:
-                    with contextlib.suppress(Exception):
-                        on_status(task)
+                _mark_running(task, on_status)
                 try:
-                    # Build context from dependencies
-                    dep_context = ""
-                    for dep_id in task.depends_on:
-                        dep_out = result.outputs.get(dep_id, "")
-                        if dep_out:
-                            dep_context += f"\n\nOutput from {dep_id}:\n{dep_out}"
-                    full_prompt = f"{task.prompt}{dep_context}"
-
-                    # Each sub-agent shares the long-term memory but gets its own session
-                    sub_memory = self._make_sub_memory()
-                    # 必须传唯一 thread_id — factory 用全局共享 checkpointer,
-                    # thread_id 缺省会让并行 sub-agent 在 checkpointer 里互相
-                    # 读写 messages 历史 (状态串扰).
-                    agent = self.factory.create(
-                        task.agent_id,
-                        thread_id=f"sub:{task.task_id}:{uuid.uuid4().hex[:8]}",
-                        memory_manager=sub_memory,
-                        approval_callback=self._approval_callback,
-                    )
+                    full_prompt = _build_task_prompt(task, result)
+                    agent = Orchestrator._create_sub_agent(self, task)
                     state = await asyncio.to_thread(agent.invoke, full_prompt)
                     output = self._extract_output(state)
                     task.result = output
@@ -347,11 +355,26 @@ class Orchestrator:
                     task.status = "error"
                     task.result = f"Error: {exc}"
                     result.outputs[task.task_id] = task.result
-                if on_status:
-                    with contextlib.suppress(Exception):
-                        on_status(task)
+                _notify_status(task, on_status)
                 completed.add(task.task_id)
 
+        if not await Orchestrator._drive_task_dag(
+            self, plan, result, completed, running, run_task
+        ):
+            return result
+
+        result.success = all(t.status == "done" for t in plan.tasks)
+        return result
+
+    async def _drive_task_dag(
+        self,
+        plan: TaskPlan,
+        result: OrchestratorResult,
+        completed: set[str],
+        running: dict[str, asyncio.Task],
+        run_task: Any,
+    ) -> bool:
+        """调度依赖 DAG; 出现不可达任务时返回 False."""
         pending = list(plan.tasks)
         while pending or running:
             ready = [t for t in pending if set(t.depends_on) <= completed]
@@ -365,7 +388,7 @@ class Orchestrator:
                 if pending:
                     result.success = False
                     result.error = f"Dependency cycle or unreachable tasks: {[t.task_id for t in pending]}"
-                    return result
+                    return False
                 break
 
             done, _ = await asyncio.wait(
@@ -377,9 +400,20 @@ class Orchestrator:
                     if task is d:
                         del running[tid]
                         break
+        return True
 
-        result.success = all(t.status == "done" for t in plan.tasks)
-        return result
+    def _create_sub_agent(self, task: SubTask) -> Any:
+        # Each sub-agent shares the long-term memory but gets its own session
+        sub_memory = self._make_sub_memory()
+        # 必须传唯一 thread_id — factory 用全局共享 checkpointer,
+        # thread_id 缺省会让并行 sub-agent 在 checkpointer 里互相
+        # 读写 messages 历史 (状态串扰).
+        return self.factory.create(
+            task.agent_id,
+            thread_id=f"sub:{task.task_id}:{uuid.uuid4().hex[:8]}",
+            memory_manager=sub_memory,
+            approval_callback=self._approval_callback,
+        )
 
     async def synthesize(self, result: OrchestratorResult) -> str:
         """Ask the lead agent to synthesize sub-agent outputs into a final answer."""
@@ -401,7 +435,10 @@ class Orchestrator:
         return summary
 
     async def run(
-        self, objective: str, on_status: Any | None = None, auto_confirm: bool | None = None
+        self,
+        objective: str,
+        on_status: Any | None = None,
+        auto_confirm: bool | None = None,
     ) -> OrchestratorResult | Plan:
         """Plan, execute, and synthesize — or plan-only for review.
 

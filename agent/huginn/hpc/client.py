@@ -83,9 +83,7 @@ def _validate_command(command: str) -> None:
         raise ValueError("HPC command too long (max 4096 chars)")
     for token in _COMMAND_FORBIDDEN:
         if token in command:
-            raise ValueError(
-                f"HPC command contains forbidden sequence {token!r}"
-            )
+            raise ValueError(f"HPC command contains forbidden sequence {token!r}")
     # Block semicolon chaining — use separate job steps instead
     if ";" in command:
         raise ValueError("HPC command must not contain ';' (use separate steps)")
@@ -147,6 +145,105 @@ def _validate_array_spec(spec: str) -> None:
         raise ValueError(f"Invalid array spec: {spec!r}")
 
 
+def _validate_job_inputs(
+    command: str,
+    job_name: str,
+    modules: list[str] | None,
+    env_vars: dict[str, str] | None,
+) -> str:
+    """校验所有用户可控输入, 返回清洗后的作业名."""
+    # Validate all user-controlled inputs before building the script
+    _validate_command(command)
+    job_name = _sanitize_job_name(job_name)
+    if modules:
+        for mod in modules:
+            _validate_module_name(mod)
+    if env_vars:
+        for k, v in env_vars.items():
+            _validate_env_var(k, str(v))
+    return job_name
+
+
+def _slurm_array_lines(array_spec: str | None) -> list[str]:
+    """数组作业: 一条脚本提交一批子任务, 用 %j 区分输出文件."""
+    if array_spec:
+        _validate_array_spec(array_spec)
+        return [
+            f"#SBATCH --array={array_spec}",
+            "#SBATCH --output=slurm-%A_%a.out",
+            "#SBATCH --error=slurm-%A_%a.err",
+        ]
+    return ["#SBATCH --output=slurm-%j.out", "#SBATCH --error=slurm-%j.err"]
+
+
+def _slurm_priority_lines(priority: str) -> list[str]:
+    """优先级: 映射成数值, urgent 抢前面."""
+    prio = _priority_to_int(priority)
+    if prio is None or priority == "normal":
+        return []
+    return [f"#SBATCH --priority={prio}"]
+
+
+def _slurm_dependency_lines(
+    depends_on: list[str] | None, dependency_type: str
+) -> list[str]:
+    """依赖: 等前置作业跑完再启动, 链式提交靠这个."""
+    if not depends_on:
+        return []
+    _validate_dependency_type(dependency_type)
+    dep_str = ":".join(str(j) for j in depends_on)
+    return [f"#SBATCH --dependency={dependency_type}:{dep_str}"]
+
+
+def _pbs_array_lines(array_spec: str | None) -> list[str]:
+    """PBS 数组: 不同版本用 -t (Torque) 或 -J (PBS Pro), 这里用兼容性最好的 -t."""
+    if array_spec:
+        _validate_array_spec(array_spec)
+        return [
+            f"#PBS -t {array_spec}",
+            "#PBS -o pbs-${PBS_ARRAYID}.out",
+            "#PBS -e pbs-${PBS_ARRAYID}.err",
+        ]
+    return ["#PBS -o pbs-$PBS_JOBID.out", "#PBS -e pbs-$PBS_JOBID.err"]
+
+
+def _pbs_priority_lines(priority: str) -> list[str]:
+    """优先级: PBS 用 -p 取整数, 范围 -1024..1023."""
+    prio = _priority_to_int(priority)
+    if prio is None or priority == "normal":
+        return []
+    # 映射到 PBS 范围内, urgent 最高
+    pbs_prio = {100: -512, 500: 0, 1000: 512, 2000: 1023}
+    return [f"#PBS -p {pbs_prio.get(prio, 0)}"]
+
+
+def _pbs_dependency_lines(
+    depends_on: list[str] | None, dependency_type: str
+) -> list[str]:
+    """依赖: PBS 用 -W depend=afterok:JOBID."""
+    if not depends_on:
+        return []
+    _validate_dependency_type(dependency_type)
+    dep_str = ":".join(str(j) for j in depends_on)
+    return [f"#PBS -W depend={dependency_type}:{dep_str}"]
+
+
+def _module_env_lines(
+    modules: list[str] | None, env_vars: dict[str, str] | None
+) -> list[str]:
+    """module load 与 export 行; 每段末尾补一个空行 (两调度器格式一致)."""
+    lines: list[str] = []
+    if modules:
+        for mod in modules:
+            lines.append(f"module load {mod}")
+        lines.append("")
+    if env_vars:
+        for key, value in env_vars.items():
+            lines.append(f"export {key}={value}")
+        lines.append("")
+    return lines
+
+
 @dataclass
 class HPCConfig:
     """Configuration for HPC connection and resource selection."""
@@ -181,6 +278,46 @@ class JobStatus:
     queue: str | None = None
     runtime: str | None = None
     message: str | None = None
+
+
+@dataclass
+class _JobScriptSpec:
+    """作业脚本的全部输入参数 (打包后便于拆分渲染 helper)."""
+
+    command: str
+    job_name: str
+    walltime: str | None
+    nodes: int | None
+    ntasks_per_node: int | None
+    queue: str | None
+    modules: list[str] | None
+    env_vars: dict[str, str] | None
+    gpus_per_node: int | None
+    priority: str
+    depends_on: list[str] | None
+    dependency_type: str
+    array_spec: str | None
+
+
+def _parse_sacct_line(job_id: str, line: str) -> JobStatus | None:
+    """解析一行 sacct 输出 "12345|COMPLETED|0:0|normal|01:23:45"."""
+    parts = line.split("|")
+    if len(parts) < 5:
+        return None
+    exit_str = parts[2]
+    exit_code = int(exit_str.split(":")[0]) if ":" in exit_str else int(exit_str)
+    return JobStatus(
+        job_id=job_id,
+        state=parts[1].upper(),
+        exit_code=exit_code,
+        queue=parts[3] if parts[3] else None,
+        runtime=parts[4] if parts[4] else None,
+    )
+
+
+def _software_result(status: str, method: str, message: str) -> dict[str, str]:
+    """构造 install_software 的返回结构 {status, method, message}."""
+    return {"status": status, "method": method, "message": message}
 
 
 class HPCClient:
@@ -354,198 +491,97 @@ class HPCClient:
         - dependency_type: afterok (默认) / afterany / afternotok
         - array_spec: 数组作业规格 (如 "1-10"), 提交一批同类作业
         """
-        # Validate all user-controlled inputs before building the script
-        _validate_command(command)
-        job_name = _sanitize_job_name(job_name)
-        if modules:
-            for mod in modules:
-                _validate_module_name(mod)
-        if env_vars:
-            for k, v in env_vars.items():
-                _validate_env_var(k, str(v))
-
+        job_name = _validate_job_inputs(command, job_name, modules, env_vars)
+        spec = _JobScriptSpec(
+            command=command,
+            job_name=job_name,
+            walltime=walltime,
+            nodes=nodes,
+            ntasks_per_node=ntasks_per_node,
+            queue=queue,
+            modules=modules,
+            env_vars=env_vars,
+            gpus_per_node=gpus_per_node,
+            priority=priority,
+            depends_on=depends_on,
+            dependency_type=dependency_type,
+            array_spec=array_spec,
+        )
         if self.config.scheduler == "slurm":
-            return self._generate_slurm_script(
-                command,
-                job_name,
-                walltime,
-                nodes,
-                ntasks_per_node,
-                queue,
-                modules,
-                env_vars,
-                gpus_per_node,
-                priority,
-                depends_on,
-                dependency_type,
-                array_spec,
-            )
+            return self._generate_slurm_script(spec)
         elif self.config.scheduler == "pbs":
-            return self._generate_pbs_script(
-                command,
-                job_name,
-                walltime,
-                nodes,
-                ntasks_per_node,
-                queue,
-                modules,
-                env_vars,
-                gpus_per_node,
-                priority,
-                depends_on,
-                dependency_type,
-                array_spec,
-            )
+            return self._generate_pbs_script(spec)
         else:
             raise ValueError(f"Unsupported scheduler: {self.config.scheduler}")
 
-    def _generate_slurm_script(
-        self,
-        command: str,
-        job_name: str,
-        walltime: str | None,
-        nodes: int | None,
-        ntasks_per_node: int | None,
-        queue: str | None,
-        modules: list[str] | None,
-        env_vars: dict[str, str] | None,
-        gpus_per_node: int | None,
-        priority: str = "normal",
-        depends_on: list[str] | None = None,
-        dependency_type: str = "afterok",
-        array_spec: str | None = None,
-    ) -> str:
+    def _generate_slurm_script(self, spec: _JobScriptSpec) -> str:
+        """渲染 SLURM (sbatch) 作业脚本."""
         lines = ["#!/bin/bash"]
-        lines.append(f"#SBATCH --job-name={job_name}")
-        lines.append(f"#SBATCH --time={walltime or self.config.default_walltime}")
-        lines.append(f"#SBATCH --nodes={nodes or self.config.default_nodes}")
+        lines.append(f"#SBATCH --job-name={spec.job_name}")
+        lines.append(f"#SBATCH --time={spec.walltime or self.config.default_walltime}")
+        lines.append(f"#SBATCH --nodes={spec.nodes or self.config.default_nodes}")
         lines.append(
-            f"#SBATCH --ntasks-per-node={ntasks_per_node or self.config.default_ntasks_per_node}"
+            f"#SBATCH --ntasks-per-node={spec.ntasks_per_node or self.config.default_ntasks_per_node}"
         )
-
-        gpus = (
-            gpus_per_node
-            if gpus_per_node is not None
-            else self.config.default_gpus_per_node
-        )
-        if gpus > 0:
-            lines.append(f"#SBATCH --gres=gpu:{gpus}")
-
-        if queue or self.config.default_queue:
-            lines.append(f"#SBATCH --partition={queue or self.config.default_queue}")
-
-        # 数组作业: 一条脚本提交一批子任务, 用 %j 区分输出文件
-        if array_spec:
-            _validate_array_spec(array_spec)
-            lines.append(f"#SBATCH --array={array_spec}")
-            lines.append("#SBATCH --output=slurm-%A_%a.out")
-            lines.append("#SBATCH --error=slurm-%A_%a.err")
-        else:
-            lines.append("#SBATCH --output=slurm-%j.out")
-            lines.append("#SBATCH --error=slurm-%j.err")
-
-        # 优先级: 映射成数值, urgent 抢前面
-        prio = _priority_to_int(priority)
-        if prio is not None and priority != "normal":
-            lines.append(f"#SBATCH --priority={prio}")
-
-        # 依赖: 等前置作业跑完再启动, 链式提交靠这个
-        if depends_on:
-            _validate_dependency_type(dependency_type)
-            dep_str = ":".join(str(j) for j in depends_on)
-            lines.append(f"#SBATCH --dependency={dependency_type}:{dep_str}")
-
+        lines.extend(self._slurm_resource_lines(spec))
+        lines.extend(_slurm_array_lines(spec.array_spec))
+        lines.extend(_slurm_priority_lines(spec.priority))
+        lines.extend(_slurm_dependency_lines(spec.depends_on, spec.dependency_type))
         lines.append("")
-
-        if modules:
-            for mod in modules:
-                lines.append(f"module load {mod}")
-            lines.append("")
-
-        if env_vars:
-            for key, value in env_vars.items():
-                lines.append(f"export {key}={value}")
-            lines.append("")
-
-        lines.append(command)
+        lines.extend(_module_env_lines(spec.modules, spec.env_vars))
+        lines.append(spec.command)
         lines.append("")
-
         return "\n".join(lines)
 
-    def _generate_pbs_script(
-        self,
-        command: str,
-        job_name: str,
-        walltime: str | None,
-        nodes: int | None,
-        ntasks_per_node: int | None,
-        queue: str | None,
-        modules: list[str] | None,
-        env_vars: dict[str, str] | None,
-        gpus_per_node: int | None,
-        priority: str = "normal",
-        depends_on: list[str] | None = None,
-        dependency_type: str = "afterok",
-        array_spec: str | None = None,
-    ) -> str:
-        lines = ["#!/bin/bash"]
-        lines.append(f"#PBS -N {job_name}")
-        lines.append(f"#PBS -l walltime={walltime or self.config.default_walltime}")
-
-        gpus = (
-            gpus_per_node
-            if gpus_per_node is not None
-            else self.config.default_gpus_per_node
-        )
-        node_spec = f"nodes={nodes or self.config.default_nodes}:ppn={ntasks_per_node or self.config.default_ntasks_per_node}"
+    def _slurm_resource_lines(self, spec: _JobScriptSpec) -> list[str]:
+        """GPU 与队列资源指令 (gres 在 partition 之前)."""
+        lines: list[str] = []
+        gpus = self._resolve_gpus(spec.gpus_per_node)
         if gpus > 0:
-            node_spec += f":ngpus={gpus}"
-        lines.append(f"#PBS -l {node_spec}")
+            lines.append(f"#SBATCH --gres=gpu:{gpus}")
+        if spec.queue or self.config.default_queue:
+            lines.append(
+                f"#SBATCH --partition={spec.queue or self.config.default_queue}"
+            )
+        return lines
 
-        if queue or self.config.default_queue:
-            lines.append(f"#PBS -q {queue or self.config.default_queue}")
+    def _resolve_gpus(self, gpus_per_node: int | None) -> int:
+        """未显式指定 GPU 数时回落到配置默认值."""
+        if gpus_per_node is not None:
+            return gpus_per_node
+        return self.config.default_gpus_per_node
 
-        # PBS 数组: 不同版本用 -t (Torque) 或 -J (PBS Pro), 这里用兼容性最好的 -t
-        if array_spec:
-            _validate_array_spec(array_spec)
-            lines.append(f"#PBS -t {array_spec}")
-            lines.append("#PBS -o pbs-${PBS_ARRAYID}.out")
-            lines.append("#PBS -e pbs-${PBS_ARRAYID}.err")
-        else:
-            lines.append("#PBS -o pbs-$PBS_JOBID.out")
-            lines.append("#PBS -e pbs-$PBS_JOBID.err")
-
-        # 优先级: PBS 用 -p 取整数, 范围 -1024..1023
-        prio = _priority_to_int(priority)
-        if prio is not None and priority != "normal":
-            # 映射到 PBS 范围内, urgent 最高
-            pbs_prio = {100: -512, 500: 0, 1000: 512, 2000: 1023}
-            lines.append(f"#PBS -p {pbs_prio.get(prio, 0)}")
-
-        # 依赖: PBS 用 -W depend=afterok:JOBID
-        if depends_on:
-            _validate_dependency_type(dependency_type)
-            dep_str = ":".join(str(j) for j in depends_on)
-            lines.append(f'#PBS -W depend={dependency_type}:{dep_str}')
-
+    def _generate_pbs_script(self, spec: _JobScriptSpec) -> str:
+        """渲染 PBS (qsub) 作业脚本."""
+        lines = ["#!/bin/bash"]
+        lines.append(f"#PBS -N {spec.job_name}")
+        lines.append(
+            f"#PBS -l walltime={spec.walltime or self.config.default_walltime}"
+        )
+        lines.append(f"#PBS -l {self._pbs_node_spec(spec)}")
+        if spec.queue or self.config.default_queue:
+            lines.append(f"#PBS -q {spec.queue or self.config.default_queue}")
+        lines.extend(_pbs_array_lines(spec.array_spec))
+        lines.extend(_pbs_priority_lines(spec.priority))
+        lines.extend(_pbs_dependency_lines(spec.depends_on, spec.dependency_type))
         lines.append("")
         lines.append("cd $PBS_O_WORKDIR")
         lines.append("")
-
-        if modules:
-            for mod in modules:
-                lines.append(f"module load {mod}")
-            lines.append("")
-
-        if env_vars:
-            for key, value in env_vars.items():
-                lines.append(f"export {key}={value}")
-            lines.append("")
-
-        lines.append(command)
+        lines.extend(_module_env_lines(spec.modules, spec.env_vars))
+        lines.append(spec.command)
         lines.append("")
-
         return "\n".join(lines)
+
+    def _pbs_node_spec(self, spec: _JobScriptSpec) -> str:
+        """拼 PBS 的 nodes[:ppn][:ngpus] 资源串."""
+        node_spec = (
+            f"nodes={spec.nodes or self.config.default_nodes}:"
+            f"ppn={spec.ntasks_per_node or self.config.default_ntasks_per_node}"
+        )
+        gpus = self._resolve_gpus(spec.gpus_per_node)
+        if gpus > 0:
+            node_spec += f":ngpus={gpus}"
+        return node_spec
 
     # ── Job Submission ────────────────────────────────────────────
 
@@ -607,87 +643,81 @@ class HPCClient:
         self._ensure_connected()
 
         if self.config.scheduler == "slurm":
-            stdout, stderr, rc = self._exec(
-                [
-                    "sacct",
-                    "-j",
-                    job_id,
-                    "--format=JobID,State,ExitCode,Partition,Elapsed",
-                    "--noheader",
-                    "-P",
-                ]
-            )
-            if rc != 0 or not stdout:
-                # Fallback to squeue for running jobs
-                stdout2, stderr2, rc2 = self._exec(
-                    ["squeue", "-j", job_id, "-h", "-o", "%T|%i|%r"]
-                )
-                if rc2 == 0 and stdout2:
-                    parts = stdout2.split("|")
-                    return JobStatus(
-                        job_id=job_id,
-                        state=parts[0].upper() if parts else "UNKNOWN",
-                        message=parts[2] if len(parts) > 2 else None,
-                    )
-                return JobStatus(job_id=job_id, state="UNKNOWN", message=stderr)
-
-            # Parse sacct output: "12345|COMPLETED|0:0|normal|01:23:45"
-            lines = stdout.strip().split("\n")
-            for line in lines:
-                parts = line.split("|")
-                if len(parts) >= 5:
-                    state = parts[1].upper()
-                    exit_str = parts[2]
-                    exit_code = (
-                        int(exit_str.split(":")[0])
-                        if ":" in exit_str
-                        else int(exit_str)
-                    )
-                    return JobStatus(
-                        job_id=job_id,
-                        state=state,
-                        exit_code=exit_code,
-                        queue=parts[3] if parts[3] else None,
-                        runtime=parts[4] if parts[4] else None,
-                    )
-            return JobStatus(job_id=job_id, state="UNKNOWN")
-
+            return self._poll_slurm_status(job_id)
         elif self.config.scheduler == "pbs":
-            stdout, stderr, rc = self._exec(["qstat", "-f", job_id])
-            if rc != 0:
-                # Job may have finished
-                stdout2, stderr2, rc2 = self._exec(["qstat", "-x", "-f", job_id])
-                if rc2 != 0:
-                    return JobStatus(job_id=job_id, state="UNKNOWN", message=stderr)
-                stdout = stdout2
-
-            # Parse PBS qstat output
-            import re
-
-            state_match = re.search(r"job_state\s*=\s*(\w+)", stdout)
-            state = state_match.group(1).upper() if state_match else "UNKNOWN"
-
-            exit_match = re.search(r"exit_status\s*=\s*(\d+)", stdout)
-            exit_code = int(exit_match.group(1)) if exit_match else None
-
-            # Map PBS states
-            pbs_state_map = {
-                "Q": "PENDING",
-                "R": "RUNNING",
-                "C": "COMPLETED",
-                "E": "RUNNING",  # Exiting
-                "H": "PENDING",  # Held
-            }
-            mapped_state = pbs_state_map.get(state, state)
-
-            return JobStatus(
-                job_id=job_id,
-                state=mapped_state,
-                exit_code=exit_code,
-            )
-
+            return self._poll_pbs_status(job_id)
         else:
             raise ValueError(f"Unsupported scheduler: {self.config.scheduler}")
+
+    def _poll_slurm_status(self, job_id: str) -> JobStatus:
+        """用 sacct 查询 SLURM 作业状态, 拿不到时回退 squeue."""
+        stdout, stderr, rc = self._exec(
+            [
+                "sacct",
+                "-j",
+                job_id,
+                "--format=JobID,State,ExitCode,Partition,Elapsed",
+                "--noheader",
+                "-P",
+            ]
+        )
+        if rc != 0 or not stdout:
+            # Fallback to squeue for running jobs
+            return self._poll_slurm_queue(job_id, stderr)
+
+        # Parse sacct output: "12345|COMPLETED|0:0|normal|01:23:45"
+        for line in stdout.strip().split("\n"):
+            status = _parse_sacct_line(job_id, line)
+            if status is not None:
+                return status
+        return JobStatus(job_id=job_id, state="UNKNOWN")
+
+    def _poll_slurm_queue(self, job_id: str, stderr: str) -> JobStatus:
+        """sacct 不可用时回退到 squeue 查询运行中作业."""
+        stdout, _, rc = self._exec(["squeue", "-j", job_id, "-h", "-o", "%T|%i|%r"])
+        if rc == 0 and stdout:
+            parts = stdout.split("|")
+            return JobStatus(
+                job_id=job_id,
+                state=parts[0].upper() if parts else "UNKNOWN",
+                message=parts[2] if len(parts) > 2 else None,
+            )
+        return JobStatus(job_id=job_id, state="UNKNOWN", message=stderr)
+
+    def _poll_pbs_status(self, job_id: str) -> JobStatus:
+        """用 qstat 查询 PBS 作业状态并映射到统一状态."""
+        stdout, stderr, rc = self._exec(["qstat", "-f", job_id])
+        if rc != 0:
+            # Job may have finished
+            stdout2, stderr2, rc2 = self._exec(["qstat", "-x", "-f", job_id])
+            if rc2 != 0:
+                return JobStatus(job_id=job_id, state="UNKNOWN", message=stderr)
+            stdout = stdout2
+
+        # Parse PBS qstat output
+        import re
+
+        state_match = re.search(r"job_state\s*=\s*(\w+)", stdout)
+        state = state_match.group(1).upper() if state_match else "UNKNOWN"
+
+        exit_match = re.search(r"exit_status\s*=\s*(\d+)", stdout)
+        exit_code = int(exit_match.group(1)) if exit_match else None
+
+        # Map PBS states
+        pbs_state_map = {
+            "Q": "PENDING",
+            "R": "RUNNING",
+            "C": "COMPLETED",
+            "E": "RUNNING",  # Exiting
+            "H": "PENDING",  # Held
+        }
+        mapped_state = pbs_state_map.get(state, state)
+
+        return JobStatus(
+            job_id=job_id,
+            state=mapped_state,
+            exit_code=exit_code,
+        )
 
     def wait_for_job(
         self,
@@ -757,9 +787,7 @@ class HPCClient:
         },
     }
 
-    def install_software(
-        self, name: str, method: str = "auto"
-    ) -> dict[str, str]:
+    def install_software(self, name: str, method: str = "auto") -> dict[str, str]:
         """在远程 HPC 上安装科学计算软件.
 
         策略 (method):
@@ -772,11 +800,7 @@ class HPCClient:
         name = name.strip().lower()
         sw = self._SUPPORTED_SOFTWARE.get(name)
         if sw is None:
-            return {
-                "status": "unsupported",
-                "method": "none",
-                "message": f"不支持自动安装 '{name}', 支持列表: {list(self._SUPPORTED_SOFTWARE)}",
-            }
+            return self._unsupported_software(name)
 
         self._ensure_connected()
         check = sw["check_cmd"]
@@ -784,45 +808,54 @@ class HPCClient:
         # 0. 先检查是否已装
         _, _, rc = self._exec(check)
         if rc == 0:
-            return {"status": "already_installed", "method": "none", "message": f"{name} 已安装"}
+            return _software_result("already_installed", "none", f"{name} 已安装")
 
-        methods = (
-            ["module", "conda"] if method == "auto"
-            else [method]
-        )
+        methods = ["module", "conda"] if method == "auto" else [method]
 
         for m in methods:
             if m == "module":
-                mod = sw["module_name"]
-                stdout, stderr, rc = self._exec(f"module load {mod} && {check}")
-                if rc == 0:
-                    return {"status": "installed", "method": "module", "message": f"module load {mod} 成功"}
-                avail, _, _ = self._exec(f"module avail {mod} 2>&1")
-                if avail.strip():
-                    return {
-                        "status": "manual_required",
-                        "method": "module",
-                        "message": f"module {mod} 存在但加载失败, 请手动 module load. 可用版本:\n{avail[:500]}",
-                    }
-
+                result = self._install_via_module(sw, check)
+                if result is not None:
+                    return result
             elif m == "conda":
-                pkg = sw["conda_package"]
-                stdout, stderr, rc = self._exec(
-                    f"conda install -y -c conda-forge {pkg} && {check}"
-                )
-                if rc == 0:
-                    return {"status": "installed", "method": "conda", "message": f"conda install {pkg} 成功"}
-                return {
-                    "status": "failed",
-                    "method": "conda",
-                    "message": f"conda install {pkg} 失败: {stderr[:300]}",
-                }
+                return self._install_via_conda(sw, check)
 
+        return _software_result("failed", method, f"{name} 安装失败, 所有策略均未成功")
+
+    def _unsupported_software(self, name: str) -> dict[str, str]:
+        """构造 unsupported 结果, 附支持列表."""
         return {
-            "status": "failed",
-            "method": method,
-            "message": f"{name} 安装失败, 所有策略均未成功",
+            "status": "unsupported",
+            "method": "none",
+            "message": f"不支持自动安装 '{name}', 支持列表: {list(self._SUPPORTED_SOFTWARE)}",
         }
+
+    def _install_via_module(
+        self, sw: dict[str, str], check: str
+    ) -> dict[str, str] | None:
+        """尝试 module load; 拿不到可自动加载的版本时返回 None 交给下一策略."""
+        mod = sw["module_name"]
+        _, _, rc = self._exec(f"module load {mod} && {check}")
+        if rc == 0:
+            return _software_result("installed", "module", f"module load {mod} 成功")
+        avail, _, _ = self._exec(f"module avail {mod} 2>&1")
+        if avail.strip():
+            return _software_result(
+                "manual_required",
+                "module",
+                f"module {mod} 存在但加载失败, 请手动 module load. 可用版本:\n{avail[:500]}",
+            )
+        return None
+
+    def _install_via_conda(self, sw: dict[str, str], check: str) -> dict[str, str]:
+        """尝试 conda install; 无论成败都返回结果 (不再 fallback)."""
+        pkg = sw["conda_package"]
+        _, stderr, rc = self._exec(f"conda install -y -c conda-forge {pkg} && {check}")
+        if rc == 0:
+            return _software_result("installed", "conda", f"conda install {pkg} 成功")
+        return _software_result(
+            "failed", "conda", f"conda install {pkg} 失败: {stderr[:300]}"
+        )
 
     def __enter__(self):
         self.connect()

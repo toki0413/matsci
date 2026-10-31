@@ -38,7 +38,9 @@ from huginn.utils.runtime import get_runtime_home
 
 def _default_audit_logger() -> AuditLogger:
     base = os.environ.get("HUGINN_CACHE_DIR")
-    log_path = Path(base) / "audit.jsonl" if base else get_runtime_home() / "audit.jsonl"
+    log_path = (
+        Path(base) / "audit.jsonl" if base else get_runtime_home() / "audit.jsonl"
+    )
     log_path.parent.mkdir(parents=True, exist_ok=True)
     return AuditLogger(log_path)
 
@@ -136,6 +138,48 @@ class ServerContext:
         return components
 
 
+def _resolve_runtime_config(config: HuginnConfig | None) -> HuginnConfig:
+    if config is not None:
+        return config
+    from huginn.routes.config import _load_runtime_config
+
+    return _load_runtime_config()
+
+
+def _build_memory_manager(cfg: HuginnConfig) -> MemoryManager:
+    memory_md = Path(cfg.workspace) / "MEMORY.md" if cfg.workspace else None
+    memory_backend = SQLiteMemoryBackend()
+    return MemoryManager(
+        config=MemoryConfig(memory_md_path=memory_md),
+        longterm=memory_backend._impl,
+    )
+
+
+def _build_agent_factory(
+    cfg: HuginnConfig, memory_manager: MemoryManager
+) -> AgentFactory:
+    return AgentFactory(
+        config=cfg,
+        model_registry=ModelRegistry.from_config(cfg),
+        memory_manager=memory_manager,
+    )
+
+
+def _build_orchestrator(
+    cfg: HuginnConfig,
+    agent_factory: AgentFactory,
+    memory_manager: MemoryManager,
+    plan_store: PlanStore,
+) -> Orchestrator:
+    return Orchestrator(
+        factory=agent_factory,
+        memory_manager=memory_manager,
+        max_concurrent=cfg.max_concurrent_subagents,
+        plan_store=plan_store,
+        auto_confirm=cfg.plan_auto_confirm,
+    )
+
+
 def create_server_context(config: HuginnConfig | None = None) -> ServerContext:
     """Create and initialize a server context.
 
@@ -143,39 +187,21 @@ def create_server_context(config: HuginnConfig | None = None) -> ServerContext:
     in the background by lifespan. This keeps context creation fast.
     """
     from huginn.tools import register_core_tools
+
     register_core_tools()
     # Use _load_runtime_config so huginn.toml is picked up the same way
     # the REST /config route does it — from_env() alone misses the file.
-    if config is not None:
-        cfg = config
-    else:
-        from huginn.routes.config import _load_runtime_config
-        cfg = _load_runtime_config()
+    cfg = _resolve_runtime_config(config)
 
     permission_config = PermissionConfig()
     audit_logger = _default_audit_logger()
 
-    memory_md = Path(cfg.workspace) / "MEMORY.md" if cfg.workspace else None
-    memory_backend = SQLiteMemoryBackend()
-    memory_manager = MemoryManager(
-        config=MemoryConfig(memory_md_path=memory_md),
-        longterm=memory_backend._impl,
-    )
+    memory_manager = _build_memory_manager(cfg)
 
-    agent_factory = AgentFactory(
-        config=cfg,
-        model_registry=ModelRegistry.from_config(cfg),
-        memory_manager=memory_manager,
-    )
+    agent_factory = _build_agent_factory(cfg, memory_manager)
 
     plan_store = PlanStore()
-    orchestrator = Orchestrator(
-        factory=agent_factory,
-        memory_manager=memory_manager,
-        max_concurrent=cfg.max_concurrent_subagents,
-        plan_store=plan_store,
-        auto_confirm=cfg.plan_auto_confirm,
-    )
+    orchestrator = _build_orchestrator(cfg, agent_factory, memory_manager, plan_store)
 
     # 启动对话转录订阅 (best-effort, 失败不影响服务启动)
     transcript_store = TranscriptStore.shared()

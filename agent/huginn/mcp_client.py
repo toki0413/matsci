@@ -52,12 +52,12 @@ except ImportError:  # pragma: no cover
     _ServerNotification = None
 
 # Reconnection defaults
-_BACKOFF_BASE: float = 1.0       # initial delay in seconds
-_BACKOFF_FACTOR: float = 2.0     # multiplier per retry
-_BACKOFF_MAX: float = 30.0       # maximum delay cap
+_BACKOFF_BASE: float = 1.0  # initial delay in seconds
+_BACKOFF_FACTOR: float = 2.0  # multiplier per retry
+_BACKOFF_MAX: float = 30.0  # maximum delay cap
 _MAX_RECONNECT_ATTEMPTS: int = 5  # give up after this many consecutive failures
 _HEALTH_CHECK_INTERVAL: float = 30.0  # seconds between health polls
-_HEALTH_CHECK_TIMEOUT: float = 5.0    # seconds before a health probe is considered hung
+_HEALTH_CHECK_TIMEOUT: float = 5.0  # seconds before a health probe is considered hung
 
 
 # stdio 子进程解释器白名单. 所有 MCP 接入入口 (lifespan 启动配置/.mcp.json/API/CLI)
@@ -105,9 +105,17 @@ def validate_mcp_command(command: str) -> str:
 # 凡是把 MCP 配置序列化到外部 (list_servers / 状态接口 / catalog) 都必须掩码,
 # 防止 api_key / headers / env 令牌泄漏到 UI 或日志.
 _SENSITIVE_CONFIG_KEYS = (
-    "token", "secret", "password", "api_key", "apikey",
-    "access_token", "bot_token", "app_token", "credential",
-    "authorization", "cookie",
+    "token",
+    "secret",
+    "password",
+    "api_key",
+    "apikey",
+    "access_token",
+    "bot_token",
+    "app_token",
+    "credential",
+    "authorization",
+    "cookie",
 )
 
 
@@ -130,9 +138,7 @@ def mask_mcp_config(config: dict[str, Any] | None) -> dict[str, Any]:
         elif isinstance(v, dict):
             out[k] = mask_mcp_config(v)
         elif isinstance(v, list):
-            out[k] = [
-                mask_mcp_config(i) if isinstance(i, dict) else i for i in v
-            ]
+            out[k] = [mask_mcp_config(i) if isinstance(i, dict) else i for i in v]
         else:
             out[k] = v
     return out
@@ -173,6 +179,171 @@ class MCPToolInfo:
     description: str
     input_schema: dict[str, Any]
     server_name: str
+
+
+def _register_config_for_connect(
+    manager: MCPClientManager,
+    config: MCPServerConfig,
+    origin: str | None,
+) -> None:
+    # Store config for future reconnection attempts
+    manager._configs[config.name] = config
+    if origin is not None:
+        manager._origins[config.name] = origin
+
+    # Clear any stale tools from a previous connection (idempotent)
+    manager._tools = [t for t in manager._tools if t.server_name != config.name]
+    manager._tool_index = {
+        k: v for k, v in manager._tool_index.items() if v.server_name != config.name
+    }
+
+
+def _build_transport_client(config: MCPServerConfig) -> Any:
+    if config.transport == "sse":
+        if _sse_client is None:
+            raise RuntimeError(
+                "SSE transport requested but mcp.client.sse is unavailable; "
+                "upgrade the mcp package or use stdio"
+            )
+        if not config.url:
+            raise ValueError(f"SSE server '{config.name}' requires a url")
+        return _sse_client(config.url, headers=config.effective_headers())
+    validate_mcp_command(config.command)
+    params = StdioServerParameters(
+        command=config.command,
+        args=config.args,
+        # 继承完整父进程 env (再叠加 config.env 覆盖)。mcp SDK 的
+        # stdio_client 默认只用白名单 env (HOME/PATH/...), 不含
+        # HTTP(S)_PROXY 等代理变量。外部 npm npx server (如
+        # flint-chart-mcp) 缺代理会在握手阶段一直 hang → initialize
+        # 超时。合并 os.environ 后这类 server 才能正常握手。
+        env={**os.environ, **(config.env or {})},
+    )
+    return stdio_client(params)
+
+
+async def _enter_client_session(client: Any, message_handler: Any) -> ClientSession:
+    read_stream, write_stream = await client.__aenter__()
+    # Hand in a message handler so resource-update notifications
+    # reach subscribers; see _make_message_handler.
+    session = ClientSession(
+        read_stream,
+        write_stream,
+        message_handler=message_handler,
+    )
+    await session.__aenter__()
+    return session
+
+
+def _register_connection_state(
+    manager: MCPClientManager,
+    config: MCPServerConfig,
+    client: Any,
+    session: ClientSession,
+) -> None:
+    manager._clients[config.name] = client
+    manager._sessions[config.name] = session
+    manager._initialized.add(config.name)
+    manager._consecutive_failures[config.name] = 0
+    manager._last_health_check[config.name] = time.monotonic()
+
+
+def _index_tools(
+    manager: MCPClientManager, tools_result: Any, config: MCPServerConfig
+) -> None:
+    for tool in tools_result.tools:
+        # mcp SDK 跨版本: pydantic 内部字段 snake_case(input_schema),
+        # 旧版为 camelCase(inputSchema). 兼容读取.
+        schema = getattr(tool, "input_schema", None) or getattr(
+            tool, "inputSchema", None
+        )
+        info = MCPToolInfo(
+            name=tool.name,
+            description=tool.description or "",
+            input_schema=schema or {"type": "object", "properties": {}},
+            server_name=config.name,
+        )
+        manager._tools.append(info)
+        manager._tool_index[tool.name] = info
+
+
+async def _handle_call_failure(
+    manager: MCPClientManager,
+    server_name: str,
+    name: str,
+    error: Exception,
+    attempt: int,
+    max_errors: int,
+) -> bool:
+    # 检测到 session expired，立即重连
+    if manager._is_session_expired(error):
+        logger.warning(f"Session expired for '{server_name}'，尝试重连")
+        reconnected = await manager.reconnect(server_name)
+        if not reconnected:
+            raise error
+        # 重连成功后重置计数，继续重试
+        manager._consecutive_errors[server_name] = 0
+        return True
+
+    # 错误计数达到上限，尝试重连
+    if manager._consecutive_errors[server_name] >= max_errors:
+        logger.warning(
+            f"工具 '{name}' 连续失败 "
+            f"{manager._consecutive_errors[server_name]} 次，"
+            f"尝试重连 '{server_name}'"
+        )
+        reconnected = await manager.reconnect(server_name)
+        if not reconnected:
+            raise error
+        # 重连成功后重置计数，给一次重试机会
+        manager._consecutive_errors[server_name] = 0
+
+    # 指数退避后重试
+    backoff = min(
+        _BACKOFF_BASE * (_BACKOFF_FACTOR**attempt),
+        _BACKOFF_MAX,
+    )
+    await asyncio.sleep(backoff)
+    return True
+
+
+async def _terminate_windows(proc: Any, timeout: float) -> None:
+    # Windows: terminate() (TerminateProcess) → kill() 升级
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        proc.terminate()
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=timeout)
+        return
+    except TimeoutError:
+        logger.debug("best-effort op failed", exc_info=True)
+
+    # 升级到 kill
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        proc.kill()
+    with contextlib.suppress(TimeoutError, ProcessLookupError):
+        await asyncio.wait_for(proc.wait(), timeout=timeout)
+
+
+async def _terminate_unix(proc: Any, timeout: float) -> None:
+    # Unix: SIGINT → SIGTERM → SIGKILL
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            proc.send_signal(sig)
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=timeout)
+            return
+        except TimeoutError:
+            logger.debug("best-effort op failed", exc_info=True)
+            continue
+        except ProcessLookupError:
+            logger.debug("best-effort op failed", exc_info=True)
+            return
+
+    # 最终升级到 SIGKILL
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        proc.kill()
+    with contextlib.suppress(TimeoutError, ProcessLookupError):
+        await asyncio.wait_for(proc.wait(), timeout=timeout)
 
 
 class MCPClientManager:
@@ -226,7 +397,9 @@ class MCPClientManager:
             for name, cfg in self._registry.items()
         ]
 
-    def register_server(self, name: str, config: dict[str, Any], origin: str = "runtime") -> None:
+    def register_server(
+        self, name: str, config: dict[str, Any], origin: str = "runtime"
+    ) -> None:
         """Register a server configuration without connecting."""
         self._registry[name] = config
         self._origins[name] = origin
@@ -279,7 +452,11 @@ class MCPClientManager:
                 # Schedule in running loop. 用 track_task 保留引用, 否则裸
                 # create_task 在 connect 完成前可能被 GC 静默取消.
                 from huginn.utils.concurrency import track_task
-                track_task(self.connect(config), name=f"mcp-connect-{getattr(config, 'name', '?')}")
+
+                track_task(
+                    self.connect(config),
+                    name=f"mcp-connect-{getattr(config, 'name', '?')}",
+                )
             except RuntimeError:
                 # No running loop — create one
                 loop = asyncio.new_event_loop()
@@ -297,6 +474,7 @@ class MCPClientManager:
                 loop = asyncio.new_event_loop()
             if loop.is_running():
                 from huginn.utils.concurrency import track_task
+
                 track_task(self.disconnect(name), name=f"mcp-disconnect-{name}")
             else:
                 loop.run_until_complete(self.disconnect(name))
@@ -336,51 +514,14 @@ class MCPClientManager:
                 return
 
             # Store config for future reconnection attempts
-            self._configs[config.name] = config
-            if origin is not None:
-                self._origins[config.name] = origin
-
-            # Clear any stale tools from a previous connection (idempotent)
-            self._tools = [t for t in self._tools if t.server_name != config.name]
-            self._tool_index = {
-                k: v for k, v in self._tool_index.items() if v.server_name != config.name
-            }
+            _register_config_for_connect(self, config, origin)
 
             try:
-                if config.transport == "sse":
-                    if _sse_client is None:
-                        raise RuntimeError(
-                            "SSE transport requested but mcp.client.sse is unavailable; "
-                            "upgrade the mcp package or use stdio"
-                        )
-                    if not config.url:
-                        raise ValueError(
-                            f"SSE server '{config.name}' requires a url"
-                        )
-                    client = _sse_client(config.url, headers=config.effective_headers())
-                else:
-                    validate_mcp_command(config.command)
-                    params = StdioServerParameters(
-                        command=config.command,
-                        args=config.args,
-                        # 继承完整父进程 env (再叠加 config.env 覆盖)。mcp SDK 的
-                        # stdio_client 默认只用白名单 env (HOME/PATH/...), 不含
-                        # HTTP(S)_PROXY 等代理变量。外部 npm npx server (如
-                        # flint-chart-mcp) 缺代理会在握手阶段一直 hang → initialize
-                        # 超时。合并 os.environ 后这类 server 才能正常握手。
-                        env={**os.environ, **(config.env or {})},
-                    )
-                    client = stdio_client(params)
-
-                read_stream, write_stream = await client.__aenter__()
-                # Hand in a message handler so resource-update notifications
-                # reach subscribers; see _make_message_handler.
-                session = ClientSession(
-                    read_stream,
-                    write_stream,
-                    message_handler=self._make_message_handler(),
+                client: Any = None
+                client = _build_transport_client(config)
+                session = await _enter_client_session(
+                    client, self._make_message_handler()
                 )
-                await session.__aenter__()
             except Exception:
                 with contextlib.suppress(Exception):
                     await client.__aexit__(None, None, None)
@@ -390,27 +531,10 @@ class MCPClientManager:
             try:
                 await session.initialize()
 
-                self._clients[config.name] = client
-                self._sessions[config.name] = session
-                self._initialized.add(config.name)
-                self._consecutive_failures[config.name] = 0
-                self._last_health_check[config.name] = time.monotonic()
+                _register_connection_state(self, config, client, session)
 
                 tools_result = await session.list_tools()
-                for tool in tools_result.tools:
-                    # mcp SDK 跨版本: pydantic 内部字段 snake_case(input_schema),
-                    # 旧版为 camelCase(inputSchema). 兼容读取.
-                    schema = getattr(tool, "input_schema", None) or getattr(
-                        tool, "inputSchema", None
-                    )
-                    info = MCPToolInfo(
-                        name=tool.name,
-                        description=tool.description or "",
-                        input_schema=schema or {"type": "object", "properties": {}},
-                        server_name=config.name,
-                    )
-                    self._tools.append(info)
-                    self._tool_index[tool.name] = info
+                _index_tools(self, tools_result, config)
 
                 logger.info(
                     f"Connected to MCP server '{config.name}' with {len(tools_result.tools)} tools"
@@ -431,9 +555,7 @@ class MCPClientManager:
         don't have to construct MCPServerConfig themselves.
         """
         await self.connect(
-            MCPServerConfig(
-                name=name, command="", args=[], transport="sse", url=url
-            )
+            MCPServerConfig(name=name, command="", args=[], transport="sse", url=url)
         )
 
     async def disconnect(self, name: str) -> None:
@@ -675,9 +797,7 @@ class MCPClientManager:
         if not session:
             return False
         try:
-            await asyncio.wait_for(
-                session.list_tools(), timeout=_HEALTH_CHECK_TIMEOUT
-            )
+            await asyncio.wait_for(session.list_tools(), timeout=_HEALTH_CHECK_TIMEOUT)
             self._last_health_check[name] = time.monotonic()
             return True
         except Exception:
@@ -784,38 +904,9 @@ class MCPClientManager:
                 self._consecutive_errors[server_name] = (
                     self._consecutive_errors.get(server_name, 0) + 1
                 )
-
-                # 检测到 session expired，立即重连
-                if self._is_session_expired(e):
-                    logger.warning(
-                        f"Session expired for '{server_name}'，尝试重连"
-                    )
-                    reconnected = await self.reconnect(server_name)
-                    if not reconnected:
-                        raise
-                    # 重连成功后重置计数，继续重试
-                    self._consecutive_errors[server_name] = 0
-                    continue
-
-                # 错误计数达到上限，尝试重连
-                if self._consecutive_errors[server_name] >= max_errors:
-                    logger.warning(
-                        f"工具 '{name}' 连续失败 "
-                        f"{self._consecutive_errors[server_name]} 次，"
-                        f"尝试重连 '{server_name}'"
-                    )
-                    reconnected = await self.reconnect(server_name)
-                    if not reconnected:
-                        raise
-                    # 重连成功后重置计数，给一次重试机会
-                    self._consecutive_errors[server_name] = 0
-
-                # 指数退避后重试
-                backoff = min(
-                    _BACKOFF_BASE * (_BACKOFF_FACTOR ** attempt),
-                    _BACKOFF_MAX,
+                await _handle_call_failure(
+                    self, server_name, name, e, attempt, max_errors
                 )
-                await asyncio.sleep(backoff)
 
         assert last_error is not None
         raise last_error
@@ -930,40 +1021,9 @@ class MCPClientManager:
 
         try:
             if system == "Windows":
-                # Windows: terminate() (TerminateProcess) → kill() 升级
-                with contextlib.suppress(ProcessLookupError, PermissionError):
-                    proc.terminate()
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=timeout)
-                    return
-                except TimeoutError:
-                    logger.debug("best-effort op failed", exc_info=True)
-
-                # 升级到 kill
-                with contextlib.suppress(ProcessLookupError, PermissionError):
-                    proc.kill()
-                with contextlib.suppress(TimeoutError, ProcessLookupError):
-                    await asyncio.wait_for(proc.wait(), timeout=timeout)
+                await _terminate_windows(proc, timeout)
             else:
-                # Unix: SIGINT → SIGTERM → SIGKILL
-                for sig in (signal.SIGINT, signal.SIGTERM):
-                    with contextlib.suppress(ProcessLookupError, PermissionError):
-                        proc.send_signal(sig)
-                    try:
-                        await asyncio.wait_for(proc.wait(), timeout=timeout)
-                        return
-                    except TimeoutError:
-                        logger.debug("best-effort op failed", exc_info=True)
-                        continue
-                    except ProcessLookupError:
-                        logger.debug("best-effort op failed", exc_info=True)
-                        return
-
-                # 最终升级到 SIGKILL
-                with contextlib.suppress(ProcessLookupError, PermissionError):
-                    proc.kill()
-                with contextlib.suppress(TimeoutError, ProcessLookupError):
-                    await asyncio.wait_for(proc.wait(), timeout=timeout)
+                await _terminate_unix(proc, timeout)
         except Exception as e:
             logger.debug(f"进程清理异常: {e}")
 

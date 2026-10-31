@@ -16,6 +16,7 @@
 关联: `huginn.validation.claim_reward`(第③点) 提供连续 grounded accuracy 奖励,
 本模块把一次"真实执行"固化为**可重放的经验单元**, 喂给该奖励做 RL 回流。
 """
+
 from __future__ import annotations
 
 import json
@@ -31,6 +32,7 @@ EXPERIENCE_VERSION = 1
 # 用与 claim_reward 相同的惰性绑定, 避免包 __init__ 拉起 langchain 重依赖.
 def _load_claim_reward():
     import importlib.util as _util
+
     _root = Path(__file__).resolve().parent
     _spec = _util.spec_from_file_location(
         "claim_reward_embed", _root.parent / "validation" / "claim_reward.py"
@@ -62,7 +64,7 @@ class ExecutableExperience:
         self.goal = goal
         self.dimension = dimension
         self.config = config
-        self.objectives = objectives          # 真实计算数值
+        self.objectives = objectives  # 真实计算数值
         self.summary = summary or {}
         self.closed_form = closed_form
         self.ground_truth = ground_truth or {}  # 主张数值 -> 真值 (供 reward 对账)
@@ -94,10 +96,14 @@ class ExecutableExperience:
             goal=d.get("goal", ""),
             dimension=d.get("dimension", ""),
             config=d.get("config", {}),
-            objectives={str(k): float(v) for k, v in (d.get("objectives") or {}).items()},
+            objectives={
+                str(k): float(v) for k, v in (d.get("objectives") or {}).items()
+            },
             summary=d.get("summary", {}),
             closed_form=d.get("closed_form"),
-            ground_truth={str(k): float(v) for k, v in (d.get("ground_truth") or {}).items()},
+            ground_truth={
+                str(k): float(v) for k, v in (d.get("ground_truth") or {}).items()
+            },
             verdict=d.get("verdict", "pass"),
             name=d.get("name", ""),
             ts=d.get("ts", ""),
@@ -132,52 +138,83 @@ class ExecutableExperience:
         new_obj = {str(k): float(v) for k, v in (res.get("objectives") or {}).items()}
         eff_q = quantities if quantities is not None else self.quantities
         # 1) 新旧一致性: 仅对两次真实执行都出现的量比较(缺项不判错).
-        pairs = {}
-        for k, v in new_obj.items():
-            if k in self.objectives:
-                pairs[k] = (v, float(self.objectives[k]))
-        max_abs = max((abs(a - b) for a, b in pairs.values()), default=0.0)
-        reproduced = max_abs <= 1e-6  # 同一 cfg 重跑 → 数值应逐位一致(确定性执行)
+        pairs, max_abs, reproduced = _replay_delta(new_obj, self.objectives)
         # 2) 真值复验: 归并 target 与 ground_truth (均为「目标键名→真值」),
         #    与 new_obj 按键名对齐成 (预测值→真值) 映射, 再喂 claim_reward 连续奖励.
-        truth_by_name = dict(self.ground_truth or {})
-        tgt = res.get("target")
-        if isinstance(tgt, dict):
-            for k, v in tgt.items():
-                truth_by_name.setdefault(str(k), v)
-        pred_to_truth: dict[float, float] = {}
-        for k, objv in new_obj.items():
-            if k in truth_by_name:
-                try:
-                    pred_to_truth[float(objv)] = float(truth_by_name[k])
-                except (TypeError, ValueError):
-                    continue
-        if pred_to_truth:
-            # 融合判官: 溯源 AND (含 contract 时) 有效域 —— objectives+quantities 一并喂入.
-            gd = cr.grounding_source_reward(
-                json.dumps(new_obj), [json.dumps(new_obj)],
-                objectives=new_obj, quantities=eff_q,
-            )
-            detail = cr.grounded_accuracy_reward(
-                json.dumps(new_obj), [json.dumps(new_obj)],
-                values=pred_to_truth, mode=reward_mode,
-            )
-            reward = {
-                "grounded": gd["grounding_score"],
-                "accuracy": detail["reward"],
-                "total": detail["reward"],  # grounded_accuracy_reward 已含溯源加权
-                "contract_verdict": gd.get("contract_verdict"),
-                "contract_score": gd.get("contract_score"),
-                "domain_violations": gd.get("domain_violations", []),
-            }
-        else:
-            reward = None
+        truth_by_name = _replay_truth_map(self.ground_truth, res.get("target"))
+        pred_to_truth = _replay_pred_to_truth(new_obj, truth_by_name)
+        reward = _replay_reward(cr, new_obj, eff_q, pred_to_truth, reward_mode)
         return {
             "reproduced": bool(reproduced),
             "new_objectives": new_obj,
             "delta": {"pairs": list(pairs.keys()), "max_abs_err": round(max_abs, 6)},
             "reward": reward,
         }
+
+
+def _replay_delta(
+    new_obj: dict[str, float], objectives: dict[str, float]
+) -> tuple[dict[str, tuple[float, float]], float, bool]:
+    pairs = {}
+    for k, v in new_obj.items():
+        if k in objectives:
+            pairs[k] = (v, float(objectives[k]))
+    max_abs = max((abs(a - b) for a, b in pairs.values()), default=0.0)
+    reproduced = max_abs <= 1e-6  # 同一 cfg 重跑 → 数值应逐位一致(确定性执行)
+    return pairs, max_abs, reproduced
+
+
+def _replay_truth_map(ground_truth: dict[str, Any], target: Any) -> dict[str, Any]:
+    truth_by_name = dict(ground_truth or {})
+    if isinstance(target, dict):
+        for k, v in target.items():
+            truth_by_name.setdefault(str(k), v)
+    return truth_by_name
+
+
+def _replay_pred_to_truth(
+    new_obj: dict[str, float], truth_by_name: dict[str, Any]
+) -> dict[float, float]:
+    pred_to_truth: dict[float, float] = {}
+    for k, objv in new_obj.items():
+        if k in truth_by_name:
+            try:
+                pred_to_truth[float(objv)] = float(truth_by_name[k])
+            except (TypeError, ValueError):
+                continue
+    return pred_to_truth
+
+
+def _replay_reward(
+    cr: Any,
+    new_obj: dict[str, float],
+    eff_q: dict[str, Any],
+    pred_to_truth: dict[float, float],
+    reward_mode: str,
+) -> dict[str, Any] | None:
+    if not pred_to_truth:
+        return None
+    # 融合判官: 溯源 AND (含 contract 时) 有效域 —— objectives+quantities 一并喂入.
+    gd = cr.grounding_source_reward(
+        json.dumps(new_obj),
+        [json.dumps(new_obj)],
+        objectives=new_obj,
+        quantities=eff_q,
+    )
+    detail = cr.grounded_accuracy_reward(
+        json.dumps(new_obj),
+        [json.dumps(new_obj)],
+        values=pred_to_truth,
+        mode=reward_mode,
+    )
+    return {
+        "grounded": gd["grounding_score"],
+        "accuracy": detail["reward"],
+        "total": detail["reward"],  # grounded_accuracy_reward 已含溯源加权
+        "contract_verdict": gd.get("contract_verdict"),
+        "contract_score": gd.get("contract_score"),
+        "domain_violations": gd.get("domain_violations", []),
+    }
 
 
 class ExperienceArchive:
@@ -201,7 +238,9 @@ class ExperienceArchive:
         if not p.exists():
             return None
         try:
-            return ExecutableExperience.from_dict(json.loads(p.read_text(encoding="utf-8")))
+            return ExecutableExperience.from_dict(
+                json.loads(p.read_text(encoding="utf-8"))
+            )
         except Exception:  # noqa: BLE001 — 损坏条目视为不存在, 不炸
             return None
 
@@ -213,7 +252,9 @@ class ExperienceArchive:
                 out.append(e)
         return out
 
-    def find(self, *, dimension: str | None = None, goal_contains: str | None = None) -> list[ExecutableExperience]:
+    def find(
+        self, *, dimension: str | None = None, goal_contains: str | None = None
+    ) -> list[ExecutableExperience]:
         out = []
         for e in self.list_all():
             if dimension and e.dimension != dimension:

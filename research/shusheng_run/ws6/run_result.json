@@ -1,0 +1,23 @@
+{
+  "success": true,
+  "objective": "基于解析解与数值积分的对比，验证一维非线性薛定谔方程（NLSE）孤子解在色散与非线性平衡下的稳定性，误差容限<1e-6，10轮迭代内收敛。 假设：在适当初始条件下，数值模拟的NLSE孤子应保持形状不变且能量、动量守恒，与解析解偏差随时间增长不超过1e-6。 成功判据：数值解与解析解在t=10时的L2范数误差 < 1e-6；能量守恒相对误差 < 1e-8，动量守恒相对误差 < 1e-7 独立校验：使用已知解析解（如sech²形式）作为初始条件，通过有限差分法求解NLSE，对比数值解与解析解在多个时间点的波形与守恒量。",
+  "run_id": "loop_d78863f3",
+  "goal_achieved": false,
+  "n_phases": 12,
+  "phase_names": [
+    "hypothesize",
+    "plan",
+    "execute",
+    "validate",
+    "learn",
+    "hypothesize",
+    "plan",
+    "execute",
+    "validate",
+    "hypothesize",
+    "hypothesize",
+    "report"
+  ],
+  "tests_passed": null,
+  "constraints_satisfied": null
+}

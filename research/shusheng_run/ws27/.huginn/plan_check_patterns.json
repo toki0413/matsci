@@ -1,0 +1,46 @@
+[
+  {
+    "scene_tag": "md",
+    "hyp_key": "5878a8a025a3",
+    "reason": "PLAN 的 MODE=workflow 与 hypothesis 的 DIM=computation 不匹配：hypothesis 的核心主张是 f_trace 是'最锐利且最廉价的判别量'，这本身是一个关于度量性质的计算/信息论命题，而非一个文件读写流程。PLAN 把 hypothesis 降级为'文件是否存在'的前置存在性检查（历史失败模式已明确指出此等价性陷阱），未对 f_trace 的定义、取值范围、与其他度量（power-law 指数、互信息）的判别力对比做任何计算或推导。PREDICTION 只可验证文档结构，不可验证 hypothesis 中的判别力主张。此外，已知失败模式明确要求先产生可执行 Python 片段并真实运行，PLAN 完全未包含。",
+    "missing_steps": [
+      "补充 f_trace 的形式化定义（如：review.md 中可溯源到 design_solid_h2.md 原文的 token 数 / review.md 总 token 数），并给出可计算的公式与 Python 实现",
+      "补充对比计算：在同一组 review 样本上计算 f_trace、power-law 拟合残差/指数、互信息估计量，量化'最锐利判别'（如分类边界清晰度、方差、所需样本量）",
+      "补充代价模型：读取/解析成本 vs 参数拟合成本 vs 互信息估计的样本复杂度，支撑'cheapest-to-test'主张",
+      "增加显式不完整性自白：若 f_trace=0 时其他度量是否仍可计算，是否存在 f_trace 失效的边界情况",
+      "方法族扩展：至少覆盖 (a) 文本溯源/字符串匹配、(b) 统计推断/假设检验、(c) 信息论/复杂度估计 三个方法族，避免单一 workflow 收敛"
+    ],
+    "mode": "workflow",
+    "description": "按任务规定的串行流程执行：(1) 用 file_read_tool 读取当前目录 design_solid_h2.md 全文，获得被评审对象的真实内容；(2) 基于原文做批判性技术评审，按「物理可行性 / 机器学习可行性 / 接口与数据闭环 / 试验与验证成本 / 组织与工程风险」五维质疑 + 问题清单（≥8 条，含机制依据/判定/来源/改进方案）+ 总体结论（3–5 句）三段式结构，用 file"
+  },
+  {
+    "scene_tag": "md",
+    "hyp_key": "5878a8a025a3",
+    "reason": "PLAN 的核心缺陷：hypothesis 断言 f_trace 能分辨「文档不存在/不可读 (f_trace=0)」与「真实评审 (f_trace>0)」，但 plan 的 SYNTHETIC 数据只覆盖 token 重叠度从 0 到 1 的连续谱，从未构造「文件缺失 → 无源可读 → 评审为幻觉文本」这一关键情形。合成 f_trace=0 只是随机文本，无法证明真实缺失场景下 f_trace 的行为。此外，plan 完全未触及 hypothesis 声称的「单读 design_solid_h2.md + 单过 review.md」的实际执行——没有任何步骤说明如何读取这两个真实文件、如何处理文件缺失/编码/权限边界，属于用合成数据替代真实前置检查。失败模式警告已指出「未含可直接运行的数值脚本」，而 plan 的 PREDICTION 只承诺产出脚本与合成结果，未保证在真实文件上实际运行并带回数值。方法族单一 (仅 coder/统计度量对比)，未达 min_method_families=3，且等价性陷阱未被排除：f_trace≈0 是否等价于「文件未被读取」而非「文档内容未被引用」，plan 未设计判别实验。",
+    "missing_steps": [
+      "在真实文件上执行：尝试读取 design_solid_h2.md，捕获 FileNotFoundError / PermissionError / 空文件 / 编码错误，并证明此时 review token 集合与空源集的交集行为",
+      "构造真实缺失场景对照：(a) 文件确实缺失 → LLM 生成幻觉 review；(b) 文件存在但未被读取 → LLM 生成幻觉 review；(c) 文件存在且被读取 → 真实 review。三类情形的 f_trace 分布必须实测，不能仅靠合成数据推断",
+      "扩方法族至 >=3：除 coder 度量计算外，加入 (i) 文件存在性/可读性的系统级探测 (stat/os 层)，(ii) 语义级溯源检测 (embedding 相似度 vs token 重叠，检验释义/改写场景)，(iii) 形式化验证 (Lean 或 SMT) 证明 f_trace=0 在何种假设下蕴含「未读取文件」",
+      "显式不完整性自白：列出 hypothesis 在哪些条件下不可判定 (如源文档存在但被 LLM 内部知识覆盖、review 通过中间摘要间接溯源、多文档混合引用)",
+      "落地可运行脚本并真实执行：import + 公式 + print 结果，带回真实文件上的数值，而非仅承诺产出"
+    ],
+    "mode": "coder",
+    "description": "(1) 形式化定义 traceability fraction `f_trace = |tokens(review) ∩ tokens(source)| / |tokens(review)|`（含 n-gram 变体与模糊匹配版本），并写出 power-law 拟合残差、互信息估计量的计算公式；(2) 生成一组可控的合成 review 样本（覆盖 f_trace=0 的幻觉情形到 f_trace≈"
+  },
+  {
+    "scene_tag": "md",
+    "hyp_key": "5878a8a025a3",
+    "reason": "PLAN 的 MODE=workflow 与 hypothesis 的 DIM=computation 完全不匹配。hypothesis 的核心主张是 f_trace 的判别力与代价优势（一个关于度量性质的计算/信息论命题），但 PLAN 把它降级为'读取文件→写评审→自检结构'的文档流程，重复了历史失败模式明确指出的等价性陷阱（把 f_trace 判别退化为文件是否存在的前置检查）。PLAN 不含任何可执行数值脚本，没有 f_trace 的形式化定义与计算，没有与 power-law 指数、互信息的判别力对比，没有代价模型，方法族仅 1 个（workflow）远低于 min_method_families=3，且缺少显式不完整性自白。",
+    "missing_steps": [
+      "补充 f_trace 的形式化定义（如 review.md 中可溯源到 design_solid_h2.md 原文的 token 数 / review.md 总 token 数），给出可计算公式与 Python 实现并真实运行",
+      "在同一组 review 样本上对比计算 f_trace、power-law 拟合残差/指数、互信息估计量，量化'最锐利判别'（分类边界清晰度、方差、所需样本量）",
+      "补充代价模型：读取/解析成本 vs 参数拟合成本 vs 互信息估计的样本复杂度，支撑'cheapest-to-test'主张",
+      "在真实文件上执行：尝试读取 design_solid_h2.md，捕获 FileNotFoundError / PermissionError / 空文件 / 编码错误，并实测此时 f_trace 行为",
+      "构造真实缺失场景对照：(a) 文件缺失→幻觉 review；(b) 文件存在但未读取→幻觉 review；(c) 文件存在且被读取→真实 review，三类情形 f_trace 分布必须实测",
+      "扩展方法族至 >=3：(i) 系统级文件存在性/可读性探测 (os/stat)，(ii) 语义级溯源检测 (embedding 相似度 vs token 重叠)，(iii) 形式化验证 (Lean/SMT) 证明 f_trace=0 在何种假设下蕴含'未读取文件'",
+      "显式不完整性自白：列出 f_trace 不可判定的边界条件（源文档存在但被 LLM 内部知识覆盖、review 通过中间摘要间接溯源、多文档混合引用）"
+    ],
+    "mode": "workflow",
+    "description": "按 target_1 锁定范围执行纯文本评审流程：(1) file_read_tool 读取当前目录 design_solid_h2.md 全文；(2) 基于原文做批判性技术评审，从物理可行性 / 机器学习可行性 / 接口与数据闭环 / 试验与验证成本 / 组织与工程风险五个维度提出质疑，每条给出机制依据、判定（确定缺陷/需验证的担忧）及来源、改进方案；(3) file_write_tool 按三"
+  }
+]

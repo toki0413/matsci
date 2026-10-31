@@ -103,6 +103,66 @@ class BlockedRoute:
         }
 
 
+def _make_attempt(
+    proposed_mechanism: str,
+    proposer_agent: str,
+    mechanism_type: MechanismType,
+    verdict: ReopenVerdict = "still_blocked",
+    equivalence_audit: EquivalenceVerdict | None = None,
+) -> ReopenAttempt:
+    return ReopenAttempt(
+        proposed_mechanism=proposed_mechanism,
+        proposer_agent=proposer_agent,
+        mechanism_type=mechanism_type,
+        equivalence_audit=equivalence_audit,
+        verdict=verdict,
+    )
+
+
+def _audit_route(auditor, route, proposed_mechanism):
+    # 步骤 3: 等价性审计
+    # 拿之前的所有提议 + block_reason 作为 "之前的东西", 检查 proposed 是否换名
+    previous_blob = (
+        route.block_reason
+        + " "
+        + " ".join(a.proposed_mechanism for a in route.attempted_reopens)
+    )
+    # recall 历史失败记录, 防止跨 session 用换名重提同一死路线
+    # ponytail: 只拼进 previous_blob 让等价审计一并检查, 不单独短路.
+    # 升级路径: 按方法族+缺口语义聚类, 不靠字面拼接.
+    for record in recall_audit_context(
+        category="failure", query=route.method_family, limit=10
+    ):
+        previous_blob += " " + (record.get("content", "") or "")
+    return auditor.audit(
+        candidate_finding=proposed_mechanism,
+        original_problem=route.block_reason,
+        reduction_chain=previous_blob,
+    )
+
+
+def _apply_audit(auditor, route, proposed_mechanism, proposer_agent, mechanism_type):
+    audit = _audit_route(auditor, route, proposed_mechanism)
+
+    verdict: ReopenVerdict
+    if audit.is_equivalent_renaming:
+        # proposed 是之前东西的换名 → 拒绝重启
+        verdict = "equivalent_to_previous"
+    elif audit.is_advancement:
+        # 真的新机制 → 重启
+        verdict = "reopen"
+        route.status = "reopened"
+    else:
+        # undetermined → 保守起见 still_blocked, 但记录提议供下次参考
+        verdict = "still_blocked"
+
+    attempt = _make_attempt(
+        proposed_mechanism, proposer_agent, mechanism_type, verdict, audit
+    )
+    route.attempted_reopens.append(attempt)
+    return attempt
+
+
 class BlockRegistry:
     """阻塞路线注册表 + 重启协议."""
 
@@ -153,20 +213,10 @@ class BlockRegistry:
         """
         route = self._routes.get(route_id)
         if route is None:
-            return ReopenAttempt(
-                proposed_mechanism=proposed_mechanism,
-                proposer_agent=proposer_agent,
-                mechanism_type=mechanism_type,
-                verdict="still_blocked",
-            )
+            return _make_attempt(proposed_mechanism, proposer_agent, mechanism_type)
 
         if not route.is_reopenable:
-            attempt = ReopenAttempt(
-                proposed_mechanism=proposed_mechanism,
-                proposer_agent=proposer_agent,
-                mechanism_type=mechanism_type,
-                verdict="still_blocked",
-            )
+            attempt = _make_attempt(proposed_mechanism, proposer_agent, mechanism_type)
             route.attempted_reopens.append(attempt)
             return attempt
 
@@ -175,54 +225,13 @@ class BlockRegistry:
             route.required_mechanism_type is not None
             and mechanism_type != route.required_mechanism_type
         ):
-            attempt = ReopenAttempt(
-                proposed_mechanism=proposed_mechanism,
-                proposer_agent=proposer_agent,
-                mechanism_type=mechanism_type,
-                verdict="still_blocked",
-            )
+            attempt = _make_attempt(proposed_mechanism, proposer_agent, mechanism_type)
             route.attempted_reopens.append(attempt)
             return attempt
 
-        # 步骤 3: 等价性审计
-        # 拿之前的所有提议 + block_reason 作为 "之前的东西", 检查 proposed 是否换名
-        previous_blob = route.block_reason + " " + " ".join(
-            a.proposed_mechanism for a in route.attempted_reopens
+        return _apply_audit(
+            self._auditor, route, proposed_mechanism, proposer_agent, mechanism_type
         )
-        # recall 历史失败记录, 防止跨 session 用换名重提同一死路线
-        # ponytail: 只拼进 previous_blob 让等价审计一并检查, 不单独短路.
-        # 升级路径: 按方法族+缺口语义聚类, 不靠字面拼接.
-        for record in recall_audit_context(
-            category="failure", query=route.method_family, limit=10
-        ):
-            previous_blob += " " + (record.get("content", "") or "")
-        audit = self._auditor.audit(
-            candidate_finding=proposed_mechanism,
-            original_problem=route.block_reason,
-            reduction_chain=previous_blob,
-        )
-
-        verdict: ReopenVerdict
-        if audit.is_equivalent_renaming:
-            # proposed 是之前东西的换名 → 拒绝重启
-            verdict = "equivalent_to_previous"
-        elif audit.is_advancement:
-            # 真的新机制 → 重启
-            verdict = "reopen"
-            route.status = "reopened"
-        else:
-            # undetermined → 保守起见 still_blocked, 但记录提议供下次参考
-            verdict = "still_blocked"
-
-        attempt = ReopenAttempt(
-            proposed_mechanism=proposed_mechanism,
-            proposer_agent=proposer_agent,
-            mechanism_type=mechanism_type,
-            equivalence_audit=audit,
-            verdict=verdict,
-        )
-        route.attempted_reopens.append(attempt)
-        return attempt
 
     def get(self, route_id: str) -> BlockedRoute | None:
         return self._routes.get(route_id)
@@ -242,6 +251,7 @@ class BlockRegistry:
 
 
 # ── 自检 ─────────────────────────────────────────────────────────
+
 
 def _selfcheck() -> None:
     reg = BlockRegistry()

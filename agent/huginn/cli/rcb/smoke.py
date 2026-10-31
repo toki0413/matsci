@@ -3,6 +3,7 @@
 从 rcb_runner.py 剥离 — 纯环境探测, 不依赖 agent/LLM 状态.
 检查 RDKit / sklearn GPR / torch / web_search 四项, 失败即 fail-fast.
 """
+
 from __future__ import annotations
 
 import sys
@@ -19,52 +20,12 @@ def rcb_smoke_test() -> None:
     t0 = time.time()
     failures: list[str] = []
 
-    # 1. RDKit — Material 类任务核心依赖
-    try:
-        from rdkit import Chem
-        from rdkit.Chem import Descriptors
-        mol = Chem.MolFromSmiles("c1ccccc1")
-        assert mol is not None, "MolFromSmiles returned None"
-        _ = Descriptors.MolWt(mol)
-    except Exception as e:
-        failures.append(f"RDKit: {e}. Fix: pip install rdkit")
+    for _check in (_check_rdkit, _check_sklearn_gpr, _check_torch):
+        _failure = _check()
+        if _failure:
+            failures.append(_failure)
 
-    # 2. sklearn GPR — Materials/Physics 建模主力
-    try:
-        import numpy as np
-        from sklearn.gaussian_process import GaussianProcessRegressor
-        from sklearn.gaussian_process.kernels import RBF
-        X = np.random.randn(10, 3)
-        y = np.random.randn(10)
-        gpr = GaussianProcessRegressor(kernel=RBF(), n_restarts_optimizer=0)
-        gpr.fit(X, y)
-        _ = gpr.predict(np.random.randn(5, 3))
-    except Exception as e:
-        failures.append(f"sklearn GPR: {e}. Fix: pip install scikit-learn")
-
-    # 3. torch — GNN/VAE 类任务核心依赖
-    try:
-        import torch
-        t = torch.randn(3, 3)
-        _ = t @ t.T
-    except Exception as e:
-        failures.append(
-            f"torch: {e}. Fix: pip install torch "
-            f"(CPU version: pip install torch --index-url https://download.pytorch.org/whl/cpu)"
-        )
-
-    # 4. C4: web 检索健康检查 — arxiv API 探测, 失败只 warn 不 fail
-    # bench 不强依赖网络 (可走 materials_database_tool/rag_tool 降级), 但检索链
-    # 全灭时 agent 会裸答猜值 (roadmap 判据 8). 探测结果打印让用户知情.
-    try:
-        from huginn.tools.web_search_tool import web_search_health_check
-        _ws_ok, _ws_msg = web_search_health_check(timeout=8.0)
-        if _ws_ok:
-            print(f"[SMOKE] web_search: {_ws_msg}")
-        else:
-            print(f"[SMOKE] web_search WARNING: {_ws_msg} (bench 可继续, 检索走降级)")
-    except Exception as _e:
-        print(f"[SMOKE] web_search WARNING: health check failed {_e} (bench 可继续)")
+    _check_web_search()
 
     if failures:
         print("=" * 60)
@@ -77,3 +38,65 @@ def rcb_smoke_test() -> None:
 
     elapsed = time.time() - t0
     print(f"[SMOKE] OK ({elapsed:.1f}s) — RDKit/sklearn/torch 就绪")
+
+
+def _check_rdkit() -> str | None:
+    # 1. RDKit — Material 类任务核心依赖
+    try:
+        from rdkit import Chem
+        from rdkit.Chem import Descriptors
+
+        mol = Chem.MolFromSmiles("c1ccccc1")
+        assert mol is not None, "MolFromSmiles returned None"
+        _ = Descriptors.MolWt(mol)
+    except Exception as e:
+        return f"RDKit: {e}. Fix: pip install rdkit"
+    return None
+
+
+def _check_sklearn_gpr() -> str | None:
+    # 2. sklearn GPR — Materials/Physics 建模主力
+    try:
+        import numpy as np
+        from sklearn.gaussian_process import GaussianProcessRegressor
+        from sklearn.gaussian_process.kernels import RBF
+
+        X = np.random.randn(10, 3)
+        y = np.random.randn(10)
+        gpr = GaussianProcessRegressor(kernel=RBF(), n_restarts_optimizer=0)
+        gpr.fit(X, y)
+        _ = gpr.predict(np.random.randn(5, 3))
+    except Exception as e:
+        return f"sklearn GPR: {e}. Fix: pip install scikit-learn"
+    return None
+
+
+def _check_torch() -> str | None:
+    # 3. torch — GNN/VAE 类任务核心依赖
+    try:
+        import torch
+
+        t = torch.randn(3, 3)
+        _ = t @ t.T
+    except Exception as e:
+        return (
+            f"torch: {e}. Fix: pip install torch "
+            f"(CPU version: pip install torch --index-url https://download.pytorch.org/whl/cpu)"
+        )
+    return None
+
+
+def _check_web_search() -> None:
+    # 4. C4: web 检索健康检查 — arxiv API 探测, 失败只 warn 不 fail
+    # bench 不强依赖网络 (可走 materials_database_tool/rag_tool 降级), 但检索链
+    # 全灭时 agent 会裸答猜值 (roadmap 判据 8). 探测结果打印让用户知情.
+    try:
+        from huginn.tools.web_search_tool import web_search_health_check
+
+        _ws_ok, _ws_msg = web_search_health_check(timeout=8.0)
+        if _ws_ok:
+            print(f"[SMOKE] web_search: {_ws_msg}")
+        else:
+            print(f"[SMOKE] web_search WARNING: {_ws_msg} (bench 可继续, 检索走降级)")
+    except Exception as _e:
+        print(f"[SMOKE] web_search WARNING: health check failed {_e} (bench 可继续)")

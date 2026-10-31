@@ -27,6 +27,15 @@ def configure(ctx: CliContext, path: str) -> None:
     except Exception:
         cfg = HuginnConfig()
 
+    new_cfg = _prompt_config(ctx, cfg)
+
+    fmt = "toml" if path.endswith(".toml") else "json"
+    new_cfg.save(path, format=fmt)
+    ds.success(f"Config saved to {path}")
+    ds.info("Run: huginn chat --config " + path)
+
+
+def _prompt_config(ctx: CliContext, cfg: HuginnConfig) -> HuginnConfig:
     provider = (
         ctx.console.input(f"Provider [cyan]{cfg.provider}[/cyan]: ").strip()
         or cfg.provider
@@ -61,7 +70,7 @@ def configure(ctx: CliContext, path: str) -> None:
         thinking_raw if thinking_raw in ("low", "medium", "high") else None
     )
 
-    new_cfg = HuginnConfig(
+    return HuginnConfig(
         provider=provider,
         model=model,
         api_key=api_key,
@@ -70,8 +79,3 @@ def configure(ctx: CliContext, path: str) -> None:
         workspace=workspace,
         thinking=thinking,  # type: ignore[arg-type]
     )
-
-    fmt = "toml" if path.endswith(".toml") else "json"
-    new_cfg.save(path, format=fmt)
-    ds.success(f"Config saved to {path}")
-    ds.info("Run: huginn chat --config " + path)

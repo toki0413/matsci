@@ -123,7 +123,9 @@ class ProjectionEngine:
         for ev in prefix_events:
             state = definition.apply(state, ev)
             observed = ev.seq
-        cell = _Cell(state=state, observed_seq=observed, version=definition.stateVersion)
+        cell = _Cell(
+            state=state, observed_seq=observed, version=definition.stateVersion
+        )
         self._cells_for(log)[def_key] = cell
         return cell
 
@@ -314,13 +316,27 @@ class MessagePathProjection(ProjectionDefinition):
     def init(self) -> list[dict[str, Any]]:
         return []
 
-    def apply(self, state: list[dict[str, Any]], event: SessionEvent) -> list[dict[str, Any]]:
+    def apply(
+        self, state: list[dict[str, Any]], event: SessionEvent
+    ) -> list[dict[str, Any]]:
         if event.kind == "message":
-            state = [*state, {"role": event.payload.get("role"), "content": event.payload.get("content")}]
+            state = [
+                *state,
+                {
+                    "role": event.payload.get("role"),
+                    "content": event.payload.get("content"),
+                },
+            ]
         elif event.kind == "compaction":
-            state = [*state, {"role": "compaction", "summary": event.payload.get("summary", "")}]
+            state = [
+                *state,
+                {"role": "compaction", "summary": event.payload.get("summary", "")},
+            ]
         elif event.kind == "branch_summary":
-            state = [*state, {"role": "branch_summary", "summary": event.payload.get("summary", "")}]
+            state = [
+                *state,
+                {"role": "branch_summary", "summary": event.payload.get("summary", "")},
+            ]
         return state
 
     def view(self, state: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -346,7 +362,14 @@ class UiBlock:
 
     __slots__ = ("kind", "text", "frozen", "rev", "seq")
 
-    def __init__(self, kind: BlockKind, text: str = "", frozen: bool = False, rev: int = 0, seq: int = 0) -> None:
+    def __init__(
+        self,
+        kind: BlockKind,
+        text: str = "",
+        frozen: bool = False,
+        rev: int = 0,
+        seq: int = 0,
+    ) -> None:
         self.kind = kind
         self.text = text
         self.frozen = frozen
@@ -390,10 +413,22 @@ class UiProjection(ProjectionDefinition):
             block = UiBlock(BLOCK_TEXT, text, frozen=True, rev=1, seq=event.seq)
             return [*state, block]
         elif event.kind == "compaction":
-            block = UiBlock(BLOCK_COMPACTION, event.payload.get("summary", ""), frozen=True, rev=1, seq=event.seq)
+            block = UiBlock(
+                BLOCK_COMPACTION,
+                event.payload.get("summary", ""),
+                frozen=True,
+                rev=1,
+                seq=event.seq,
+            )
             return [*state, block]
         elif event.kind == "branch_summary":
-            block = UiBlock(BLOCK_TOOL, event.payload.get("summary", ""), frozen=True, rev=1, seq=event.seq)
+            block = UiBlock(
+                BLOCK_TOOL,
+                event.payload.get("summary", ""),
+                frozen=True,
+                rev=1,
+                seq=event.seq,
+            )
             return [*state, block]
         return state  # metadata events don't affect the UI
 
@@ -401,74 +436,82 @@ class UiProjection(ProjectionDefinition):
         return [b.to_dict() for b in state]
 
 
-def _selfcheck() -> None:
+def _sc_runtime_basics(log, engine) -> None:
+    from huginn.events.session_log import (
+        EVENT_COMPACTION,
+        EVENT_MESSAGE,
+    )
+
+    # ── drive events → projections update ──
+    log.append(EVENT_MESSAGE, {"role": "user", "content": "hi"})
+    log.append(EVENT_MESSAGE, {"role": "assistant", "content": "ok"})
+    log.append("cognitive_mode_change", {"cognitive_mode": "construct"})
+    log.append(EVENT_COMPACTION, {"summary": "compacted early"})
+
+    for ev in log:
+        engine.drive(log, ev)
+
+    runtime = engine.build(log, "runtime")
+    assert runtime["cognitive_mode"] == "construct"
+    assert runtime["turns_count"] == 1, (
+        f"turns_count should be 1, got {runtime['turns_count']}"
+    )
+    msgs = engine.build(log, "messages")
+    assert msgs[-1]["role"] == "compaction", "compaction kept as marker"
+    assert len(msgs) == 3, f"expected 3 (user+assistant+compaction), got {len(msgs)}"
+    print("  [OK] drive → both projections updated; compaction kept as marker")
+
+
+def _sc_runtime_idempotent(engine, log) -> None:
+    # ── build is idempotent / replay-safe from a cold engine ──
+    runtime = engine.build(log, "runtime")  # 对照用 driven state
+    engine2 = ProjectionEngine()
+    engine2.register(RuntimeStateProjection())
+    runtime2 = engine2.build(log, "runtime")
+    assert runtime2 == runtime, "cold rebuild from path must equal driven state"
+    print("  [OK] cold rebuild from event path == driven state")
+
+
+def _sc_listener_fires_on_change(engine, log) -> None:
+    # ── listener fires on change only ──
+    calls: list[tuple[str, str, int]] = []
+
+    def _listener(log_, key, value, seq):
+        calls.append((key, value["cognitive_mode"], seq))
+
+    engine.subscribe(log, "runtime", _listener)
+    log.append("cognitive_mode_change", {"cognitive_mode": "construct"})  # same value
+    engine.drive(log, log.get(log.leaf_id))
+    log.append("cognitive_mode_change", {"cognitive_mode": "discover"})  # change
+    engine.drive(log, log.get(log.leaf_id))
+    assert len(calls) == 1, f"listener should fire once, got {len(calls)}"
+    assert calls[0][1] == "discover"  # value at fire time (the real change)
+    print("  [OK] listener fires only when view changed")
+
+
+def _sc_state_version_bump(engine, log) -> None:
+    # ── stateVersion bump forces rebuild ──
+    RuntimeStateProjection.stateVersion = 2
+    try:
+        engine.build(log, "runtime")  # rebuild with new version
+        assert engine._cells_for(log)["runtime"].version == 2
+        print("  [OK] stateVersion bump rebuilds cell")
+    finally:
+        RuntimeStateProjection.stateVersion = 1  # noqa: N815
+
+
+def _sc_ui_projection() -> None:
     import tempfile
 
     from huginn.events.session_log import (
+        EVENT_BRANCH_SUMMARY,
         EVENT_COMPACTION,
         EVENT_MESSAGE,
         SessionEventLog,
     )
 
-    print("Running projection selfcheck...")
-
-    with tempfile.TemporaryDirectory() as tmp:
-        log = SessionEventLog("s1", Path(tmp) / "s1.jsonl", load=False)
-        engine = ProjectionEngine()
-        engine.register(RuntimeStateProjection())
-        engine.register(MessagePathProjection())
-
-        # ── drive events → projections update ──
-        log.append(EVENT_MESSAGE, {"role": "user", "content": "hi"})
-        log.append(EVENT_MESSAGE, {"role": "assistant", "content": "ok"})
-        log.append("cognitive_mode_change", {"cognitive_mode": "construct"})
-        log.append(EVENT_COMPACTION, {"summary": "compacted early"})
-
-        for ev in log:
-            engine.drive(log, ev)
-
-        runtime = engine.build(log, "runtime")
-        assert runtime["cognitive_mode"] == "construct"
-        assert runtime["turns_count"] == 1, (
-            f"turns_count should be 1, got {runtime['turns_count']}"
-        )
-        msgs = engine.build(log, "messages")
-        assert msgs[-1]["role"] == "compaction", "compaction kept as marker"
-        assert len(msgs) == 3, f"expected 3 (user+assistant+compaction), got {len(msgs)}"
-        print("  [OK] drive → both projections updated; compaction kept as marker")
-
-        # ── build is idempotent / replay-safe from a cold engine ──
-        engine2 = ProjectionEngine()
-        engine2.register(RuntimeStateProjection())
-        runtime2 = engine2.build(log, "runtime")
-        assert runtime2 == runtime, "cold rebuild from path must equal driven state"
-        print("  [OK] cold rebuild from event path == driven state")
-
-        # ── listener fires on change only ──
-        calls: list[tuple[str, str, int]] = []
-        def _listener(log_, key, value, seq):
-            calls.append((key, value["cognitive_mode"], seq))
-        engine.subscribe(log, "runtime", _listener)
-        log.append("cognitive_mode_change", {"cognitive_mode": "construct"})  # same value
-        engine.drive(log, log.get(log.leaf_id))
-        log.append("cognitive_mode_change", {"cognitive_mode": "discover"})  # change
-        engine.drive(log, log.get(log.leaf_id))
-        assert len(calls) == 1, f"listener should fire once, got {len(calls)}"
-        assert calls[0][1] == "discover"  # value at fire time (the real change)
-        print("  [OK] listener fires only when view changed")
-
-        # ── stateVersion bump forces rebuild ──
-        RuntimeStateProjection.stateVersion = 2
-        try:
-            engine.build(log, "runtime")  # rebuild with new version
-            assert engine._cells_for(log)["runtime"].version == 2
-            print("  [OK] stateVersion bump rebuilds cell")
-        finally:
-            RuntimeStateProjection.stateVersion = 1  # noqa: N815
-
     # ── UiProjection: block structure for the incremental frontend ──
     with tempfile.TemporaryDirectory() as tmp:
-        from huginn.events.session_log import EVENT_BRANCH_SUMMARY
         log2 = SessionEventLog("s2", Path(tmp) / "s2.jsonl", load=False)
         eng2 = ProjectionEngine()
         eng2.register(UiProjection())
@@ -483,6 +526,27 @@ def _selfcheck() -> None:
         assert all(b["rev"] == 1 for b in blocks)
         assert blocks[1]["kind"] == BLOCK_COMPACTION
         print("  [OK] UiProjection emits frozen blocks + compaction/tool dividers")
+
+
+def _selfcheck() -> None:
+    import tempfile
+
+    from huginn.events.session_log import SessionEventLog
+
+    print("Running projection selfcheck...")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        log = SessionEventLog("s1", Path(tmp) / "s1.jsonl", load=False)
+        engine = ProjectionEngine()
+        engine.register(RuntimeStateProjection())
+        engine.register(MessagePathProjection())
+
+        _sc_runtime_basics(log, engine)
+        _sc_runtime_idempotent(engine, log)
+        _sc_listener_fires_on_change(engine, log)
+        _sc_state_version_bump(engine, log)
+
+    _sc_ui_projection()
 
     print("projection selfcheck passed.")
 

@@ -97,23 +97,26 @@ def completion_query(
         # 已知的自由度不视为"缺", 跳过 (method_family 已从 known 拿到 → 不再判缺)
         if known and _known_satisfies(know=known, dim=dim):
             continue
-        template = _TEMPLATES[dim]
-        query = template.format(**base_fields)
-        if tail:
-            query = f"{query} {tail}"
-        reason = _reason(dim)
-        urgency = _URGENCY.get(dim, 1)
-        out.append(
-            {
-                "target_dim": dim,
-                "query": _clean(query),
-                "urgency": urgency,
-                "reason": reason,
-                "should_retrieve": urgency >= 2,  # 关键缺度才值得发起真实检索
-            }
-        )
+        out.append(_completion_item(dim, base_fields, tail))
     out.sort(key=lambda q: q["urgency"], reverse=True)
     return out
+
+
+def _completion_item(dim: str, base_fields: dict, tail: str) -> dict[str, Any]:
+    """组装单条补全查询."""
+    template = _TEMPLATES[dim]
+    query = template.format(**base_fields)
+    if tail:
+        query = f"{query} {tail}"
+    reason = _reason(dim)
+    urgency = _URGENCY.get(dim, 1)
+    return {
+        "target_dim": dim,
+        "query": _clean(query),
+        "urgency": urgency,
+        "reason": reason,
+        "should_retrieve": urgency >= 2,  # 关键缺度才值得发起真实检索
+    }
 
 
 def _known_satisfies(*, know: dict[str, str], dim: str) -> bool:

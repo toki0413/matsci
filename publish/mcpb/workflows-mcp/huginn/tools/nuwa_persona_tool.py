@@ -52,6 +52,53 @@ _RESEARCH_SYSTEM_PROMPT = """你是 persona 研究员。你的任务是研究给
 }"""
 
 
+def _parse_persona_fields(
+    spec: dict[str, Any], persona_name: str
+) -> tuple[str, str, list[str], str]:
+    """字段校验 + 兜底."""
+    name = str(spec.get("name", "")).strip() or persona_name
+    description = str(spec.get("description", "")).strip()
+    when_to_use = spec.get("when_to_use", []) or []
+    if isinstance(when_to_use, str):
+        when_to_use = [when_to_use]
+    when_to_use = [str(item).strip() for item in when_to_use if str(item).strip()]
+    system_prompt = str(spec.get("system_prompt", "")).strip()
+    return name, description, when_to_use, system_prompt
+
+
+def _existing_persona_error(
+    manager: Any, name: str, overwrite: bool
+) -> ToolResult | None:
+    """已存在且不覆盖时报错; 覆盖时先清理旧 persona."""
+    existing = manager.list()
+    if name in existing and not overwrite:
+        # 已存在的用户 persona 不覆盖; 内置 persona create_persona 会自己拒绝
+        return ToolResult(
+            data=None,
+            success=False,
+            error=(f"Persona '{name}' 已存在。传 overwrite=True 覆盖, 或换个名字。"),
+        )
+    # overwrite 时先把旧文件删掉 (create_persona 不会覆盖已有文件内容,
+    # 它直接 write_text 会覆盖文件, 但内存里的 persona 来自 _load,
+    # 这里走 delete_persona 清理一下再 create 保证状态干净)
+    if name in existing and overwrite:
+        # 内置 persona 删不掉, 这种情况下 overwrite 无意义, 直接让 create 报错
+        with contextlib.suppress(Exception):
+            manager.delete_persona(name)
+    return None
+
+
+def _system_prompt_preview(system_prompt: str) -> str:
+    preview = system_prompt[:200]
+    if len(system_prompt) > 200:
+        preview += "..."
+    return preview
+
+
+def _error(error: str) -> ToolResult:
+    return ToolResult(data=None, success=False, error=error)
+
+
 class NuwaPersonaToolInput(BaseModel):
     persona_name: str = Field(
         ...,
@@ -86,89 +133,80 @@ class NuwaPersonaTool(HuginnTool):
     ) -> ToolResult:
         persona_name = args.persona_name.strip()
         if not persona_name:
-            return ToolResult(
-                data=None, success=False, error="persona_name 不能为空"
-            )
+            return _error("persona_name 不能为空")
 
-        # 1. 拿 LLM 客户端
-        try:
-            model = self._get_model(context)
-        except Exception as exc:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"初始化 LLM 客户端失败: {exc}",
-            )
-
-        # 2. 调 LLM 研究 persona
-        try:
-            raw = await self._research_persona(persona_name, model)
-        except Exception as exc:
-            logger.warning("nuwa_persona_tool 研究 %s 失败: %s", persona_name, exc)
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"LLM 研究 persona '{persona_name}' 失败: {exc}",
-            )
+        # 1-2. 拿 LLM 客户端并调 LLM 研究 persona
+        raw, failure = await self._research_with_model(context, persona_name)
+        if failure is not None:
+            return failure
 
         # 3. 解析 JSON
         spec = self._parse_research_json(raw)
         if spec is None:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=(
-                    f"无法从 LLM 回复里解析出 persona JSON。"
-                    f"原始回复前 500 字: {raw[:500]}"
-                ),
+            return _error(
+                f"无法从 LLM 回复里解析出 persona JSON。原始回复前 500 字: {raw[:500]}"
             )
 
         # 4. 字段校验 + 兜底
-        name = str(spec.get("name", "")).strip() or persona_name
-        description = str(spec.get("description", "")).strip()
-        when_to_use = spec.get("when_to_use", []) or []
-        if isinstance(when_to_use, str):
-            when_to_use = [when_to_use]
-        when_to_use = [str(item).strip() for item in when_to_use if str(item).strip()]
-        system_prompt = str(spec.get("system_prompt", "")).strip()
-
+        name, description, when_to_use, system_prompt = _parse_persona_fields(
+            spec, persona_name
+        )
         if not system_prompt:
-            return ToolResult(
-                data=None,
-                success=False,
-                error="LLM 返回的 system_prompt 为空, 拒绝创建空 persona",
-            )
+            return _error("LLM 返回的 system_prompt 为空, 拒绝创建空 persona")
 
         # 5. 落盘: 已存在且不覆盖就报错, 避免静默覆盖
+        persona, failure = self._create_persona(
+            context, args.overwrite, name, description, system_prompt, when_to_use
+        )
+        if failure is not None:
+            return failure
+
+        return ToolResult(
+            data={
+                "persona_name": persona.name,
+                "description": description,
+                "when_to_use": when_to_use,
+                "system_prompt_preview": _system_prompt_preview(system_prompt),
+                "file_path": persona.source_path,
+            },
+            success=True,
+        )
+
+    async def _research_with_model(
+        self, context: ToolContext, persona_name: str
+    ) -> tuple[str, ToolResult | None]:
+        """拿 LLM 客户端并研究 persona; 失败时返回 (空串, 错误)."""
+        try:
+            model = self._get_model(context)
+        except Exception as exc:
+            return "", _error(f"初始化 LLM 客户端失败: {exc}")
+
+        try:
+            raw = await self._research_persona(persona_name, model)
+        except Exception as exc:
+            logger.warning("nuwa_persona_tool 研究 %s 失败: %s", persona_name, exc)
+            return "", _error(f"LLM 研究 persona '{persona_name}' 失败: {exc}")
+        return raw, None
+
+    def _create_persona(
+        self,
+        context: ToolContext,
+        overwrite: bool,
+        name: str,
+        description: str,
+        system_prompt: str,
+        when_to_use: list[str],
+    ) -> tuple[Any, ToolResult | None]:
+        """查重 + 落盘; 失败时返回 (None, 错误)."""
         try:
             manager = self._get_manager(context)
         except Exception as exc:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"初始化 PersonaManager 失败: {exc}",
-            )
+            return None, _error(f"初始化 PersonaManager 失败: {exc}")
 
         # 名字规范化: persona 文件名用 name, 但 create_persona 内部会查重
-        existing = manager.list()
-        if name in existing and not args.overwrite:
-            # 已存在的用户 persona 不覆盖; 内置 persona create_persona 会自己拒绝
-            return ToolResult(
-                data=None,
-                success=False,
-                error=(
-                    f"Persona '{name}' 已存在。传 overwrite=True 覆盖, "
-                    f"或换个名字。"
-                ),
-            )
-
-        # overwrite 时先把旧文件删掉 (create_persona 不会覆盖已有文件内容,
-        # 它直接 write_text 会覆盖文件, 但内存里的 persona 来自 _load,
-        # 这里走 delete_persona 清理一下再 create 保证状态干净)
-        if name in existing and args.overwrite:
-            # 内置 persona 删不掉, 这种情况下 overwrite 无意义, 直接让 create 报错
-            with contextlib.suppress(Exception):
-                manager.delete_persona(name)
+        failure = _existing_persona_error(manager, name, overwrite)
+        if failure is not None:
+            return None, failure
 
         try:
             persona = manager.create_persona(
@@ -178,26 +216,8 @@ class NuwaPersonaTool(HuginnTool):
                 when_to_use=when_to_use,
             )
         except Exception as exc:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"落盘 persona 失败: {exc}",
-            )
-
-        preview = system_prompt[:200]
-        if len(system_prompt) > 200:
-            preview += "..."
-
-        return ToolResult(
-            data={
-                "persona_name": persona.name,
-                "description": description,
-                "when_to_use": when_to_use,
-                "system_prompt_preview": preview,
-                "file_path": persona.source_path,
-            },
-            success=True,
-        )
+            return None, _error(f"落盘 persona 失败: {exc}")
+        return persona, None
 
     # ------------------------------------------------------------------ helpers
 

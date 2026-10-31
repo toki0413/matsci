@@ -1,0 +1,15 @@
+{
+  "schema": "huginn.task-contract/v1",
+  "required_files": ["results.json", "loop_log.jsonl"],
+  "required_keys": [
+    {"key": "model_comparison", "type": "object"},
+    {"key": "prediction", "type": "object"}
+  ],
+  "hypotheses": null,
+  "loop_log": {
+    "path": "loop_log.jsonl",
+    "lines": 50,
+    "fields": ["loop_id", "status", "delta_ea"]
+  },
+  "static": null
+}

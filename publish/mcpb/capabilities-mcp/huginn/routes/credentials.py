@@ -242,6 +242,30 @@ async def _test_ssh(store, cid: str) -> dict[str, Any]:
         }
 
 
+async def _invoke_llm_hello(provider: str, info: dict[str, Any], api_key: str):
+    """建客户端并同步 invoke "Hello" (10s 超时), 返回原始响应。"""
+    client = create_langchain_model(
+        provider=provider,
+        model_name=info["model"],
+        api_key=api_key,
+        base_url=info.get("base_url"),
+        temperature=0.0,
+        max_tokens=16,
+    )
+    return await asyncio.wait_for(
+        asyncio.to_thread(
+            client.invoke,
+            "Hello",
+            config=(
+                {"max_tokens": 16}
+                if provider in ("openai", "vllm", "local", "deepseek", "openrouter")
+                else None
+            ),
+        ),
+        timeout=10.0,
+    )
+
+
 async def _test_llm(store, cid: str) -> dict[str, Any]:
     """LLM 连通性: 建客户端发 Hello, 复用 registry 的 create_langchain_model。"""
     info = store.to_llm_info(cid)
@@ -258,26 +282,7 @@ async def _test_llm(store, cid: str) -> dict[str, Any]:
 
     start = time.perf_counter()
     try:
-        client = create_langchain_model(
-            provider=provider,
-            model_name=info["model"],
-            api_key=api_key,
-            base_url=info.get("base_url"),
-            temperature=0.0,
-            max_tokens=16,
-        )
-        response = await asyncio.wait_for(
-            asyncio.to_thread(
-                client.invoke,
-                "Hello",
-                config=(
-                    {"max_tokens": 16}
-                    if provider in ("openai", "vllm", "local", "deepseek", "openrouter")
-                    else None
-                ),
-            ),
-            timeout=10.0,
-        )
+        response = await _invoke_llm_hello(provider, info, api_key)
         latency_ms = int((time.perf_counter() - start) * 1000)
         text = ""
         if hasattr(response, "content"):
@@ -307,7 +312,9 @@ async def _test_llm(store, cid: str) -> dict[str, Any]:
 # ── 凭据 ↔ 模型配置 桥接 ──────────────────────────────────────
 
 
-@router.post("/credentials/import-from-config", dependencies=[Depends(require_admin_key)])
+@router.post(
+    "/credentials/import-from-config", dependencies=[Depends(require_admin_key)]
+)
 async def import_credentials_from_config() -> dict[str, Any]:
     """扫一遍 huginn.toml 里的模型池, 把明文 api_key 批量导入 CredentialStore。
 
@@ -337,7 +344,9 @@ async def import_credentials_from_config() -> dict[str, Any]:
     }
 
 
-@router.post("/credentials/{cid}/link-model/{alias}", dependencies=[Depends(require_admin_key)])
+@router.post(
+    "/credentials/{cid}/link-model/{alias}", dependencies=[Depends(require_admin_key)]
+)
 async def link_credential_to_model(cid: str, alias: str) -> dict[str, Any]:
     """把一条凭据挂到某个 ModelConfig 上: 设 credential_id, 清掉明文 api_key。
 
@@ -398,9 +407,7 @@ async def set_service_credential(
     if service not in SUPPORTED_SERVICES:
         return {
             "success": False,
-            "error": (
-                f"不支持的服务 {service!r}, 可选: {SUPPORTED_SERVICES}"
-            ),
+            "error": (f"不支持的服务 {service!r}, 可选: {SUPPORTED_SERVICES}"),
         }
     api_key = params.get("api_key")
     if not api_key or not str(api_key).strip():
@@ -417,9 +424,7 @@ async def set_service_credential(
     return {"success": True, "service": service}
 
 
-@router.get(
-    "/credentials/{service}/test", dependencies=[Depends(require_admin_key)]
-)
+@router.get("/credentials/{service}/test", dependencies=[Depends(require_admin_key)])
 async def test_service_credential(service: str) -> dict[str, Any]:
     """探活外部服务凭据: 取明文 key 去服务端发一个最小请求, 看 401/403 还是 200。
 
@@ -430,9 +435,7 @@ async def test_service_credential(service: str) -> dict[str, Any]:
     if service not in SUPPORTED_SERVICES:
         return {
             "valid": False,
-            "error": (
-                f"不支持的服务 {service!r}, 可选: {SUPPORTED_SERVICES}"
-            ),
+            "error": (f"不支持的服务 {service!r}, 可选: {SUPPORTED_SERVICES}"),
         }
     store = _svc_store()
     if not store.has_credential(service):

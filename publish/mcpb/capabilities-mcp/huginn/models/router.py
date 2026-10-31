@@ -45,6 +45,7 @@ PersonaBand = Literal["spec", "react", "mixed"]
 # 稳定带: 允许路由的目标. mixed 是陷阱, 永不作为目标.
 _STABLE_BANDS: frozenset[str] = frozenset({"spec", "react"})
 
+
 # 双吸引子行为策略理论: 模型无法自我路由, 外部路由器必须把请求量化到稳定带
 # (spec/react), 否则容易落入 mixed 相变陷阱. 下面这个轻量分类器把 task/阶段
 # 映射到稳定带 — 只做"该用哪种行为带"的判断, 不涉及具体模型.
@@ -69,8 +70,16 @@ def classify_band(
 
     _spec = ("science", "reasoning", "coding", "hypothesize", "explore", "spec")
     _react = (
-        "default", "agent", "planning", "summarize", "format", "cheap",
-        "archival", "verify", "execute", "react",
+        "default",
+        "agent",
+        "planning",
+        "summarize",
+        "format",
+        "cheap",
+        "archival",
+        "verify",
+        "execute",
+        "react",
     )
     # 明确 react 信号优先 (收敛/执行是更"确定"的量化目标), 避免双引人带歧义.
     if any(w in text for w in _react):
@@ -136,9 +145,7 @@ class ModelRouter:
     ) -> RegisteredModel:
         """Register an existing LangChain model instance."""
         # band 只允许声明稳定带; 若混入 mixed (相变陷阱) 直接剔除并拒绝.
-        valid_bands = (
-            band for band in (bands or set()) if band in _STABLE_BANDS
-        )
+        valid_bands = (band for band in (bands or set()) if band in _STABLE_BANDS)
         entry = RegisteredModel(
             name=name,
             model=model,
@@ -216,9 +223,7 @@ class ModelRouter:
             )
             return self.select()
         # 精确命中: 稳定带内按 priority/cost 排序
-        matching = [
-            m for m in self._models.values() if target in m.bands
-        ]
+        matching = [m for m in self._models.values() if target in m.bands]
         if matching:
             matching.sort(key=lambda m: (-m.priority, m.cost_input + m.cost_output))
             return matching[0].model
@@ -329,11 +334,14 @@ class ModelRouter:
             preferred_tags = self._TASK_TAGS.get("verification", ["verification"])
             for tag in preferred_tags:
                 matches = [
-                    m for m in self._models.values()
+                    m
+                    for m in self._models.values()
                     if tag in m.tags and m.family != different_family_from
                 ]
                 if matches:
-                    matches.sort(key=lambda m: (-m.priority, m.cost_input + m.cost_output))
+                    matches.sort(
+                        key=lambda m: (-m.priority, m.cost_input + m.cost_output)
+                    )
                     return matches[0].model
             # 没有不同 family 的, 退回原逻辑 (advisory, 不阻塞)
         return self.select("verification")
@@ -352,9 +360,7 @@ class ModelRouter:
 
     def has_dedicated_verification(self) -> bool:
         """是否注册了独立的 verification 模型 (标签含 'verification')."""
-        return any(
-            "verification" in m.tags for m in self._models.values()
-        )
+        return any("verification" in m.tags for m in self._models.values())
 
     def list_models(self) -> list[str]:
         """Return registered model names."""
@@ -399,7 +405,9 @@ class ModelRouter:
                 model = create_langchain_model(provider="ollama", model_name="qwen3.8")
                 router.register("default", model, tags={"default"})
             except Exception:
-                logger.debug("best-effort op failed", exc_info=True)  # ollama 也没装就只能让 select() 报 RuntimeError
+                logger.debug(
+                    "best-effort op failed", exc_info=True
+                )  # ollama 也没装就只能让 select() 报 RuntimeError
         return router
 
 
@@ -418,8 +426,15 @@ def _selfcheck() -> None:
     # P3a: register_provider 默认从 provider 推断 family
     # 不调真 create_langchain_model, 直接走 register 路径验证 family 逻辑
     r.register("main_openai", _m_openai, tags={"default", "agent"}, family="openai")
-    r.register("verif_anthropic", _m_anthropic, tags={"verification"}, family="anthropic")
-    r.register("verif_deepseek", _m_deepseek, tags={"verification", "reasoning"}, family="deepseek")
+    r.register(
+        "verif_anthropic", _m_anthropic, tags={"verification"}, family="anthropic"
+    )
+    r.register(
+        "verif_deepseek",
+        _m_deepseek,
+        tags={"verification", "reasoning"},
+        family="deepseek",
+    )
     assert r.get_family("main_openai") == "openai", "get_family 应返 openai"
     assert r.get_family("verif_anthropic") == "anthropic"
     assert r.get_family("nonexistent") == "", "未注册模型应返空串"
@@ -439,6 +454,15 @@ def _selfcheck() -> None:
     assert _v2 is _m_anthropic, f"应选 anthropic (非 deepseek), got {_v2}"
     print("P3c. cross-family 优先选异族 (deepseek 主 → anthropic 验) OK")
 
+    _selfcheck_fallback_cases(r, (_m_anthropic, _m_deepseek))
+
+    print("ModelRouter selfcheck OK (P3a-P3e cross-family audit)")
+
+
+def _selfcheck_fallback_cases(
+    r: ModelRouter, expected_verification: tuple[Any, ...]
+) -> None:
+    """P3d-P3e: 无异族退回原逻辑 + different_family_from=None 向后兼容."""
     # P3d: 没有不同 family 的 verification 时退回原逻辑 (不阻塞)
     # 只有 openai family 的 verification 模型, 主模型也是 openai → 退回原 select
     r2 = ModelRouter()
@@ -453,10 +477,8 @@ def _selfcheck() -> None:
     # P3e: different_family_from=None 向后兼容 (原 select_verification 行为)
     _v4 = r.select_verification()
     # 原逻辑: verification tag 优先, priority 排序, 第一个匹配
-    assert _v4 in (_m_anthropic, _m_deepseek), "None 时走原逻辑选 verification 模型"
+    assert _v4 in expected_verification, "None 时走原逻辑选 verification 模型"
     print("P3e. different_family_from=None 向后兼容 OK")
-
-    print("ModelRouter selfcheck OK (P3a-P3e cross-family audit)")
 
 
 if __name__ == "__main__":

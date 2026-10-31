@@ -11,6 +11,7 @@ VLM 丢失 3D 信息的直接证据.
 ponytail: optional 依赖, 包未安装时降级 log warning 不 raise (跟 ml_potential_tool 一致).
 升级路径: 接入 RCBench 做 RL reward (P0 只 eval 不训练).
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -53,9 +54,7 @@ def evaluate(target_cif: str, generated_output: str) -> EvaluateResult:
     签名按 README: keyword args target_cif=, generated_output=.
     """
     if _atomworld is None:
-        raise RuntimeError(
-            "atomworld not installed, pip install -e \".[benchmark]\""
-        )
+        raise RuntimeError('atomworld not installed, pip install -e ".[benchmark]"')
     raw = _atomworld.evaluate(
         target_cif=target_cif,
         generated_output=generated_output,
@@ -120,13 +119,9 @@ def apply_action(input_cif: str, action_name: str, **params: Any) -> str:
     params 透传给 ActionClass (具体签名在真包安装后验证).
     """
     if _atomworld is None:
-        raise RuntimeError(
-            "atomworld not installed, pip install -e \".[benchmark]\""
-        )
+        raise RuntimeError('atomworld not installed, pip install -e ".[benchmark]"')
     if action_name not in _ACTION_NAMES:
-        raise ValueError(
-            f"unknown action {action_name!r}, supported: {_ACTION_NAMES}"
-        )
+        raise ValueError(f"unknown action {action_name!r}, supported: {_ACTION_NAMES}")
     return _dispatch_apply(input_cif, action_name, params)
 
 
@@ -141,10 +136,36 @@ def _resolve_actions_module():
     if mod is None:
         try:
             import atom_world.actions as _aw  # type: ignore[import-not-found]
+
             mod = _aw
         except ImportError:
             logger.debug("best-effort op failed", exc_info=True)
     return mod
+
+
+def _apply_via_instance(cls, atoms, params: dict) -> str | None:
+    try:
+        instance = cls(**params)
+    except TypeError:
+        logger.debug("best-effort op failed", exc_info=True)
+        instance = None
+
+    if instance is not None:
+        apply_fn = getattr(instance, "apply", None)
+        if callable(apply_fn):
+            new_atoms = apply_fn(atoms)
+            return _atoms_to_cif(_unwrap_result(new_atoms))
+    return None
+
+
+def _apply_via_random(cls, atoms, params: dict) -> str | None:
+    if not params and hasattr(cls, "apply_random"):
+        import numpy as np
+
+        rng = np.random.default_rng()
+        _prompt, new_atoms = cls.apply_random(atoms, rng=rng)
+        return _atoms_to_cif(_unwrap_result(new_atoms))
+    return None
 
 
 def _dispatch_apply(input_cif: str, action_name: str, params: dict) -> str:
@@ -173,30 +194,18 @@ def _dispatch_apply(input_cif: str, action_name: str, params: dict) -> str:
 
     atoms = _cif_to_atoms(input_cif)
 
-    # fallback 链: apply(atoms, **params) → cls(**params).apply(atoms) → apply_random
-    # 第三条只在没有 params 时用 (随机生成测试样本).
     apply_cls = getattr(cls, "apply", None)
     if callable(apply_cls):
         new_atoms = apply_cls(atoms, **params)
         return _atoms_to_cif(_unwrap_result(new_atoms))
 
-    try:
-        instance = cls(**params)
-    except TypeError:
-        logger.debug("best-effort op failed", exc_info=True)
-        instance = None
+    result = _apply_via_instance(cls, atoms, params)
+    if result is not None:
+        return result
 
-    if instance is not None:
-        apply_fn = getattr(instance, "apply", None)
-        if callable(apply_fn):
-            new_atoms = apply_fn(atoms)
-            return _atoms_to_cif(_unwrap_result(new_atoms))
-
-    if not params and hasattr(cls, "apply_random"):
-        import numpy as np
-        rng = np.random.default_rng()
-        _prompt, new_atoms = cls.apply_random(atoms, rng=rng)
-        return _atoms_to_cif(_unwrap_result(new_atoms))
+    result = _apply_via_random(cls, atoms, params)
+    if result is not None:
+        return result
 
     raise RuntimeError(
         f"could not apply {cls_name}: no apply/apply_random path matched. "
@@ -216,6 +225,7 @@ def _cif_to_atoms(cif: str):
     from io import StringIO
 
     from ase.io import read as ase_read
+
     return ase_read(StringIO(cif), format="cif")
 
 
@@ -229,6 +239,7 @@ def _atoms_to_cif(atoms) -> str:
     import tempfile
 
     from ase.io import write as ase_write
+
     fd, path = tempfile.mkstemp(suffix=".cif")
     try:
         os.close(fd)
@@ -248,6 +259,7 @@ def _selfcheck() -> None:
     """
     # 用 ase 生成 mock CIF (简单立方 Si 晶胞)
     from ase.build import bulk
+
     si = bulk("Si", "diamond", a=5.43)
     mock_cif = _atoms_to_cif(si)
 

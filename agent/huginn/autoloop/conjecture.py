@@ -42,6 +42,7 @@ import threading
 from datetime import UTC, datetime
 from typing import Any
 
+from huginn.metacog.text_to_json import extract_json_object
 from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
@@ -57,20 +58,37 @@ logger = logging.getLogger(__name__)
 # 因果触发词 → 方向分类. 遍历时先匹配到的优先, 所以常见词放前面
 _CAUSAL_TRIGGERS: dict[str, str] = {
     # increases
-    "增加": "increases", "提升": "increases", "提高": "increases",
-    "增强": "increases", "促进": "increases", "增大": "increases",
-    "increases": "increases", "enhances": "increases",
-    "improves": "increases", "promotes": "increases", "boosts": "increases",
+    "增加": "increases",
+    "提升": "increases",
+    "提高": "increases",
+    "增强": "increases",
+    "促进": "increases",
+    "增大": "increases",
+    "increases": "increases",
+    "enhances": "increases",
+    "improves": "increases",
+    "promotes": "increases",
+    "boosts": "increases",
     # decreases
-    "降低": "decreases", "减小": "decreases", "减弱": "decreases",
-    "抑制": "decreases", "削减": "decreases",
-    "decreases": "decreases", "reduces": "decreases",
-    "suppresses": "decreases", "diminishes": "decreases",
+    "降低": "decreases",
+    "减小": "decreases",
+    "减弱": "decreases",
+    "抑制": "decreases",
+    "削减": "decreases",
+    "decreases": "decreases",
+    "reduces": "decreases",
+    "suppresses": "decreases",
+    "diminishes": "decreases",
     # modifies (中性, 方向不明确)
-    "改变": "modifies", "调控": "modifies", "影响": "modifies",
-    "调节": "modifies", "调制": "modifies",
-    "modifies": "modifies", "affects": "modifies",
-    "alters": "modifies", "controls": "modifies",
+    "改变": "modifies",
+    "调控": "modifies",
+    "影响": "modifies",
+    "调节": "modifies",
+    "调制": "modifies",
+    "modifies": "modifies",
+    "affects": "modifies",
+    "alters": "modifies",
+    "controls": "modifies",
 }
 
 # 具体动作 → 抽象动作. 提取时把领域术语泛化成跨域通用的概念
@@ -178,6 +196,39 @@ class ConjectureGenerator:
 
     # ── pipeline steps ──────────────────────────────────────────────
 
+    def _extract_try_llm(
+        self,
+        source_problem: str,
+        source_domain: str,
+        model: Any,
+        domain_context: str | None,
+    ) -> dict[str, Any]:
+        """优先 LLM 抽取, 失败或无模型时回退关键词模板."""
+        if model is not None and self._is_real_model(model):
+            try:
+                return self._llm_extract(
+                    source_problem, source_domain, model, domain_context
+                )
+            except Exception:  # 防御: LLM 抽取失败回退模板
+                logger.debug("LLM extract failed, fallback to template", exc_info=True)
+        return self._template_extract(source_problem, source_domain)
+
+    @staticmethod
+    def _extract_detail(
+        result: dict[str, Any], source_problem: str, source_domain: str
+    ) -> str:
+        """拼装 open_question 日志的正文."""
+        return (
+            f"源问题: {source_problem}\n"
+            f"源领域: {source_domain}\n"
+            f"抽象模式: {result.get('abstract_pattern', '')}\n"
+            f"动作: {result.get('action', '')}\n"
+            f"属性: {result.get('property', '')}\n"
+            f"方向: {result.get('direction', '')}\n"
+            f"机制: {result.get('mechanism', '')}\n"
+            f"方法: {result.get('method', '')}"
+        )
+
     def extract_pattern(
         self,
         source_problem: str,
@@ -195,31 +246,15 @@ class ConjectureGenerator:
         走模板时忽略它 (模板靠关键词, 不需要额外上下文).
         结果写 research_log (OPEN_QUESTION).
         """
-        if model is not None and self._is_real_model(model):
-            try:
-                result = self._llm_extract(
-                    source_problem, source_domain, model, domain_context
-                )
-            except Exception:  # 防御: LLM 抽取失败回退模板
-                logger.debug("LLM extract failed, fallback to template", exc_info=True)
-                result = self._template_extract(source_problem, source_domain)
-        else:
-            result = self._template_extract(source_problem, source_domain)
+        result = self._extract_try_llm(
+            source_problem, source_domain, model, domain_context
+        )
 
         # 提取出的模式本身就是一个待探索的开放问题
         log_id = self._log_research(
             "open_question",
             f"模式提取: {result.get('abstract_pattern', '')[:60]}",
-            (
-                f"源问题: {source_problem}\n"
-                f"源领域: {source_domain}\n"
-                f"抽象模式: {result.get('abstract_pattern', '')}\n"
-                f"动作: {result.get('action', '')}\n"
-                f"属性: {result.get('property', '')}\n"
-                f"方向: {result.get('direction', '')}\n"
-                f"机制: {result.get('mechanism', '')}\n"
-                f"方法: {result.get('method', '')}"
-            ),
+            ConjectureGenerator._extract_detail(result, source_problem, source_domain),
             tags=["autoloop", "conjecture", "pattern_extraction", source_domain],
             metadata={
                 "source_problem": source_problem,
@@ -281,6 +316,74 @@ class ConjectureGenerator:
         self._last_transfer = result
         return result
 
+    def _gc_try_imagination(
+        self, transfer_result: dict[str, Any], model: Any
+    ) -> dict[str, Any] | None:
+        """把迁移结果当 seed hypothesis 试 imagination 变换, 失败返 None."""
+        try:
+            from huginn.metacog.hypothesis_manifold import Hypothesis
+            from huginn.metacog.imagination import imagine
+
+            _seed_desc = (
+                transfer_result.get("transferred_pattern")
+                or transfer_result.get("abstract_pattern")
+                or ""
+            )
+            if not _seed_desc:
+                return None
+            h_seed = Hypothesis(
+                h_id=f"h_transfer_{transfer_result.get('log_id', 'x')}",
+                description=_seed_desc,
+                predictions={},
+                n_params=2,
+            )
+            for t_type in ("algebraic", "topological", "order"):
+                new_h = imagine(h_seed, t_type, model=model)
+                if new_h is not None:
+                    return {
+                        "statement": new_h.description,
+                        "prediction": json.dumps(new_h.predictions, ensure_ascii=False),
+                        "rationale": f"imagination ({t_type} transform) of {_seed_desc[:60]}",
+                        "confidence": "medium",
+                        "method": f"imagination:{t_type}",
+                    }
+        except Exception:  # 防御: 想象失败置空继续
+            logger.debug(
+                "imagination in generate_conjecture failed, fallback", exc_info=True
+            )
+        return None
+
+    def _gc_fallback(
+        self,
+        transfer_result: dict[str, Any],
+        model: Any,
+        prompt_level: int,
+        known_solutions: list[str] | None,
+    ) -> dict[str, Any]:
+        """imagination 不可用/失败时的降级路径: LLM 优先, 失败回退模板."""
+        if model is not None and self._is_real_model(model):
+            try:
+                return self._llm_generate(
+                    transfer_result,
+                    model,
+                    prompt_level=prompt_level,
+                    known_solutions=known_solutions,
+                )
+            except Exception:  # 防御: LLM 生成失败回退模板
+                logger.debug("LLM generate failed, fallback to template", exc_info=True)
+        return self._template_generate(transfer_result)
+
+    @staticmethod
+    def _gc_detail(result: dict[str, Any]) -> str:
+        """拼装 conjecture 日志的正文."""
+        return (
+            f"猜想陈述: {result.get('statement', '')}\n\n"
+            f"可证伪预测: {result.get('prediction', '')}\n\n"
+            f"类比依据: {result.get('rationale', '')}\n\n"
+            f"置信度: {result.get('confidence', 'medium')}\n"
+            f"方法: {result.get('method', '')}"
+        )
+
     def generate_conjecture(
         self,
         transfer_result: dict[str, Any],
@@ -301,63 +404,39 @@ class ConjectureGenerator:
         结果写 research_log (CONJECTURE), parent 指向 transfer 的 BRIDGE 记录.
         """
         # v15 Phase 4 Task 9.1: 先试 imagination (Bourbaki structure-preserving
-        # transform), 把 transfer_result 当 seed hypothesis 喂 imagine(). 失败
-        # 降级到下面原 LLM/template 路径, 不阻塞.
+        # transform), 失败降级到原 LLM/template 路径, 不阻塞.
         result = None
         if model is not None and self._is_real_model(model):
-            try:
-                from huginn.metacog.hypothesis_manifold import Hypothesis
-                from huginn.metacog.imagination import imagine
-                _seed_desc = (transfer_result.get("transferred_pattern")
-                              or transfer_result.get("abstract_pattern") or "")
-                if _seed_desc:
-                    h_seed = Hypothesis(
-                        h_id=f"h_transfer_{transfer_result.get('log_id', 'x')}",
-                        description=_seed_desc,
-                        predictions={},
-                        n_params=2,
-                    )
-                    for t_type in ("algebraic", "topological", "order"):
-                        new_h = imagine(h_seed, t_type, model=model)
-                        if new_h is not None:
-                            result = {
-                                "statement": new_h.description,
-                                "prediction": json.dumps(new_h.predictions, ensure_ascii=False),
-                                "rationale": f"imagination ({t_type} transform) of {_seed_desc[:60]}",
-                                "confidence": "medium",
-                                "method": f"imagination:{t_type}",
-                            }
-                            break
-            except Exception:  # 防御: 想象失败置空继续
-                logger.debug("imagination in generate_conjecture failed, fallback", exc_info=True)
-                result = None
+            result = ConjectureGenerator._gc_try_imagination(
+                self, transfer_result, model
+            )
 
-        # imagination 失败 -> 降级到原 LLM/template 路径
         if result is None:
-            if model is not None and self._is_real_model(model):
-                try:
-                    result = self._llm_generate(
-                        transfer_result, model,
-                        prompt_level=prompt_level,
-                        known_solutions=known_solutions,
-                    )
-                except Exception:  # 防御: LLM 生成失败回退模板
-                    logger.debug("LLM generate failed, fallback to template", exc_info=True)
-                    result = self._template_generate(transfer_result)
-            else:
-                result = self._template_generate(transfer_result)
+            result = ConjectureGenerator._gc_fallback(
+                self, transfer_result, model, prompt_level, known_solutions
+            )
 
         parent_id = transfer_result.get("log_id")
-        log_id = self._log_research(
+        result["log_id"] = ConjectureGenerator._gc_log(
+            self, result, parent_id, transfer_result
+        )
+        result["parent_log_id"] = parent_id
+        self._last_conjecture = result
+        # 写回 KG: 猜想作为 FACT 节点, 连上源/目标领域. 失败不影响主流程
+        result["kg_node_id"] = self._write_conjecture_to_kg(result, transfer_result)
+        return result
+
+    def _gc_log(
+        self,
+        result: dict[str, Any],
+        parent_id: str | None,
+        transfer_result: dict[str, Any],
+    ) -> str | None:
+        """把猜想写进 research_log, 返回记录 id."""
+        return self._log_research(
             "conjecture",
             result.get("statement", "")[:80],
-            (
-                f"猜想陈述: {result.get('statement', '')}\n\n"
-                f"可证伪预测: {result.get('prediction', '')}\n\n"
-                f"类比依据: {result.get('rationale', '')}\n\n"
-                f"置信度: {result.get('confidence', 'medium')}\n"
-                f"方法: {result.get('method', '')}"
-            ),
+            ConjectureGenerator._gc_detail(result),
             parent_id=parent_id,
             status="proposed",
             tags=["autoloop", "conjecture", transfer_result.get("target_domain", "")],
@@ -367,12 +446,6 @@ class ConjectureGenerator:
                 "method": result.get("method"),
             },
         )
-        result["log_id"] = log_id
-        result["parent_log_id"] = parent_id
-        self._last_conjecture = result
-        # 写回 KG: 猜想作为 FACT 节点, 连上源/目标领域. 失败不影响主流程
-        result["kg_node_id"] = self._write_conjecture_to_kg(result, transfer_result)
-        return result
 
     def run(
         self,
@@ -397,7 +470,8 @@ class ConjectureGenerator:
         )
         transfer = self.transfer_domain(pattern, target_domain, model)
         conjecture = self.generate_conjecture(
-            transfer, model,
+            transfer,
+            model,
             prompt_level=prompt_level,
             known_solutions=known_solutions,
         )
@@ -530,9 +604,7 @@ class ConjectureGenerator:
             "method": "template",
         }
 
-    def _template_generate(
-        self, transfer_result: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _template_generate(self, transfer_result: dict[str, Any]) -> dict[str, Any]:
         """模板拼出猜想陈述 / 预测 / 依据."""
         transferred = transfer_result.get("transferred_pattern", "")
         target_domain = transfer_result.get("target_domain", "")
@@ -570,41 +642,51 @@ class ConjectureGenerator:
 
     # ── LLM enhanced ────────────────────────────────────────────────
 
-    def _llm_extract(
-        self, source_problem: str, source_domain: str, model: Any,
-        domain_context: str | None = None,
-    ) -> dict[str, Any]:
-        """调 LLM 做模式提取, 返回结构化结果."""
+    @staticmethod
+    def _le_messages(
+        source_problem: str, source_domain: str, domain_context: str | None
+    ) -> list:
+        """构造模式提取的 LLM 消息列表."""
         from langchain_core.messages import HumanMessage, SystemMessage
 
         # KG 查到的领域上下文拼进 prompt, 帮 LLM 落到已知实体上
         context_block = ""
         if domain_context:
             context_block = f"\nKnown domain context from KG:\n{domain_context}\n"
-        messages = [
-            SystemMessage(content=(
-                "You are a structural pattern extractor. "
-                "Given a known problem or result, extract the abstract structural "
-                "pattern by generalizing the specific action and property. "
-                "Output ONLY a JSON object with keys: "
-                "abstract_pattern, action, property, "
-                "direction (increases|decreases|modifies), mechanism. "
-                "No markdown, no explanation."
-            )),
-            HumanMessage(content=(
-                f"Source problem: {source_problem}\n"
-                f"Source domain: {source_domain}\n"
-                f"{context_block}"
-                f"Extract the abstract pattern."
-            )),
+        return [
+            SystemMessage(
+                content=(
+                    "You are a structural pattern extractor. "
+                    "Given a known problem or result, extract the abstract structural "
+                    "pattern by generalizing the specific action and property. "
+                    "Output ONLY a JSON object with keys: "
+                    "abstract_pattern, action, property, "
+                    "direction (increases|decreases|modifies), mechanism. "
+                    "No markdown, no explanation."
+                )
+            ),
+            HumanMessage(
+                content=(
+                    f"Source problem: {source_problem}\n"
+                    f"Source domain: {source_domain}\n"
+                    f"{context_block}"
+                    f"Extract the abstract pattern."
+                )
+            ),
         ]
-        text = self._invoke_model(model, messages)
-        parsed = self._parse_json(text)
 
-        # LLM 没返回的字段用模板补
-        fallback = self._template_extract(source_problem, source_domain)
+    @staticmethod
+    def _le_result(
+        parsed: dict[str, Any],
+        fallback: dict[str, Any],
+        source_problem: str,
+        source_domain: str,
+    ) -> dict[str, Any]:
+        """合并 LLM 结果与模板兜底字段."""
         return {
-            "abstract_pattern": parsed.get("abstract_pattern", fallback["abstract_pattern"]),
+            "abstract_pattern": parsed.get(
+                "abstract_pattern", fallback["abstract_pattern"]
+            ),
             "source_problem": source_problem,
             "source_domain": source_domain,
             "action": parsed.get("action", fallback["action"]),
@@ -615,6 +697,26 @@ class ConjectureGenerator:
             "mechanism": parsed.get("mechanism", fallback["mechanism"]),
             "method": "llm",
         }
+
+    def _llm_extract(
+        self,
+        source_problem: str,
+        source_domain: str,
+        model: Any,
+        domain_context: str | None = None,
+    ) -> dict[str, Any]:
+        """调 LLM 做模式提取, 返回结构化结果."""
+        messages = ConjectureGenerator._le_messages(
+            source_problem, source_domain, domain_context
+        )
+        text = self._invoke_model(model, messages)
+        parsed = self._parse_json(text)
+
+        # LLM 没返回的字段用模板补
+        fallback = self._template_extract(source_problem, source_domain)
+        return ConjectureGenerator._le_result(
+            parsed, fallback, source_problem, source_domain
+        )
 
     def _llm_transfer(
         self, pattern: dict[str, Any], target_domain: str, model: Any
@@ -629,9 +731,9 @@ class ConjectureGenerator:
         )
 
         messages = [
-            HumanMessage(content=self._render_transfer_prompt(
-                pattern, target_domain, shared
-            )),
+            HumanMessage(
+                content=self._render_transfer_prompt(pattern, target_domain, shared)
+            ),
         ]
         text = self._invoke_model(model, messages)
         parsed = self._parse_json(text)
@@ -655,6 +757,7 @@ class ConjectureGenerator:
         ponytail: 只在 _REGISTRY 命中时返回非空, 避免硬塞虚假结构."""
         try:
             from huginn.ml.transfer_registry import _REGISTRY, shared_structure
+
             src = next((d for d in _REGISTRY if d.name == src_name), None)
             tgt = next((d for d in _REGISTRY if d.name == tgt_name), None)
             if src and tgt:
@@ -676,17 +779,18 @@ class ConjectureGenerator:
             f"NOTE: Source and target are structurally isomorphic. "
             f"Anchor the transfer on the shared structure, not on "
             f"composition or material type."
-            if shared else ""
+            if shared
+            else ""
         )
         return f"""You are a cross-domain transfer specialist.
 
 Given an abstract pattern and a target domain, instantiate the pattern in the target domain using domain-appropriate terminology.
 
-ABSTRACT PATTERN: {pattern.get('abstract_pattern', '')}
-ACTION: {pattern.get('action', '')}
-PROPERTY: {pattern.get('property', '')}
-DIRECTION: {pattern.get('direction', '')}
-SOURCE DOMAIN: {pattern.get('source_domain', '')}
+ABSTRACT PATTERN: {pattern.get("abstract_pattern", "")}
+ACTION: {pattern.get("action", "")}
+PROPERTY: {pattern.get("property", "")}
+DIRECTION: {pattern.get("direction", "")}
+SOURCE DOMAIN: {pattern.get("source_domain", "")}
 TARGET DOMAIN: {target_domain}
 {shared_block}
 
@@ -735,86 +839,12 @@ Output ONLY a JSON object with keys: transferred_pattern, domain_mapping (object
         Level 1: 附带领域知识表, 帮 LLM 落到具体术语.
         Level 2: 分步引导推理 + 遗忘已知解法, 强制从第一性原理出发.
         """
-        transferred = transfer_result.get("transferred_pattern", "")
-        target_domain = transfer_result.get("target_domain", "")
-        source_domain = transfer_result.get("source_domain", "")
-        domain_mapping = json.dumps(
-            transfer_result.get("domain_mapping", {}), ensure_ascii=False
-        )
-        analogy_notes = transfer_result.get("analogy_notes", "")
-
-        # 所有级别共用的输出格式要求
-        output_spec = (
-            "Output ONLY a JSON object with keys: "
-            "statement (falsifiable conjecture), "
-            "prediction (specific observable result), "
-            "rationale (grounded reasoning), "
-            "confidence (low|medium|high). No markdown."
-        )
-
-        base_user = (
-            f"Transferred pattern: {transferred}\n"
-            f"Target domain: {target_domain}\n"
-            f"Source domain: {source_domain}\n"
-            f"Domain mapping: {domain_mapping}\n"
-            f"Analogy notes: {analogy_notes}\n"
-        )
-
+        base_user = _gp_base_user(transfer_result)
         if prompt_level == 0:
-            # 纯自由生成
-            system = (
-                "You are a conjecture generator. "
-                "Given a transferred pattern, formulate a testable conjecture. "
-                + output_spec
-            )
-            return system, base_user + "Generate a testable conjecture."
-
+            return _gp_level0(base_user)
         if prompt_level == 1:
-            # 领域知识表提示
-            domain_info = _lookup_domain(target_domain)
-            system = (
-                "You are a conjecture generator. "
-                "Use the provided domain knowledge to ground your conjecture "
-                "in domain-appropriate terminology and mechanisms. "
-                + output_spec
-            )
-            user = (
-                base_user
-                + f"Domain knowledge: {json.dumps(domain_info, ensure_ascii=False)}\n"
-                + "Generate a testable conjecture grounded in this domain knowledge."
-            )
-            return system, user
-
-        # Level 2: 分步引导 + 遗忘已知解法
-        domain_info = _lookup_domain(target_domain)
-        forget_section = ""
-        if known_solutions:
-            forget_section = (
-                "\n\nIMPORTANT: Ignore the following known solutions. "
-                "Do NOT reproduce or build upon them. "
-                "Reason from first principles to find a NOVEL approach:\n"
-                + "\n".join(f"- {s}" for s in known_solutions)
-            )
-
-        system = (
-            "You are a conjecture generator using "
-            "first-principles reasoning. Follow the step-by-step instructions. "
-            "Ignore any known solutions provided and derive a genuinely novel conjecture. "
-            + output_spec
-        )
-        user = (
-            base_user
-            + f"Domain knowledge: {json.dumps(domain_info, ensure_ascii=False)}\n\n"
-            "Step 1: Identify the core physical mechanism that connects "
-            f"the transferred pattern '{transferred}' to {target_domain}.\n"
-            "Step 2: Consider what observable quantity would change and in which direction.\n"
-            "Step 3: State the underlying assumption and its boundary conditions.\n"
-            "Step 4: Formulate a falsifiable conjecture and a specific prediction.\n"
-            f"Step 5: Rate your confidence (low|medium|high)."
-            f"{forget_section}\n\n"
-            "Output the JSON object with your final conjecture."
-        )
-        return system, user
+            return _gp_level1(base_user, transfer_result.get("target_domain", ""))
+        return _gp_level2(base_user, transfer_result, known_solutions)
 
     # ── helpers ─────────────────────────────────────────────────────
 
@@ -838,23 +868,8 @@ Output ONLY a JSON object with keys: transferred_pattern, domain_mapping (object
 
     @staticmethod
     def _parse_json(text: str) -> dict[str, Any]:
-        """从 LLM 输出里抠 JSON. 处理 markdown 代码块包裹的情况."""
-        if not text:
-            return {}
-        # 去掉 ```json ... ``` 包裹
-        if "```" in text:
-            parts = text.split("```")
-            if len(parts) >= 2:
-                text = parts[1]
-                if text.startswith("json"):
-                    text = text[4:]
-        try:
-            result = json.loads(text.strip())
-            if isinstance(result, dict):
-                return result
-        except (json.JSONDecodeError, TypeError):
-            logger.debug("best-effort op failed", exc_info=True)
-        return {}
+        """从 LLM 输出里抠 JSON 对象 (围栏/散文容忍统一由 text_to_json 负责)."""
+        return extract_json_object(text) or {}
 
     def _log_research(
         self,
@@ -909,38 +924,15 @@ Output ONLY a JSON object with keys: transferred_pattern, domain_mapping (object
             if kg is None:
                 return None
 
-            statement = result.get("statement", "")
-            source_domain = transfer_result.get("source_domain", "")
-            target_domain = transfer_result.get("target_domain", "")
-
-            conjecture_id = kg.add_entity(
-                label=statement[:80] or "cross-domain conjecture",
-                entity_type=EntityType.FACT,
-                source="conjecture",
-                confidence=0.6,
-                prediction=result.get("prediction", ""),
-                rationale=result.get("rationale", ""),
-                confidence_level=result.get("confidence", "medium"),
+            conjecture_id = _ckg_add_conjecture_node(kg, result, EntityType)
+            _ckg_link_domains(
+                kg,
+                conjecture_id,
+                transfer_result.get("source_domain", ""),
+                transfer_result.get("target_domain", ""),
+                EntityType,
+                Relation,
             )
-
-            # 源领域 MATERIAL --DERIVED_FROM--> 猜想
-            if source_domain:
-                src_id = kg.add_entity(
-                    source_domain, EntityType.MATERIAL, source="conjecture"
-                )
-                kg.add_relation(
-                    src_id, Relation.DERIVED_FROM, conjecture_id, source="conjecture"
-                )
-
-            # 猜想 --APPLIES--> 目标领域 MATERIAL
-            if target_domain:
-                dst_id = kg.add_entity(
-                    target_domain, EntityType.MATERIAL, source="conjecture"
-                )
-                kg.add_relation(
-                    conjecture_id, Relation.APPLIES, dst_id, source="conjecture"
-                )
-
             kg.save()
             return conjecture_id
         except Exception:  # 防御: 结论图写回失败返回空
@@ -966,6 +958,136 @@ Output ONLY a JSON object with keys: transferred_pattern, domain_mapping (object
             return None
 
 
+# ── 生成提示构建 ──────────────────────────────────────────────────────
+
+
+def _ckg_add_conjecture_node(kg: Any, result: dict[str, Any], entity_type: Any) -> str:
+    """把猜想作为 FACT 节点加入 KG, 返回节点 id."""
+    return kg.add_entity(
+        label=result.get("statement", "")[:80] or "cross-domain conjecture",
+        entity_type=entity_type.FACT,
+        source="conjecture",
+        confidence=0.6,
+        prediction=result.get("prediction", ""),
+        rationale=result.get("rationale", ""),
+        confidence_level=result.get("confidence", "medium"),
+    )
+
+
+def _ckg_link_domains(
+    kg: Any,
+    conjecture_id: str,
+    source_domain: str,
+    target_domain: str,
+    entity_type: Any,
+    relation: Any,
+) -> None:
+    """连上源/目标领域 MATERIAL 节点: source --DERIVED_FROM--> 猜想 --APPLIES--> target."""
+    # 源领域 MATERIAL --DERIVED_FROM--> 猜想
+    if source_domain:
+        src_id = kg.add_entity(source_domain, entity_type.MATERIAL, source="conjecture")
+        kg.add_relation(
+            src_id, relation.DERIVED_FROM, conjecture_id, source="conjecture"
+        )
+
+    # 猜想 --APPLIES--> 目标领域 MATERIAL
+    if target_domain:
+        dst_id = kg.add_entity(target_domain, entity_type.MATERIAL, source="conjecture")
+        kg.add_relation(conjecture_id, relation.APPLIES, dst_id, source="conjecture")
+
+
+# 所有 prompt_level 共用的输出格式要求
+_GP_OUTPUT_SPEC = (
+    "Output ONLY a JSON object with keys: "
+    "statement (falsifiable conjecture), "
+    "prediction (specific observable result), "
+    "rationale (grounded reasoning), "
+    "confidence (low|medium|high). No markdown."
+)
+
+
+def _gp_base_user(transfer_result: dict[str, Any]) -> str:
+    """拼装所有 prompt_level 共用的用户提示前缀."""
+    domain_mapping = json.dumps(
+        transfer_result.get("domain_mapping", {}), ensure_ascii=False
+    )
+    return (
+        f"Transferred pattern: {transfer_result.get('transferred_pattern', '')}\n"
+        f"Target domain: {transfer_result.get('target_domain', '')}\n"
+        f"Source domain: {transfer_result.get('source_domain', '')}\n"
+        f"Domain mapping: {domain_mapping}\n"
+        f"Analogy notes: {transfer_result.get('analogy_notes', '')}\n"
+    )
+
+
+def _gp_forget_section(known_solutions: list[str] | None) -> str:
+    """Level 2 的遗忘已知解法段落; 无已知解法时为空串."""
+    if not known_solutions:
+        return ""
+    return (
+        "\n\nIMPORTANT: Ignore the following known solutions. "
+        "Do NOT reproduce or build upon them. "
+        "Reason from first principles to find a NOVEL approach:\n"
+        + "\n".join(f"- {s}" for s in known_solutions)
+    )
+
+
+def _gp_level0(base_user: str) -> tuple[str, str]:
+    """Level 0: 纯自由生成."""
+    system = (
+        "You are a conjecture generator. "
+        "Given a transferred pattern, formulate a testable conjecture. "
+        + _GP_OUTPUT_SPEC
+    )
+    return system, base_user + "Generate a testable conjecture."
+
+
+def _gp_level1(base_user: str, target_domain: str) -> tuple[str, str]:
+    """Level 1: 附带领域知识表."""
+    domain_info = _lookup_domain(target_domain)
+    system = (
+        "You are a conjecture generator. "
+        "Use the provided domain knowledge to ground your conjecture "
+        "in domain-appropriate terminology and mechanisms. " + _GP_OUTPUT_SPEC
+    )
+    user = (
+        base_user
+        + f"Domain knowledge: {json.dumps(domain_info, ensure_ascii=False)}\n"
+        + "Generate a testable conjecture grounded in this domain knowledge."
+    )
+    return system, user
+
+
+def _gp_level2(
+    base_user: str,
+    transfer_result: dict[str, Any],
+    known_solutions: list[str] | None,
+) -> tuple[str, str]:
+    """Level 2: 分步引导 + 遗忘已知解法."""
+    target_domain = transfer_result.get("target_domain", "")
+    transferred = transfer_result.get("transferred_pattern", "")
+    domain_info = _lookup_domain(target_domain)
+    system = (
+        "You are a conjecture generator using "
+        "first-principles reasoning. Follow the step-by-step instructions. "
+        "Ignore any known solutions provided and derive a genuinely novel conjecture. "
+        + _GP_OUTPUT_SPEC
+    )
+    user = (
+        base_user
+        + f"Domain knowledge: {json.dumps(domain_info, ensure_ascii=False)}\n\n"
+        "Step 1: Identify the core physical mechanism that connects "
+        f"the transferred pattern '{transferred}' to {target_domain}.\n"
+        "Step 2: Consider what observable quantity would change and in which direction.\n"
+        "Step 3: State the underlying assumption and its boundary conditions.\n"
+        "Step 4: Formulate a falsifiable conjecture and a specific prediction.\n"
+        f"Step 5: Rate your confidence (low|medium|high)."
+        f"{_gp_forget_section(known_solutions)}\n\n"
+        "Output the JSON object with your final conjecture."
+    )
+    return system, user
+
+
 # ── 领域知识查表 ──────────────────────────────────────────────────────
 
 
@@ -978,6 +1100,7 @@ def _lookup_domain(domain: str) -> dict[str, str]:
     """
     try:
         from huginn.metacog import recall_context
+
         results = recall_context(
             category="knowledge_seed",
             query=domain,
@@ -1069,6 +1192,43 @@ _TEXT_TO_STRUCTURE_TYPE: dict[str, str] = {
 }
 
 
+def _eps_relation_type(pattern: dict[str, Any], source_problem: str) -> str:
+    """把 pattern 的抽象字段拼成文本, 推断 relation_type."""
+    text = (
+        pattern.get("abstract_pattern", "")
+        + " "
+        + pattern.get("action", "")
+        + " "
+        + pattern.get("property", "")
+        + " "
+        + source_problem
+    ).lower()
+    return _infer_relation_type(text)
+
+
+def _eps_physical_structure(relation_type: str) -> Any:
+    """按 relation_type 取预定义结构作模板, 构造 PhysicalStructure."""
+    from huginn.metacog.physical_structure import (
+        PREDEFINED_STRUCTURES,
+        PhysicalStructure,
+    )
+
+    template = PREDEFINED_STRUCTURES.get(relation_type)
+    if template is None:
+        # 兜底: catalytic_geometry
+        template = PREDEFINED_STRUCTURES["catalytic_geometry"]
+
+    # 构造 PhysicalStructure — 复用 template 的 relation_expr/constraints,
+    # implementor_slots 填 pattern 的抽象 action/property
+    return PhysicalStructure(
+        relation_type=template.relation_type,
+        relation_expr=template.relation_expr,
+        implementor_slots=dict(template.implementor_slots),
+        constraints=list(template.constraints),
+        relative_anchors=dict(template.relative_anchors),
+    )
+
+
 def extract_physical_structure(
     source_problem: str,
     source_domain: str,
@@ -1087,35 +1247,15 @@ def extract_physical_structure(
     """
     gen = ConjectureGenerator()
     pattern = gen.extract_pattern(
-        source_problem, source_domain, model=model, domain_context=domain_context,
+        source_problem,
+        source_domain,
+        model=model,
+        domain_context=domain_context,
     )
 
-    # 从 pattern 关键词推断 relation_type
-    text = (
-        pattern.get("abstract_pattern", "") + " " +
-        pattern.get("action", "") + " " +
-        pattern.get("property", "") + " " +
-        source_problem
-    ).lower()
-    relation_type = _infer_relation_type(text)
+    relation_type = _eps_relation_type(pattern, source_problem)
+    physical = _eps_physical_structure(relation_type)
 
-    # 用预定义结构作模板, implementor_slots 用 pattern 的 action/property 填
-    from huginn.metacog.physical_structure import PREDEFINED_STRUCTURES
-    template = PREDEFINED_STRUCTURES.get(relation_type)
-    if template is None:
-        # 兜底: catalytic_geometry
-        template = PREDEFINED_STRUCTURES["catalytic_geometry"]
-
-    # 构造 PhysicalStructure — 复用 template 的 relation_expr/constraints,
-    # implementor_slots 填 pattern 的抽象 action/property
-    from huginn.metacog.physical_structure import PhysicalStructure
-    physical = PhysicalStructure(
-        relation_type=template.relation_type,
-        relation_expr=template.relation_expr,
-        implementor_slots=dict(template.implementor_slots),
-        constraints=list(template.constraints),
-        relative_anchors=dict(template.relative_anchors),
-    )
     # action/property 进 metadata (pattern 里已有, 不重复存)
     pattern["physical_structure_type"] = relation_type
     return physical, pattern
@@ -1143,6 +1283,7 @@ def transfer_with_structure(
     # target PhysicalStructure: 同 relation_type, implementor_slots 暂时复用
     # (真实迁移需要 LLM 识别目标领域实现者)
     from huginn.metacog.physical_structure import PhysicalStructure
+
     target_physical = PhysicalStructure(
         relation_type=physical_structure.relation_type,
         relation_expr=physical_structure.relation_expr,
@@ -1176,10 +1317,13 @@ def generate_conjecture_with_structure(
         StructureMapping,
         validate_structure_preservation,
     )
+
     gen = ConjectureGenerator()
     conjecture = gen.generate_conjecture(
-        transfer_result, model=model,
-        prompt_level=prompt_level, known_solutions=known_solutions,
+        transfer_result,
+        model=model,
+        prompt_level=prompt_level,
+        known_solutions=known_solutions,
     )
 
     # 断言同构保持
@@ -1194,43 +1338,49 @@ def generate_conjecture_with_structure(
     return is_isomorphic, conjecture
 
 
+# 5 类预定义 relation_type 的关键词表, 命中即返回 (顺序即优先级)
+_RELATION_TYPE_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "band_symmetry",
+        ("band", "能带", "带隙", "symmetry", "对称", "topolog", "电子结构"),
+    ),
+    (
+        "interface_binding",
+        ("interface", "界面", "binding", "结合", "hetero", "异质", "adhesion"),
+    ),
+    (
+        "percolation_topology",
+        ("percolat", "逾渗", "network", "网络", "connect", "连通", "transport"),
+    ),
+    (
+        "defect_chemistry",
+        ("defect", "缺陷", "dop", "掺杂", "charge", "电荷", "vacanc", "空位"),
+    ),
+    (
+        "catalytic_geometry",
+        ("catal", "催化", "adsorp", "吸附", "active site", "活性位"),
+    ),
+)
+
+
 def _infer_relation_type(text: str) -> str:
     """从 pattern 文字推断 5 类预定义 relation_type."""
     text_lower = text.lower()
-    # band_symmetry: 电子结构/能带/带隙
-    if any(k in text_lower for k in (
-        "band", "能带", "带隙", "symmetry", "对称", "topolog", "电子结构",
-    )):
-        return "band_symmetry"
-    # interface_binding: 界面/结合/异质
-    if any(k in text_lower for k in (
-        "interface", "界面", "binding", "结合", "hetero", "异质", "adhesion",
-    )):
-        return "interface_binding"
-    # percolation_topology: 逾渗/网络/连通
-    if any(k in text_lower for k in (
-        "percolat", "逾渗", "network", "网络", "connect", "连通", "transport",
-    )):
-        return "percolation_topology"
-    # defect_chemistry: 缺陷/掺杂/电荷
-    if any(k in text_lower for k in (
-        "defect", "缺陷", "dop", "掺杂", "charge", "电荷", "vacanc", "空位",
-    )):
-        return "defect_chemistry"
-    # catalytic_geometry: 催化/吸附/活性位
-    if any(k in text_lower for k in (
-        "catal", "催化", "adsorp", "吸附", "active site", "活性位",
-    )):
-        return "catalytic_geometry"
+    for relation_type, keywords in _RELATION_TYPE_KEYWORDS:
+        if any(k in text_lower for k in keywords):
+            return relation_type
     # 默认
     return "catalytic_geometry"
 
 
 __all__ = [
-    "ConjectureGenerator", "get_conjecture_generator",
-    "extract_physical_structure", "transfer_with_structure",
+    "ConjectureGenerator",
+    "get_conjecture_generator",
+    "extract_physical_structure",
+    "transfer_with_structure",
     "generate_conjecture_with_structure",
-    "reframe_problem", "should_reframe",
+    "reframe_problem",
+    "should_reframe",
 ]
 
 
@@ -1342,16 +1492,22 @@ def should_reframe(
     block_status = None
     if block_registry_state is not None:
         if isinstance(block_registry_state, dict):
-            block_status = block_registry_state.get("status") or block_registry_state.get("route_status")
+            block_status = block_registry_state.get(
+                "status"
+            ) or block_registry_state.get("route_status")
         else:
-            block_status = getattr(block_registry_state, "status", None) or \
-                           getattr(block_registry_state, "route_status", None)
+            block_status = getattr(block_registry_state, "status", None) or getattr(
+                block_registry_state, "route_status", None
+            )
     if block_status not in {"blocked", "abandoned"}:
         return (False, f"block_registry not blocked (status={block_status})")
 
     if not equivalence_audit_passed:
         # 换名归约嫌疑 — reframe 会变成漂移合法化
-        return (False, "equivalence audit flagged renaming — reframe would legitimize drift")
+        return (
+            False,
+            "equivalence audit flagged renaming — reframe would legitimize drift",
+        )
 
     return (True, f"drift + blocked + non-renaming: {drift_msg}")
 
@@ -1425,58 +1581,57 @@ def _auto_select_mode(problem_lower: str, target_domain: str | None) -> str:
     return "abstract_lift"
 
 
-def _reframe_abstract_lift(
-    problem: str, problem_lower: str, model: Any
-) -> dict[str, Any]:
-    """抽象升级: 把具体问题抬到更高数学结构.
-
-    模板路径: 关键词命中 _PROBLEM_TO_MATH_CONCEPT → MathConceptGraph 找祖先链
-    LLM 路径: 调 LLM 做更丰富的抽象化
-    """
-    # 找命中概念
-    math_concept = None
-    matched_key = None
+def _ral_match(problem_lower: str) -> tuple[str | None, str | None]:
+    """在 _PROBLEM_TO_MATH_CONCEPT 里找首个命中, 返回 (math_concept, matched_key)."""
     for key, concept in _PROBLEM_TO_MATH_CONCEPT.items():
         if key in problem_lower:
-            math_concept = concept
-            matched_key = key
-            break
+            return concept, key
+    return None, None
 
-    if math_concept is None:
-        # 兜底: 没命中也调 LLM
-        if model is not None and ConjectureGenerator()._is_real_model(model):
-            return _llm_reframe_abstract_lift(problem, model)
-        return {
-            "reframed_problem": problem,
-            "rationale": "no math concept match; no LLM; reframed as-is",
-            "mapping": {},
-            "method": "template_noop",
-        }
 
-    # 模板路径: 用 MathConceptGraph 找祖先链
+def _ral_ancestors(math_concept: str) -> list[str]:
+    """查 MathConceptGraph 的祖先链, 失败返空表."""
     try:
         from huginn.kg.graph import get_math_concept_graph
+
         mcg = get_math_concept_graph()
         nb = mcg.query_concept_neighborhood(math_concept, depth=2)
-        ancestors = nb.get("ancestors", []) if nb.get("found") else []
+        return nb.get("ancestors", []) if nb.get("found") else []
     except Exception:  # 防御: 祖先计算失败用空表
-        ancestors = []
+        logger.debug("ancestor lookup skipped", exc_info=True)
+        return []
 
-    if not ancestors:
-        # MathConceptGraph 没找到, 至少把 matched_key 抽象成 math_concept
-        reframed = problem.replace(matched_key, math_concept) if matched_key else problem
-        return {
-            "reframed_problem": reframed,
-            "rationale": f"将 '{matched_key}' 抽象为 '{math_concept}' (无祖先链)",
-            "mapping": {"original_term": matched_key, "abstract_concept": math_concept},
-            "method": "template",
-        }
 
-    # 取最远祖先 (depth=2 的最深一层)
+def _ral_noop(problem: str, reason: str) -> dict[str, Any]:
+    """无命中兜底: 原样返回."""
+    return {
+        "reframed_problem": problem,
+        "rationale": reason,
+        "mapping": {},
+        "method": "template_noop",
+    }
+
+
+def _ral_no_ancestor(
+    problem: str, matched_key: str, math_concept: str
+) -> dict[str, Any]:
+    """有命中概念但无祖先链: 只做术语替换."""
+    reframed = problem.replace(matched_key, math_concept) if matched_key else problem
+    return {
+        "reframed_problem": reframed,
+        "rationale": f"将 '{matched_key}' 抽象为 '{math_concept}' (无祖先链)",
+        "mapping": {"original_term": matched_key, "abstract_concept": math_concept},
+        "method": "template",
+    }
+
+
+def _ral_with_ancestor(
+    problem: str, matched_key: str, math_concept: str, ancestors: list[str]
+) -> dict[str, Any]:
+    """有祖先链: 抬到最深祖先层, 分析不变量与守恒律."""
     deepest_ancestor = ancestors[-1] if ancestors else math_concept
     reframed = (
-        f"在 {deepest_ancestor} 的数学结构下, "
-        f"分析原问题的不变量与守恒律: {problem}"
+        f"在 {deepest_ancestor} 的数学结构下, 分析原问题的不变量与守恒律: {problem}"
     )
     return {
         "reframed_problem": reframed,
@@ -1495,9 +1650,29 @@ def _reframe_abstract_lift(
     }
 
 
-def _reframe_dual_flip(
+def _reframe_abstract_lift(
     problem: str, problem_lower: str, model: Any
 ) -> dict[str, Any]:
+    """抽象升级: 把具体问题抬到更高数学结构.
+
+    模板路径: 关键词命中 _PROBLEM_TO_MATH_CONCEPT → MathConceptGraph 找祖先链
+    LLM 路径: 调 LLM 做更丰富的抽象化
+    """
+    math_concept, matched_key = _ral_match(problem_lower)
+
+    if math_concept is None:
+        # 兜底: 没命中也调 LLM
+        if model is not None and ConjectureGenerator()._is_real_model(model):
+            return _llm_reframe_abstract_lift(problem, model)
+        return _ral_noop(problem, "no math concept match; no LLM; reframed as-is")
+
+    ancestors = _ral_ancestors(math_concept)
+    if not ancestors:
+        return _ral_no_ancestor(problem, matched_key, math_concept)
+    return _ral_with_ancestor(problem, matched_key, math_concept, ancestors)
+
+
+def _reframe_dual_flip(problem: str, problem_lower: str, model: Any) -> dict[str, Any]:
     """对偶翻转: 把原问题翻到对偶面.
 
     模板路径: 命中 _DUAL_PAIRS → 替换
@@ -1536,68 +1711,56 @@ def _reframe_dual_flip(
     }
 
 
-def _reframe_analogy_map(
-    problem: str,
-    domain: str,
-    target_domain: str | None,
-    model: Any,
-) -> dict[str, Any]:
-    """类比映射: 用 transfer_registry 找同构域, 翻译问题到那个域.
-
-    Ponytail: 复用 transfer_registry.find_transfer_domain — 它的相似度
-    已经能识别结构同构 (Landau phi⁴ 共享, symmetry shared). 不重写.
-    """
-    if not target_domain:
-        # 没指定 target_domain, 让 LLM 或 transfer_registry 自己找
-        if model is not None and ConjectureGenerator()._is_real_model(model):
-            return _llm_reframe_analogy_map(problem, domain, model)
-        return {
-            "reframed_problem": problem,
-            "rationale": "no target_domain; no LLM; reframed as-is",
-            "mapping": {},
-            "method": "template_noop",
-        }
-
+def _ram_lookup(domain: str, target_domain: str) -> tuple[Any, list[str]]:
+    """查 domain → target_domain 的迁移 profile 与共享结构, 失败返 (None, [])."""
     try:
         from huginn.ml.transfer_registry import find_transfer_domain, shared_structure
-        # 查 domain → target_domain 是否结构同构
+
         transfer = find_transfer_domain(domain, target_domain) if domain else None
-        shared = []
+        shared: list[str] = []
         if domain and target_domain:
             try:
                 # find_transfer_domain 返回 DomainProfile, shared_structure 需要 DomainProfile 对
                 from huginn.ml.transfer_registry import _REGISTRY
+
                 src = next((d for d in _REGISTRY if d.name == domain), None)
                 tgt = next((d for d in _REGISTRY if d.name == target_domain), None)
                 if src and tgt:
                     shared = shared_structure(src, tgt)
             except Exception:  # 防御: 共同结构查找失败跳过
                 logger.debug("shared structure lookup skipped", exc_info=True)
+        return transfer, shared
     except Exception:  # 防御: 迁移失败回落空
-        transfer = None
-        shared = []
+        logger.debug("transfer lookup skipped", exc_info=True)
+        return None, []
 
-    if not shared:
-        # 无结构同构, 退到 LLM 或 as-is
-        if model is not None and ConjectureGenerator()._is_real_model(model):
-            return _llm_reframe_analogy_map(problem, domain, model, target_domain)
-        return {
-            "reframed_problem": (
-                f"将问题翻译到 {target_domain} 域求解: {problem} "
-                f"(注: 未检测到结构同构, 类比可能不成立)"
-            ),
-            "rationale": (
-                f"target_domain={target_domain} 与 source={domain} 未检测到 "
-                f"结构同构. 类比映射可能不成立, 建议先做小范围验证."
-            ),
-            "mapping": {
-                "source_domain": domain,
-                "target_domain": target_domain,
-                "shared_structure": [],
-            },
-            "method": "template_no_isomorphism",
-        }
 
+def _ram_no_isomorphism(
+    problem: str, domain: str, target_domain: str
+) -> dict[str, Any]:
+    """未检测到结构同构: 翻译但标注类比可能不成立."""
+    return {
+        "reframed_problem": (
+            f"将问题翻译到 {target_domain} 域求解: {problem} "
+            f"(注: 未检测到结构同构, 类比可能不成立)"
+        ),
+        "rationale": (
+            f"target_domain={target_domain} 与 source={domain} 未检测到 "
+            f"结构同构. 类比映射可能不成立, 建议先做小范围验证."
+        ),
+        "mapping": {
+            "source_domain": domain,
+            "target_domain": target_domain,
+            "shared_structure": [],
+        },
+        "method": "template_no_isomorphism",
+    }
+
+
+def _ram_with_isomorphism(
+    problem: str, domain: str, target_domain: str, shared: list[str], transfer: Any
+) -> dict[str, Any]:
+    """检测到结构同构: 翻译到目标域求解."""
     reframed = (
         f"将原问题 ({domain} 域) 翻译到 {target_domain} 域求解, "
         f"利用共享结构 {shared}. 原问题: {problem}"
@@ -1613,16 +1776,51 @@ def _reframe_analogy_map(
             "source_domain": domain,
             "target_domain": target_domain,
             "shared_structure": shared,
-            "transfer_profile": transfer.__dict__ if transfer and hasattr(transfer, "__dict__") else None,
+            "transfer_profile": (
+                transfer.__dict__
+                if transfer and hasattr(transfer, "__dict__")
+                else None
+            ),
         },
         "method": "template",
     }
+
+
+def _reframe_analogy_map(
+    problem: str,
+    domain: str,
+    target_domain: str | None,
+    model: Any,
+) -> dict[str, Any]:
+    """类比映射: 用 transfer_registry 找同构域, 翻译问题到那个域.
+
+    Ponytail: 复用 transfer_registry.find_transfer_domain — 它的相似度
+    已经能识别结构同构 (Landau phi⁴ 共享, symmetry shared). 不重写.
+    """
+    has_llm = model is not None and ConjectureGenerator()._is_real_model(model)
+
+    if not target_domain:
+        # 没指定 target_domain, 让 LLM 或 transfer_registry 自己找
+        if has_llm:
+            return _llm_reframe_analogy_map(problem, domain, model)
+        return _ral_noop(problem, "no target_domain; no LLM; reframed as-is")
+
+    transfer, shared = _ram_lookup(domain, target_domain)
+
+    if not shared:
+        # 无结构同构, 退到 LLM 或 as-is
+        if has_llm:
+            return _llm_reframe_analogy_map(problem, domain, model, target_domain)
+        return _ram_no_isomorphism(problem, domain, target_domain)
+
+    return _ram_with_isomorphism(problem, domain, target_domain, shared, transfer)
 
 
 def _find_dual_concepts(text: str) -> list[str]:
     """从 MathConceptGraph 找 dual_to 关系, 给 dual_flip 模板路径增强."""
     try:
         from huginn.kg.graph import get_math_concept_graph
+
         mcg = get_math_concept_graph()
         # 遍历图找 dual_to 边
         duals = []
@@ -1640,17 +1838,22 @@ def _find_dual_concepts(text: str) -> list[str]:
 def _llm_reframe_abstract_lift(problem: str, model: Any) -> dict[str, Any]:
     """调 LLM 把问题抬到更高数学结构."""
     from langchain_core.messages import HumanMessage, SystemMessage
+
     try:
         messages = [
-            SystemMessage(content=(
-                "You are a mathematical abstraction specialist. "
-                "Given a concrete research problem, reframe it at a "
-                "higher level of mathematical structure (e.g. group theory, "
-                "topology, functional analysis). Output ONLY a JSON object with "
-                "keys: reframed_problem, rationale, mapping (object with "
-                "original_concept, abstract_concept, ancestor_chain). No markdown."
-            )),
-            HumanMessage(content=f"Problem: {problem}\n\nReframe at higher abstraction."),
+            SystemMessage(
+                content=(
+                    "You are a mathematical abstraction specialist. "
+                    "Given a concrete research problem, reframe it at a "
+                    "higher level of mathematical structure (e.g. group theory, "
+                    "topology, functional analysis). Output ONLY a JSON object with "
+                    "keys: reframed_problem, rationale, mapping (object with "
+                    "original_concept, abstract_concept, ancestor_chain). No markdown."
+                )
+            ),
+            HumanMessage(
+                content=f"Problem: {problem}\n\nReframe at higher abstraction."
+            ),
         ]
         text = ConjectureGenerator()._invoke_model(model, messages)
         parsed = ConjectureGenerator()._parse_json(text)
@@ -1670,17 +1873,20 @@ def _llm_reframe_abstract_lift(problem: str, model: Any) -> dict[str, Any]:
 def _llm_reframe_dual_flip(problem: str, model: Any) -> dict[str, Any]:
     """调 LLM 识别对偶问题 (Legendre / Fourier / primal-dual / max-min)."""
     from langchain_core.messages import HumanMessage, SystemMessage
+
     try:
         messages = [
-            SystemMessage(content=(
-                "You are a mathematical duality specialist. "
-                "Given an optimization or analysis problem, identify its dual. "
-                "Common dualities: max-min, primal-dual, position-momentum "
-                "(Fourier), covariant-contravariant, Lagrangian-Hamiltonian "
-                "(Legendre). Output ONLY a JSON object with keys: "
-                "reframed_problem, rationale, mapping (object with "
-                "original_form, dual_form, duality_type). No markdown."
-            )),
+            SystemMessage(
+                content=(
+                    "You are a mathematical duality specialist. "
+                    "Given an optimization or analysis problem, identify its dual. "
+                    "Common dualities: max-min, primal-dual, position-momentum "
+                    "(Fourier), covariant-contravariant, Lagrangian-Hamiltonian "
+                    "(Legendre). Output ONLY a JSON object with keys: "
+                    "reframed_problem, rationale, mapping (object with "
+                    "original_form, dual_form, duality_type). No markdown."
+                )
+            ),
             HumanMessage(content=f"Problem: {problem}\n\nIdentify the dual problem."),
         ]
         text = ConjectureGenerator()._invoke_model(model, messages)
@@ -1698,27 +1904,35 @@ def _llm_reframe_dual_flip(problem: str, model: Any) -> dict[str, Any]:
 
 
 def _llm_reframe_analogy_map(
-    problem: str, domain: str, model: Any, target_domain: str | None = None,
+    problem: str,
+    domain: str,
+    model: Any,
+    target_domain: str | None = None,
 ) -> dict[str, Any]:
     """调 LLM 找同构域并翻译问题."""
     from langchain_core.messages import HumanMessage, SystemMessage
+
     try:
         target_hint = f"Target domain hint: {target_domain}\n" if target_domain else ""
         messages = [
-            SystemMessage(content=(
-                "You are a cross-domain analogy specialist. "
-                "Given a problem in one domain, find a structurally isomorphic "
-                "domain and translate the problem there. Use known mathematical "
-                "isomorphisms (e.g. Landau phi⁴ for ferroelectric/ferromagnetic, "
-                "percolation for transport, group theory for symmetry). "
-                "Output ONLY a JSON object with keys: reframed_problem, rationale, "
-                "mapping (object with source_domain, target_domain, "
-                "shared_structure, isomorphism_type). No markdown."
-            )),
-            HumanMessage(content=(
-                f"Problem: {problem}\nSource domain: {domain}\n{target_hint}\n"
-                f"Find an isomorphic domain and translate the problem."
-            )),
+            SystemMessage(
+                content=(
+                    "You are a cross-domain analogy specialist. "
+                    "Given a problem in one domain, find a structurally isomorphic "
+                    "domain and translate the problem there. Use known mathematical "
+                    "isomorphisms (e.g. Landau phi⁴ for ferroelectric/ferromagnetic, "
+                    "percolation for transport, group theory for symmetry). "
+                    "Output ONLY a JSON object with keys: reframed_problem, rationale, "
+                    "mapping (object with source_domain, target_domain, "
+                    "shared_structure, isomorphism_type). No markdown."
+                )
+            ),
+            HumanMessage(
+                content=(
+                    f"Problem: {problem}\nSource domain: {domain}\n{target_hint}\n"
+                    f"Find an isomorphic domain and translate the problem."
+                )
+            ),
         ]
         text = ConjectureGenerator()._invoke_model(model, messages)
         parsed = ConjectureGenerator()._parse_json(text)
@@ -1738,12 +1952,11 @@ def _llm_reframe_analogy_map(
 # ── 写回 research_log + KG ──
 
 
-def _log_reframe_to_research_log(
-    original: str, result: dict[str, Any]
-) -> str | None:
+def _log_reframe_to_research_log(original: str, result: dict[str, Any]) -> str | None:
     """把 reframe 结果写回 research_log (用 OPEN_QUESTION type, tags 区分)."""
     try:
         from huginn.research_log import RecordType, get_research_log
+
         log = get_research_log()
         record = log.add(
             record_type=RecordType.OPEN_QUESTION,
@@ -1769,47 +1982,58 @@ def _log_reframe_to_research_log(
         return None
 
 
-def _write_reframe_to_kg(
-    original: str, result: dict[str, Any]
-) -> str | None:
+def _wrk_add_nodes(
+    kg: Any, original: str, result: dict[str, Any], entity_type: Any, relation: Any
+) -> str:
+    """加 reframed / original 两个 FACT 节点并连 DERIVED_FROM 边, 返回 reframed_id."""
+    mode = result.get("mode", "auto")
+    reframed = result.get("reframed_problem", "") or original
+    reframed_id = kg.add_entity(
+        label=reframed[:80] or "reframed problem",
+        entity_type=entity_type.FACT,
+        source=f"reframe_{mode}",
+        confidence=0.7,
+        reframe_mode=result.get("mode"),
+        rationale=result.get("rationale", ""),
+    )
+    original_id = kg.add_entity(
+        original[:80], entity_type.FACT, source="reframe_original"
+    )
+    # reframed DERIVED_FROM original
+    kg.add_relation(
+        reframed_id, relation.DERIVED_FROM, original_id, source=f"reframe_{mode}"
+    )
+    return reframed_id
+
+
+def _wrk_attach_math(kg: Any, result: dict[str, Any]) -> None:
+    """mapping 含 ancestor_chain 时把数学概念层 merge 进 KG, 失败跳过."""
+    mapping = result.get("mapping", {})
+    ancestor_chain = (
+        mapping.get("ancestor_chain") if isinstance(mapping, dict) else None
+    )
+    if not ancestor_chain:
+        return
+    # 调 attach_math_concept_graph 把数学概念层 merge 进来
+    try:
+        deepest = ancestor_chain[-1] if ancestor_chain else None
+        if deepest:
+            kg.attach_math_concept_graph(deepest, depth=1)
+    except Exception:  # 防御: 数学概念图挂载失败跳过
+        logger.debug("attach_math_concept_graph in reframe failed", exc_info=True)
+
+
+def _write_reframe_to_kg(original: str, result: dict[str, Any]) -> str | None:
     """把 reframe 写回 KG: 新 FACT 节点 + DERIVED_FROM 边连原问题."""
     try:
         from huginn.kg.entities import EntityType, Relation
+
         kg = get_kg()
         if kg is None:
             return None
 
-        reframed = result.get("reframed_problem", "") or original
-        reframed_id = kg.add_entity(
-            label=reframed[:80] or "reframed problem",
-            entity_type=EntityType.FACT,
-            source=f"reframe_{result.get('mode', 'auto')}",
-            confidence=0.7,
-            reframe_mode=result.get("mode"),
-            rationale=result.get("rationale", ""),
-        )
-
-        original_id = kg.add_entity(
-            original[:80], EntityType.FACT, source="reframe_original"
-        )
-        # reframed DERIVED_FROM original
-        kg.add_relation(
-            reframed_id, Relation.DERIVED_FROM, original_id,
-            source=f"reframe_{result.get('mode', 'auto')}",
-        )
-
-        # 如果 mapping 含 math_concept / ancestor_chain, 也加进 KG 并连边
-        mapping = result.get("mapping", {})
-        ancestor_chain = mapping.get("ancestor_chain") if isinstance(mapping, dict) else None
-        if ancestor_chain:
-            # 调 attach_math_concept_graph 把数学概念层 merge 进来
-            try:
-                deepest = ancestor_chain[-1] if ancestor_chain else None
-                if deepest:
-                    kg.attach_math_concept_graph(deepest, depth=1)
-            except Exception:  # 防御: 数学概念图挂载失败跳过
-                logger.debug("attach_math_concept_graph in reframe failed", exc_info=True)
-
+        reframed_id = _wrk_add_nodes(kg, original, result, EntityType, Relation)
+        _wrk_attach_math(kg, result)
         kg.save()
         return reframed_id
     except Exception:  # 防御: 重构图写回失败返回空
@@ -1819,36 +2043,51 @@ def _write_reframe_to_kg(
 
 # ── reframe self-check ──
 
-def _reframe_selfcheck() -> None:
-    """assert-based 自检, 不调真实 LLM. 模板路径覆盖三种模式."""
-    # 1. abstract_lift 模板路径: 关键词命中
+
+def _rsc_check_abstract_lift() -> None:
+    """1. abstract_lift 模板路径: 关键词命中."""
     r1 = reframe_problem("找 Si 的带隙", mode="abstract_lift")
     assert r1["mode"] == "abstract_lift", f"mode 应为 abstract_lift, got {r1['mode']}"
-    assert "band_symmetry" in r1.get("mapping", {}).get("abstract_concept", "") or \
-           "band_symmetry" in str(r1.get("mapping", {})), \
-           f"应命中 band_symmetry, mapping={r1.get('mapping')}"
-    assert r1["reframed_problem"] != "找 Si 的带隙" or r1.get("method") == "template_noop", \
-        "应产生不同的问题文本 (或 noop)"
+    assert "band_symmetry" in r1.get("mapping", {}).get(
+        "abstract_concept", ""
+    ) or "band_symmetry" in str(r1.get("mapping", {})), (
+        f"应命中 band_symmetry, mapping={r1.get('mapping')}"
+    )
+    assert (
+        r1["reframed_problem"] != "找 Si 的带隙" or r1.get("method") == "template_noop"
+    ), "应产生不同的问题文本 (或 noop)"
 
-    # 2. dual_flip 模板路径: 命中 _DUAL_PAIRS
+
+def _rsc_check_dual_flip() -> None:
+    """2. dual_flip 模板路径: 命中 _DUAL_PAIRS."""
     r2 = reframe_problem("最大化稳定性", mode="dual_flip")
     assert r2["mode"] == "dual_flip"
-    assert "最小化失稳路径" in r2["reframed_problem"], \
+    assert "最小化失稳路径" in r2["reframed_problem"], (
         f"应翻转到对偶问题, got {r2['reframed_problem']}"
+    )
     assert r2["mapping"]["original_form"] == "最大化稳定性"
     assert r2["mapping"]["dual_form"] == "最小化失稳路径"
 
-    # 3. analogy_map 模板路径: 无结构同构时降级
+
+def _rsc_check_analogy_map() -> None:
+    """3. analogy_map 模板路径: 无结构同构时降级."""
     r3 = reframe_problem(
-        "找最优催化剂", mode="analogy_map",
-        domain="oxide_catalyst", target_domain="nonexistent_domain",
+        "找最优催化剂",
+        mode="analogy_map",
+        domain="oxide_catalyst",
+        target_domain="nonexistent_domain",
     )
     assert r3["mode"] == "analogy_map"
     # 不存在的 target_domain 应降级 (template_no_isomorphism 或 noop)
-    assert r3.get("method") in {"template_no_isomorphism", "template_noop", "template"}, \
-        f"无结构同构应降级, got method={r3.get('method')}"
+    assert r3.get("method") in {
+        "template_no_isomorphism",
+        "template_noop",
+        "template",
+    }, f"无结构同构应降级, got method={r3.get('method')}"
 
-    # 4. auto 模式: 选最合适的 mode
+
+def _rsc_check_auto() -> None:
+    """4. auto 模式: 选最合适的 mode."""
     r4 = reframe_problem("最大化电导率", mode="auto")
     # "最大化电导率" 命中 _DUAL_PAIRS → dual_flip
     assert r4["mode"] == "dual_flip", f"auto 应选 dual_flip, got {r4['mode']}"
@@ -1857,7 +2096,9 @@ def _reframe_selfcheck() -> None:
     # "带隙" 命中 _PROBLEM_TO_MATH_CONCEPT → abstract_lift
     assert r5["mode"] == "abstract_lift", f"auto 应选 abstract_lift, got {r5['mode']}"
 
-    # 5. should_reframe: 三条都满足才触发
+
+def _rsc_check_should_reframe() -> None:
+    """5. should_reframe: 三条都满足才触发."""
     # 全满足 (drift + blocked + non-renaming)
     evals_off = [{"on_track": False}, {"on_track": False}, {"on_track": False}]
     ok, reason = should_reframe(
@@ -1892,9 +2133,23 @@ def _reframe_selfcheck() -> None:
     )
     assert not no_ok3, "无 drift 不应触发"
 
-    # 6. 不命中的问题: 模板兜底
-    r6 = reframe_problem("xxx yyy zzz", mode="abstract_lift")
-    assert r6["reframed_problem"] == "xxx yyy zzz" or "math structure" in r6["reframed_problem"].lower() \
-           or r6.get("method") == "template_noop"
 
+def _rsc_check_no_match() -> None:
+    """6. 不命中的问题: 模板兜底."""
+    r6 = reframe_problem("xxx yyy zzz", mode="abstract_lift")
+    assert (
+        r6["reframed_problem"] == "xxx yyy zzz"
+        or "math structure" in r6["reframed_problem"].lower()
+        or r6.get("method") == "template_noop"
+    )
+
+
+def _reframe_selfcheck() -> None:
+    """assert-based 自检, 不调真实 LLM. 模板路径覆盖三种模式."""
+    _rsc_check_abstract_lift()
+    _rsc_check_dual_flip()
+    _rsc_check_analogy_map()
+    _rsc_check_auto()
+    _rsc_check_should_reframe()
+    _rsc_check_no_match()
     print("reframe selfcheck OK")

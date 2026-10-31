@@ -26,7 +26,9 @@ from tests.fixtures.fake_llm import make_scripted_llm
 # CI runner 上慢到 300s 都跑不完 (本地 ~62s). 不是代码 bug, 是 CI runner
 # 性能不够. 用 HUGINN_CI=1 标记 CI 环境, 整个文件 skip.
 _skip_ci = os.environ.get("HUGINN_CI", "").lower() in ("1", "true", "yes")
-pytestmark = pytest.mark.skipif(_skip_ci, reason="WebSocket tests too slow on CI runner")
+pytestmark = pytest.mark.skipif(
+    _skip_ci, reason="WebSocket tests too slow on CI runner"
+)
 
 WS_PATH = "/v1/ws/agent"
 
@@ -59,6 +61,7 @@ class _MockModel:
         class _Resp:
             def __init__(self, content: str):
                 self.content = content
+
         return _Resp(self.plan_text)
 
 
@@ -174,11 +177,13 @@ class TestChatBasicReAct:
             model=llm,
         )
         with client.websocket_connect(WS_PATH) as ws:
-            ws.send_json({
-                "type": "user_input",
-                "content": "What is the band gap of silicon?",
-                "thread_id": "react-basic",
-            })
+            ws.send_json(
+                {
+                    "type": "user_input",
+                    "content": "What is the band gap of silicon?",
+                    "thread_id": "react-basic",
+                }
+            )
             msgs = _drain(ws)
 
         assert _first(msgs, "text_delta")["text"] == "The band gap is 1.12 eV."
@@ -192,11 +197,13 @@ class TestChatBasicReAct:
             model=llm,
         )
         with client.websocket_connect(WS_PATH) as ws:
-            ws.send_json({
-                "type": "user_input",
-                "content": "hi",
-                "thread_id": "react-empty",
-            })
+            ws.send_json(
+                {
+                    "type": "user_input",
+                    "content": "hi",
+                    "thread_id": "react-empty",
+                }
+            )
             msgs = _drain(ws)
 
         # ponytail: the fallback text is locale-specific Chinese; just
@@ -208,63 +215,72 @@ class TestChatBasicReAct:
 # ── 2. tool call chain: LLM → tool_call → tool_result → final ─────
 
 
-class TestChatToolChain:
-    def test_tool_call_visible(self, harness):
-        """LLM calls file_read_tool, gets result, then gives final answer."""
-        # Three scripted states: tool call → tool result → final text
-        states = [
+def _tool_chain_states() -> list[dict]:
+    """Three scripted states: tool call → tool result → final text."""
+    return [
+        {
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "file_read_tool",
+                            "args": {"path": "POSCAR"},
+                            "id": "tc1",
+                        }
+                    ],
+                )
+            ]
+        },
+        {"messages": [ToolMessage(content="Si\n2\ndirect", tool_call_id="tc1")]},
+        {
+            "messages": [
+                AIMessage(
+                    content="The POSCAR contains silicon in a direct configuration."
+                )
+            ]
+        },
+    ]
+
+
+def _run_tool_chain(harness):
+    harness.states(_tool_chain_states())
+    with client.websocket_connect(WS_PATH) as ws:
+        ws.send_json(
             {
-                "messages": [
-                    AIMessage(
-                        content="",
-                        tool_calls=[
-                            {
-                                "name": "file_read_tool",
-                                "args": {"path": "POSCAR"},
-                                "id": "tc1",
-                            }
-                        ],
-                    )
-                ]
-            },
-            {
-                "messages": [
-                    ToolMessage(content="Si\n2\ndirect", tool_call_id="tc1")
-                ]
-            },
-            {
-                "messages": [
-                    AIMessage(content="The POSCAR contains silicon in a direct configuration.")
-                ]
-            },
-        ]
-        harness.states(states)
-        with client.websocket_connect(WS_PATH) as ws:
-            ws.send_json({
                 "type": "user_input",
                 "content": "Read the POSCAR file",
                 "thread_id": "tool-chain",
-            })
-            msgs = _drain(ws)
-
-        # tool_call card
-        tc = _first(msgs, "tool_call")
-        assert tc is not None
-        assert tc["name"] == "file_read_tool"
-        assert tc["id"] == "tc1"
-        assert tc["args"] == {"path": "POSCAR"}
-
-        # tool_result
-        tr = _first(msgs, "tool_result")
-        assert tr is not None
-        assert tr["id"] == "tc1"
-        assert "Si" in tr["content"]
-
-        # final text delta
-        assert _first(msgs, "text_delta")["text"] == (
-            "The POSCAR contains silicon in a direct configuration."
+            }
         )
-        assert msgs[-1]["type"] == "done"
+        return _drain(ws)
+
+
+def _assert_tool_chain_msgs(msgs) -> None:
+    # tool_call card
+    tc = _first(msgs, "tool_call")
+    assert tc is not None
+    assert tc["name"] == "file_read_tool"
+    assert tc["id"] == "tc1"
+    assert tc["args"] == {"path": "POSCAR"}
+
+    # tool_result
+    tr = _first(msgs, "tool_result")
+    assert tr is not None
+    assert tr["id"] == "tc1"
+    assert "Si" in tr["content"]
+
+    # final text delta
+    assert _first(msgs, "text_delta")["text"] == (
+        "The POSCAR contains silicon in a direct configuration."
+    )
+    assert msgs[-1]["type"] == "done"
+
+
+class TestChatToolChain:
+    def test_tool_call_visible(self, harness):
+        """LLM calls file_read_tool, gets result, then gives final answer."""
+        _assert_tool_chain_msgs(_run_tool_chain(harness))
 
 
 # ── 3. thread isolation: two threads don't share context ───────────
@@ -287,11 +303,13 @@ class TestChatThreadIsolation:
             model=llm_a,
         )
         with client.websocket_connect(WS_PATH) as ws:
-            ws.send_json({
-                "type": "user_input",
-                "content": "question A",
-                "thread_id": "thread-A",
-            })
+            ws.send_json(
+                {
+                    "type": "user_input",
+                    "content": "question A",
+                    "thread_id": "thread-A",
+                }
+            )
             msgs_a = _drain(ws)
 
         # Second thread → response B (different content)
@@ -301,11 +319,13 @@ class TestChatThreadIsolation:
             model=llm_b,
         )
         with client.websocket_connect(WS_PATH) as ws:
-            ws.send_json({
-                "type": "user_input",
-                "content": "question B",
-                "thread_id": "thread-B",
-            })
+            ws.send_json(
+                {
+                    "type": "user_input",
+                    "content": "question B",
+                    "thread_id": "thread-B",
+                }
+            )
             msgs_b = _drain(ws)
 
         text_a = _join_text(msgs_a)

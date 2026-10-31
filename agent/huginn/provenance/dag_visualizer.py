@@ -80,6 +80,24 @@ def visualize_dag(registry: ProvenanceRegistry, max_nodes: int = 30) -> str:
         path_to_id[e.file_path] = f"N{i}"
 
     lines: list[str] = ["graph TD"]
+    node_lines, converged_ids, unconverged_ids = _dag_node_lines(entries, path_to_id)
+    lines.extend(node_lines)
+
+    # 收敛状态样式: 绿=收敛, 红=未收敛
+    if converged_ids:
+        lines.append("  classDef conv fill:#c8e6c9,stroke:#388e3c")
+        lines.append(f"  class {','.join(converged_ids)} conv")
+    if unconverged_ids:
+        lines.append("  classDef noconv fill:#ffcdd2,stroke:#d32f2f")
+        lines.append(f"  class {','.join(unconverged_ids)} noconv")
+
+    return "\n".join(lines)
+
+
+def _dag_node_lines(
+    entries: list[ProvenanceEntry], path_to_id: dict[str, str]
+) -> tuple[list[str], list[str], list[str]]:
+    lines: list[str] = []
     converged_ids: list[str] = []
     unconverged_ids: list[str] = []
     source_counter = 0
@@ -105,15 +123,7 @@ def visualize_dag(registry: ProvenanceRegistry, max_nodes: int = 30) -> str:
                 lines.append(f'  {sid}["{_esc(sname)}"]')
                 lines.append(f"  {sid} --> {nid}")
 
-    # 收敛状态样式: 绿=收敛, 红=未收敛
-    if converged_ids:
-        lines.append("  classDef conv fill:#c8e6c9,stroke:#388e3c")
-        lines.append(f"  class {','.join(converged_ids)} conv")
-    if unconverged_ids:
-        lines.append("  classDef noconv fill:#ffcdd2,stroke:#d32f2f")
-        lines.append(f"  class {','.join(unconverged_ids)} noconv")
-
-    return "\n".join(lines)
+    return lines, converged_ids, unconverged_ids
 
 
 def visualize_timeline(registry: ProvenanceRegistry) -> str:

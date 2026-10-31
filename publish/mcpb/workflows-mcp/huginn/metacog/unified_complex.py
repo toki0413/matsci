@@ -7,6 +7,7 @@ v14 Task 16: 把 KG vertex 跟 Meta-Trace vertex 拉到同一个查询接口下.
 依赖注入: cross_task_store / kg 都通过构造器传入, 任一为 None 只查另一边.
 import 时 try/except, 不强依赖 CrossTaskStore (Task 14) 或 KG 模块.
 """
+
 from __future__ import annotations
 
 import logging
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 # ponytail: 升级路径是真正注入实例后, type hint 自动从 Optional[Any] 收紧.
 try:  # Task 14 的 CrossTaskStore, 可能尚未实现
     from huginn.metacog.cross_task_store import CrossTaskStore  # noqa: F401
+
     _HAS_CROSS_TASK_STORE = True
 except Exception:
     logger.debug("best-effort op failed", exc_info=True)
@@ -25,6 +27,7 @@ except Exception:
 
 try:  # 项目已有 KG
     from huginn.kg.graph import ProjectKnowledgeGraph  # noqa: F401
+
     _HAS_KG = True
 except Exception:
     logger.debug("best-effort op failed", exc_info=True)
@@ -37,6 +40,7 @@ class Vertex:
 
     vertex_id 前缀区分来源: 'kg:entity:xxx' / 'trace:xxx'.
     """
+
     vertex_id: str
     source: str  # 'kg' 或 'trace'
     content: str
@@ -48,6 +52,76 @@ class Vertex:
 # KG vertex 默认 darwin — KG 没有 darwin 概念, 给中性 prior.
 # ponytail: 真正升级路径是让 KG node 带 confidence → darwin 映射, 当前 0.5 中性够用.
 _KG_DEFAULT_DARWIN = 0.5
+
+
+def _collect_trace_vertices(
+    view: UnifiedComplexView,
+    domain: str,
+    task_id: str | None,
+    keyword: str | None,
+    top_k: int,
+) -> list[Vertex]:
+    """Meta-Trace 侧 vertex 收集."""
+    vertices: list[Vertex] = []
+    try:
+        entries = view.store.query(
+            domain=domain,
+            task_id=task_id,
+            keyword=keyword,
+            top_k=top_k,
+        )
+    except TypeError:
+        # 老签名兼容: 只接 domain 位置参数
+        entries = view.store.query(domain)
+    for e in entries or []:
+        if not isinstance(e, dict):
+            continue
+        e_domain = e.get("domain", "unknown")
+        # 跨 domain 隔离: store 应已过滤, 这里再保险 (general 永远放行)
+        if e_domain != domain and e_domain != "general":
+            continue
+        sid = e.get("simplex_id") or ""
+        if not sid.startswith("trace:"):
+            # 兜底: 没有 simplex_id 的旧 entry 拼一个
+            sid = f"trace:{e.get('task_id', 'unknown')}:iter_{e.get('iteration', 0)}:{e.get('role', 'unknown')}"
+        content = f"{e.get('attempted', '')} -> {e.get('found', '')}"
+        vertices.append(
+            Vertex(
+                vertex_id=sid,
+                source="trace",
+                content=content,
+                domain=e_domain,
+                task_id=e.get("task_id", "unknown"),
+                darwin_score=float(e.get("darwin_score", 0.0) or 0.0),
+            )
+        )
+    return vertices
+
+
+def _collect_kg_vertices(
+    view: UnifiedComplexView,
+    domain: str,
+    task_id: str | None,
+    keyword: str,
+    top_k: int,
+) -> list[Vertex]:
+    """KG 侧 vertex 收集 (keyword 必非空)."""
+    vertices: list[Vertex] = []
+    for ent in view._kg_query_entities(keyword, top_k):
+        name = ent.get("name") or ent.get("label") or ""
+        if not name:
+            continue
+        vertices.append(
+            Vertex(
+                vertex_id=f"kg:entity:{name}",
+                source="kg",
+                content=name,
+                domain=domain,
+                task_id=task_id or "unknown",
+                darwin_score=_KG_DEFAULT_DARWIN,
+            )
+        )
+    return vertices
 
 
 class UnifiedComplexView:
@@ -88,50 +162,14 @@ class UnifiedComplexView:
 
         # ── Meta-Trace 侧 ──
         if self.store is not None:
-            try:
-                entries = self.store.query(
-                    domain=domain, task_id=task_id,
-                    keyword=keyword, top_k=top_k,
-                )
-            except TypeError:
-                # 老签名兼容: 只接 domain 位置参数
-                entries = self.store.query(domain)
-            for e in entries or []:
-                if not isinstance(e, dict):
-                    continue
-                e_domain = e.get("domain", "unknown")
-                # 跨 domain 隔离: store 应已过滤, 这里再保险 (general 永远放行)
-                if e_domain != domain and e_domain != "general":
-                    continue
-                sid = e.get("simplex_id") or ""
-                if not sid.startswith("trace:"):
-                    # 兜底: 没有 simplex_id 的旧 entry 拼一个
-                    sid = f"trace:{e.get('task_id', 'unknown')}:iter_{e.get('iteration', 0)}:{e.get('role', 'unknown')}"
-                content = f"{e.get('attempted', '')} -> {e.get('found', '')}"
-                vertices.append(Vertex(
-                    vertex_id=sid,
-                    source="trace",
-                    content=content,
-                    domain=e_domain,
-                    task_id=e.get("task_id", "unknown"),
-                    darwin_score=float(e.get("darwin_score", 0.0) or 0.0),
-                ))
+            vertices.extend(
+                _collect_trace_vertices(self, domain, task_id, keyword, top_k)
+            )
 
         # ── KG 侧 ──
         # keyword 为空时 KG 没法查 (KG query 接口都需 seed), 跳过
         if self.kg is not None and keyword:
-            for ent in self._kg_query_entities(keyword, top_k):
-                name = ent.get("name") or ent.get("label") or ""
-                if not name:
-                    continue
-                vertices.append(Vertex(
-                    vertex_id=f"kg:entity:{name}",
-                    source="kg",
-                    content=name,
-                    domain=domain,
-                    task_id=task_id or "unknown",
-                    darwin_score=_KG_DEFAULT_DARWIN,
-                ))
+            vertices.extend(_collect_kg_vertices(self, domain, task_id, keyword, top_k))
 
         # 按 darwin 降序截断
         vertices.sort(key=lambda v: v.darwin_score, reverse=True)
@@ -168,16 +206,18 @@ class UnifiedComplexView:
             if not (s and p and o):
                 continue
             sid = f"kg:triple:{hash((s, p, o)) & 0xFFFFFFFF:x}"
-            result.append({
-                "simplex_id": sid,
-                "simplex_type": "triangle",
-                "vertices": [
-                    f"kg:entity:{s}",
-                    f"kg:entity:{o}",
-                    f"kg:predicate:{p}",
-                ],
-                "domain": domain,
-            })
+            result.append(
+                {
+                    "simplex_id": sid,
+                    "simplex_type": "triangle",
+                    "vertices": [
+                        f"kg:entity:{s}",
+                        f"kg:entity:{o}",
+                        f"kg:predicate:{p}",
+                    ],
+                    "domain": domain,
+                }
+            )
         return result[:top_k]
 
     # ── KG duck-typed adapters ──
@@ -239,8 +279,10 @@ class UnifiedComplexView:
             return []
         try:
             result = kg.query_triples(
-                subject=subject, predicate=predicate,
-                object=object, top_k=top_k,
+                subject=subject,
+                predicate=predicate,
+                object=object,
+                top_k=top_k,
             )
             return result if isinstance(result, list) else []
         except Exception:
@@ -248,6 +290,7 @@ class UnifiedComplexView:
 
 
 # ── self-check ──
+
 
 class _MockCrossTaskStore:
     """Mock store for self-check — 只返 astronomy domain 的 1 条 trace entry."""
@@ -276,28 +319,12 @@ class _MockKG:
         return [{"name": "Superradiance", "type": "phenomenon"}]
 
     def query_triples(self, subject=None, predicate=None, object=None, top_k=10):
-        return [{"subject": "BlackHole", "predicate": "exhibits", "object": "Superradiance"}]
+        return [
+            {"subject": "BlackHole", "predicate": "exhibits", "object": "Superradiance"}
+        ]
 
 
-def _run_self_check() -> None:
-    """v14 Task 16 self-check.
-
-    构造 mock CrossTaskStore + mock KG, 断言:
-      1. query(domain=astronomy, keyword=superradiance) 返回 ≥2 vertex (1 trace + 1 kg)
-      2. query(domain=astronomy) 无 keyword 也至少返回 1 trace vertex
-      3. query(domain=material) 返回 0 (mock 只返 astronomy)
-      4. query_triples(domain=astronomy, keyword=superradiance) 返回 1 个 triangle dict
-      5. 跨 domain 隔离: query(domain=material) 不含 astronomy 内容
-      6. source 字段: trace vertex source='trace', kg vertex source='kg'
-      7. vertex_id 前缀: trace 含 'trace:', kg 含 'kg:entity:'
-
-    ponytail: 全用 assert, 不引框架. mock store / kg 最小够覆盖以上 case.
-    """
-    view = UnifiedComplexView(
-        cross_task_store=_MockCrossTaskStore(),
-        kg=_MockKG(),
-    )
-
+def _sc_cases_1_3(view: UnifiedComplexView) -> tuple[list, list, list]:
     # case 1: 双边都查, 至少 1 trace + 1 kg
     v1 = view.query(domain="astronomy", keyword="superradiance", top_k=10)
     assert len(v1) >= 2, f"case 1 fail: expected ≥2 vertices, got {len(v1)}"
@@ -312,7 +339,10 @@ def _run_self_check() -> None:
     # case 3: 不存在的 domain, mock store 返 [], kg 无 keyword → 0
     v3 = view.query(domain="material", top_k=10)
     assert len(v3) == 0, f"case 3 fail: expected 0 vertices, got {len(v3)}"
+    return v1, v2, v3
 
+
+def _sc_case_4(view: UnifiedComplexView) -> list:
     # case 4: query_triples 返 1 个 triangle
     t4 = view.query_triples(domain="astronomy", keyword="superradiance", top_k=10)
     assert len(t4) == 1, f"case 4 fail: expected 1 triple, got {len(t4)}"
@@ -325,7 +355,10 @@ def _run_self_check() -> None:
     assert "kg:entity:BlackHole" in tri["vertices"], "case 4 fail: subject vertex"
     assert "kg:entity:Superradiance" in tri["vertices"], "case 4 fail: object vertex"
     assert "kg:predicate:exhibits" in tri["vertices"], "case 4 fail: predicate vertex"
+    return t4
 
+
+def _sc_cases_5_7(view: UnifiedComplexView) -> tuple[list, list, list]:
     # case 5: 跨 domain 隔离 — query(material) 不含 astronomy 内容
     v5 = view.query(domain="material", keyword="superradiance", top_k=10)
     # mock store 不返 material, kg 仍会返 Superradiance (kg 不分 domain)
@@ -347,11 +380,18 @@ def _run_self_check() -> None:
         assert v.vertex_id.startswith("trace:"), f"case 7 fail: trace id={v.vertex_id}"
     for v in kg_vs:
         assert v.vertex_id.startswith("kg:entity:"), f"case 7 fail: kg id={v.vertex_id}"
+    return v5, trace_vs, kg_vs
 
+
+def _sc_extras(view: UnifiedComplexView) -> None:
     # 额外: 两边都 None → 空 list (不崩)
     empty_view = UnifiedComplexView(cross_task_store=None, kg=None)
-    assert empty_view.query(domain="astronomy", keyword="x") == [], "empty view should return []"
-    assert empty_view.query_triples(domain="astronomy", keyword="x") == [], "empty view triples []"
+    assert empty_view.query(domain="astronomy", keyword="x") == [], (
+        "empty view should return []"
+    )
+    assert empty_view.query_triples(domain="astronomy", keyword="x") == [], (
+        "empty view triples []"
+    )
 
     # 额外: darwin 降序 — trace 0.8 应在 kg 0.5 之前
     v8 = view.query(domain="astronomy", keyword="superradiance", top_k=10)
@@ -359,9 +399,36 @@ def _run_self_check() -> None:
         # trace (0.8) > kg (0.5)
         assert v8[0].darwin_score >= v8[1].darwin_score, "case 8 fail: not sorted desc"
 
-    print("[CHECK v14 Task 16] UnifiedComplexView OK "
-          f"(case1={len(v1)}, case2={len(v2)}, case3={len(v3)}, "
-          f"case4={len(t4)}, case5={len(v5)}, case6={len(trace_vs)}/{len(kg_vs)})")
+
+def _run_self_check() -> None:
+    """v14 Task 16 self-check.
+
+    构造 mock CrossTaskStore + mock KG, 断言:
+      1. query(domain=astronomy, keyword=superradiance) 返回 ≥2 vertex (1 trace + 1 kg)
+      2. query(domain=astronomy) 无 keyword 也至少返回 1 trace vertex
+      3. query(domain=material) 返回 0 (mock 只返 astronomy)
+      4. query_triples(domain=astronomy, keyword=superradiance) 返回 1 个 triangle dict
+      5. 跨 domain 隔离: query(domain=material) 不含 astronomy 内容
+      6. source 字段: trace vertex source='trace', kg vertex source='kg'
+      7. vertex_id 前缀: trace 含 'trace:', kg 含 'kg:entity:'
+
+    ponytail: 全用 assert, 不引框架. mock store / kg 最小够覆盖以上 case.
+    """
+    view = UnifiedComplexView(
+        cross_task_store=_MockCrossTaskStore(),
+        kg=_MockKG(),
+    )
+
+    v1, v2, v3 = _sc_cases_1_3(view)
+    t4 = _sc_case_4(view)
+    v5, trace_vs, kg_vs = _sc_cases_5_7(view)
+    _sc_extras(view)
+
+    print(
+        "[CHECK v14 Task 16] UnifiedComplexView OK "
+        f"(case1={len(v1)}, case2={len(v2)}, case3={len(v3)}, "
+        f"case4={len(t4)}, case5={len(v5)}, case6={len(trace_vs)}/{len(kg_vs)})"
+    )
     print("v14 Task 16 self-check PASSED")
 
 

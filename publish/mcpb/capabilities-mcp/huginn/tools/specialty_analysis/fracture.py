@@ -15,12 +15,72 @@ from huginn.core_types import ToolResult
 
 # 常见裂纹构型的几何因子 Y (无限大体或标准试件)
 _GEOMETRY_FACTORS: dict[str, float] = {
-    "edge": 1.12,        # 边裂纹, 单边拉伸 (无限宽板)
-    "interior": 1.0,     # 内部中心裂纹 (无限大板, σ √(πa))
-    "surface": 1.12,     # 表面裂纹 (近似 edge)
+    "edge": 1.12,  # 边裂纹, 单边拉伸 (无限宽板)
+    "interior": 1.0,  # 内部中心裂纹 (无限大板, σ √(πa))
+    "surface": 1.12,  # 表面裂纹 (近似 edge)
     "three_point_bend": 1.5,  # 三点弯曲 SE(B) 试件
-    "compact_tension": 1.0,   # C(T) 试件, 用 a/W 函数修正, 这里给近似
+    "compact_tension": 1.0,  # C(T) 试件, 用 a/W 函数修正, 这里给近似
 }
+
+
+def _lefm_j_integral(
+    k_i: float, E: float | None, nu: float
+) -> tuple[float | None, float | None, float | None, str]:
+    """计算 J-integral / 能量释放率 G (线弹性下 J = G) 与平面假设."""
+    # 平面应变: E' = E / (1 - ν²)
+    if E is not None:
+        e_prime = E / (1.0 - nu**2)  # 默认平面应变 (保守)
+        j = k_i**2 / e_prime
+        g = j  # 线弹性 J = G
+        return j, g, e_prime, "plane_strain"
+    return None, None, None, "youngs_modulus_not_provided"
+
+
+def _lefm_assessment(k_i: float, k_ic: float | None) -> tuple[float | None, str, str]:
+    """按 K_I vs K_IC 判据返回 (safety_factor, assessment, margin)."""
+    if k_ic is not None:
+        safety_factor = k_ic / k_i if k_i > 0 else float("inf")
+        if k_i < k_ic:
+            assessment = "safe"
+            margin = f"K_I / K_IC = {k_i / k_ic:.4f} < 1"
+        else:
+            assessment = "unstable_propagation"
+            margin = f"K_I / K_IC = {k_i / k_ic:.4f} >= 1"
+        return safety_factor, assessment, margin
+    return None, "no_k_ic_provided", "provide k_ic for failure assessment"
+
+
+def _lefm_result(
+    args: Any,
+    k_i: float,
+    Y: float,
+    j: float | None,
+    g: float | None,
+    e_prime: float | None,
+    plane_assumption: str,
+    safety_factor: float | None,
+    assessment: str,
+    margin: str,
+) -> ToolResult:
+    """组装 LEFM 成功结果."""
+    return ToolResult(
+        data={
+            "stress_intensity_factor_ki": k_i,
+            "geometry_factor_y": Y,
+            "crack_type": args.crack_type,
+            "crack_length": args.crack_length,
+            "applied_stress": args.applied_stress,
+            "j_integral": j,
+            "energy_release_rate_g": g,
+            "effective_modulus_e_prime": e_prime,
+            "plane_assumption": plane_assumption,
+            "fracture_toughness_kic": args.k_ic,
+            "safety_factor": safety_factor,
+            "assessment": assessment,
+            "margin": margin,
+        },
+        success=True,
+    )
 
 
 def fracture_lefm(args: Any) -> ToolResult:
@@ -55,47 +115,20 @@ def fracture_lefm(args: Any) -> ToolResult:
     k_i = Y * sigma * math.sqrt(math.pi * a)
 
     # J-integral 和能量释放率 G (线弹性下 J = G)
-    # 平面应变: E' = E / (1 - ν²)
-    if E is not None:
-        e_prime = E / (1.0 - nu**2)  # 默认平面应变 (保守)
-        j = k_i**2 / e_prime
-        g = j  # 线弹性 J = G
-        plane_assumption = "plane_strain"
-    else:
-        j = None
-        g = None
-        e_prime = None
-        plane_assumption = "youngs_modulus_not_provided"
+    j, g, e_prime, plane_assumption = _lefm_j_integral(k_i, E, nu)
 
     # 判据
-    if k_ic is not None:
-        safety_factor = k_ic / k_i if k_i > 0 else float("inf")
-        if k_i < k_ic:
-            assessment = "safe"
-            margin = f"K_I / K_IC = {k_i / k_ic:.4f} < 1"
-        else:
-            assessment = "unstable_propagation"
-            margin = f"K_I / K_IC = {k_i / k_ic:.4f} >= 1"
-    else:
-        safety_factor = None
-        assessment = "no_k_ic_provided"
-        margin = "provide k_ic for failure assessment"
+    safety_factor, assessment, margin = _lefm_assessment(k_i, k_ic)
 
-    return ToolResult(
-        data={
-            "stress_intensity_factor_ki": k_i,
-            "geometry_factor_y": Y,
-            "crack_type": crack_type,
-            "crack_length": a,
-            "applied_stress": sigma,
-            "j_integral": j,
-            "energy_release_rate_g": g,
-            "effective_modulus_e_prime": e_prime,
-            "plane_assumption": plane_assumption,
-            "fracture_toughness_kic": k_ic,
-            "safety_factor": safety_factor,
-            "assessment": assessment,
-            "margin": margin,
-        },
-        success=True,
+    return _lefm_result(
+        args,
+        k_i,
+        Y,
+        j,
+        g,
+        e_prime,
+        plane_assumption,
+        safety_factor,
+        assessment,
+        margin,
     )

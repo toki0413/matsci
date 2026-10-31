@@ -12,8 +12,18 @@ ponytail: 不引新依赖, 不上策略模式, 单文件单类. 14 hint 的分�
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any
+
+# 白名单/正则/公开 API 均来自 huginn.utils.numeric_targets (与 cli.rcb_utils
+# 共用同一事实来源). engine_observe 走 `from huginn.agent.hint_coordinator import
+# extract_numeric_targets`, 故此处 re-export 该名字.
+from huginn.utils.numeric_targets import (
+    METRIC_WHITELIST as _METRIC_WHITELIST,
+)
+from huginn.utils.numeric_targets import (
+    NUMERIC_PAIR_RE as _NUMERIC_PAIR_RE,
+)
+from huginn.utils.numeric_targets import extract_numeric_targets  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +64,28 @@ def _build_posterior_guided_hint(
         return ""
 
     parts: list[str] = []
-    best_h_id: str | None = None
+    core_text, best_h_id = _posterior_core_hint(manifold, observations)
+    if core_text is not None:
+        parts.append(core_text)
 
-    # 核心 hint: argmax_h P(h|O)
+    explore_text = _posterior_explore_hint(
+        manifold, observations, have_parts=bool(parts), best_h_id=best_h_id
+    )
+    if explore_text is not None:
+        parts.append(explore_text)
+
+    mcmc_text = _posterior_mcmc_hint(manifold, mcmc_current, best_h_id)
+    if mcmc_text is not None:
+        parts.append(mcmc_text)
+
+    return _truncate_hint_parts(parts, max_chars)
+
+
+def _posterior_core_hint(
+    manifold: Any, observations: list
+) -> tuple[str | None, str | None]:
+    """核心 hint: argmax_h P(h|O). 失败返回 (None, None)."""
+    best_h_id: str | None = None
     try:
         best_h = manifold.abductive_inference(observations)
         if best_h is not None:
@@ -72,22 +101,30 @@ def _build_posterior_guided_hint(
             ]
             if best_h.predictions:
                 pred_str = ", ".join(
-                    f"{k}={v:.4g}"
-                    for k, v in list(best_h.predictions.items())[:5]
+                    f"{k}={v:.4g}" for k, v in list(best_h.predictions.items())[:5]
                 )
                 core_lines.append(f"predictions: {pred_str}")
             core_lines.append(
                 f"posterior_lift: {lift:.3f} "
                 f"(log_post={log_post:.3f}, log_prior={log_prior:.3f})"
             )
-            parts.append("\n".join(core_lines))
+            return "\n".join(core_lines), best_h_id
     except Exception:  # 非致命: posterior core 提示生成失败则忽略
         logger.debug("posterior core hint failed", exc_info=True)
+    return None, best_h_id
 
-    # 探索 hint: max Fisher distance to current best (info gain 代理)
+
+def _posterior_explore_hint(
+    manifold: Any,
+    observations: list,
+    *,
+    have_parts: bool,
+    best_h_id: str | None,
+) -> str | None:
+    """探索 hint: max Fisher distance to current best (info gain 代理)."""
     try:
         next_h = manifold.propose_next_exploration(observations)
-        if next_h is not None and (not parts or next_h.h_id != best_h.h_id):
+        if next_h is not None and (not have_parts or next_h.h_id != best_h_id):
             explore_lines = [
                 "[posterior explore hint]",
                 f"next_exploration: {next_h.h_id}",
@@ -95,48 +132,55 @@ def _build_posterior_guided_hint(
             ]
             if next_h.predictions:
                 pred_str = ", ".join(
-                    f"{k}={v:.4g}"
-                    for k, v in list(next_h.predictions.items())[:5]
+                    f"{k}={v:.4g}" for k, v in list(next_h.predictions.items())[:5]
                 )
                 explore_lines.append(f"predictions: {pred_str}")
-            parts.append("\n".join(explore_lines))
+            return "\n".join(explore_lines)
     except Exception:  # 非致命: posterior explore 提示生成失败则忽略
         logger.debug("posterior explore hint failed", exc_info=True)
+    return None
 
-    # MCMC hint: MCMC 采样链当前驻留的假设 (动态采样路径, 补充 argmax 贪婪盲区).
+
+def _posterior_mcmc_hint(
+    manifold: Any, mcmc_current: str | None, best_h_id: str | None
+) -> str | None:
+    """MCMC hint: MCMC 采样链当前驻留的假设 (动态采样路径, 补充 argmax 贪婪盲区)."""
     # mcmc_current 不在 manifold 时静默跳过. 优先级最低 — 截断时最先被裁.
-    if mcmc_current:
-        try:
-            _m_h = manifold._hyp.get(mcmc_current)
-            if _m_h is not None:
-                m_lines = [
-                    "[posterior mcmc hint]",
-                    f"mcmc_current_hypothesis: {mcmc_current}",
-                    f"description: {_m_h.description}",
-                ]
-                if _m_h.predictions:
-                    _mpred = ", ".join(
-                        f"{k}={v:.4g}"
-                        for k, v in list(_m_h.predictions.items())[:5]
+    if not mcmc_current:
+        return None
+    try:
+        _m_h = manifold._hyp.get(mcmc_current)
+        if _m_h is not None:
+            m_lines = [
+                "[posterior mcmc hint]",
+                f"mcmc_current_hypothesis: {mcmc_current}",
+                f"description: {_m_h.description}",
+            ]
+            if _m_h.predictions:
+                _mpred = ", ".join(
+                    f"{k}={v:.4g}" for k, v in list(_m_h.predictions.items())[:5]
+                )
+                m_lines.append(f"predictions: {_mpred}")
+            # 若 MCMC 驻留站点就是 argmax (核心 hint), 标出来避免冗余重复.
+            if mcmc_current == best_h_id:
+                m_lines.append("note: same as best_hypothesis (MCMC converged here)")
+            # #3: least-visited 假设 = 未探索方向, 引导生成多样性.
+            try:
+                _lv = manifold.mcmc_least_visited(k=3)
+                if _lv:
+                    m_lines.append(
+                        "least_visited (underexplored directions): " + ", ".join(_lv)
                     )
-                    m_lines.append(f"predictions: {_mpred}")
-                # 若 MCMC 驻留站点就是 argmax (核心 hint), 标出来避免冗余重复.
-                if mcmc_current == best_h_id:
-                    m_lines.append("note: same as best_hypothesis (MCMC converged here)")
-                # #3: least-visited 假设 = 未探索方向, 引导生成多样性.
-                try:
-                    _lv = manifold.mcmc_least_visited(k=3)
-                    if _lv:
-                        m_lines.append(
-                            "least_visited (underexplored directions): "
-                            + ", ".join(_lv)
-                        )
-                except Exception:  # 非致命: mcmc 最少访问查询失败则忽略该段
-                    logger.debug("mcmc_least_visited lookup failed", exc_info=True)
-                parts.append("\n".join(m_lines))
-        except Exception:  # 非致命: posterior mcmc 提示生成失败则忽略
-            logger.debug("posterior mcmc hint failed", exc_info=True)
+            except Exception:  # 非致命: mcmc 最少访问查询失败则忽略该段
+                logger.debug("mcmc_least_visited lookup failed", exc_info=True)
+            return "\n".join(m_lines)
+    except Exception:  # 非致命: posterior mcmc 提示生成失败则忽略
+        logger.debug("posterior mcmc hint failed", exc_info=True)
+    return None
 
+
+def _truncate_hint_parts(parts: list[str], max_chars: int) -> str:
+    """按 核心 > 探索 > MCMC 顺序拼装并截断到 max_chars."""
     if not parts:
         return ""
 
@@ -156,38 +200,7 @@ def _build_posterior_guided_hint(
 # E2-1: 通用观测抽取 — 让假设流形对任何 benchmark 都可用.
 # 从自由文本里抓 "metric = value" 喂给 manifold 做后验/溯因. 不调 LLM.
 # 白名单过滤避免误抓年份/版本号; 失败/无文本返回空 list, 不阻塞.
-_METRIC_WHITELIST = frozenset({
-    "mae", "rmse", "mse", "r2", "r\u00b2", "r3", "accuracy",
-    "precision", "recall", "f1", "auc", "pearson", "spearman",
-    "loss", "error", "score", "bias",
-})
-_NUMERIC_PAIR_RE = re.compile(
-    r"\b([A-Za-z][A-Za-z0-9_\u00b2\u00b3]{1,15})\s*(?:=|:|of|\u2248|~|is)\s*"
-    r"([-+]?\d+\.?\d*(?:[eE][-+]?\d+)?)"
-)
-
-
-def extract_numeric_targets(text: str) -> dict[str, float]:
-    """从文本抓 'metric = value' 模式, 返回 {metric: value}.
-
-    白名单 + 数值量级过滤, 避免误抓年份/版本号. 无文本返回空 dict.
-    """
-    if not text:
-        return {}
-    targets: dict[str, float] = {}
-    for m in _NUMERIC_PAIR_RE.finditer(text):
-        name = m.group(1).lower()
-        try:
-            val = float(m.group(2))
-        except ValueError:
-            logger.debug("best-effort op failed", exc_info=True)
-            continue
-        if name not in _METRIC_WHITELIST:
-            continue
-        if abs(val) > 1e6:
-            continue
-        targets[name] = val
-    return targets
+# 白名单/正则见 huginn.utils.numeric_targets (与 cli.rcb_utils 共用).
 
 
 def extract_observations(text: str) -> list:
@@ -271,122 +284,42 @@ class HintCoordinator:
           [progress audit]    — curl 族, last_verdict != "pass" 时合并
           [topology probe]    — harmonic 族, β_1>0 或 stagnation 时合并
 
-        Meta-Trace top-k 块由调用方用 build_meta_trace_text 拼, 这块不管.
-
-        cross_task_prior (v14 Task 15): 同 domain 历史 high darwin entry,
-        用来 boost 当前 hint 中关键词重叠 >0.5 的块. 调用方必须传同 domain
-        的 entry, 跨 domain 隔离在 CrossTaskStore.query_high_darwin(domain=...)
-        层实现 — 这里不重复过滤.
-
-        v15 Task 4 升级: manifold 可用时, boost 权重从 keyword overlap 改为
-        posterior lift (log_posterior - log_prior). entry 缺 v15 字段时降级
-        到 keyword overlap. posterior_hint 是预构造的核心+探索 hint 段,
-        注入到 blocks 最前面 (最高优先级), 不参与 boost 重排.
-
-        ponytail: 调用方一次拿全 3 块, 自己决定是否再拼 Meta-Trace.
+        cross_task_prior / manifold / posterior_hint 的 v14→v15 升级语义见
+        ``_apply_cross_task_boost`` 与 ``_posterior_lift``. Meta-Trace top-k 块
+        由调用方用 build_meta_trace_text 拼, 这块不管.
         """
         events: list[str] = []
-        blocks: list[str] = []
-
-        # --- gradient 族 (必需) ---
-        # iter_prompt 是 iter>0 的 "continue execution" 文本, 跟 step2_prompt
-        # 在 benchmark runner 里互斥 (iter 0 直接复用 step2_prompt). 取非空的那个.
-        _grad = iter_prompt if (iter_prompt and iter_prompt != step2_prompt) else (step2_prompt or "")
-        # scan_hint deprecated: 合并进 step2_prompt (spec §deprecated)
-        if scan_text:
-            _grad = (_grad + "\n\n" + scan_text).strip() if _grad else scan_text
-        # fcm_winner reminder deprecated: spec "iter>0 不重复", 只 iter 0 注入
-        if fcm_winner and iter_n == 0:
-            _fcw = fcm_winner[:1200]
-            _grad = (
-                _grad + "\n\n## Selected Execution Plan (FCM winner)\n" + _fcw
-            ).strip() if _grad else f"## Selected Execution Plan (FCM winner)\n{_fcw}"
-        if _grad:
-            blocks.append("[gradient block]\n" + _grad)
-
-        # --- curl 族 (条件触发): verdict != pass 时合并 progress audit ---
-        # 首轮 verdict=None 不触发; pass 不触发; 其他 (fix_needed / blocked) 触发
-        _verdict_triggers = last_verdict is not None and last_verdict.lower() != "pass"
-        _curl_parts = [p for p in (compass, step_eval, drift_info) if p]
-        if _curl_parts and _verdict_triggers:
-            blocks.append("[progress audit]\n" + "\n\n".join(_curl_parts))
-
-        # --- harmonic 族 (条件触发): β_1>0 或 stagnation 时合并 topology probe ---
-        _beta_1 = beta[1] if beta and len(beta) >= 2 else 0
-        # stagnation 代理: spec 签名没单独参数, 复用 csm_state / last_verdict
-        # 任一含 "stagnation" 关键词视为停滞信号. 调用方按需传.
-        _stagnation = any(
-            s and "stagnation" in s.lower() for s in (csm_state, last_verdict)
+        blocks = self._build_base_blocks(
+            iter_n,
+            csm_state,
+            beta,
+            last_verdict,
+            fcm_winner,
+            scan_text,
+            step2_prompt,
+            iter_prompt,
+            compass,
+            step_eval,
+            drift_info,
+            imagination,
+            meta_agent,
+            events,
         )
-        _harm_parts = [p for p in (imagination, meta_agent) if p]
-        _harm_trigger = (_beta_1 > 0 or _stagnation) and bool(_harm_parts)
+        return self._merge(blocks, cross_task_prior, manifold, posterior_hint, events)
 
-        # 冲突仲裁 (spec §"冲突仲裁"): gradient (FCM winner) 跟 harmonic (imagination)
-        # 冲突时按族优先级保留 gradient, harmonic 块标注 "deferred", 事件入 list
-        if _harm_trigger:
-            _probe = "\n\n".join(_harm_parts)
-            if fcm_winner and self._detect_conflict(fcm_winner, imagination):
-                _probe = "FCM winner active, imagination deferred\n\n" + _probe
-                events.append("cochain_conflict:fcm_vs_imagination")
-            blocks.append("[topology probe]\n" + _probe)
-
+    def _merge(
+        self,
+        blocks: list[str],
+        cross_task_prior: list[dict] | None,
+        manifold: Any,
+        posterior_hint: str | None,
+        events: list[str],
+    ) -> tuple[str, list[str]]:
         # --- v14 Task 15 / v15 Task 4: 跨 task prior boost ---
-        # 选择条件不变 (v14 keyword overlap > 0.5), boost marker 升级:
-        # entry 有 hypothesis_id + log_posterior 且 manifold 能查到时, marker
-        # 用 posterior lift (log_posterior - log_prior) 替代 darwin_score.
-        # ponytail: lift=log_lik_sum, Gaussian 下 ≤0, 越接近 0 说明数据越支持
-        # 该 hypothesis. 用 lift 当 weight 是相对比较 (越高的 entry 越值得借势),
-        # 不要求 lift>0. 失败降级: 无 manifold / entry 缺 v15 字段 → v14 darwin.
         if cross_task_prior:
-            _boosted: list[str] = []
-            _rest: list[str] = []
-            for _blk in blocks:
-                # 剥掉 "[gradient block]\n" header, 只用正文算重叠
-                _hint_text = _blk.split("\n", 1)[1] if "\n" in _blk else _blk
-                _best_overlap = 0.0
-                _best_darwin = 0.0
-                _best_lift = 0.0
-                _best_entry_v15 = False
-                for _entry in cross_task_prior:
-                    _att = _entry.get("attempted") or ""
-                    _ov = self._keyword_overlap(_hint_text, _att)
-                    if _ov <= _best_overlap:
-                        continue
-                    # 找到更高 overlap 的 entry, 更新所有字段
-                    _best_overlap = _ov
-                    _best_darwin = float(_entry.get("darwin_score") or 0.0)
-                    _best_entry_v15 = False
-                    _h_id = _entry.get("hypothesis_id")
-                    _log_post = float(_entry.get("log_posterior", 0.0) or 0.0)
-                    if (manifold is not None and _h_id
-                            and _log_post != 0.0):
-                        try:
-                            _h = manifold._hyp.get(_h_id)
-                            if _h is not None:
-                                _best_lift = _log_post - _h.log_prior()
-                                _best_entry_v15 = True
-                        except Exception:  # 非致命: manifold 假设查询失败则忽略该样本
-                            logger.debug("manifold hypothesis lookup failed", exc_info=True)
-                if _best_overlap > 0.5:
-                    if _best_entry_v15:
-                        _boosted.append(
-                            f"[prior validated: lift={_best_lift:.2f}]\n" + _blk
-                        )
-                        events.append(
-                            f"posterior_lift_boost:lift={_best_lift:.2f},"
-                            f"overlap={_best_overlap:.2f}"
-                        )
-                    else:
-                        _boosted.append(
-                            f"[prior validated: darwin={_best_darwin:.2f}]\n"
-                            + _blk
-                        )
-                        events.append(
-                            f"cross_task_prior_boost:overlap={_best_overlap:.2f}"
-                        )
-                else:
-                    _rest.append(_blk)
-            blocks = _boosted + _rest
+            blocks = self._apply_cross_task_boost(
+                blocks, cross_task_prior, manifold, events
+            )
 
         # --- v15 Task 4: posterior-guided hint 注入 (最高优先级, 不参与 boost) ---
         # 核心 hint (abduction best) + 探索 hint (next exploration) 拼好的串,
@@ -395,6 +328,206 @@ class HintCoordinator:
             blocks.insert(0, posterior_hint)
 
         return "\n\n".join(blocks), events
+
+    def _build_base_blocks(
+        self,
+        iter_n: int,
+        csm_state: str | None,
+        beta: tuple[int, int],
+        last_verdict: str | None,
+        fcm_winner: str | None,
+        scan_text: str | None,
+        step2_prompt: str,
+        iter_prompt: str | None,
+        compass: str | None,
+        step_eval: str | None,
+        drift_info: str | None,
+        imagination: str | None,
+        meta_agent: str | None,
+        events: list[str],
+    ) -> list[str]:
+        """Hodge 三分量块: gradient (必需) + curl / harmonic (条件触发)."""
+        blocks: list[str] = []
+
+        # --- gradient 族 (必需) ---
+        _grad = self._build_gradient_block(
+            iter_n, fcm_winner, scan_text, step2_prompt, iter_prompt
+        )
+        if _grad:
+            blocks.append("[gradient block]\n" + _grad)
+
+        # --- curl 族 (条件触发): verdict != pass 时合并 progress audit ---
+        _curl = self._build_curl_block(last_verdict, compass, step_eval, drift_info)
+        if _curl:
+            blocks.append("[progress audit]\n" + _curl)
+
+        # --- harmonic 族 (条件触发): β_1>0 或 stagnation 时合并 topology probe ---
+        _probe = self._build_harmonic_block(
+            beta, csm_state, last_verdict, imagination, meta_agent, fcm_winner, events
+        )
+        if _probe:
+            blocks.append("[topology probe]\n" + _probe)
+        return blocks
+
+    def _build_gradient_block(
+        self,
+        iter_n: int,
+        fcm_winner: str | None,
+        scan_text: str | None,
+        step2_prompt: str,
+        iter_prompt: str | None,
+    ) -> str:
+        """gradient 族 (必需): step2_prompt / iter_prompt / scan_hint / fcm_winner."""
+        # iter_prompt 是 iter>0 的 "continue execution" 文本, 跟 step2_prompt
+        # 在 benchmark runner 里互斥 (iter 0 直接复用 step2_prompt). 取非空的那个.
+        grad = (
+            iter_prompt
+            if (iter_prompt and iter_prompt != step2_prompt)
+            else (step2_prompt or "")
+        )
+        # scan_hint deprecated: 合并进 step2_prompt (spec §deprecated)
+        if scan_text:
+            grad = (grad + "\n\n" + scan_text).strip() if grad else scan_text
+        # fcm_winner reminder deprecated: spec "iter>0 不重复", 只 iter 0 注入
+        if fcm_winner and iter_n == 0:
+            fc = fcm_winner[:1200]
+            grad = (
+                (grad + "\n\n## Selected Execution Plan (FCM winner)\n" + fc).strip()
+                if grad
+                else f"## Selected Execution Plan (FCM winner)\n{fc}"
+            )
+        return grad
+
+    @staticmethod
+    def _build_curl_block(
+        last_verdict: str | None,
+        compass: str | None,
+        step_eval: str | None,
+        drift_info: str | None,
+    ) -> str:
+        """curl 族: 仅 verdict != pass 时合并 progress audit."""
+        # 首轮 verdict=None 不触发; pass 不触发; 其他 (fix_needed / blocked) 触发
+        triggers = last_verdict is not None and last_verdict.lower() != "pass"
+        parts = [p for p in (compass, step_eval, drift_info) if p]
+        if not (parts and triggers):
+            return ""
+        return "\n\n".join(parts)
+
+    def _build_harmonic_block(
+        self,
+        beta: tuple[int, int],
+        csm_state: str | None,
+        last_verdict: str | None,
+        imagination: str | None,
+        meta_agent: str | None,
+        fcm_winner: str | None,
+        events: list[str],
+    ) -> str:
+        """harmonic 族: β_1>0 或 stagnation 时合并 topology probe; 冲突仲裁."""
+        beta_1 = beta[1] if beta and len(beta) >= 2 else 0
+        # stagnation 代理: spec 签名没单独参数, 复用 csm_state / last_verdict
+        # 任一含 "stagnation" 关键词视为停滞信号. 调用方按需传.
+        stagnation = any(
+            s and "stagnation" in s.lower() for s in (csm_state, last_verdict)
+        )
+        parts = [p for p in (imagination, meta_agent) if p]
+        if not ((beta_1 > 0 or stagnation) and bool(parts)):
+            return ""
+
+        probe = "\n\n".join(parts)
+        # 冲突仲裁 (spec §"冲突仲裁"): gradient (FCM winner) 跟 harmonic
+        # (imagination) 冲突时按族优先级保留 gradient, harmonic 块标注 "deferred".
+        if fcm_winner and self._detect_conflict(fcm_winner, imagination):
+            probe = "FCM winner active, imagination deferred\n\n" + probe
+            events.append("cochain_conflict:fcm_vs_imagination")
+        return probe
+
+    def _apply_cross_task_boost(
+        self,
+        blocks: list[str],
+        cross_task_prior: list[dict],
+        manifold: Any,
+        events: list[str],
+    ) -> list[str]:
+        """跨 task prior boost: 关键词重叠 >0.5 的块加 marker 并前移.
+
+        v14 Task 15: entry 是同 domain 历史 high darwin 记录, 调用方必须传同
+        domain 的 entry; 跨 domain 隔离在 CrossTaskStore.query_high_darwin 层实现,
+        这里不重复过滤.
+        v15 Task 4: manifold 可查时用 posterior lift (log_posterior - log_prior)
+        替代 darwin_score, entry 缺 v15 字段时降级到 keyword overlap.
+        """
+        boosted: list[str] = []
+        rest: list[str] = []
+        for blk in blocks:
+            overlap, darwin, lift, is_v15 = self._best_prior_match(
+                blk, cross_task_prior, manifold
+            )
+            if overlap > 0.5:
+                boosted.append(
+                    self._annotate_boosted_block(
+                        blk, overlap, darwin, lift, is_v15, events
+                    )
+                )
+            else:
+                rest.append(blk)
+        return boosted + rest
+
+    def _best_prior_match(
+        self,
+        block: str,
+        cross_task_prior: list[dict],
+        manifold: Any,
+    ) -> tuple[float, float, float, bool]:
+        """在 prior 里找与 block 关键词重叠最高的 entry.
+
+        返回 (overlap, darwin, lift, is_v15). v15 字段缺失时降级 v14 darwin.
+        """
+        # 剥掉 "[gradient block]\n" header, 只用正文算重叠
+        hint_text = block.split("\n", 1)[1] if "\n" in block else block
+        best: tuple[float, float, float, bool] = (0.0, 0.0, 0.0, False)
+        for entry in cross_task_prior:
+            attempted = entry.get("attempted") or ""
+            overlap = self._keyword_overlap(hint_text, attempted)
+            if overlap <= best[0]:
+                continue
+            # 找到更高 overlap 的 entry, 更新所有字段
+            darwin = float(entry.get("darwin_score") or 0.0)
+            lift, is_v15 = self._posterior_lift(entry, manifold)
+            best = (overlap, darwin, lift, is_v15)
+        return best
+
+    @staticmethod
+    def _posterior_lift(entry: dict, manifold: Any) -> tuple[float, bool]:
+        """v15 posterior lift; entry 缺字段或 manifold 不可用时返回 (0.0, False)."""
+        h_id = entry.get("hypothesis_id")
+        log_post = float(entry.get("log_posterior", 0.0) or 0.0)
+        if manifold is None or not h_id or log_post == 0.0:
+            return 0.0, False
+        try:
+            hyp = manifold._hyp.get(h_id)
+            if hyp is None:
+                return 0.0, False
+            return log_post - hyp.log_prior(), True
+        except Exception:  # 非致命: manifold 假设查询失败则忽略该样本
+            logger.debug("manifold hypothesis lookup failed", exc_info=True)
+            return 0.0, False
+
+    @staticmethod
+    def _annotate_boosted_block(
+        block: str,
+        overlap: float,
+        darwin: float,
+        lift: float,
+        is_v15: bool,
+        events: list[str],
+    ) -> str:
+        """给命中的块加 prior marker, 并写 trace 事件."""
+        if is_v15:
+            events.append(f"posterior_lift_boost:lift={lift:.2f},overlap={overlap:.2f}")
+            return f"[prior validated: lift={lift:.2f}]\n" + block
+        events.append(f"cross_task_prior_boost:overlap={overlap:.2f}")
+        return f"[prior validated: darwin={darwin:.2f}]\n" + block
 
     def _detect_conflict(self, hint_a: str | None, hint_b: str | None) -> bool:
         """简单关键词检测: gradient 跟 harmonic 冲突.
@@ -443,10 +576,12 @@ if __name__ == "__main__":
         imagination="换数学结构家族: PDE ↔ variational",
         meta_agent=None,
     )
-    assert "FCM winner active, imagination deferred" in _prompt, \
+    assert "FCM winner active, imagination deferred" in _prompt, (
         f"conflict annotation missing:\n{_prompt}"
-    assert "cochain_conflict:fcm_vs_imagination" in _events, \
+    )
+    assert "cochain_conflict:fcm_vs_imagination" in _events, (
         f"conflict event missing: {_events}"
+    )
     assert "[gradient block]" in _prompt
     assert "[progress audit]" in _prompt
     assert "[topology probe]" in _prompt
@@ -507,7 +642,11 @@ if __name__ == "__main__":
     # 用 Jaccard >0.5 选文本: hint="compute superradiance extraction" + prior="compute superradiance"
     # 交集={compute, superradiance}=2, 并集={compute, superradiance, extraction}=3 → 0.667.
     _prior1 = [
-        {"attempted": "compute superradiance", "darwin_score": 0.9, "domain": "astronomy"}
+        {
+            "attempted": "compute superradiance",
+            "darwin_score": 0.9,
+            "domain": "astronomy",
+        }
     ]
     _p15a, _e15a = _hc.coordinate(
         iter_n=2,
@@ -525,13 +664,14 @@ if __name__ == "__main__":
         meta_agent=None,
         cross_task_prior=_prior1,
     )
-    assert "[prior validated: darwin=0.90]" in _p15a, \
-        f"case1 marker missing:\n{_p15a}"
+    assert "[prior validated: darwin=0.90]" in _p15a, f"case1 marker missing:\n{_p15a}"
     # boost 后 [progress audit] 应在 [gradient block] 之前
-    assert _p15a.index("[prior validated: darwin=0.90]") < _p15a.index("[gradient block]"), \
-        f"case1 boost order wrong:\n{_p15a}"
-    assert any(e.startswith("cross_task_prior_boost:") for e in _e15a), \
+    assert _p15a.index("[prior validated: darwin=0.90]") < _p15a.index(
+        "[gradient block]"
+    ), f"case1 boost order wrong:\n{_p15a}"
+    assert any(e.startswith("cross_task_prior_boost:") for e in _e15a), (
         f"case1 boost event missing: {_e15a}"
+    )
     print(f"[CHECK v14 Task 15] case1 boost OK (events={_e15a})")
 
     # case 2: 跨 domain 隔离 — 调用方传空 list (CrossTaskStore 已按 domain 过滤掉)
@@ -551,8 +691,9 @@ if __name__ == "__main__":
         meta_agent=None,
         cross_task_prior=[],  # 空 list = 本 domain 无历史 high darwin entry
     )
-    assert "[prior validated" not in _p15b, \
+    assert "[prior validated" not in _p15b, (
         f"case2 should not boost when prior empty:\n{_p15b}"
+    )
     assert _e15b == [] or not any(
         e.startswith("cross_task_prior_boost:") for e in _e15b
     ), f"case2 should not emit boost event: {_e15b}"
@@ -562,7 +703,11 @@ if __name__ == "__main__":
     # hint="compute orbital elements" + prior="compute quantum tunneling"
     # 交集={compute}=1, 并集={compute, orbital, elements, quantum, tunneling}=5 → 0.2.
     _prior3 = [
-        {"attempted": "compute quantum tunneling", "darwin_score": 0.9, "domain": "astronomy"}
+        {
+            "attempted": "compute quantum tunneling",
+            "darwin_score": 0.9,
+            "domain": "astronomy",
+        }
     ]
     _p15c, _e15c = _hc.coordinate(
         iter_n=0,
@@ -580,11 +725,12 @@ if __name__ == "__main__":
         meta_agent=None,
         cross_task_prior=_prior3,
     )
-    assert "[prior validated" not in _p15c, \
+    assert "[prior validated" not in _p15c, (
         f"case3 should not boost when overlap <0.5:\n{_p15c}"
-    assert not any(
-        e.startswith("cross_task_prior_boost:") for e in _e15c
-    ), f"case3 should not emit boost event: {_e15c}"
+    )
+    assert not any(e.startswith("cross_task_prior_boost:") for e in _e15c), (
+        f"case3 should not emit boost event: {_e15c}"
+    )
     print("[CHECK v14 Task 15] case3 low overlap no-boost OK")
 
     print("v14 Task 15 self-check PASSED")
@@ -598,24 +744,30 @@ if __name__ == "__main__":
     )
 
     _m = HypothesisManifold()
-    _m.add(Hypothesis(
-        h_id="h_paper_repro",
-        description="Paper results reproducible: metrics match claimed values",
-        predictions={"mae": 0.5, "r2": 0.85, "accuracy": 0.90},
-        n_params=2,
-    ))
-    _m.add(Hypothesis(
-        h_id="h_partial_repro",
-        description="Partial reproduction: metrics at 50% of claimed values",
-        predictions={"mae": 0.25, "r2": 0.425, "accuracy": 0.45},
-        n_params=3,
-    ))
-    _m.add(Hypothesis(
-        h_id="h_null_baseline",
-        description="Null/baseline result: no signal, default metrics",
-        predictions={"mae": 0.0, "r2": 0.0, "accuracy": 0.0},
-        n_params=1,
-    ))
+    _m.add(
+        Hypothesis(
+            h_id="h_paper_repro",
+            description="Paper results reproducible: metrics match claimed values",
+            predictions={"mae": 0.5, "r2": 0.85, "accuracy": 0.90},
+            n_params=2,
+        )
+    )
+    _m.add(
+        Hypothesis(
+            h_id="h_partial_repro",
+            description="Partial reproduction: metrics at 50% of claimed values",
+            predictions={"mae": 0.25, "r2": 0.425, "accuracy": 0.45},
+            n_params=3,
+        )
+    )
+    _m.add(
+        Hypothesis(
+            h_id="h_null_baseline",
+            description="Null/baseline result: no signal, default metrics",
+            predictions={"mae": 0.0, "r2": 0.0, "accuracy": 0.0},
+            n_params=1,
+        )
+    )
     _obs = [
         Observation("mae", 0.48, sigma=0.1),
         Observation("r2", 0.83, sigma=0.1),
@@ -629,20 +781,20 @@ if __name__ == "__main__":
     assert "best_hypothesis:" in _hint, f"missing best_hypothesis:\n{_hint}"
     assert "posterior_lift:" in _hint, f"missing lift:\n{_hint}"
     assert "[posterior explore hint]" in _hint, f"missing explore hint:\n{_hint}"
-    assert len(_hint) <= 1500, (
-        f"hint {len(_hint)} chars > 1500:\n{_hint}")
+    assert len(_hint) <= 1500, f"hint {len(_hint)} chars > 1500:\n{_hint}"
     print(f"[CHECK v15 Task 4] case1 hint OK ({len(_hint)} chars)")
 
     # case 2: 失败降级 — manifold=None → 空串
-    assert _build_posterior_guided_hint(None, _obs) == "", \
+    assert _build_posterior_guided_hint(None, _obs) == "", (
         "manifold=None should return ''"
+    )
     # 空 observations → 空串
-    assert _build_posterior_guided_hint(_m, []) == "", \
-        "empty obs should return ''"
+    assert _build_posterior_guided_hint(_m, []) == "", "empty obs should return ''"
     # 空 manifold (无 hypothesis) → 空串
     _m_empty = HypothesisManifold()
-    assert _build_posterior_guided_hint(_m_empty, _obs) == "", \
+    assert _build_posterior_guided_hint(_m_empty, _obs) == "", (
         "empty manifold should return ''"
+    )
     print("[CHECK v15 Task 4] case2 failure degradation OK")
 
     # case 3: coordinate 注入 — posterior_hint 出现在 prompt 最前面
@@ -663,11 +815,11 @@ if __name__ == "__main__":
         meta_agent=None,
         posterior_hint=_ph,
     )
-    assert "[posterior core hint]" in _p4, (
-        f"posterior_hint not injected:\n{_p4}")
+    assert "[posterior core hint]" in _p4, f"posterior_hint not injected:\n{_p4}"
     # posterior_hint 应在 [gradient block] 之前 (最高优先级)
-    assert _p4.index("[posterior core hint]") < _p4.index("[gradient block]"), \
+    assert _p4.index("[posterior core hint]") < _p4.index("[gradient block]"), (
         f"posterior_hint should be before gradient block:\n{_p4}"
+    )
     print("[CHECK v15 Task 4] case3 coordinate injection OK")
 
     # case 4: posterior lift boost — entry 有 hypothesis_id + log_posterior, manifold 能查到
@@ -701,9 +853,9 @@ if __name__ == "__main__":
         manifold=_m,
     )
     assert any(e.startswith("posterior_lift_boost:") for e in _e4b), (
-        f"posterior_lift_boost event missing: {_e4b}")
-    assert "[prior validated: lift=" in _p4b, (
-        f"lift marker missing:\n{_p4b}")
+        f"posterior_lift_boost event missing: {_e4b}"
+    )
+    assert "[prior validated: lift=" in _p4b, f"lift marker missing:\n{_p4b}"
     print(f"[CHECK v15 Task 4] case4 posterior lift boost OK (events={_e4b})")
 
     # case 5: 失败降级到 v14 keyword overlap — entry 无 hypothesis_id (v14 entry)
@@ -730,32 +882,39 @@ if __name__ == "__main__":
     )
     # 应走 keyword overlap (无 v15 字段)
     assert not any(e.startswith("posterior_lift_boost:") for e in _e4c), (
-        f"v14 entry should not trigger posterior_lift: {_e4c}")
+        f"v14 entry should not trigger posterior_lift: {_e4c}"
+    )
     print("[CHECK v15 Task 4] case5 v14 fallback OK")
 
     # case 6: token 控制 — 极长 description 时 explore 段被截, 总长 ≤1500
     _m_long = HypothesisManifold()
-    _m_long.add(Hypothesis(
-        h_id="h_long_core",
-        description="X" * 800,  # 极长 description
-        predictions={"mae": 0.5},
-        n_params=2,
-    ))
-    _m_long.add(Hypothesis(
-        h_id="h_long_explore",
-        description="Y" * 800,
-        predictions={"mae": 0.0},
-        n_params=1,
-    ))
+    _m_long.add(
+        Hypothesis(
+            h_id="h_long_core",
+            description="X" * 800,  # 极长 description
+            predictions={"mae": 0.5},
+            n_params=2,
+        )
+    )
+    _m_long.add(
+        Hypothesis(
+            h_id="h_long_explore",
+            description="Y" * 800,
+            predictions={"mae": 0.0},
+            n_params=1,
+        )
+    )
     _hint_long = _build_posterior_guided_hint(
-        _m_long, [Observation("mae", 0.5, sigma=0.1)])
-    assert len(_hint_long) <= 1500, (
-        f"long hint {len(_hint_long)} > 1500:\n{_hint_long}")
+        _m_long, [Observation("mae", 0.5, sigma=0.1)]
+    )
+    assert len(_hint_long) <= 1500, f"long hint {len(_hint_long)} > 1500:\n{_hint_long}"
     # 核心段必须保留
     assert "[posterior core hint]" in _hint_long, (
-        f"core hint must survive truncation:\n{_hint_long}")
+        f"core hint must survive truncation:\n{_hint_long}"
+    )
     print(
         f"[CHECK v15 Task 4] case6 token control OK "
-        f"(truncated to {len(_hint_long)} chars)")
+        f"(truncated to {len(_hint_long)} chars)"
+    )
 
     print("v15 Task 4 self-check PASSED")

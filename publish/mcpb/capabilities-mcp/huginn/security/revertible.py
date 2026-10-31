@@ -55,9 +55,7 @@ class RevertibleContext:
     def __init__(self, journal_path: str | Path | None = None) -> None:
         self._disposers: list[Disposer] = []
         self._ops: list[dict[str, Any]] = []
-        self._journal_path = (
-            Path(journal_path) if journal_path is not None else None
-        )
+        self._journal_path = Path(journal_path) if journal_path is not None else None
 
     # ── 核心 ─────────────────────────────────────────────────────
     def track(self, dispose: Disposer | None) -> None:
@@ -84,9 +82,7 @@ class RevertibleContext:
         if op is None:
             return
         self._ops.append(op)
-        self._disposers.append(
-            lambda: _apply_inverse(op, env=env, store=store)
-        )
+        self._disposers.append(lambda: _apply_inverse(op, env=env, store=store))
         if self._journal_path is not None:
             self._flush_journal()
 
@@ -104,7 +100,8 @@ class RevertibleContext:
             )
         except Exception:
             logger.warning(
-                "revertible: journal flush failed to %s", self._journal_path,
+                "revertible: journal flush failed to %s",
+                self._journal_path,
                 exc_info=True,
             )
 
@@ -113,7 +110,9 @@ class RevertibleContext:
         """当前累积的逆的数量 (调试/测试用)."""
         return len(self._disposers)
 
-    def effect(self, op: Callable[[RevertibleContext], tuple[Any, Disposer | None]]) -> Any:
+    def effect(
+        self, op: Callable[[RevertibleContext], tuple[Any, Disposer | None]]
+    ) -> Any:
         """执行一个可逆操作并累计其逆.
 
         ``op(ctx)`` 返回 ``(value, dispose)``; ``dispose`` 为操作产生的逆或多图空.
@@ -190,7 +189,9 @@ class RevertibleContext:
                 "type": OP_CREATE_FILE,
                 "path": str(path),
                 "existed": existed,
-                "prev_b64": base64.b64encode(prev).decode() if prev is not None else None,
+                "prev_b64": base64.b64encode(prev).decode()
+                if prev is not None
+                else None,
             },
         )
         return path
@@ -216,7 +217,9 @@ class RevertibleContext:
             {
                 "type": OP_REMOVE_FILE,
                 "path": str(path),
-                "data_b64": base64.b64encode(data).decode() if data is not None else None,
+                "data_b64": base64.b64encode(data).decode()
+                if data is not None
+                else None,
             },
         )
         return path
@@ -253,11 +256,7 @@ class RevertibleContext:
         else:
             # prev 不可序列化 — 无法 journal, 退化为闭包逆 (进程内仍精确恢复).
             self.track(
-                lambda: (
-                    store.pop(key, None)
-                    if absent
-                    else store.update({key: prev})
-                )
+                lambda: store.pop(key, None) if absent else store.update({key: prev})
             )
         return value
 
@@ -315,12 +314,15 @@ class RevertibleContext:
                     try:
                         d()
                     except Exception:
-                        logger.warning("revertible composite dispose failed", exc_info=True)
+                        logger.warning(
+                            "revertible composite dispose failed", exc_info=True
+                        )
 
         return dispose
 
 
 # ── 模块级辅助: journal 序列化 + 逆执行器 ─────────────────────────
+
 
 def _json_safe(value: Any) -> bool:
     """能否被 JSON 序列化 (决定该逆能否落盘 journal)."""
@@ -334,6 +336,46 @@ def _json_safe(value: Any) -> bool:
 def _json_default(value: Any) -> Any:
     """JSON 兜底: 类型名作为占位 (审计可见, 但不保留值)."""
     return {"__repr__": repr(value)}
+
+
+def _restore_env(env: dict[str, str], op: dict[str, Any]) -> None:
+    key = op["key"]
+    if op.get("absent"):
+        env.pop(key, None)
+    else:
+        env[key] = op["prev"]
+
+
+def _restore_file(op: dict[str, Any]) -> None:
+    p = Path(op["path"])
+    if op.get("existed"):
+        prev = base64.b64decode(op["prev_b64"]) if op.get("prev_b64") else b""
+        p.write_bytes(prev)
+    else:
+        p.unlink(missing_ok=True)
+
+
+def _restore_dir(op: dict[str, Any]) -> None:
+    p = Path(op["path"])
+    if not op.get("existed"):
+        try:
+            p.rmdir()
+        except OSError:
+            logger.debug("revertible: dir not empty, skip rmdir %s", p)
+
+
+def _restore_removed_file(op: dict[str, Any]) -> None:
+    p = Path(op["path"])
+    data = base64.b64decode(op["data_b64"]) if op.get("data_b64") else None
+    if data is not None:
+        p.write_bytes(data)
+
+
+def _restore_store(store: dict[str, Any], op: dict[str, Any]) -> None:
+    if op.get("absent"):
+        store.pop(op["key"], None)
+    else:
+        store[op["key"]] = op["prev"]
 
 
 def _apply_inverse(
@@ -350,39 +392,19 @@ def _apply_inverse(
         if op_type == OP_SET_ENV:
             if env is None:
                 return  # 进程已消失, env 无法重建 — 跳过
-            key = op["key"]
-            if op.get("absent"):
-                env.pop(key, None)
-            else:
-                env[key] = op["prev"]
+            _restore_env(env, op)
         elif op_type == OP_CREATE_FILE:
-            p = Path(op["path"])
-            if op.get("existed"):
-                prev = base64.b64decode(op["prev_b64"]) if op.get("prev_b64") else b""
-                p.write_bytes(prev)
-            else:
-                p.unlink(missing_ok=True)
+            _restore_file(op)
         elif op_type == OP_CREATE_DIR:
-            p = Path(op["path"])
-            if not op.get("existed"):
-                try:
-                    p.rmdir()
-                except OSError:
-                    logger.debug("revertible: dir not empty, skip rmdir %s", p)
+            _restore_dir(op)
         elif op_type == OP_REMOVE_FILE:
-            p = Path(op["path"])
-            data = base64.b64decode(op["data_b64"]) if op.get("data_b64") else None
-            if data is not None:
-                p.write_bytes(data)
+            _restore_removed_file(op)
         elif op_type == OP_SPAWN:
             _kill_pid(op["pid"])
         elif op_type == OP_REGISTER:
             if store is None:
                 return  # 进程内 store 已消失 — 跳过
-            if op.get("absent"):
-                store.pop(op["key"], None)
-            else:
-                store[op["key"]] = op["prev"]
+            _restore_store(store, op)
         elif op_type == OP_COMPENSATE:
             _run_compensation(op.get("kind"), op.get("payload") or {})
         elif op_type == OP_ACTION:

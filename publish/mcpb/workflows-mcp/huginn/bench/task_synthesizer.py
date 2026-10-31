@@ -13,11 +13,12 @@ LLM 生成任务描述 + 判分脚本, sanity_check 用已知答案验证判分�
 from __future__ import annotations
 
 import ast
-import json
 import logging
 import textwrap
 from dataclasses import dataclass
 from typing import Any
+
+from huginn.metacog.text_to_json import extract_json_object
 
 from .task import BenchmarkTask
 
@@ -25,9 +26,18 @@ logger = logging.getLogger(__name__)
 
 # 白名单: LLM 生成的 judge 脚本只能调这些模块.
 # 跟 security/script_runner.py 的 _safe_import 一致, 不引入新依赖.
-_JUDGE_ALLOWED_MODULES = frozenset({
-    "math", "statistics", "json", "re", "numpy", "pandas", "sympy", "scipy",
-})
+_JUDGE_ALLOWED_MODULES = frozenset(
+    {
+        "math",
+        "statistics",
+        "json",
+        "re",
+        "numpy",
+        "pandas",
+        "sympy",
+        "scipy",
+    }
+)
 
 
 @dataclass
@@ -37,6 +47,7 @@ class SynthesizedTask:
     known_answer 用来跑 sanity_check 验证判分脚本本身没写错.
     验证通过后转 BenchmarkTask 接入 BenchmarkRunner.
     """
+
     id: str
     domain: str
     difficulty: str
@@ -80,6 +91,59 @@ def synthesize_task(
         return _template_synthesize(tid, domain, difficulty)
 
 
+def _scan_judge_ast(tree: ast.AST) -> bool:
+    """AST 预扫描: 只允许白名单 import, 禁危险内建."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split(".")[0]
+                if top not in _JUDGE_ALLOWED_MODULES:
+                    return False
+        elif isinstance(node, ast.ImportFrom):
+            top = (node.module or "").split(".")[0]
+            if top not in _JUDGE_ALLOWED_MODULES:
+                return False
+        if isinstance(node, ast.Call):
+            fn = node.func
+            if isinstance(fn, ast.Name) and fn.id in {
+                "__import__",
+                "eval",
+                "exec",
+                "compile",
+            }:
+                return False
+            # getattr 链封堵 (跟 G23 一致)
+            if isinstance(fn, ast.Name) and fn.id == "getattr":
+                # judge 脚本一般不需要 getattr, 直接禁
+                return False
+    return True
+
+
+def _exec_judge(tree: ast.AST) -> Any:
+    """在隔离 globals 里 exec, 返回可调用的 judge (失败返 None)."""
+    # 2. 在隔离 globals 里 exec
+    safe_globals: dict[str, Any] = {"__builtins__": __builtins__}
+    try:
+        exec(compile(tree, "<judge>", "exec"), safe_globals)
+    except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
+        return None
+    judge_fn = safe_globals.get("judge")
+    if not callable(judge_fn):
+        return None
+    return judge_fn
+
+
+def _judge_verdict(judge_fn: Any, answer: str) -> Any:
+    """跑一次 judge, 异常返 None."""
+    try:
+        ok, _ = judge_fn(answer)
+    except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
+        return None
+    return ok
+
+
 def sanity_check_judge(judge_script: str, known_answer: str) -> bool:
     """用已知答案跑 judge 脚本, 验证脚本本身没写错.
 
@@ -98,54 +162,19 @@ def sanity_check_judge(judge_script: str, known_answer: str) -> bool:
         logger.debug("best-effort op failed", exc_info=True)
         return False
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                top = alias.name.split(".")[0]
-                if top not in _JUDGE_ALLOWED_MODULES:
-                    return False
-        elif isinstance(node, ast.ImportFrom):
-            top = (node.module or "").split(".")[0]
-            if top not in _JUDGE_ALLOWED_MODULES:
-                return False
-        if isinstance(node, ast.Call):
-            fn = node.func
-            if isinstance(fn, ast.Name) and fn.id in {
-                "__import__", "eval", "exec", "compile"
-            }:
-                return False
-            # getattr 链封堵 (跟 G23 一致)
-            if isinstance(fn, ast.Name) and fn.id == "getattr":
-                # judge 脚本一般不需要 getattr, 直接禁
-                return False
-
-    # 2. 在隔离 globals 里 exec
-    safe_globals: dict[str, Any] = {"__builtins__": __builtins__}
-    try:
-        exec(compile(tree, "<judge>", "exec"), safe_globals)
-    except Exception:
-        logger.debug("best-effort op failed", exc_info=True)
+    if not _scan_judge_ast(tree):
         return False
-    judge_fn = safe_globals.get("judge")
-    if not callable(judge_fn):
+
+    judge_fn = _exec_judge(tree)
+    if judge_fn is None:
         return False
 
     # 3. 已知答案应判 True
-    try:
-        ok_pos, _ = judge_fn(known_answer)
-    except Exception:
-        logger.debug("best-effort op failed", exc_info=True)
-        return False
-    if ok_pos is not True:
+    if _judge_verdict(judge_fn, known_answer) is not True:
         return False
 
     # 4. 明显错答案应判 False
-    try:
-        ok_neg, _ = judge_fn("__definitely_wrong_answer_xyz__")
-    except Exception:
-        logger.debug("best-effort op failed", exc_info=True)
-        return False
-    return ok_neg is False
+    return _judge_verdict(judge_fn, "__definitely_wrong_answer_xyz__") is False
 
 
 def to_benchmark_task(synth: SynthesizedTask) -> BenchmarkTask | None:
@@ -211,7 +240,9 @@ class SynthesizedBenchAdapter:
         tasks: list[BenchmarkTask] = []
         for i in range(n):
             synth = synthesize_task(
-                domain, difficulty, model=self.model,
+                domain,
+                difficulty,
+                model=self.model,
                 task_id=f"synth-{i:03d}",
             )
             if synth is None:
@@ -227,59 +258,80 @@ class SynthesizedBenchAdapter:
 
 # ── 模板合成 (测试 + LLM 失败降级) ──────────────────────────────────
 
+
+def _template_easy() -> tuple[str, str, str]:
+    """easy 模板: 立方晶体体积模量."""
+    prompt = (
+        "What is the bulk modulus (GPa) of a cubic crystal with "
+        "c11=100, c12=40? Reply with only the number."
+    )
+    known = "60"
+    judge = textwrap.dedent("""
+        def judge(output):
+            import re
+            nums = re.findall(r"[-+]?\\d*\\.?\\d+", output)
+            if not nums:
+                return False, "no number found"
+            n = float(nums[0])
+            if abs(n - 60.0) <= 0.5:
+                return True, "got " + str(n)
+            return False, "got " + str(n) + ", expected 60"
+    """).strip()
+    return prompt, known, judge
+
+
+def _template_medium() -> tuple[str, str, str]:
+    """medium 模板: Birch-Murnaghan 压力."""
+    prompt = (
+        "Compute the Birch-Murnaghan pressure (GPa) at V/V0=0.95 "
+        "for B0=100, B0'=4. Reply with only the number."
+    )
+    known = "9.48"
+    judge = textwrap.dedent("""
+        def judge(output):
+            import re
+            nums = re.findall(r"[-+]?\\d*\\.?\\d+", output)
+            if not nums:
+                return False, "no number"
+            n = float(nums[0])
+            # BM3 压力 at eta=0.95, B0=100, B0'=4: ~9.48 GPa
+            if abs(n - 9.48) <= 0.5:
+                return True, "got " + str(n)
+            return False, "got " + str(n) + ", expected ~9.48"
+    """).strip()
+    return prompt, known, judge
+
+
+def _template_hard() -> tuple[str, str, str]:
+    """hard 模板: 六方晶体稳定性判定."""
+    prompt = (
+        "For a hexagonal crystal with c11=550, c12=124, c13=120, "
+        "c33=560, c44=110, c66=(c11-c12)/2, verify stability. "
+        "Reply with STABLE or UNSTABLE."
+    )
+    known = "STABLE"
+    judge = textwrap.dedent("""
+        def judge(output):
+            up = output.upper().strip()
+            if "STABLE" in up and "UNSTABLE" not in up:
+                return True, "STABLE"
+            return False, "should be STABLE"
+    """).strip()
+    return prompt, known, judge
+
+
 def _template_synthesize(
-    task_id: str, domain: str, difficulty: str,
+    task_id: str,
+    domain: str,
+    difficulty: str,
 ) -> SynthesizedTask:
     """不用 LLM 的兜底合成. 出一个可算的数值题."""
     if difficulty == "easy":
-        prompt = (
-            "What is the bulk modulus (GPa) of a cubic crystal with "
-            "c11=100, c12=40? Reply with only the number."
-        )
-        known = "60"
-        judge = textwrap.dedent('''
-            def judge(output):
-                import re
-                nums = re.findall(r"[-+]?\\d*\\.?\\d+", output)
-                if not nums:
-                    return False, "no number found"
-                n = float(nums[0])
-                if abs(n - 60.0) <= 0.5:
-                    return True, "got " + str(n)
-                return False, "got " + str(n) + ", expected 60"
-        ''').strip()
+        prompt, known, judge = _template_easy()
     elif difficulty == "medium":
-        prompt = (
-            "Compute the Birch-Murnaghan pressure (GPa) at V/V0=0.95 "
-            "for B0=100, B0'=4. Reply with only the number."
-        )
-        known = "9.48"
-        judge = textwrap.dedent('''
-            def judge(output):
-                import re
-                nums = re.findall(r"[-+]?\\d*\\.?\\d+", output)
-                if not nums:
-                    return False, "no number"
-                n = float(nums[0])
-                # BM3 压力 at eta=0.95, B0=100, B0'=4: ~9.48 GPa
-                if abs(n - 9.48) <= 0.5:
-                    return True, "got " + str(n)
-                return False, "got " + str(n) + ", expected ~9.48"
-        ''').strip()
+        prompt, known, judge = _template_medium()
     else:  # hard
-        prompt = (
-            "For a hexagonal crystal with c11=550, c12=124, c13=120, "
-            "c33=560, c44=110, c66=(c11-c12)/2, verify stability. "
-            "Reply with STABLE or UNSTABLE."
-        )
-        known = "STABLE"
-        judge = textwrap.dedent('''
-            def judge(output):
-                up = output.upper().strip()
-                if "STABLE" in up and "UNSTABLE" not in up:
-                    return True, "STABLE"
-                return False, "should be STABLE"
-        ''').strip()
+        prompt, known, judge = _template_hard()
 
     return SynthesizedTask(
         id=task_id,
@@ -292,6 +344,7 @@ def _template_synthesize(
 
 
 # ── LLM 调用 helpers (跟 conjecture.py 同套) ────────────────────────
+
 
 def _is_mock(model: Any) -> bool:
     return hasattr(model, "_mock_name")
@@ -312,44 +365,35 @@ def _build_synth_prompt(domain: str, difficulty: str) -> list:
     from langchain_core.messages import HumanMessage, SystemMessage
 
     return [
-        SystemMessage(content=(
-            "You are a benchmark task synthesizer in the style of SCALECUA. "
-            "Generate a verifiable task with a judge function. "
-            "Output ONLY a JSON object with keys: "
-            "prompt (task description), "
-            "judge_script (Python source defining "
-            "`def judge(output: str) -> tuple[bool, str]`), "
-            "known_answer (string the judge should accept), "
-            "timeout_seconds (float, default 180). "
-            "judge_script may only import: "
-            "math, statistics, json, re, numpy, pandas, sympy, scipy. "
-            "No __import__, eval, exec, compile, getattr. "
-            "No markdown, no explanation."
-        )),
-        HumanMessage(content=(
-            f"Domain: {domain}\n"
-            f"Difficulty: {difficulty}\n"
-            f"Generate one verifiable task."
-        )),
+        SystemMessage(
+            content=(
+                "You are a benchmark task synthesizer in the style of SCALECUA. "
+                "Generate a verifiable task with a judge function. "
+                "Output ONLY a JSON object with keys: "
+                "prompt (task description), "
+                "judge_script (Python source defining "
+                "`def judge(output: str) -> tuple[bool, str]`), "
+                "known_answer (string the judge should accept), "
+                "timeout_seconds (float, default 180). "
+                "judge_script may only import: "
+                "math, statistics, json, re, numpy, pandas, sympy, scipy. "
+                "No __import__, eval, exec, compile, getattr. "
+                "No markdown, no explanation."
+            )
+        ),
+        HumanMessage(
+            content=(
+                f"Domain: {domain}\n"
+                f"Difficulty: {difficulty}\n"
+                f"Generate one verifiable task."
+            )
+        ),
     ]
 
 
 def _parse_json(text: str) -> dict[str, Any]:
-    if not text:
-        return {}
-    if "```" in text:
-        parts = text.split("```")
-        if len(parts) >= 2:
-            text = parts[1]
-            if text.startswith("json"):
-                text = text[4:]
-    try:
-        result = json.loads(text.strip())
-        if isinstance(result, dict):
-            return result
-    except (json.JSONDecodeError, TypeError):
-        logger.debug("best-effort op failed", exc_info=True)
-    return {}
+    """从 LLM 输出里抠 JSON 对象 (围栏/散文容忍统一由 text_to_json 负责)."""
+    return extract_json_object(text) or {}
 
 
 def _validate_synth_payload(p: dict[str, Any]) -> bool:
@@ -363,17 +407,9 @@ def _validate_synth_payload(p: dict[str, Any]) -> bool:
 
 # ── self-check ────────────────────────────────────────────────────
 
-def _self_check() -> int:
-    """assert-based demo: 验证 synthesize_task + sanity_check_judge + adapter."""
-    # 1. 模板合成
-    t = synthesize_task("materials-science", "easy")
-    assert t is not None
-    assert "def judge" in t.judge_script
-    assert t.known_answer == "60"
 
-    # 2. sanity_check 通过
-    assert sanity_check_judge(t.judge_script, t.known_answer) is True
-
+def _self_check_rejects_bad_judges() -> None:
+    """3-6: 错判分脚本与危险 import 必须被拒绝."""
     # 3. 错判分脚本被拒绝 (永远返回 True)
     bad_judge = "def judge(output):\n    return True, 'always'"
     assert sanity_check_judge(bad_judge, "anything") is False
@@ -388,11 +424,52 @@ def _self_check() -> int:
 
     # 6. 拒绝 getattr
     evil3 = (
-        "def judge(output):\n"
-        "    x = getattr(output, 'strip')()\n"
-        "    return True, 'ok'"
+        "def judge(output):\n    x = getattr(output, 'strip')()\n    return True, 'ok'"
     )
     assert sanity_check_judge(evil3, "ok") is False
+
+
+def _self_check_fallback() -> None:
+    """10: Adapter 全部合成失败时降级到 fallback."""
+    empty_adapter = SynthesizedBenchAdapter(
+        model=None,
+        fallback_tasks=[
+            BenchmarkTask(
+                id="fallback-1",
+                category="fallback",
+                prompt="hi",
+                evaluator=lambda out: (True, "ok"),
+            )
+        ],
+    )
+    # monkeypatch synthesize_task 让它返回 None.
+    # 用 sys.modules[__name__] 而非 import, 因为 python -m 模式下 __name__ 是
+    # __main__, 重新 import 会拿到另一个模块副本, monkeypatch 不生效.
+    import sys
+
+    mod = sys.modules[__name__]
+    orig = mod.synthesize_task
+    mod.synthesize_task = lambda *a, **k: None
+    try:
+        fb_tasks = empty_adapter.load_tasks(n=2)
+        assert len(fb_tasks) == 1, f"expected 1 fallback, got {len(fb_tasks)}"
+        assert fb_tasks[0].id == "fallback-1"
+    finally:
+        mod.synthesize_task = orig
+
+
+def _self_check() -> int:
+    """assert-based demo: 验证 synthesize_task + sanity_check_judge + adapter."""
+    # 1. 模板合成
+    t = synthesize_task("materials-science", "easy")
+    assert t is not None
+    assert "def judge" in t.judge_script
+    assert t.known_answer == "60"
+
+    # 2. sanity_check 通过
+    assert sanity_check_judge(t.judge_script, t.known_answer) is True
+
+    _self_check_rejects_bad_judges()
 
     # 7. 转 BenchmarkTask
     bt = to_benchmark_task(t)
@@ -417,27 +494,7 @@ def _self_check() -> int:
             f"sanity failed at {d}"
         )
 
-    # 10. Adapter 全部合成失败时降级到 fallback
-    empty_adapter = SynthesizedBenchAdapter(
-        model=None,
-        fallback_tasks=[BenchmarkTask(
-            id="fallback-1", category="fallback",
-            prompt="hi", evaluator=lambda out: (True, "ok"),
-        )],
-    )
-    # monkeypatch synthesize_task 让它返回 None.
-    # 用 sys.modules[__name__] 而非 import, 因为 python -m 模式下 __name__ 是
-    # __main__, 重新 import 会拿到另一个模块副本, monkeypatch 不生效.
-    import sys
-    mod = sys.modules[__name__]
-    orig = mod.synthesize_task
-    mod.synthesize_task = lambda *a, **k: None
-    try:
-        fb_tasks = empty_adapter.load_tasks(n=2)
-        assert len(fb_tasks) == 1, f"expected 1 fallback, got {len(fb_tasks)}"
-        assert fb_tasks[0].id == "fallback-1"
-    finally:
-        mod.synthesize_task = orig
+    _self_check_fallback()
 
     print("[SYNTH] self-check OK")
     return 0
@@ -445,4 +502,5 @@ def _self_check() -> int:
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(_self_check())

@@ -1,0 +1,142 @@
+{
+  "particle_sizes_nm": [
+    100.0,
+    500.0,
+    1000.0,
+    5000.0,
+    10000.0
+  ],
+  "temperatures_K": [
+    400.0,
+    450.0,
+    500.0,
+    550.0,
+    600.0,
+    650.0,
+    700.0
+  ],
+  "diffusion_coefficients_at_550K": [
+    2.2475781435865142e-12,
+    2.2475781435865142e-12,
+    2.2475781435865142e-12,
+    2.2475781435865142e-12,
+    2.2475781435865142e-12
+  ],
+  "fraction_released_at_550K": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+  ],
+  "sweep_results": {
+    "T400_r1e-07": {
+      "temperature_K": 400.0,
+      "radius_m": 1e-07,
+      "diffusion_coefficient_m2s": 7.221174672550325e-15,
+      "fraction_released_at_tmax": 1.0,
+      "hydrogen_released_g": 5.532889205698247e-16,
+      "time_to_50_percent_s": 0.042301323099736304,
+      "time_to_50_percent_min": 0.0007050220516622717
+    },
+    "T400_r1e-06": {
+      "temperature_K": 400.0,
+      "radius_m": 1e-06,
+      "diffusion_coefficient_m2s": 7.221174672550325e-15,
+      "fraction_released_at_tmax": 1.0,
+      "hydrogen_released_g": 5.532889205698248e-13,
+      "time_to_50_percent_s": 4.230132309935679,
+      "time_to_50_percent_min": 0.07050220516559465
+    },
+    "T400_r1e-05": {
+      "temperature_K": 400.0,
+      "radius_m": 1e-05,
+      "diffusion_coefficient_m2s": 7.221174672550325e-15,
+      "fraction_released_at_tmax": 0.9532673271210996,
+      "hydrogen_released_g": 5.274322504373152e-10,
+      "time_to_50_percent_s": 423.0132309935684,
+      "time_to_50_percent_min": 7.050220516559474
+    },
+    "T500_r1e-07": {
+      "temperature_K": 500.0,
+      "radius_m": 1e-07,
+      "diffusion_coefficient_m2s": 4.862798568686627e-13,
+      "fraction_released_at_tmax": 1.0,
+      "hydrogen_released_g": 5.532889205698247e-16,
+      "time_to_50_percent_s": 0.0006281675842918863,
+      "time_to_50_percent_min": 1.0469459738198104e-05
+    },
+    "T500_r1e-06": {
+      "temperature_K": 500.0,
+      "radius_m": 1e-06,
+      "diffusion_coefficient_m2s": 4.862798568686627e-13,
+      "fraction_released_at_tmax": 1.0,
+      "hydrogen_released_g": 5.532889205698248e-13,
+      "time_to_50_percent_s": 0.06281675842948707,
+      "time_to_50_percent_min": 0.0010469459738247846
+    },
+    "T500_r1e-05": {
+      "temperature_K": 500.0,
+      "radius_m": 1e-05,
+      "diffusion_coefficient_m2s": 4.862798568686627e-13,
+      "fraction_released_at_tmax": 1.0,
+      "hydrogen_released_g": 5.532889205698248e-10,
+      "time_to_50_percent_s": 6.281675842948707,
+      "time_to_50_percent_min": 0.10469459738247845
+    },
+    "T600_r1e-07": {
+      "temperature_K": 600.0,
+      "radius_m": 1e-07,
+      "diffusion_coefficient_m2s": 8.048937717238692e-12,
+      "fraction_released_at_tmax": 1.0,
+      "hydrogen_released_g": 5.532889205698247e-16,
+      "time_to_50_percent_s": 3.795100095328248e-05,
+      "time_to_50_percent_min": 6.32516682554708e-07
+    },
+    "T600_r1e-06": {
+      "temperature_K": 600.0,
+      "radius_m": 1e-06,
+      "diffusion_coefficient_m2s": 8.048937717238692e-12,
+      "fraction_released_at_tmax": 1.0,
+      "hydrogen_released_g": 5.532889205698248e-13,
+      "time_to_50_percent_s": 0.0037951000954510043,
+      "time_to_50_percent_min": 6.325166825751674e-05
+    },
+    "T600_r1e-05": {
+      "temperature_K": 600.0,
+      "radius_m": 1e-05,
+      "diffusion_coefficient_m2s": 8.048937717238692e-12,
+      "fraction_released_at_tmax": 1.0,
+      "hydrogen_released_g": 5.532889205698248e-10,
+      "time_to_50_percent_s": 0.37951000953352826,
+      "time_to_50_percent_min": 0.006325166825558805
+    },
+    "T700_r1e-07": {
+      "temperature_K": 700.0,
+      "radius_m": 1e-07,
+      "diffusion_coefficient_m2s": 5.97512978529413e-11,
+      "fraction_released_at_tmax": 1.0,
+      "hydrogen_released_g": 5.532889205698247e-16,
+      "time_to_50_percent_s": 5.112277959078289e-06,
+      "time_to_50_percent_min": 8.520463265130481e-08
+    },
+    "T700_r1e-06": {
+      "temperature_K": 700.0,
+      "radius_m": 1e-06,
+      "diffusion_coefficient_m2s": 5.97512978529413e-11,
+      "fraction_released_at_tmax": 1.0,
+      "hydrogen_released_g": 5.532889205698248e-13,
+      "time_to_50_percent_s": 0.0005112277958085637,
+      "time_to_50_percent_min": 8.520463263476062e-06
+    },
+    "T700_r1e-05": {
+      "temperature_K": 700.0,
+      "radius_m": 1e-05,
+      "diffusion_coefficient_m2s": 5.97512978529413e-11,
+      "fraction_released_at_tmax": 1.0,
+      "hydrogen_released_g": 5.532889205698248e-10,
+      "time_to_50_percent_s": 0.051122779580831015,
+      "time_to_50_percent_min": 0.0008520463263471836
+    }
+  }
+}

@@ -209,6 +209,73 @@ class PhysicalWorkspace:
             raise ConstraintViolationError(action, issues)
         return self.world_model.predict(self.state, action)
 
+    def _check_spec_preconditions(
+        self, spec: ActionSpec | None, expected: dict[str, Any] | None
+    ) -> None:
+        """spec 前置依赖校验; ``expected`` 与 ``spec`` 互斥."""
+        if spec is not None:
+            for dep in spec.preconditions:
+                if not self.is_available(dep):
+                    raise DependencyNotMetError(spec.id, dep)
+            if expected is not None:
+                raise ValueError("expected 与 spec 互斥, 二者只能传其一")
+
+    def _preflight_expected(
+        self,
+        action: PhysicalAction,
+        expected: dict[str, Any] | None,
+        spec: ActionSpec | None,
+    ) -> dict[str, Any] | None:
+        """用当前状态预演: 先约束校验, 再取前向预测 (供 expected 对比)."""
+        predicted = self.preflight(action)
+        if (expected is None and spec is None) or (
+            spec is not None and not spec.expect
+        ):
+            expected = predicted
+            # 感知确认须与观测同一视角 (microduck: 编码器读穿输出侧). 预演得到
+            # 的是"理想世界状态", 先投影到执行器读数视角再对比 observe(), 否则
+            # 一个"偏置但正确"的动作会被误判失败. 真实 adapter 用 sensor_view
+            # 建模传感器系统偏置/位姿噪声; 无偏置执行器走恒等, 行为不变.
+            sensor_view = getattr(self.executor, "sensor_view", None)
+            if sensor_view is not None:
+                expected = sensor_view(expected, action.type)
+        return expected
+
+    def _verify_state(
+        self,
+        action: PhysicalAction,
+        spec: ActionSpec | None,
+        expected: dict[str, Any] | None,
+        tolerance: float,
+    ) -> None:
+        """状态级感知确认: spec.expect 优先, 否则按 expected 统一容差对比."""
+        if (
+            spec is not None
+            and spec.expect
+            and not matches_state(spec.expect, self.state)
+        ):
+            raise WorkspaceConfirmError(
+                f"感知确认失败: 状态偏离预期 (规格 {spec.id}, 动作 {action.type})"
+            )
+        elif expected is not None and not matches_state(
+            expected, self.state, tolerance
+        ):
+            raise WorkspaceConfirmError(
+                f"感知确认失败: 状态偏离预期 (动作 {action.type})"
+            )
+
+    def _record_world_step(
+        self, state_before: dict[str, Any], action: PhysicalAction
+    ) -> None:
+        """世界表征回流 (advisory): 记录本轮状态快照 + 前向预测误差."""
+        # 失败静默吞掉, 不阻塞实验执行.
+        if self._world_state is not None:
+            try:
+                self._world_state.step(state_before, action)
+                self._world_state.observe(self.state)
+            except Exception:
+                logger.debug("world-state step failed", exc_info=True)
+
     def execute(
         self,
         action: PhysicalAction,
@@ -236,51 +303,33 @@ class PhysicalWorkspace:
         """
         state_before = dict(self.state)
 
-        if spec is not None:
-            for dep in spec.preconditions:
-                if not self.is_available(dep):
-                    raise DependencyNotMetError(spec.id, dep)
-            if expected is not None:
-                raise ValueError("expected 与 spec 互斥, 二者只能传其一")
+        PhysicalWorkspace._check_spec_preconditions(self, spec, expected)
 
         if preflight:
-            # 用当前状态预演: 先约束校验, 再取前向预测 (供 expected 对比).
-            predicted = self.preflight(action)
-            if (
-                expected is None
-                and spec is None
-                or spec is not None
-                and not spec.expect
-            ):
-                expected = predicted
-                # 感知确认须与观测同一视角 (microduck: 编码器读穿输出侧). 预演得到
-                # 的是"理想世界状态", 先投影到执行器读数视角再对比 observe(), 否则
-                # 一个"偏置但正确"的动作会被误判失败. 真实 adapter 用 sensor_view
-                # 建模传感器系统偏置/位姿噪声; 无偏置执行器走恒等, 行为不变.
-                sensor_view = getattr(self.executor, "sensor_view", None)
-                if sensor_view is not None:
-                    expected = sensor_view(expected, action.type)
+            expected = PhysicalWorkspace._preflight_expected(
+                self, action, expected, spec
+            )
 
         inverse = self.world_model.infer_inverse(state_before, action)
 
         self.executor.execute(action)
         self.state = dict(self.executor.observe())
 
-        if (
-            spec is not None
-            and spec.expect
-            and not matches_state(spec.expect, self.state)
-        ):
-            raise WorkspaceConfirmError(
-                f"感知确认失败: 状态偏离预期 (规格 {spec.id}, 动作 {action.type})"
-            )
-        elif expected is not None and not matches_state(
-            expected, self.state, tolerance
-        ):
-            raise WorkspaceConfirmError(
-                f"感知确认失败: 状态偏离预期 (动作 {action.type})"
-            )
+        PhysicalWorkspace._verify_state(self, action, spec, expected, tolerance)
 
+        PhysicalWorkspace._commit_effects(
+            self, state_before, action, inverse, confirm_key
+        )
+        return action
+
+    def _commit_effects(
+        self,
+        state_before: dict[str, Any],
+        action: PhysicalAction,
+        inverse: Any,
+        confirm_key: str | None,
+    ) -> None:
+        """登记逆 → 按 key 确认 → 世界表征回流."""
         if inverse is not None:
             # state_before 是动作执行前的状态, inverse 是"回到执行前"所需的逆动作.
             self.revertible.track_world_action(
@@ -293,15 +342,7 @@ class PhysicalWorkspace:
                 raise WorkspaceConfirmError(
                     f"感知确认失败: {confirm_key} (动作 {action.type})"
                 )
-        # 世界表征回流 (advisory): 记录本轮状态快照 + 前向预测误差, 供奖励/记忆消费.
-        # 失败静默吞掉, 不阻塞实验执行.
-        if self._world_state is not None:
-            try:
-                self._world_state.step(state_before, action)
-                self._world_state.observe(self.state)
-            except Exception:
-                logger.debug("world-state step failed", exc_info=True)
-        return action
+        PhysicalWorkspace._record_world_step(self, state_before, action)
 
     def last_world_snapshot(self):
         """最近一轮的世界状态快照 (含 predicted), 无跟踪器时返回 None."""

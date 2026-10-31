@@ -186,14 +186,14 @@ _BIDI_CPS: frozenset[int] = frozenset(
 )
 
 # Zero-width family (common edit-based carriers)
-_ZW_FAMILY: frozenset[int] = frozenset(
-    {0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x180E}
-)
+_ZW_FAMILY: frozenset[int] = frozenset({0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x180E})
 
 
 def _is_private_use(cp: int) -> bool:
     """BMP and supplementary private-use planes (Co: no portable meaning)."""
-    return 0xE000 <= cp <= 0xF8FF or 0xF0000 <= cp <= 0xFFFFD or 0x100000 <= cp <= 0x10FFFD
+    return (
+        0xE000 <= cp <= 0xF8FF or 0xF0000 <= cp <= 0xFFFFD or 0x100000 <= cp <= 0x10FFFD
+    )
 
 
 def _is_strip_cp(cp: int) -> bool:
@@ -257,7 +257,19 @@ def _is_emoji_base(cp: int) -> bool:
 _SCRIPT_JOINERS: frozenset[int] = frozenset({0x200C, 0x200D})
 _TAG_RANGE = range(0xE0020, 0xE0080)
 _ORTHOGRAPHIC_CF: frozenset[int] = frozenset(
-    {0x0600, 0x0601, 0x0602, 0x0603, 0x0604, 0x0605, 0x06DD, 0x070F, 0x08E2, 0x110BD, 0x110CD}
+    {
+        0x0600,
+        0x0601,
+        0x0602,
+        0x0603,
+        0x0604,
+        0x0605,
+        0x06DD,
+        0x070F,
+        0x08E2,
+        0x110BD,
+        0x110CD,
+    }
 )
 _MONGOLIAN_FVS: frozenset[int] = frozenset({0x180B, 0x180C, 0x180D})
 _KHMER_VOWELS: frozenset[int] = frozenset({0x17B4, 0x17B5})
@@ -312,26 +324,8 @@ def _decide(
     kind is the inspect classification (None when not suspicious).
     """
     cp = ord(ch)
-    if (
-        _is_emoji_glue(cp)
-        and not strip_emoji_glue
-        and prev_kept is not None
-        and _is_emoji_base(ord(prev_kept))
-    ):
+    if _is_kept_invisible(cp, prev_kept, strip_emoji_glue):
         return ("keep", ch, None)
-    if not strip_emoji_glue:
-        if cp in _SCRIPT_JOINERS and prev_kept is not None and _is_joining_letter(ord(prev_kept)):
-            return ("keep", ch, None)
-        if cp in _TAG_RANGE and prev_kept is not None and _is_emoji_base(ord(prev_kept)):
-            return ("keep", ch, None)
-        if cp in _MONGOLIAN_FVS and prev_kept is not None and _is_mongolian_letter(ord(prev_kept)):
-            return ("keep", ch, None)
-        if cp in _KHMER_VOWELS and prev_kept is not None and _is_khmer_letter(ord(prev_kept)):
-            return ("keep", ch, None)
-        if cp in _HANGUL_FILLERS and prev_kept is not None and _is_hangul_jamo(ord(prev_kept)):
-            return ("keep", ch, None)
-        if cp in _ORTHOGRAPHIC_CF:
-            return ("keep", ch, None)
     if _is_strip_cp(cp):
         return ("strip", "", _strip_kind(cp))
     if normalize_spaces and cp in SPACE_HOMOGLYPHS:
@@ -341,6 +335,50 @@ def _decide(
     if unicodedata.category(ch) == "Cf" and cp not in SPACE_HOMOGLYPHS:
         return ("strip", "", "other_cf")
     return ("keep", ch, None)
+
+
+def _is_kept_invisible(cp: int, prev_kept: str | None, strip_emoji_glue: bool) -> bool:
+    if (
+        _is_emoji_glue(cp)
+        and not strip_emoji_glue
+        and prev_kept is not None
+        and _is_emoji_base(ord(prev_kept))
+    ):
+        return True
+    if not strip_emoji_glue:
+        if (
+            cp in _SCRIPT_JOINERS
+            and prev_kept is not None
+            and _is_joining_letter(ord(prev_kept))
+        ):
+            return True
+        if (
+            cp in _TAG_RANGE
+            and prev_kept is not None
+            and _is_emoji_base(ord(prev_kept))
+        ):
+            return True
+        if (
+            cp in _MONGOLIAN_FVS
+            and prev_kept is not None
+            and _is_mongolian_letter(ord(prev_kept))
+        ):
+            return True
+        if (
+            cp in _KHMER_VOWELS
+            and prev_kept is not None
+            and _is_khmer_letter(ord(prev_kept))
+        ):
+            return True
+        if (
+            cp in _HANGUL_FILLERS
+            and prev_kept is not None
+            and _is_hangul_jamo(ord(prev_kept))
+        ):
+            return True
+        if cp in _ORTHOGRAPHIC_CF:
+            return True
+    return False
 
 
 def _char_label(ch: str) -> str:
@@ -397,6 +435,33 @@ def inspect_text(
     aggressive: bool = False,
     strip_emoji_glue: bool = False,
 ) -> TextInspectReport:
+    buckets = _collect_inspect_buckets(
+        text, aggressive=aggressive, strip_emoji_glue=strip_emoji_glue
+    )
+    hits, total = _build_inspect_hits(buckets)
+
+    notes = [
+        "Layer A only: invisible/format Unicode and space homoglyphs (edit-based carriers).",
+        "Statistical (token-sampling) watermarks are not detectable here; use Layer B rewrite.",
+        "Inspect kinds: strip, bidi, tag_chars, variation_selector, zwj_family, private_use, space, confusable, other_cf.",
+        "Load-bearing invisibles are preserved by default: emoji glue (ZWJ/VS after an emoji base), script joiners (ZWNJ/ZWJ inside complex scripts), flag tag chars, same-script fillers/selectors (Mongolian FVS, Khmer inherent vowels, Hangul jamo fillers), and orthographic Arabic/Syriac Cf marks. Use --strip-emoji-glue for paranoid mode (strips them all).",
+    ]
+    if not hits:
+        notes.append(
+            "No deterministic Layer A (invisible Unicode/format) carriers detected; "
+            "statistical and pixel-domain marks are out of scope here."
+        )
+    return TextInspectReport(
+        length=len(text), suspicious_total=total, hits=hits, notes=notes
+    )
+
+
+def _collect_inspect_buckets(
+    text: str,
+    *,
+    aggressive: bool,
+    strip_emoji_glue: bool,
+) -> dict[tuple[int, str], list[int]]:
     buckets: dict[tuple[int, str], list[int]] = {}
     prev_kept: str | None = None
     for i, ch in enumerate(text):
@@ -418,10 +483,17 @@ def inspect_text(
         if action == "replace":
             prev_kept = out_char
         # strip: prev_kept unchanged
+    return buckets
 
+
+def _build_inspect_hits(
+    buckets: dict[tuple[int, str], list[int]],
+) -> tuple[list[CharHit], int]:
     hits: list[CharHit] = []
     total = 0
-    for (cp, kind), offsets in sorted(buckets.items(), key=lambda x: (-len(x[1]), x[0][0])):
+    for (cp, kind), offsets in sorted(
+        buckets.items(), key=lambda x: (-len(x[1]), x[0][0])
+    ):
         ch = chr(cp)
         hits.append(
             CharHit(
@@ -434,19 +506,7 @@ def inspect_text(
             )
         )
         total += len(offsets)
-
-    notes = [
-        "Layer A only: invisible/format Unicode and space homoglyphs (edit-based carriers).",
-        "Statistical (token-sampling) watermarks are not detectable here; use Layer B rewrite.",
-        "Inspect kinds: strip, bidi, tag_chars, variation_selector, zwj_family, private_use, space, confusable, other_cf.",
-        "Load-bearing invisibles are preserved by default: emoji glue (ZWJ/VS after an emoji base), script joiners (ZWNJ/ZWJ inside complex scripts), flag tag chars, same-script fillers/selectors (Mongolian FVS, Khmer inherent vowels, Hangul jamo fillers), and orthographic Arabic/Syriac Cf marks. Use --strip-emoji-glue for paranoid mode (strips them all).",
-    ]
-    if not hits:
-        notes.append(
-            "No deterministic Layer A (invisible Unicode/format) carriers detected; "
-            "statistical and pixel-domain marks are out of scope here."
-        )
-    return TextInspectReport(length=len(text), suspicious_total=total, hits=hits, notes=notes)
+    return hits, total
 
 
 def clean_text(
@@ -458,6 +518,40 @@ def clean_text(
     strip_emoji_glue: bool = False,
 ) -> tuple[str, dict]:
     """Return cleaned text and a stats dict."""
+    removed, replaced, out_chars = _apply_clean_pass(
+        text,
+        normalize_spaces=normalize_spaces,
+        aggressive_homoglyphs=aggressive_homoglyphs,
+        strip_emoji_glue=strip_emoji_glue,
+    )
+
+    result = "".join(out_chars)
+    if nfkc:
+        before = result
+        result = unicodedata.normalize("NFKC", result)
+        if result != before:
+            replaced["NFKC_normalize"] += abs(len(before) - len(result)) or 1
+
+    # Collapse runs of spaces only if we introduced space replacements? Keep conservative: no.
+
+    stats = {
+        "input_length": len(text),
+        "output_length": len(result),
+        "removed": dict(removed),
+        "replaced": dict(replaced),
+        "removed_count": sum(removed.values()),
+        "replaced_count": sum(v for k, v in replaced.items() if k != "NFKC_normalize"),
+    }
+    return result, stats
+
+
+def _apply_clean_pass(
+    text: str,
+    *,
+    normalize_spaces: bool,
+    aggressive_homoglyphs: bool,
+    strip_emoji_glue: bool,
+) -> tuple[Counter[str], Counter[str], list[str]]:
     removed: Counter[str] = Counter()
     replaced: Counter[str] = Counter()
     out_chars: list[str] = []
@@ -484,25 +578,7 @@ def clean_text(
         else:  # strip
             removed[_char_label(ch)] += 1
             # prev_kept unchanged
-
-    result = "".join(out_chars)
-    if nfkc:
-        before = result
-        result = unicodedata.normalize("NFKC", result)
-        if result != before:
-            replaced["NFKC_normalize"] += abs(len(before) - len(result)) or 1
-
-    # Collapse runs of spaces only if we introduced space replacements? Keep conservative: no.
-
-    stats = {
-        "input_length": len(text),
-        "output_length": len(result),
-        "removed": dict(removed),
-        "replaced": dict(replaced),
-        "removed_count": sum(removed.values()),
-        "replaced_count": sum(v for k, v in replaced.items() if k != "NFKC_normalize"),
-    }
-    return result, stats
+    return removed, replaced, out_chars
 
 
 def human_report(report: TextInspectReport) -> str:

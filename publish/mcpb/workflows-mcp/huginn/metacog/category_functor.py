@@ -30,12 +30,14 @@ ponytail: 单文件, stdlib + 现有 LLM client. 不引 category theory 库
 # 架构状态: 已接入主循环 — hypothesis_loop P7 (get_category) 在源/目标域命中已知
 # category 时附加跨域 functor 保结构提示. advisory: 只影响 prompt note, 不改变 hint.
 """
+
 from __future__ import annotations
 
 # 直接跑脚本时把 agent/ 加到 sys.path (被 import 时不执行, rcb_runner 已设好)
 if __name__ == "__main__":
     import sys as _sys
     from pathlib import Path as _Path
+
     _agent_root = str(_Path(__file__).resolve().parents[2])
     if _agent_root not in _sys.path:
         _sys.path.insert(0, _agent_root)
@@ -61,6 +63,7 @@ class Morphism:
       表示 crystal→spin→band (defined by ∘ splits) == crystal→band (induces).
       ponytail: 不上 Morphism 对象引用, 用 relation 字符串避免循环引用.
     """
+
     src: str
     dst: str
     relation: str
@@ -82,10 +85,13 @@ class Category:
       e.g. (["defined by", "splits"], ["induces"])
       表示 "crystal→spin→band (走 defined by 然后 splits) == crystal→band (走 induces)"
     """
+
     name: str
     objects: list[str]
     morphisms: list[Morphism]
-    commutative_diagrams: list[tuple[list[str], list[str]]] = field(default_factory=list)
+    commutative_diagrams: list[tuple[list[str], list[str]]] = field(
+        default_factory=list
+    )
 
     def morphism_by_relation(self, rel: str) -> Morphism | None:
         for m in self.morphisms:
@@ -108,6 +114,7 @@ class Functor:
     morphism_map: "src→dst" (source) -> "src→dst" (target)
     reason: LLM 给的迁移理由 (人类可读)
     """
+
     source: str
     target: str
     object_map: dict[str, str]
@@ -118,6 +125,7 @@ class Functor:
 @dataclass
 class VerifyResult:
     """Functor 验证结果."""
+
     is_valid: bool
     violations: list[str]
     reason: str
@@ -131,6 +139,7 @@ class Hypothesis:
       e.g. ["crystal→spin", "spin→band"] 表示 hypothesis 涉及 crystal→spin→band 这条 path.
       空列表表示纯文本 hypothesis, 不带 structure.
     """
+
     statement: str
     domain: str
     morphism_chain: list[str] = field(default_factory=list)
@@ -249,23 +258,33 @@ def get_category(name: str) -> Category | None:
 
 _KNOWN_FUNCTORS: dict[tuple[str, str], Functor] = {
     ("altermagnetism", "phonon"): Functor(
-        source="altermagnetism", target="phonon",
-        object_map={"crystal": "lattice", "spin": "atom",
-                    "band": "force_constant", "symmetry": "dispersion"},
+        source="altermagnetism",
+        target="phonon",
+        object_map={
+            "crystal": "lattice",
+            "spin": "atom",
+            "band": "force_constant",
+            "symmetry": "dispersion",
+        },
         morphism_map={
-            "crystal→spin": "lattice→atom",      # defined by -> contains
+            "crystal→spin": "lattice→atom",  # defined by -> contains
             "spin→band": "atom→force_constant",  # splits -> defined by
             "band→symmetry": "force_constant→dispersion",  # constrained by -> determines
-            "crystal→band": "lattice→force_constant",     # induces -> induces
-            "spin→symmetry": "atom→dispersion",            # governs -> yields
+            "crystal→band": "lattice→force_constant",  # induces -> induces
+            "spin→symmetry": "atom→dispersion",  # governs -> yields
         },
         reason="crystal~lattice (骨架), spin~atom (基本自由度), "
-               "band~force_constant (导出量), symmetry~dispersion (可观测量)",
+        "band~force_constant (导出量), symmetry~dispersion (可观测量)",
     ),
     ("altermagnetism", "catalysis"): Functor(
-        source="altermagnetism", target="catalysis",
-        object_map={"crystal": "surface", "spin": "adsorbate",
-                    "band": "active_site", "symmetry": "energy"},
+        source="altermagnetism",
+        target="catalysis",
+        object_map={
+            "crystal": "surface",
+            "spin": "adsorbate",
+            "band": "active_site",
+            "symmetry": "energy",
+        },
         morphism_map={
             "crystal→spin": "surface→adsorbate",
             "spin→band": "adsorbate→active_site",
@@ -274,12 +293,17 @@ _KNOWN_FUNCTORS: dict[tuple[str, str], Functor] = {
             "spin→symmetry": "adsorbate→energy",
         },
         reason="crystal~surface (载体), spin~adsorbate (基本单元), "
-               "band~active_site (导出位), symmetry~energy (终态可观测量)",
+        "band~active_site (导出位), symmetry~energy (终态可观测量)",
     ),
     ("phonon", "altermagnetism"): Functor(
-        source="phonon", target="altermagnetism",
-        object_map={"lattice": "crystal", "atom": "spin",
-                    "force_constant": "band", "dispersion": "symmetry"},
+        source="phonon",
+        target="altermagnetism",
+        object_map={
+            "lattice": "crystal",
+            "atom": "spin",
+            "force_constant": "band",
+            "dispersion": "symmetry",
+        },
         morphism_map={
             "lattice→atom": "crystal→spin",
             "atom→force_constant": "spin→band",
@@ -290,9 +314,14 @@ _KNOWN_FUNCTORS: dict[tuple[str, str], Functor] = {
         reason="altermagnetism→phonon functor 的逆",
     ),
     ("phonon", "catalysis"): Functor(
-        source="phonon", target="catalysis",
-        object_map={"lattice": "surface", "atom": "adsorbate",
-                    "force_constant": "active_site", "dispersion": "energy"},
+        source="phonon",
+        target="catalysis",
+        object_map={
+            "lattice": "surface",
+            "atom": "adsorbate",
+            "force_constant": "active_site",
+            "dispersion": "energy",
+        },
         morphism_map={
             "lattice→atom": "surface→adsorbate",
             "atom→force_constant": "adsorbate→active_site",
@@ -331,7 +360,9 @@ def propose_functor(
             return _llm_propose(source_cat, target_cat, model)
         except Exception:
             # LLM 失败 -> 降级到已知 functor 表
-            logger.debug("LLM functor proposal failed, degrading to known table", exc_info=True)
+            logger.debug(
+                "LLM functor proposal failed, degrading to known table", exc_info=True
+            )
 
     # 已知 functor 降级路径
     key = (source_cat.name, target_cat.name)
@@ -401,25 +432,11 @@ def _render_category(cat: Category) -> str:
 # ── verify functor ──────────────────────────────────────────────────────
 
 
-def verify_functor(
-    functor: Functor,
-    source_cat: Category,
-    target_cat: Category,
-) -> VerifyResult:
-    """检查 functor 是否保 structure.
-
-    四层检查:
-      1. object_map 完整 (每个 source object 都映射)
-      2. morphism_map 完整 (每个 source morphism 都映射)
-      3. morphism_map 合法: F(f: A→B) = F(f): F(A)→F(B), 且 F(f) 是 target 里的真 morphism
-      4. commutative diagram 保持: source 有 path_a == path_b 则 target 也要 F(path_a) == F(path_b)
-         (target 必须也有对应的 commutative_diagram entry)
-
-    Returns: VerifyResult. is_valid=True 当且仅当四层都过.
-    """
+def _check_object_map(
+    functor: Functor, source_cat: Category, target_cat: Category
+) -> list[str]:
+    """1. object_map 完整."""
     violations: list[str] = []
-
-    # 1. object_map 完整
     for obj in source_cat.objects:
         if obj not in functor.object_map:
             violations.append(f"object_map missing source object: {obj}")
@@ -427,13 +444,23 @@ def verify_functor(
             violations.append(
                 f"object_map[{obj}]={functor.object_map[obj]} not in target objects"
             )
+    return violations
 
-    # 2. morphism_map 完整
+
+def _check_morphism_map_complete(functor: Functor, source_cat: Category) -> list[str]:
+    """2. morphism_map 完整."""
+    violations: list[str] = []
     for m in source_cat.morphisms:
         if m.key not in functor.morphism_map:
             violations.append(f"morphism_map missing source morphism: {m.key}")
+    return violations
 
-    # 3. morphism_map 合法: F(f: A→B) 是 target 里的 F(A)→F(B) morphism
+
+def _check_morphism_map_valid(
+    functor: Functor, source_cat: Category, target_cat: Category
+) -> list[str]:
+    """3. morphism_map 合法: F(f: A→B) 是 target 里的 F(A)→F(B) morphism."""
+    violations: list[str] = []
     for m in source_cat.morphisms:
         if m.key not in functor.morphism_map:
             continue
@@ -454,21 +481,58 @@ def verify_functor(
             continue
         # target 里要真有这条 morphism
         if target_cat.morphism_by_endpoints(tgt_src, tgt_dst) is None:
-            violations.append(
-                f"F({m.key})={tgt_key} not in target morphisms"
-            )
+            violations.append(f"F({m.key})={tgt_key} not in target morphisms")
+    return violations
 
-    # 4. commutative diagram 保持
+
+def _check_diagrams_preserved(
+    functor: Functor, source_cat: Category, target_cat: Category
+) -> list[str]:
+    """4. commutative diagram 保持."""
+    violations: list[str] = []
     for path_a, path_b in source_cat.commutative_diagrams:
         diag_violation = _check_diagram_preserved(
             functor, source_cat, target_cat, path_a, path_b
         )
         if diag_violation:
             violations.append(diag_violation)
+    return violations
+
+
+def verify_functor(
+    functor: Functor,
+    source_cat: Category,
+    target_cat: Category,
+) -> VerifyResult:
+    """检查 functor 是否保 structure.
+
+    四层检查:
+      1. object_map 完整 (每个 source object 都映射)
+      2. morphism_map 完整 (每个 source morphism 都映射)
+      3. morphism_map 合法: F(f: A→B) = F(f): F(A)→F(B), 且 F(f) 是 target 里的真 morphism
+      4. commutative diagram 保持: source 有 path_a == path_b 则 target 也要 F(path_a) == F(path_b)
+         (target 必须也有对应的 commutative_diagram entry)
+
+    Returns: VerifyResult. is_valid=True 当且仅当四层都过.
+    """
+    violations: list[str] = []
+
+    # 1. object_map 完整
+    violations.extend(_check_object_map(functor, source_cat, target_cat))
+
+    # 2. morphism_map 完整
+    violations.extend(_check_morphism_map_complete(functor, source_cat))
+
+    # 3. morphism_map 合法: F(f: A→B) 是 target 里的 F(A)→F(B) morphism
+    violations.extend(_check_morphism_map_valid(functor, source_cat, target_cat))
+
+    # 4. commutative diagram 保持
+    violations.extend(_check_diagrams_preserved(functor, source_cat, target_cat))
 
     if violations:
         return VerifyResult(
-            is_valid=False, violations=violations,
+            is_valid=False,
+            violations=violations,
             reason=f"{len(violations)} violation(s)",
         )
     return VerifyResult(is_valid=True, violations=[], reason="all checks passed")
@@ -489,20 +553,47 @@ def _check_diagram_preserved(
     Returns: None 表示保持, 否则返回 violation 描述.
     """
     # 取 source path 对应的 morphism 列表 (按 relation 找)
-    src_morphs_a: list[Morphism] = []
-    for rel in path_a:
-        m = source_cat.morphism_by_relation(rel)
-        if m is None:
-            return f"diagram references unknown relation: {rel}"
-        src_morphs_a.append(m)
-    src_morphs_b: list[Morphism] = []
-    for rel in path_b:
-        m = source_cat.morphism_by_relation(rel)
-        if m is None:
-            return f"diagram references unknown relation: {rel}"
-        src_morphs_b.append(m)
+    src_morphs_a, err = _resolve_source_path(source_cat, path_a)
+    if err is not None:
+        return err
+    src_morphs_b, err = _resolve_source_path(source_cat, path_b)
+    if err is not None:
+        return err
 
     # source path 是不是 valid chain (m_i.dst == m_{i+1}.src)
+    err = _source_paths_valid(src_morphs_a, src_morphs_b, path_a, path_b)
+    if err is not None:
+        return err
+
+    # 映射到 target: 取 target morphism 的 relation 列表
+    tgt_rels_a, err = _map_path_to_target(functor, target_cat, src_morphs_a, "path_a")
+    if err is not None:
+        return err
+    tgt_rels_b, err = _map_path_to_target(functor, target_cat, src_morphs_b, "path_b")
+    if err is not None:
+        return err
+
+    # target 里要有对应的 commutative_diagram (双向都可)
+    target_diagrams = [(list(a), list(b)) for a, b in target_cat.commutative_diagrams]
+    if (tgt_rels_a, tgt_rels_b) not in target_diagrams and (
+        tgt_rels_b,
+        tgt_rels_a,
+    ) not in target_diagrams:
+        return (
+            f"commutative diagram not preserved: source ({path_a})=({path_b}) -> "
+            f"target ({tgt_rels_a})=({tgt_rels_b}) not in target diagrams"
+        )
+
+    return None
+
+
+def _source_paths_valid(
+    src_morphs_a: list[Morphism],
+    src_morphs_b: list[Morphism],
+    path_a: list[str],
+    path_b: list[str],
+) -> str | None:
+    """source 两条 path 是否各自成链, 且 endpoints 一致."""
     for i in range(len(src_morphs_a) - 1):
         if src_morphs_a[i].dst != src_morphs_a[i + 1].src:
             return f"source path_a not a chain: {path_a}"
@@ -511,43 +602,45 @@ def _check_diagram_preserved(
             return f"source path_b not a chain: {path_b}"
 
     # source 两条 path endpoints 必须一致
-    if src_morphs_a[0].src != src_morphs_b[0].src or \
-       src_morphs_a[-1].dst != src_morphs_b[-1].dst:
+    if (
+        src_morphs_a[0].src != src_morphs_b[0].src
+        or src_morphs_a[-1].dst != src_morphs_b[-1].dst
+    ):
         return f"source diagram endpoints mismatch: {path_a} vs {path_b}"
-
-    # 映射到 target: 取 target morphism 的 relation 列表
-    tgt_rels_a: list[str] = []
-    for m in src_morphs_a:
-        if m.key not in functor.morphism_map:
-            return f"morphism_map missing {m.key} (in path_a)"
-        tgt_key = functor.morphism_map[m.key]
-        tgt_src, tgt_dst = tgt_key.split("→", 1)
-        tgt_m = target_cat.morphism_by_endpoints(tgt_src, tgt_dst)
-        if tgt_m is None:
-            return f"F({m.key})={tgt_key} not in target (path_a)"
-        tgt_rels_a.append(tgt_m.relation)
-
-    tgt_rels_b: list[str] = []
-    for m in src_morphs_b:
-        if m.key not in functor.morphism_map:
-            return f"morphism_map missing {m.key} (in path_b)"
-        tgt_key = functor.morphism_map[m.key]
-        tgt_src, tgt_dst = tgt_key.split("→", 1)
-        tgt_m = target_cat.morphism_by_endpoints(tgt_src, tgt_dst)
-        if tgt_m is None:
-            return f"F({m.key})={tgt_key} not in target (path_b)"
-        tgt_rels_b.append(tgt_m.relation)
-
-    # target 里要有对应的 commutative_diagram (双向都可)
-    target_diagrams = [(list(a), list(b)) for a, b in target_cat.commutative_diagrams]
-    if (tgt_rels_a, tgt_rels_b) not in target_diagrams and \
-       (tgt_rels_b, tgt_rels_a) not in target_diagrams:
-        return (
-            f"commutative diagram not preserved: source ({path_a})=({path_b}) -> "
-            f"target ({tgt_rels_a})=({tgt_rels_b}) not in target diagrams"
-        )
-
     return None
+
+
+def _resolve_source_path(
+    source_cat: Category, path: list[str]
+) -> tuple[list[Morphism] | None, str | None]:
+    """把 relation 列表解析成 source category 里的 morphism 列表."""
+    morphs: list[Morphism] = []
+    for rel in path:
+        m = source_cat.morphism_by_relation(rel)
+        if m is None:
+            return None, f"diagram references unknown relation: {rel}"
+        morphs.append(m)
+    return morphs, None
+
+
+def _map_path_to_target(
+    functor: Functor,
+    target_cat: Category,
+    src_morphs: list[Morphism],
+    label: str,
+) -> tuple[list[str] | None, str | None]:
+    """把 source morphism 列表映射成 target 里的 relation 列表."""
+    tgt_rels: list[str] = []
+    for m in src_morphs:
+        if m.key not in functor.morphism_map:
+            return None, f"morphism_map missing {m.key} (in {label})"
+        tgt_key = functor.morphism_map[m.key]
+        tgt_src, tgt_dst = tgt_key.split("→", 1)
+        tgt_m = target_cat.morphism_by_endpoints(tgt_src, tgt_dst)
+        if tgt_m is None:
+            return None, f"F({m.key})={tgt_key} not in target ({label})"
+        tgt_rels.append(tgt_m.relation)
+    return tgt_rels, None
 
 
 # ── hypothesis transfer ─────────────────────────────────────────────────
@@ -586,7 +679,9 @@ def transfer_hypothesis(
     for src_key, tgt_key in zip(source_hypothesis.morphism_chain, target_chain):
         # 同时替 object 名 (单独出现时也替)
         src_obj_a, src_obj_b = src_key.split("→", 1)
-        tgt_obj_a, tgt_obj_b = tgt_key.split("→", 1) if "→" in tgt_key else (tgt_key, "")
+        tgt_obj_a, tgt_obj_b = (
+            tgt_key.split("→", 1) if "→" in tgt_key else (tgt_key, "")
+        )
         target_statement = target_statement.replace(src_obj_a, tgt_obj_a)
         if src_obj_b:
             target_statement = target_statement.replace(src_obj_b, tgt_obj_b)
@@ -640,27 +735,30 @@ def keyword_transfer_hypothesis(
 # 这样的"语义对但结构错"的映射 — 这是 keyword 跟 functor 的本质差别.
 _KEYWORD_MAPS: dict[tuple[str, str], dict[str, str]] = {
     ("altermagnetism", "phonon"): {
-        "crystal": "lattice",     # 对 (结构骨架)
-        "spin": "atom",           # 对 (基本自由度)
-        "band": "dispersion",     # 错: band 应映 force_constant (导出量),
-                                  # 但 keyword 看到都是 "spectral" 就映 dispersion
+        "crystal": "lattice",  # 对 (结构骨架)
+        "spin": "atom",  # 对 (基本自由度)
+        "band": "dispersion",  # 错: band 应映 force_constant (导出量),
+        # 但 keyword 看到都是 "spectral" 就映 dispersion
         "symmetry": "force_constant",  # 错: symmetry 应映 dispersion (终态),
-                                       # keyword 看到 "constraint" 就映 force_constant
+        # keyword 看到 "constraint" 就映 force_constant
     },
     ("altermagnetism", "catalysis"): {
-        "crystal": "surface", "spin": "adsorbate",
-        "band": "energy",         # 错: 应映 active_site
+        "crystal": "surface",
+        "spin": "adsorbate",
+        "band": "energy",  # 错: 应映 active_site
         "symmetry": "active_site",  # 错: 应映 energy
     },
     ("phonon", "altermagnetism"): {
-        "lattice": "crystal", "atom": "spin",
+        "lattice": "crystal",
+        "atom": "spin",
         "force_constant": "symmetry",  # 错: 应映 band
-        "dispersion": "band",           # 错: 应映 symmetry
+        "dispersion": "band",  # 错: 应映 symmetry
     },
     ("phonon", "catalysis"): {
-        "lattice": "surface", "atom": "adsorbate",
-        "force_constant": "energy",    # 错: 应映 active_site
-        "dispersion": "active_site",   # 错: 应映 energy
+        "lattice": "surface",
+        "atom": "adsorbate",
+        "force_constant": "energy",  # 错: 应映 active_site
+        "dispersion": "active_site",  # 错: 应映 energy
     },
 }
 
@@ -714,6 +812,7 @@ def _invoke_model(model: Any, prompt: str) -> str:
 
     try:
         from langchain_core.messages import HumanMessage
+
         messages = [HumanMessage(content=prompt)]
     except ImportError:
         # 没装 langchain 就退到字符串 invoke
@@ -749,15 +848,7 @@ def _parse_json(text: str) -> dict[str, Any]:
 # ── Self-check ──────────────────────────────────────────────────────────
 
 
-def _selfcheck() -> None:
-    """验证 Phase 7.3 Open Problem: category functor + transfer.
-
-    Test 1: 3 个 category 定义正确 (objects / morphisms / commutative_diagrams 齐全)
-    Test 2: functor propose (mock LLM 返回合法 functor, 解析 + verify 通过)
-    Test 3: functor verify (保 structure; 反例 functor 检出 violation)
-    Test 4: hypothesis transfer (5 source hypothesis, functor vs keyword)
-    Test 5: 成功判据 — functor 5/5, keyword 2/5 (functor 严格更强)
-    """
+def _sc_categories() -> None:
     print("=== Phase 7 Open Problem 7.3: Category Functor self-check ===\n")
 
     # Test 1: 3 个 category 定义
@@ -773,18 +864,26 @@ def _selfcheck() -> None:
     # 验证 morphism endpoint 内部一致 (没有引用不存在的 object)
     for cat in (ALTERMAGNETISM, PHONON, CATALYSIS):
         for m in cat.morphisms:
-            assert m.src in cat.objects, f"{cat.name}: morphism src {m.src} not in objects"
-            assert m.dst in cat.objects, f"{cat.name}: morphism dst {m.dst} not in objects"
+            assert m.src in cat.objects, (
+                f"{cat.name}: morphism src {m.src} not in objects"
+            )
+            assert m.dst in cat.objects, (
+                f"{cat.name}: morphism dst {m.dst} not in objects"
+            )
         # 验证 commutative_diagrams 引用的 relation 都存在
         rels = {m.relation for m in cat.morphisms}
         for path_a, path_b in cat.commutative_diagrams:
             for r in path_a + path_b:
                 assert r in rels, f"{cat.name}: diagram references unknown relation {r}"
-    print("PASS Test 1: 3 个 category 定义正确 (4 objects / 5 morphisms / 2 diagrams 每个)")
+    print(
+        "PASS Test 1: 3 个 category 定义正确 (4 objects / 5 morphisms / 2 diagrams 每个)"
+    )
     print(f"  Altermagnetism: {ALTERMAGNETISM.objects}")
     print(f"  Phonon:         {PHONON.objects}")
     print(f"  Catalysis:      {CATALYSIS.objects}")
 
+
+def _sc_propose_functor_llm() -> None:
     # Test 2: functor propose (mock LLM)
     # mock 一个 langchain-style model: invoke 返回带 content 属性的对象
     class _MockResp:
@@ -794,20 +893,26 @@ def _selfcheck() -> None:
     class _MockModel:
         def invoke(self, messages):
             # 返回 altermagnetism → phonon 的合法 functor JSON
-            return _MockResp(json.dumps({
-                "object_map": {
-                    "crystal": "lattice", "spin": "atom",
-                    "band": "force_constant", "symmetry": "dispersion",
-                },
-                "morphism_map": {
-                    "crystal→spin": "lattice→atom",
-                    "spin→band": "atom→force_constant",
-                    "band→symmetry": "force_constant→dispersion",
-                    "crystal→band": "lattice→force_constant",
-                    "spin→symmetry": "atom→dispersion",
-                },
-                "reason": "structure-preserving mapping via 4-stage causal chain",
-            }))
+            return _MockResp(
+                json.dumps(
+                    {
+                        "object_map": {
+                            "crystal": "lattice",
+                            "spin": "atom",
+                            "band": "force_constant",
+                            "symmetry": "dispersion",
+                        },
+                        "morphism_map": {
+                            "crystal→spin": "lattice→atom",
+                            "spin→band": "atom→force_constant",
+                            "band→symmetry": "force_constant→dispersion",
+                            "crystal→band": "lattice→force_constant",
+                            "spin→symmetry": "atom→dispersion",
+                        },
+                        "reason": "structure-preserving mapping via 4-stage causal chain",
+                    }
+                )
+            )
 
     mock_model = _MockModel()
     functor_llm = propose_functor(ALTERMAGNETISM, PHONON, model=mock_model)
@@ -825,6 +930,8 @@ def _selfcheck() -> None:
     assert verify_llm.is_valid, f"LLM functor should be valid: {verify_llm.violations}"
     print(f"  verify: VALID ({verify_llm.reason})")
 
+
+def _sc_verify_known_and_counterexamples() -> None:
     # Test 3: functor verify — 合法 + 反例
     # 3a: 已知 functor 全部 verify 通过
     for (src_name, tgt_name), functor in _KNOWN_FUNCTORS.items():
@@ -834,13 +941,31 @@ def _selfcheck() -> None:
         assert result.is_valid, (
             f"Known functor {src_name}→{tgt_name} should be valid: {result.violations}"
         )
-    print(f"\nPASS Test 3a: 所有 {_KNOWN_FUNCTORS.__len__()} 个已知 functor verify 通过")
+    print(
+        f"\nPASS Test 3a: 所有 {_KNOWN_FUNCTORS.__len__()} 个已知 functor verify 通过"
+    )
 
     # 3b: 反例 functor — 缺 morphism (检测出来)
+    _sc_missing_morphism_case()
+
+    # 3c: 反例 functor — morphism mapping 不合法 (endpoint 不匹配)
+    _sc_bad_endpoint_case()
+
+    # 3d: 反例 functor — 不保 commutative diagram (但 endpoints 都对)
+    _sc_bad_diagram_case()
+
+
+def _sc_missing_morphism_case() -> None:
+    # 3b: 反例 functor — 缺 morphism (检测出来)
     broken_functor = Functor(
-        source="altermagnetism", target="phonon",
-        object_map={"crystal": "lattice", "spin": "atom",
-                    "band": "force_constant", "symmetry": "dispersion"},
+        source="altermagnetism",
+        target="phonon",
+        object_map={
+            "crystal": "lattice",
+            "spin": "atom",
+            "band": "force_constant",
+            "symmetry": "dispersion",
+        },
         morphism_map={
             "crystal→spin": "lattice→atom",
             "spin→band": "atom→force_constant",
@@ -852,13 +977,22 @@ def _selfcheck() -> None:
     result_broken = verify_functor(broken_functor, ALTERMAGNETISM, PHONON)
     assert not result_broken.is_valid, "broken functor (missing morphism) should fail"
     assert any("missing" in v for v in result_broken.violations)
-    print(f"PASS Test 3b: 反例 functor (缺 morphism) 检出 — {len(result_broken.violations)} violation(s)")
+    print(
+        f"PASS Test 3b: 反例 functor (缺 morphism) 检出 — {len(result_broken.violations)} violation(s)"
+    )
 
+
+def _sc_bad_endpoint_case() -> None:
     # 3c: 反例 functor — morphism mapping 不合法 (endpoint 不匹配)
     bad_endpoint_functor = Functor(
-        source="altermagnetism", target="phonon",
-        object_map={"crystal": "lattice", "spin": "atom",
-                    "band": "force_constant", "symmetry": "dispersion"},
+        source="altermagnetism",
+        target="phonon",
+        object_map={
+            "crystal": "lattice",
+            "spin": "atom",
+            "band": "force_constant",
+            "symmetry": "dispersion",
+        },
         morphism_map={
             "crystal→spin": "lattice→atom",
             "spin→band": "atom→dispersion",  # 错: 应是 atom→force_constant
@@ -871,24 +1005,33 @@ def _selfcheck() -> None:
     assert not result_bad.is_valid, "bad endpoint functor should fail"
     # 应该至少检出一个 endpoint mismatch 或 diagram not preserved
     assert len(result_bad.violations) > 0
-    print(f"PASS Test 3c: 反例 functor (morphism endpoint 错) 检出 — {len(result_bad.violations)} violation(s)")
+    print(
+        f"PASS Test 3c: 反例 functor (morphism endpoint 错) 检出 — {len(result_bad.violations)} violation(s)"
+    )
     for v in result_bad.violations:
         print(f"    - {v}")
 
+
+def _sc_bad_diagram_case() -> None:
     # 3d: 反例 functor — 不保 commutative diagram (但 endpoints 都对)
     # 构造: 所有 morphism endpoints 都对, 但故意把 composition morphism 映到
     # 一条不参与 commutative diagram 的 target morphism
     bad_diagram_functor = Functor(
-        source="altermagnetism", target="phonon",
-        object_map={"crystal": "lattice", "spin": "atom",
-                    "band": "force_constant", "symmetry": "dispersion"},
+        source="altermagnetism",
+        target="phonon",
+        object_map={
+            "crystal": "lattice",
+            "spin": "atom",
+            "band": "force_constant",
+            "symmetry": "dispersion",
+        },
         morphism_map={
-            "crystal→spin": "lattice→atom",       # contains
-            "spin→band": "atom→force_constant",   # defined by
+            "crystal→spin": "lattice→atom",  # contains
+            "spin→band": "atom→force_constant",  # defined by
             "band→symmetry": "force_constant→dispersion",  # determines
-            "crystal→band": "lattice→atom",       # 错: 映到 lattice→atom 而不是 lattice→force_constant
-                                                  # 这条 morphism 存在但不是 composition, 破坏 commutative diagram
-            "spin→symmetry": "atom→dispersion",   # yields (对)
+            "crystal→band": "lattice→atom",  # 错: 映到 lattice→atom 而不是 lattice→force_constant
+            # 这条 morphism 存在但不是 composition, 破坏 commutative diagram
+            "spin→symmetry": "atom→dispersion",  # yields (对)
         },
     )
     result_diag = verify_functor(bad_diagram_functor, ALTERMAGNETISM, PHONON)
@@ -900,50 +1043,120 @@ def _selfcheck() -> None:
     if not has_diagram_violation:
         # 至少有别的 violation
         assert len(result_diag.violations) > 0
-    print(f"PASS Test 3d: 反例 functor (不保 diagram) 检出 — {len(result_diag.violations)} violation(s)")
+    print(
+        f"PASS Test 3d: 反例 functor (不保 diagram) 检出 — {len(result_diag.violations)} violation(s)"
+    )
     for v in result_diag.violations:
         print(f"    - {v}")
 
+
+def _sc_transfer_compare() -> None:
     # Test 4 + 5: hypothesis transfer — 5 source hypothesis, functor vs keyword
     print("\n--- Test 4+5: hypothesis transfer (functor vs keyword) ---")
 
     # 5 个 source hypothesis: 3 个带 4-morphism chain (深度结构), 2 个单 morphism (浅)
-    test_hypotheses: list[tuple[Hypothesis, str, Category]] = [
+    test_hypotheses = _sc_test_hypotheses()
+    n_total = len(test_hypotheses)
+
+    functor_success, keyword_success = _sc_run_transfer_cases(test_hypotheses)
+
+    print(f"\n  functor transfer:  {functor_success}/{n_total} valid (保 structure)")
+    print(f"  keyword transfer: {keyword_success}/{n_total} valid (可能 mismatch)")
+
+    # 成功判据 (spec): functor 5/5, keyword 2/5
+    assert functor_success == n_total, (
+        f"functor should be {n_total}/{n_total}, got {functor_success}/{n_total}"
+    )
+    assert keyword_success == 2, (
+        f"keyword should be 2/{n_total} (浅 hypothesis 命中, 深 hypothesis mismatch), "
+        f"got {keyword_success}/{n_total}"
+    )
+
+    print(
+        f"\nPASS Test 4+5: functor {functor_success}/{n_total} > keyword {keyword_success}/{n_total}"
+    )
+    print("  functor 严格更强: 深 hypothesis (4-stage chain) 全部保 structure,")
+    print("  keyword 仅浅 hypothesis (单 morphism) 命中, 深 hypothesis 因 keyword")
+    print("  替换 band→dispersion / symmetry→force_constant 等结构错位而失败.")
+
+
+def _sc_test_hypotheses() -> list[tuple[Hypothesis, str, Category]]:
+    """5 个 source hypothesis: 3 个带 4-morphism chain (深度结构), 2 个单 morphism (浅)."""
+    return _sc_deep_hypotheses() + _sc_shallow_hypotheses()
+
+
+def _sc_deep_hypotheses() -> list[tuple[Hypothesis, str, Category]]:
+    """3 个带完整 4-stage chain 的深度 hypothesis."""
+    return [
         # 1. altermagnetism → phonon, 完整 4-stage chain
-        (Hypothesis(
-            statement="crystal→spin→band→symmetry chain determines magnetic ordering",
-            domain="altermagnetism",
-            morphism_chain=["crystal→spin", "spin→band", "band→symmetry"],
-         ), "phonon", PHONON),
+        (
+            Hypothesis(
+                statement="crystal→spin→band→symmetry chain determines magnetic ordering",
+                domain="altermagnetism",
+                morphism_chain=["crystal→spin", "spin→band", "band→symmetry"],
+            ),
+            "phonon",
+            PHONON,
+        ),
         # 2. altermagnetism → catalysis, 完整 4-stage chain
-        (Hypothesis(
-            statement="crystal→spin→band→symmetry chain governs altermagnetic response",
-            domain="altermagnetism",
-            morphism_chain=["crystal→spin", "spin→band", "band→symmetry"],
-         ), "catalysis", CATALYSIS),
+        (
+            Hypothesis(
+                statement="crystal→spin→band→symmetry chain governs altermagnetic response",
+                domain="altermagnetism",
+                morphism_chain=["crystal→spin", "spin→band", "band→symmetry"],
+            ),
+            "catalysis",
+            CATALYSIS,
+        ),
         # 3. phonon → altermagnetism, 完整 4-stage chain (反向)
-        (Hypothesis(
-            statement="lattice→atom→force_constant→dispersion chain determines phonon spectrum",
-            domain="phonon",
-            morphism_chain=["lattice→atom", "atom→force_constant", "force_constant→dispersion"],
-         ), "altermagnetism", ALTERMAGNETISM),
-        # 4. altermagnetism → phonon, 单 morphism (浅 hypothesis, 无 chain composition)
-        (Hypothesis(
-            statement="crystal→spin defines spin texture in altermagnet",
-            domain="altermagnetism",
-            morphism_chain=["crystal→spin"],
-         ), "phonon", PHONON),
-        # 5. phonon → catalysis, 单 morphism (浅 hypothesis)
-        (Hypothesis(
-            statement="lattice→atom contains atomic positions in unit cell",
-            domain="phonon",
-            morphism_chain=["lattice→atom"],
-         ), "catalysis", CATALYSIS),
+        (
+            Hypothesis(
+                statement="lattice→atom→force_constant→dispersion chain determines phonon spectrum",
+                domain="phonon",
+                morphism_chain=[
+                    "lattice→atom",
+                    "atom→force_constant",
+                    "force_constant→dispersion",
+                ],
+            ),
+            "altermagnetism",
+            ALTERMAGNETISM,
+        ),
     ]
 
+
+def _sc_shallow_hypotheses() -> list[tuple[Hypothesis, str, Category]]:
+    """2 个单 morphism 的浅 hypothesis."""
+    return [
+        # 4. altermagnetism → phonon, 单 morphism (浅 hypothesis, 无 chain composition)
+        (
+            Hypothesis(
+                statement="crystal→spin defines spin texture in altermagnet",
+                domain="altermagnetism",
+                morphism_chain=["crystal→spin"],
+            ),
+            "phonon",
+            PHONON,
+        ),
+        # 5. phonon → catalysis, 单 morphism (浅 hypothesis)
+        (
+            Hypothesis(
+                statement="lattice→atom contains atomic positions in unit cell",
+                domain="phonon",
+                morphism_chain=["lattice→atom"],
+            ),
+            "catalysis",
+            CATALYSIS,
+        ),
+    ]
+
+
+def _sc_run_transfer_cases(
+    test_hypotheses: list[tuple[Hypothesis, str, Category]],
+) -> tuple[int, int]:
+    """跑 functor vs keyword 的 hypothesis transfer 对比, 返回成功计数."""
     functor_success = 0
     keyword_success = 0
-    n_total = len(test_hypotheses)
 
     for i, (src_hyp, tgt_name, tgt_cat) in enumerate(test_hypotheses, 1):
         src_cat = _CATEGORIES[src_hyp.domain]
@@ -966,30 +1179,37 @@ def _selfcheck() -> None:
         print(f"    functor F:   {ft_hyp.morphism_chain}  -> valid={ft_ok}")
         print(f"    keyword:     {kw_hyp.morphism_chain}  -> valid={kw_ok}")
 
-    print(f"\n  functor transfer:  {functor_success}/{n_total} valid (保 structure)")
-    print(f"  keyword transfer: {keyword_success}/{n_total} valid (可能 mismatch)")
+    return functor_success, keyword_success
 
-    # 成功判据 (spec): functor 5/5, keyword 2/5
-    assert functor_success == n_total, (
-        f"functor should be {n_total}/{n_total}, got {functor_success}/{n_total}"
-    )
-    assert keyword_success == 2, (
-        f"keyword should be 2/{n_total} (浅 hypothesis 命中, 深 hypothesis mismatch), "
-        f"got {keyword_success}/{n_total}"
-    )
 
-    print(f"\nPASS Test 4+5: functor {functor_success}/{n_total} > keyword {keyword_success}/{n_total}")
-    print("  functor 严格更强: 深 hypothesis (4-stage chain) 全部保 structure,")
-    print("  keyword 仅浅 hypothesis (单 morphism) 命中, 深 hypothesis 因 keyword")
-    print("  替换 band→dispersion / symmetry→force_constant 等结构错位而失败.")
-
+def _sc_summary() -> None:
     print("\n=== Phase 7 Open Problem 7.3 self-check PASSED ===")
     print("  Category 定义: 3 个 domain (altermagnetism / phonon / catalysis),")
     print("    每个 4 objects + 5 morphisms + 2 commutative_diagrams, 结构同构")
     print("  Functor propose: LLM-based + 已知 functor 降级, 解析 JSON 返回 Functor")
-    print("  Functor verify: 4 层检查 (object_map 完整 / morphism_map 完整 / 合法性 / 保 diagram)")
-    print("  Hypothesis transfer: functor vs keyword baseline, 5/5 vs 2/5 -> 成功判据达成")
+    print(
+        "  Functor verify: 4 层检查 (object_map 完整 / morphism_map 完整 / 合法性 / 保 diagram)"
+    )
+    print(
+        "  Hypothesis transfer: functor vs keyword baseline, 5/5 vs 2/5 -> 成功判据达成"
+    )
     print("  -> Open Problem 7.3 探索成功")
+
+
+def _selfcheck() -> None:
+    """验证 Phase 7.3 Open Problem: category functor + transfer.
+
+    Test 1: 3 个 category 定义正确 (objects / morphisms / commutative_diagrams 齐全)
+    Test 2: functor propose (mock LLM 返回合法 functor, 解析 + verify 通过)
+    Test 3: functor verify (保 structure; 反例 functor 检出 violation)
+    Test 4: hypothesis transfer (5 source hypothesis, functor vs keyword)
+    Test 5: 成功判据 — functor 5/5, keyword 2/5 (functor 严格更强)
+    """
+    _sc_categories()
+    _sc_propose_functor_llm()
+    _sc_verify_known_and_counterexamples()
+    _sc_transfer_compare()
+    _sc_summary()
 
 
 if __name__ == "__main__":

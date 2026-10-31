@@ -40,7 +40,11 @@ class PrivacyGuard:
     DATA_TIERS = {
         "permanent": {"redact": False, "retain_after_session": True},
         "temporary": {"redact": True, "retain_after_session": False},
-        "ephemeral": {"redact": True, "retain_after_session": False, "never_cloud": True},
+        "ephemeral": {
+            "redact": True,
+            "retain_after_session": False,
+            "never_cloud": True,
+        },
     }
 
     _singleton_lock = threading.Lock()
@@ -83,9 +87,7 @@ class PrivacyGuard:
     def set_level(self, level: str) -> None:
         """设隐私级别. 三个 flag 互斥, 只让对应的一个 True."""
         if level not in self.LEVELS:
-            raise ValueError(
-                f"未知隐私级别: {level}. 可选: {list(self.LEVELS)}"
-            )
+            raise ValueError(f"未知隐私级别: {level}. 可选: {list(self.LEVELS)}")
         from huginn.feature_flags import FeatureFlags
 
         ff = FeatureFlags.shared()
@@ -128,7 +130,8 @@ class PrivacyGuard:
         if re.search(
             r"(api[_-]?key|secret|token|password|passwd|credential|"
             r"\.env|/home/|C:\\Users\\|/root/)",
-            content, re.I,
+            content,
+            re.I,
         ):
             return "ephemeral"
 
@@ -206,13 +209,16 @@ class PrivacyGuard:
     def _record_audit(self, content_type: str, tier: str, action: str) -> None:
         """记录一条审计日志 (不含原文)."""
         import time as _time
+
         with self._lock:
-            self._audit_log.append({
-                "ts": _time.time(),
-                "content_type": content_type,
-                "tier": tier,
-                "action": action,  # redacted / blocked / forced_local / sent_as_is
-            })
+            self._audit_log.append(
+                {
+                    "ts": _time.time(),
+                    "content_type": content_type,
+                    "tier": tier,
+                    "action": action,  # redacted / blocked / forced_local / sent_as_is
+                }
+            )
             # 上限 500 条, FIFO
             if len(self._audit_log) > 500:
                 self._audit_log = self._audit_log[-500:]
@@ -325,13 +331,28 @@ class PrivacyGuard:
 
     def _redact_structure(self, content: str) -> str:
         """POSCAR / CIF → 化学式 + 原子数 + 空间群(尽力) + 晶系(尽力)."""
-        formula = "?"
-        n_atoms = 0
-        space_group = "?"
-        crystal_system = "?"
-
         lines = content.splitlines()
         # POSCAR: 第 6 行元素名, 第 7 行各元素计数
+        formula, n_atoms = PrivacyGuard._poscar_formula(self, lines)
+
+        # CIF: 抓 _chemical_formula_sum 和 _symmetry_space_group_name
+        cif_formula, space_group, crystal_system = PrivacyGuard._cif_fields(content)
+        if cif_formula is not None:
+            formula = cif_formula
+
+        # 空间群 → 晶系兜底推断
+        if space_group != "?" and crystal_system == "?":
+            crystal_system = self._guess_crystal_system(space_group)
+
+        return (
+            f"[STRUCTURE: formula={formula}, n_atoms={n_atoms}, "
+            f"space_group={space_group}, crystal_system={crystal_system}]"
+        )
+
+    def _poscar_formula(self, lines: list[str]) -> tuple[str, int]:
+        """POSCAR: 第 6 行元素名, 第 7 行各元素计数."""
+        formula = "?"
+        n_atoms = 0
         if len(lines) >= 7:
             elem_line = lines[5].split()
             count_line = lines[6].split()
@@ -344,22 +365,28 @@ class PrivacyGuard:
                     for e, c in zip(elem_line, counts):
                         parts.append(f"{e}{c if c > 1 else ''}")
                         total += c
-                    formula = self._normalize_formula("".join(parts))
+                    formula = PrivacyGuard._normalize_formula("".join(parts))
                     n_atoms = total
                 else:
                     n_atoms = sum(counts)
                     formula = f"M{n_atoms}"
             except (ValueError, IndexError):
                 logger.debug("best-effort op failed", exc_info=True)
+        return formula, n_atoms
 
-        # CIF: 抓 _chemical_formula_sum 和 _symmetry_space_group_name
+    @staticmethod
+    def _cif_fields(content: str) -> tuple[str | None, str, str]:
+        """CIF: 抓 _chemical_formula_sum / _symmetry_space_group_name / _symmetry_cell_setting."""
+        formula: str | None = None
+        space_group = "?"
+        crystal_system = "?"
         m = re.search(
             r"_chemical_formula_sum\s+['\"]?([A-Za-z0-9]+)['\"]?",
             content,
             re.I,
         )
         if m:
-            formula = self._normalize_formula(m.group(1))
+            formula = PrivacyGuard._normalize_formula(m.group(1))
         m2 = re.search(
             r"_symmetry_space_group_name_H-M\s+['\"]?([^'\"\s]+)['\"]?",
             content,
@@ -367,20 +394,10 @@ class PrivacyGuard:
         )
         if m2:
             space_group = m2.group(1)
-        m3 = re.search(
-            r"_symmetry_cell_setting\s+([A-Za-z]+)", content, re.I
-        )
+        m3 = re.search(r"_symmetry_cell_setting\s+([A-Za-z]+)", content, re.I)
         if m3:
             crystal_system = m3.group(1).lower()
-
-        # 空间群 → 晶系兜底推断
-        if space_group != "?" and crystal_system == "?":
-            crystal_system = self._guess_crystal_system(space_group)
-
-        return (
-            f"[STRUCTURE: formula={formula}, n_atoms={n_atoms}, "
-            f"space_group={space_group}, crystal_system={crystal_system}]"
-        )
+        return formula, space_group, crystal_system
 
     @staticmethod
     def _normalize_formula(raw: str) -> str:
@@ -399,12 +416,8 @@ class PrivacyGuard:
         counts = list(merged.values())
         g = reduce(gcd, counts, 0)
         if g <= 1:
-            return "".join(
-                f"{e}{n if n > 1 else ''}" for e, n in merged.items()
-            )
-        return "".join(
-            f"{e}{n // g if n // g > 1 else ''}" for e, n in merged.items()
-        )
+            return "".join(f"{e}{n if n > 1 else ''}" for e, n in merged.items())
+        return "".join(f"{e}{n // g if n // g > 1 else ''}" for e, n in merged.items())
 
     @staticmethod
     def _guess_crystal_system(sg: str) -> str:
@@ -473,9 +486,7 @@ class PrivacyGuard:
             except ValueError:
                 logger.debug("best-effort op failed", exc_info=True)
 
-        e_str = (
-            f"({e_min}, {e_max}) eV" if e_min is not None else "?"
-        )
+        e_str = f"({e_min}, {e_max}) eV" if e_min is not None else "?"
         t_str = f"({t_min}, {t_max}) K" if t_min is not None else "?"
         return (
             f"[TRAJECTORY: n_atoms={n_atoms}, n_frames={n_frames}, "
@@ -508,10 +519,13 @@ class PrivacyGuard:
             r"(?:maximum force|max force|FORCES:max)\s*=?\s*(-?\d+\.\d+)\s*(?:eV/Å|eV/A)",
             content,
         )
-        functional = self._extract_first(
-            r"(?:functional|XC|GGA|LDA)\s*=?\s*([A-Za-z0-9]+)",
-            content,
-        ) or "?"
+        functional = (
+            self._extract_first(
+                r"(?:functional|XC|GGA|LDA)\s*=?\s*([A-Za-z0-9]+)",
+                content,
+            )
+            or "?"
+        )
 
         parts = [f"type={calc_type}"]
         if energy is not None:

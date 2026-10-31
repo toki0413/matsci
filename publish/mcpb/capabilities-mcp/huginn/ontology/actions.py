@@ -184,7 +184,15 @@ def list_action_types() -> dict[str, ActionType]:
 
 def _init_builtin_types() -> None:
     """Register built-in action types for common materials science operations."""
+    _register_query_property()
+    _register_run_dft()
+    _register_file_edit()
+    _register_code_execute()
+    _register_knowledge_update()
 
+
+def _register_query_property() -> None:
+    """Look up a materials property (band gap, lattice constant, etc.)."""
     register_action_type(ActionType(
         name="query_property",
         category=ActionCategory.QUERY,
@@ -207,6 +215,32 @@ def _init_builtin_types() -> None:
         ),
     ))
 
+
+def _run_dft_constraints() -> list[Constraint]:
+    """Constraints for run_dft: bound-system energy + force convergence."""
+    return [
+        Constraint(
+            name="energy_negative",
+            check=lambda ctx: (
+                ctx.get("energy", 0) < 0,
+                f"Energy {ctx.get('energy')} should be negative for a bound system"
+            ),
+            description="Total energy must be negative",
+        ),
+        Constraint(
+            name="forces_converged",
+            check=lambda ctx: (
+                ctx.get("max_force", 999) < 0.01,
+                f"Max force {ctx.get('max_force')} exceeds 0.01 eV/A"
+            ),
+            description="Forces must be below 0.01 eV/A for convergence",
+            rollback_on_violation=False,  # don't rollback, just warn
+        ),
+    ]
+
+
+def _register_run_dft() -> None:
+    """Submit a DFT calculation (VASP/QE/CP2K)."""
     register_action_type(ActionType(
         name="run_dft",
         category=ActionCategory.SIMULATE,
@@ -225,25 +259,7 @@ def _init_builtin_types() -> None:
                 blocking=False,
             ),
         ],
-        constraints=[
-            Constraint(
-                name="energy_negative",
-                check=lambda ctx: (
-                    ctx.get("energy", 0) < 0,
-                    f"Energy {ctx.get('energy')} should be negative for a bound system"
-                ),
-                description="Total energy must be negative",
-            ),
-            Constraint(
-                name="forces_converged",
-                check=lambda ctx: (
-                    ctx.get("max_force", 999) < 0.01,
-                    f"Max force {ctx.get('max_force')} exceeds 0.01 eV/A"
-                ),
-                description="Forces must be below 0.01 eV/A for convergence",
-                rollback_on_violation=False,  # don't rollback, just warn
-            ),
-        ],
+        constraints=_run_dft_constraints(),
         effects=[
             Effect(name="calculation_result", positive=True,
                    affects_entities=["Property", "Fact"],
@@ -261,6 +277,9 @@ def _init_builtin_types() -> None:
         ],
     ))
 
+
+def _register_file_edit() -> None:
+    """Edit or overwrite a file in the workspace."""
     register_action_type(ActionType(
         name="file_edit",
         category=ActionCategory.FILE_OPS,
@@ -293,6 +312,9 @@ def _init_builtin_types() -> None:
         ],
     ))
 
+
+def _register_code_execute() -> None:
+    """Execute arbitrary Python code."""
     register_action_type(ActionType(
         name="code_execute",
         category=ActionCategory.CODE,
@@ -325,6 +347,9 @@ def _init_builtin_types() -> None:
         audit_fields=["timestamp", "user", "code_hash", "output", "status"],
     ))
 
+
+def _register_knowledge_update() -> None:
+    """Update the knowledge graph with new information."""
     register_action_type(ActionType(
         name="knowledge_update",
         category=ActionCategory.LEARN,

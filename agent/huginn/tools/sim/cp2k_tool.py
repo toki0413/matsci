@@ -22,6 +22,157 @@ from huginn.tools.base import HuginnTool, ToolProfile
 logger = logging.getLogger(__name__)
 
 
+def _cp2k_coord_lines(species: list[str], positions: list[Any]) -> list[str]:
+    """渲染 &COORD 段中的原子坐标行."""
+    coords = []
+    for elem, pos in zip(species, positions):
+        coords.append(f"  {elem:<4} {pos[0]:.8f} {pos[1]:.8f} {pos[2]:.8f}")
+    return coords
+
+
+def _cp2k_input_lines(args: Any, prefix: str, cell: list[Any], units: str) -> list[str]:
+    """渲染 CP2K 输入文件主体行 (到 &COORD UNIT 为止)."""
+    return [
+        "&GLOBAL",
+        f"  PROJECT {prefix}",
+        f"  RUN_TYPE {args.run_type}",
+        "  PRINT_LEVEL MEDIUM",
+        "&END GLOBAL",
+        "",
+        "&FORCE_EVAL",
+        "  METHOD Quickstep",
+        "  &DFT",
+        f"    BASIS_SET_FILE_NAME {args.basis_set_file}",
+        f"    POTENTIAL_FILE_NAME {args.potential_file}",
+        "    &QS",
+        "      EPS_DEFAULT 1.0E-12",
+        "    &END QS",
+        "    &MGRID",
+        f"      CUTOFF {args.cutoff}",
+        f"      REL_CUTOFF {args.rel_cutoff}",
+        "    &END MGRID",
+        "    &XC",
+        "      &XC_FUNCTIONAL",
+        f"        &{args.method} T",
+        "        &END",
+        "      &END XC_FUNCTIONAL",
+        "    &END XC",
+        "    &SCF",
+        f"      EPS_SCF {args.scf_eps}",
+        f"      MAX_SCF {args.max_scf}",
+        "    &END SCF",
+        "  &END DFT",
+        "  &SUBSYS",
+        "    &CELL",
+        f"      A {cell[0][0]:.8f} {cell[0][1]:.8f} {cell[0][2]:.8f}",
+        f"      B {cell[1][0]:.8f} {cell[1][1]:.8f} {cell[1][2]:.8f}",
+        f"      C {cell[2][0]:.8f} {cell[2][1]:.8f} {cell[2][2]:.8f}",
+        "      PERIODIC XYZ",
+        "    &END CELL",
+        "    &COORD",
+        f"      UNIT {units}",
+    ]
+
+
+_CP2K_MD_MOTION_LINES: list[str] = [
+    "",
+    "&MOTION",
+    "  &MD",
+    "    ENSEMBLE NVT",
+    "    TEMPERATURE 300.0",
+    "    TIMESTEP 1.0",
+    "    STEPS 100",
+    "    &THERMOSTAT",
+    "      TYPE NOSE",
+    "      &NOSE",
+    "        LENGTH 3",
+    "        YOSHIDA 3",
+    "        TIMECON 100.0",
+    "        MTS 2",
+    "      &END NOSE",
+    "    &END THERMOSTAT",
+    "  &END MD",
+    "&END MOTION",
+]
+
+
+def _attach_cp2k_audit(args: Any, parsed: dict[str, Any], data: dict[str, Any]) -> None:
+    """附加物理审计报告，失败不阻断结果返回."""
+    try:
+        from huginn.execution.physics_auditor import PhysicsAuditor
+
+        auditor = PhysicsAuditor()
+        audit_report = auditor.audit(
+            "cp2k_tool", args.run_type, parsed, args.model_dump()
+        )
+        data["physics_audit"] = audit_report.to_dict()
+    except Exception:  # 防御: 审计失败不阻断结果返回
+        logger.debug("audit failure can't block result delivery", exc_info=True)
+
+
+def _cp2k_parse_energy(lines: list[str]) -> float | None:
+    """扫描 total energy 行, 取最后一个像总能 (负值或 >1) 的数."""
+    energy: float | None = None
+    for line in lines:
+        if "Total energy:" in line or "ENERERGY| Total FORCE_EVAL" in line:
+            for p in line.split():
+                with contextlib.suppress(ValueError):
+                    val = float(p)
+                    # Accept values that look like total energies (negative or large)
+                    if val < 0 or abs(val) > 1:
+                        energy = val
+                        break
+    return energy
+
+
+def _cp2k_parse_forces(lines: list[str]) -> list[list[float]]:
+    """取最后一个 ATOMIC FORCES 块的原子受力."""
+    in_forces = False
+    force_block: list[list[float]] = []
+    for line in lines:
+        if "ATOMIC FORCES in" in line or "FORCES" in line and "atom" in line.lower():
+            in_forces = True
+            force_block = []
+            continue
+        if not in_forces:
+            continue
+        parts = line.split()
+        if len(parts) >= 6 and parts[0].isdigit():
+            with contextlib.suppress(ValueError, IndexError):
+                force_block.append(
+                    [float(parts[-3]), float(parts[-2]), float(parts[-1])]
+                )
+        elif line.strip() == "":
+            in_forces = False
+    return force_block
+
+
+def _cp2k_stress_row(lines: list[str], i: int, offset: int) -> list[float] | None:
+    """取 lines[i+offset] 末 3 个浮点数作为一行应力, 越界/解析失败返回 None."""
+    idx = i + offset
+    if idx >= len(lines):
+        return None
+    parts = lines[idx].split()
+    if len(parts) < 3:
+        return None
+    with contextlib.suppress(ValueError, IndexError):
+        return [float(parts[-3]), float(parts[-2]), float(parts[-1])]
+    return None
+
+
+def _cp2k_parse_stress(lines: list[str]) -> list[list[float]]:
+    """取最后一个 stress 张量 (3x3)."""
+    stress_result: list[list[float]] = []
+    for i, line in enumerate(lines):
+        if not ("STRESS|" in line or "Stress tensor" in line):
+            continue
+        rows = (_cp2k_stress_row(lines, i, j) for j in range(1, 4))
+        stress = [row for row in rows if row is not None]
+        if len(stress) == 3:
+            stress_result = stress
+    return stress_result
+
+
 class Cp2kToolInput(BaseModel):
     action: Literal["generate", "run", "parse"] = Field(default="run")
     run_type: Literal["ENERGY_FORCE", "GEO_OPT", "MD", "CELL_OPT"] = Field(
@@ -124,51 +275,8 @@ class Cp2kTool(HuginnTool):
         cell = args.structure.get("cell", [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
         units = args.structure.get("units", "ANGSTROM")
 
-        coords = []
-        for elem, pos in zip(species, positions):
-            coords.append(f"  {elem:<4} {pos[0]:.8f} {pos[1]:.8f} {pos[2]:.8f}")
-
-        lines = [
-            "&GLOBAL",
-            f"  PROJECT {prefix}",
-            f"  RUN_TYPE {args.run_type}",
-            "  PRINT_LEVEL MEDIUM",
-            "&END GLOBAL",
-            "",
-            "&FORCE_EVAL",
-            "  METHOD Quickstep",
-            "  &DFT",
-            f"    BASIS_SET_FILE_NAME {args.basis_set_file}",
-            f"    POTENTIAL_FILE_NAME {args.potential_file}",
-            "    &QS",
-            "      EPS_DEFAULT 1.0E-12",
-            "    &END QS",
-            "    &MGRID",
-            f"      CUTOFF {args.cutoff}",
-            f"      REL_CUTOFF {args.rel_cutoff}",
-            "    &END MGRID",
-            "    &XC",
-            "      &XC_FUNCTIONAL",
-            f"        &{args.method} T",
-            "        &END",
-            "      &END XC_FUNCTIONAL",
-            "    &END XC",
-            "    &SCF",
-            f"      EPS_SCF {args.scf_eps}",
-            f"      MAX_SCF {args.max_scf}",
-            "    &END SCF",
-            "  &END DFT",
-            "  &SUBSYS",
-            "    &CELL",
-            f"      A {cell[0][0]:.8f} {cell[0][1]:.8f} {cell[0][2]:.8f}",
-            f"      B {cell[1][0]:.8f} {cell[1][1]:.8f} {cell[1][2]:.8f}",
-            f"      C {cell[2][0]:.8f} {cell[2][1]:.8f} {cell[2][2]:.8f}",
-            "      PERIODIC XYZ",
-            "    &END CELL",
-            "    &COORD",
-            f"      UNIT {units}",
-        ]
-        lines.extend(coords)
+        lines = _cp2k_input_lines(args, prefix, cell, units)
+        lines.extend(_cp2k_coord_lines(species, positions))
         lines.extend(
             [
                 "    &END COORD",
@@ -182,28 +290,7 @@ class Cp2kTool(HuginnTool):
         )
 
         if args.run_type == "MD":
-            lines.extend(
-                [
-                    "",
-                    "&MOTION",
-                    "  &MD",
-                    "    ENSEMBLE NVT",
-                    "    TEMPERATURE 300.0",
-                    "    TIMESTEP 1.0",
-                    "    STEPS 100",
-                    "    &THERMOSTAT",
-                    "      TYPE NOSE",
-                    "      &NOSE",
-                    "        LENGTH 3",
-                    "        YOSHIDA 3",
-                    "        TIMECON 100.0",
-                    "        MTS 2",
-                    "      &END NOSE",
-                    "    &END THERMOSTAT",
-                    "  &END MD",
-                    "&END MOTION",
-                ]
-            )
+            lines.extend(_CP2K_MD_MOTION_LINES)
 
         input_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return input_path
@@ -245,16 +332,7 @@ class Cp2kTool(HuginnTool):
         }
 
         # Physics audit — CP2K shares DFT energy/convergence semantics with VASP
-        try:
-            from huginn.execution.physics_auditor import PhysicsAuditor
-
-            auditor = PhysicsAuditor()
-            audit_report = auditor.audit(
-                "cp2k_tool", args.run_type, parsed, args.model_dump()
-            )
-            data["physics_audit"] = audit_report.to_dict()
-        except Exception:  # 防御: 审计失败不阻断结果返回
-            logger.debug("audit failure can't block result delivery", exc_info=True)
+        _attach_cp2k_audit(args, parsed, data)
 
         return ToolResult(
             data=data,
@@ -268,80 +346,16 @@ class Cp2kTool(HuginnTool):
         return self._parse_output(content)
 
     def _parse_output(self, content: str) -> dict[str, Any]:
-        result: dict[str, Any] = {
-            "energy": None,
-            "converged": False,
-            "forces": [],
-            "stress": [],
-            "n_scf_steps": 0,
-        }
-
         lines = content.splitlines()
-
-        # Energy
-        for line in lines:
-            if "Total energy:" in line or "ENERERGY| Total FORCE_EVAL" in line:
-                parts = line.split()
-                for p in parts:
-                    with contextlib.suppress(ValueError):
-                        val = float(p)
-                        # Accept values that look like total energies (negative or large)
-                        if val < 0 or abs(val) > 1:
-                            result["energy"] = val
-                            break
-
-        # Convergence
-        result["converged"] = (
-            "SCF run converged" in content or "*** SCF run converged" in content
-        )
-
-        # SCF steps
-        result["n_scf_steps"] = content.count("SCF iteration")
-
-        # Forces
-        in_forces = False
-        force_block: list[list[float]] = []
-        for line in lines:
-            if (
-                "ATOMIC FORCES in" in line
-                or "FORCES" in line
-                and "atom" in line.lower()
-            ):
-                in_forces = True
-                force_block = []
-                continue
-            if in_forces:
-                parts = line.split()
-                if len(parts) >= 6 and parts[0].isdigit():
-                    with contextlib.suppress(ValueError, IndexError):
-                        force_block.append(
-                            [float(parts[-3]), float(parts[-2]), float(parts[-1])]
-                        )
-                elif line.strip() == "":
-                    in_forces = False
-        if force_block:
-            result["forces"] = force_block
-
-        # Stress
-        for i, line in enumerate(lines):
-            if "STRESS|" in line or "Stress tensor" in line:
-                stress = []
-                for j in range(1, 4):
-                    if i + j < len(lines):
-                        parts = lines[i + j].split()
-                        if len(parts) >= 3:
-                            with contextlib.suppress(ValueError, IndexError):
-                                stress.append(
-                                    [
-                                        float(parts[-3]),
-                                        float(parts[-2]),
-                                        float(parts[-1]),
-                                    ]
-                                )
-                if len(stress) == 3:
-                    result["stress"] = stress
-
-        return result
+        return {
+            "energy": _cp2k_parse_energy(lines),
+            "converged": (
+                "SCF run converged" in content or "*** SCF run converged" in content
+            ),
+            "forces": _cp2k_parse_forces(lines),
+            "stress": _cp2k_parse_stress(lines),
+            "n_scf_steps": content.count("SCF iteration"),
+        }
 
     def _parse_results(self, args: Cp2kToolInput, work_dir: Path) -> ToolResult:
         parsed: dict[str, Any] = {}

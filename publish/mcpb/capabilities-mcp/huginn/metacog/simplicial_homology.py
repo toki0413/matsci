@@ -21,6 +21,7 @@ GUDHI 没装时退回 networkx 风格的 β_0 + β_1 估计, 升级路径: pip i
 # 算 β_0/β_1 (compute_exact_betti) 与 Rips persistence, 结果经 engine_observe
 # 回灌 prompt. advisory: GUDHI 缺失时走 fallback, 失败静默降级不阻断.
 """
+
 from __future__ import annotations
 
 import math
@@ -30,6 +31,7 @@ import numpy as np
 
 try:
     import gudhi
+
     _GUDHI_AVAILABLE = True
 except ImportError:
     _GUDHI_AVAILABLE = False
@@ -101,6 +103,7 @@ def _betti_fallback(simplices: Iterable[tuple], max_dim: int) -> dict[int, int]:
 
     try:
         import networkx as nx
+
         _nx = True
     except ImportError:
         _nx = False
@@ -122,22 +125,27 @@ def _betti_fallback(simplices: Iterable[tuple], max_dim: int) -> dict[int, int]:
         b0 = nx.number_connected_components(G)
         b1 = len(nx.cycle_basis(G))
     else:
-        # networkx 也没: 并查集算 β_0, β_1 给 0 (保守)
-        parent = {v: v for v in vertices}
-        def find(x):
-            while parent[x] != x:
-                parent[x] = parent[parent[x]]
-                x = parent[x]
-            return x
-        for a, b in edges:
-            if a in parent and b in parent:
-                ra, rb = find(a), find(b)
-                if ra != rb:
-                    parent[ra] = rb
-        b0 = len({find(v) for v in vertices})
-        b1 = 0
+        b0, b1 = _fallback_union_find_b0(vertices, edges), 0
 
     return {d: (b0 if d == 0 else (b1 if d == 1 else 0)) for d in range(max_dim + 1)}
+
+
+def _fallback_union_find_b0(vertices: set, edges: set) -> int:
+    """networkx 也没有: 并查集算 β_0 (β_1 保守给 0)."""
+    parent = {v: v for v in vertices}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for a, b in edges:
+        if a in parent and b in parent:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+    return len({find(v) for v in vertices})
 
 
 def compute_persistent_homology(
@@ -176,16 +184,16 @@ def compute_persistent_homology(
         raise ValueError(f"points should be 2D (n, dim), got shape {pts.shape}")
 
     if max_edge_length is None:
-        # 启发式: 2x median pairwise distance. 大到连通, 不至于退化成全 clique.
-        # ponytail: O(n^2) pdist, n>2000 时换 sample. 升级路径: 用 max_edge_length
-        # 参数由 caller 显式给.
-        from scipy.spatial.distance import pdist
-        d = pdist(pts)
-        if len(d) == 0:
+        max_edge_length = _median_edge_length(pts)
+        if max_edge_length is None:
             return []
-        max_edge_length = float(np.median(d)) * 2.0
 
     rc = gudhi.RipsComplex(points=pts, max_edge_length=max_edge_length)
+    return _rips_persistence(rc, max_dim)
+
+
+def _rips_persistence(rc, max_dim: int) -> list[tuple[int, float, float]]:
+    """从 RipsComplex 取 persistence, 拍扁成 (dim, birth, death) list."""
     # simplex tree 扩展到 max_dim+1: 算 k-dim persistence 需要 (k+1)-simplex
     # 来 kill spurious cycles (e.g. 算 1-dim persistence 需要 2-simplex 来填
     # 三角形, 否则每个 edge 都是 essential class — 没意义)
@@ -196,6 +204,19 @@ def compute_persistent_homology(
 
     # GUDHI 返回 [(dim, (birth, death)), ...] — 拍扁成 (dim, birth, death)
     return [(dim, float(b), float(d)) for dim, (b, d) in diag]
+
+
+def _median_edge_length(pts: np.ndarray) -> float | None:
+    """按 2x median pairwise distance 推 max_edge_length; 空距离返 None."""
+    # 启发式: 2x median pairwise distance. 大到连通, 不至于退化成全 clique.
+    # ponytail: O(n^2) pdist, n>2000 时换 sample. 升级路径: 用 max_edge_length
+    # 参数由 caller 显式给.
+    from scipy.spatial.distance import pdist
+
+    d = pdist(pts)
+    if len(d) == 0:
+        return None
+    return float(np.median(d)) * 2.0
 
 
 def _persistent_fallback(points, max_dim):
@@ -240,6 +261,7 @@ def count_persistent_features(
 
 # ---------- 测试用 point cloud 构造器 ----------
 
+
 def ring_point_cloud(n: int = 50, r: float = 2.0, noise: float = 0.05) -> np.ndarray:
     """n 个点排在半径 r 的圆周上 — 用于测试 1-dim persistent hole.
 
@@ -271,6 +293,7 @@ def torus_point_cloud(n: int = 100, R: float = 2.0, r: float = 0.7) -> np.ndarra
 
 # ---------- Self-check ----------
 
+
 def _selfcheck() -> None:
     """验证: betti 一致性 + persistence diagram + 成功判据.
 
@@ -289,6 +312,20 @@ def _selfcheck() -> None:
     print(f"gudhi version: {gudhi.__version__}")
     print()
 
+    _selfcheck_betti_examples()
+    _selfcheck_disjoint_and_sphere()
+    _selfcheck_sphere()
+    _selfcheck_persistence()
+    _selfcheck_torus()
+    _selfcheck_perf()
+
+    print()
+    print("✓ simplicial_homology self-check 全过 — Open Problem 7.1 探索成功")
+    print("  GUDHI 已装, 真正 simplicial homology 可用, persistence diagram 可用")
+
+
+def _selfcheck_betti_examples() -> None:
+    """Test 1-2: 实心/空心 triangle 的 betti 对比."""
     # Test 1: 实心 triangle — 关键 case
     # networkx (cycle_basis) 会把边界算成 β_1=1, 真正 homology β_1=0
     # (2-simplex 把洞填了)
@@ -305,6 +342,7 @@ def _selfcheck() -> None:
     # 对比: networkx 算法 (trace_topology 风格)
     try:
         import networkx as nx
+
         G = nx.Graph()
         G.add_nodes_from([0, 1, 2])
         G.add_edges_from([(0, 1), (1, 2), (0, 2)])
@@ -319,35 +357,73 @@ def _selfcheck() -> None:
     hollow_triangle = [(0,), (1,), (2,), (0, 1), (1, 2), (0, 2)]
     betti_hollow = compute_exact_betti(hollow_triangle, max_dim=2)
     assert betti_hollow[0] == 1
-    assert betti_hollow[1] == 1, f"hollow triangle β_1 should be 1, got {betti_hollow[1]}"
+    assert betti_hollow[1] == 1, (
+        f"hollow triangle β_1 should be 1, got {betti_hollow[1]}"
+    )
     assert betti_hollow[2] == 0
     print(f"✓ Test 2 hollow triangle: β={betti_hollow} (跟 networkx 一致)")
 
+
+def _selfcheck_disjoint_and_sphere() -> None:
+    """Test 3-4: disjoint triangles 与 S^2 的 betti."""
     # Test 3: 两个 disjoint triangle — β_0=2
     two_triangles = [
-        (0,), (1,), (2,), (0, 1), (1, 2), (0, 2), (0, 1, 2),
-        (3,), (4,), (5,), (3, 4), (4, 5), (3, 5), (3, 4, 5),
+        (0,),
+        (1,),
+        (2,),
+        (0, 1),
+        (1, 2),
+        (0, 2),
+        (0, 1, 2),
+        (3,),
+        (4,),
+        (5,),
+        (3, 4),
+        (4, 5),
+        (3, 5),
+        (3, 4, 5),
     ]
     betti_two = compute_exact_betti(two_triangles, max_dim=2)
-    assert betti_two[0] == 2, f"two disjoint triangles β_0 should be 2, got {betti_two[0]}"
+    assert betti_two[0] == 2, (
+        f"two disjoint triangles β_0 should be 2, got {betti_two[0]}"
+    )
     assert betti_two[1] == 0
     print(f"✓ Test 3 two disjoint triangles: β={betti_two}")
 
+
+def _selfcheck_sphere() -> None:
+    """Test 4: tetrahedron boundary (S^2) 的 betti."""
     # Test 4: tetrahedron boundary (2-sphere) — β_0=1, β_2=1
     # 4 个 vertex + 6 条 edge + 4 个 triangle (边界), 没 tetrahedron (没填实)
     # 真正 homology: S^2 → β_0=1, β_1=0, β_2=1
     tet_boundary = [
-        (0,), (1,), (2,), (3,),
-        (0,1), (0,2), (0,3), (1,2), (1,3), (2,3),
-        (0,1,2), (0,1,3), (0,2,3), (1,2,3),
+        (0,),
+        (1,),
+        (2,),
+        (3,),
+        (0, 1),
+        (0, 2),
+        (0, 3),
+        (1, 2),
+        (1, 3),
+        (2, 3),
+        (0, 1, 2),
+        (0, 1, 3),
+        (0, 2, 3),
+        (1, 2, 3),
     ]
     betti_sphere = compute_exact_betti(tet_boundary, max_dim=3)
     assert betti_sphere[0] == 1, f"S^2 β_0 should be 1, got {betti_sphere[0]}"
     assert betti_sphere[1] == 0, f"S^2 β_1 should be 0, got {betti_sphere[1]}"
-    assert betti_sphere[2] == 1, f"S^2 β_2 should be 1 (enclosed void), got {betti_sphere[2]}"
+    assert betti_sphere[2] == 1, (
+        f"S^2 β_2 should be 1 (enclosed void), got {betti_sphere[2]}"
+    )
     print(f"✓ Test 4 S^2 (tetrahedron boundary): β={betti_sphere}")
     print("  (networkx 算不出 β_2=1, 这就是 GUDHI 的额外能力)")
 
+
+def _selfcheck_persistence() -> None:
+    """Test 5-6: ring point cloud 的 persistence + 成功判据."""
     # Test 5: n=50 ring point cloud — persistent 1-dim feature
     # 50 个点排在 r=2 圆周上, 相邻点距 ~2π·2/50≈0.25, max_edge_length=0.6
     # 让相邻 2-3 个点连成边但不至于全 clique — 期望看到 1 个 essential 1-dim
@@ -359,7 +435,9 @@ def _selfcheck() -> None:
     assert n_essential_1d >= 1, (
         f"ring should have ≥1 essential 1-dim feature (death=inf), got {n_essential_1d}"
     )
-    print(f"✓ Test 5 ring point cloud (n=50): {n_essential_1d} essential 1-dim feature(s)")
+    print(
+        f"✓ Test 5 ring point cloud (n=50): {n_essential_1d} essential 1-dim feature(s)"
+    )
     # 打印最 persistent 的几个 (按 persistence 排序, inf 在前)
     persist_1d = [(d, b, de) for d, b, de in diag if d == 1]
     persist_1d.sort(
@@ -375,40 +453,49 @@ def _selfcheck() -> None:
     # networkx 给出的是静态整数 β_1, 没尺度信息
     # GUDHI 给 (dim, birth, death) — 每个洞都有 scale, 区分 noise (短命) 和
     # 真实结构 (essential 或长 persistence)
-    has_scale_info = any(
-        d == 1 and not math.isinf(b) for d, b, de in diag
-    )
+    has_scale_info = any(d == 1 and not math.isinf(b) for d, b, de in diag)
     assert has_scale_info, "persistence diagram 应该有有限 birth (scale info)"
     n_1d_total = sum(1 for d, b, de in diag if d == 1)
-    print(f"✓ Test 6 成功判据: GUDHI 给出 {n_1d_total} 个 1-dim feature (含 essential + noise)")
+    print(
+        f"✓ Test 6 成功判据: GUDHI 给出 {n_1d_total} 个 1-dim feature (含 essential + noise)"
+    )
     print("  networkx 只能给整数 β_1, 看不到 birth/death scale — GUDHI 给出 diagram")
-    print(f"  → {n_essential_1d} 个 essential feature 跨尺度存在 (death=inf), 即 ring 的 2D hole")
+    print(
+        f"  → {n_essential_1d} 个 essential feature 跨尺度存在 (death=inf), 即 ring 的 2D hole"
+    )
     print("  → Open Problem 7.1 成功判据达成")
 
+
+def _selfcheck_torus() -> None:
+    """Test 7: torus point cloud 的持久特征数."""
     # Test 7: torus point cloud — β_0=1, β_1=2 (经典)
     # 用 Rips approximation (point cloud, 不是 triangulation)
     torus_pts = torus_point_cloud(n=80, R=2.0, r=0.7)
     torus_diag = compute_persistent_homology(torus_pts, max_dim=2, max_edge_length=1.0)
-    n_persist_1d_torus = count_persistent_features(torus_diag, dim=1, min_persistence=0.3)
+    n_persist_1d_torus = count_persistent_features(
+        torus_diag, dim=1, min_persistence=0.3
+    )
     # torus 真正 β_1=2, Rips approximation 可能多个噪声, 但至少 ≥2
     assert n_persist_1d_torus >= 2, (
         f"torus should have ≥2 persistent 1-dim features (β_1=2), got {n_persist_1d_torus}"
     )
-    print(f"✓ Test 7 torus point cloud: {n_persist_1d_torus} persistent 1-dim features (期望 ≥2)")
+    print(
+        f"✓ Test 7 torus point cloud: {n_persist_1d_torus} persistent 1-dim features (期望 ≥2)"
+    )
 
+
+def _selfcheck_perf() -> None:
+    """Test 8: 性能开销 sanity check."""
     # Test 8: 性能开销 sanity check
     import time
+
     big_pts = np.random.default_rng(0).uniform(0, 5, (200, 3))
     t0 = time.perf_counter()
     _ = compute_persistent_homology(big_pts, max_dim=2, max_edge_length=1.0)
     dt = time.perf_counter() - t0
-    print(f"✓ Test 8 性能 n=200: {dt*1000:.0f}ms")
+    print(f"✓ Test 8 性能 n=200: {dt * 1000:.0f}ms")
     assert dt < 10.0, f"n=200 Rips 应该 <10s, got {dt:.2f}s"
     print("  (Phase 1-6 trace_topology cap=50, 这里 n=200 远超, 性能可接受)")
-
-    print()
-    print("✓ simplicial_homology self-check 全过 — Open Problem 7.1 探索成功")
-    print("  GUDHI 已装, 真正 simplicial homology 可用, persistence diagram 可用")
 
 
 if __name__ == "__main__":

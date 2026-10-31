@@ -71,6 +71,7 @@ class DiagnoseTool(HuginnTool):
             # ponytail: Sobko 仓库里没有 troubleshooting_by_software.json.
             # 想用就设 HUGINN_SOBKO_TROUBLESHOOTING 指向自己的 troubleshooting JSON.
             import os
+
             env_path = os.environ.get("HUGINN_SOBKO_TROUBLESHOOTING", "")
             kb_path = Path(env_path) if env_path else None
 
@@ -88,53 +89,12 @@ class DiagnoseTool(HuginnTool):
         error_lower = args.error_message.lower()
         software = (args.software or "").lower()
 
-        findings: list[dict[str, Any]] = []
-
         # Search in software-specific troubleshooting entries
-        if software and software in {k.lower() for k in self._kb}:
-            for sw_name, entries in self._kb.items():
-                if sw_name.lower() == software:
-                    for entry in entries:
-                        entry_text = entry.get("text", "").lower()
-                        # Score by keyword overlap
-                        score = sum(
-                            1
-                            for word in error_lower.split()
-                            if len(word) > 3 and word in entry_text
-                        )
-                        if score > 0:
-                            findings.append(
-                                {
-                                    "source": sw_name,
-                                    "title": entry.get("title", ""),
-                                    "text": entry.get("text", ""),
-                                    "score": score,
-                                    "relevance": "high" if score >= 3 else "medium",
-                                }
-                            )
+        findings = _search_software_entries(self._kb, software, error_lower)
 
         # Also search across all software if no specific match or few results
         if len(findings) < 3:
-            for sw_name, entries in self._kb.items():
-                if software and sw_name.lower() == software:
-                    continue  # Already searched
-                for entry in entries:
-                    entry_text = entry.get("text", "").lower()
-                    score = sum(
-                        1
-                        for word in error_lower.split()
-                        if len(word) > 3 and word in entry_text
-                    )
-                    if score >= 2:
-                        findings.append(
-                            {
-                                "source": sw_name,
-                                "title": entry.get("title", ""),
-                                "text": entry.get("text", ""),
-                                "score": score,
-                                "relevance": "medium",
-                            }
-                        )
+            findings.extend(_search_all_entries(self._kb, software, error_lower))
 
         # Sort by score
         findings.sort(key=lambda x: -x["score"])
@@ -211,123 +171,23 @@ class DiagnoseTool(HuginnTool):
         sw = (args.software or "").lower()
 
         if "scf" in calc or "dft" in calc:
-            advice.extend(
-                [
-                    "Check initial guess quality — read converged wavefunction from previous calculation if available",
-                    "Try different convergence algorithms (DIIS → RCA → EDIIS in Gaussian; DIIS → SOSCF in ORCA)",
-                    "Verify that your geometry is chemically reasonable (no overlapping atoms)",
-                    "For metallic systems, ensure proper smearing and k-point density",
-                ]
-            )
-
+            advice.extend(_scf_advice())
         if "md" in calc or "molecular dynamics" in calc:
-            advice.extend(
-                [
-                    "Check energy conservation in NVE ensemble (drift should be < 1% over 1 ns)",
-                    "Verify force field parameters — especially for non-standard residues or ions",
-                    "Inspect trajectory for atom clashes or unusual bond breaking",
-                    "Ensure proper thermostat/barostat coupling constants (not too aggressive)",
-                ]
-            )
-
+            advice.extend(_md_advice())
         if "td" in calc or "excited" in calc:
-            advice.extend(
-                [
-                    "Increase number of roots if target state is higher in energy",
-                    "Check for root flipping — the state ordering may change along a coordinate",
-                    "For charge transfer states, range-separated functionals (CAM-B3LYP, ωB97X) are often necessary",
-                    "Verify that oscillator strengths are physically reasonable",
-                ]
-            )
-
+            advice.extend(_td_advice())
         # FEA / Solid Mechanics
         if "fea" in calc or "structural" in calc or "solid" in calc:
-            advice.extend(
-                [
-                    "Check mesh quality — aspect ratio, skewness, and Jacobian distortion",
-                    "Verify boundary conditions are statically admissible (no over/under-constraint)",
-                    "Check material property units — GPa vs Pa vs MPa is a common source of error",
-                    "For contact problems, ensure proper master/slave pairing and penalty stiffness",
-                ]
-            )
-
+            advice.extend(_fea_advice())
         if "cpfem" in calc or "crystal plasticity" in calc:
-            advice.extend(
-                [
-                    "Verify crystal orientation input format (Euler angles, Rodrigues, or quaternion)",
-                    "Check that slip system definitions match the crystal structure (fcc, bcc, hcp)",
-                    "Ensure mesh resolves grain boundaries adequately",
-                    "For spectral solvers (DAMASK), check FFT grid resolution",
-                ]
-            )
-
+            advice.extend(_cpfem_advice())
         # CFD / Fluid Mechanics
         if "cfd" in calc or "fluid" in calc:
-            advice.extend(
-                [
-                    "Check mesh quality — orthogonality, skewness, and y+ values",
-                    "Verify boundary condition consistency (mass flux balance)",
-                    "For transient simulations, ensure CFL condition is satisfied",
-                    "Check that turbulence model is appropriate for the flow regime",
-                ]
-            )
+            advice.extend(_cfd_advice())
 
-        if "gaussian" in sw:
-            advice.append(
-                "Check Gaussian output for 'Error termination' lines — they usually indicate the specific problem"
-            )
-
-        if "orca" in sw:
-            advice.append(
-                "Check ORCA output for 'ABORTING THE RUN' and preceding warnings"
-            )
-
-        if "vasp" in sw:
-            advice.extend(
-                [
-                    "Check for 'ZBRENT' or 'EDDDAV' errors — usually SCF convergence issues",
-                    "Verify ENCUT ≥ max(ENMAX) across all species",
-                    "For magnetic systems, ensure correct MAGMOM initialization",
-                ]
-            )
-
-        if "abaqus" in sw:
-            advice.extend(
-                [
-                    "Check .dat and .msg files for detailed error diagnostics",
-                    "'Too many attempts' → reduce increment size or improve initial guess",
-                    "'Negative eigenvalues' → check for buckling or material instability",
-                    "'Excessive distortion' → check element quality or material properties",
-                ]
-            )
-
-        if "ansys" in sw:
-            advice.extend(
-                [
-                    "Check .err and .out files for specific error codes",
-                    "'Solution diverges' → check contact settings, element distortion, or material units",
-                    "Verify license availability for required features",
-                ]
-            )
-
-        if "openfoam" in sw:
-            advice.extend(
-                [
-                    "Check log.simpleFoam (or corresponding solver log) for residual history",
-                    "'Floating point exception' → check boundary conditions, initial fields, or mesh quality",
-                    "'Continuity error' → check pressure-velocity coupling or boundary flux consistency",
-                    "Run checkMesh to identify mesh quality issues",
-                ]
-            )
-
-        if "fluent" in sw:
-            advice.extend(
-                [
-                    "Check console output for divergence warnings",
-                    "Reduce under-relaxation factors if solution diverges",
-                    "Verify mesh quality metrics (skewness < 0.85, orthogonal quality > 0.15)",
-                ]
-            )
+        advice.extend(_quantum_software_advice(sw))
+        advice.extend(_fea_software_advice(sw))
+        advice.extend(_cfd_software_advice(sw))
 
         if not advice:
             advice = [
@@ -347,57 +207,257 @@ class DiagnoseTool(HuginnTool):
         # If findings mention specific keywords, suggest actions
         all_text = " ".join(f["text"] for f in findings).lower()
 
-        if "converg" in all_text:
-            steps.append("Adjust convergence criteria or switch algorithms")
-        if "basis" in all_text or "diffuse" in all_text:
-            steps.append(
-                "Review basis set choice — consider adding diffuse functions for anions/Rydberg states"
-            )
-        if "smear" in all_text:
-            steps.append(
-                "Check smearing parameters — SIGMA too large can cause unphysical occupancies"
-            )
-        if "grid" in all_text:
-            steps.append(
-                "Increase integration grid quality (fine or ultrafine in Gaussian)"
-            )
-        if "memory" in all_text or "disk" in all_text:
-            steps.append(
-                "Increase memory/disk allocation or reduce system size for testing"
-            )
+        steps.extend(_keyword_next_steps(all_text))
 
         # FEA-specific next steps
         if "abaqus" in sw or "ansys" in sw or "comsol" in sw:
-            if "mesh" in all_text or "distortion" in all_text or "element" in all_text:
-                steps.append("Remesh with finer resolution or better element type")
-            if "contact" in all_text:
-                steps.append("Review contact pair definitions and penalty stiffness")
-            if "convergence" in all_text and (
-                "newton" in all_text or "equilibrium" in all_text
-            ):
-                steps.append("Reduce load increment or enable line search")
-            if "material" in all_text:
-                steps.append("Verify material property units and consistency")
+            steps.extend(_fea_next_steps(all_text))
 
         # CFD-specific next steps
         if "openfoam" in sw or "fluent" in sw:
-            if "mesh" in all_text or "quality" in all_text or "skewness" in all_text:
-                steps.append("Improve mesh quality or add inflation layers")
-            if "boundary" in all_text or "flux" in all_text:
-                steps.append(
-                    "Check boundary condition types and values for consistency"
-                )
-            if "divergence" in all_text or "residual" in all_text:
-                steps.append("Reduce under-relaxation factors or improve initial guess")
-            if "courant" in all_text or "cfl" in all_text:
-                steps.append("Reduce time step size to satisfy CFL condition")
-            if "turbulence" in all_text or "yplus" in all_text:
-                steps.append(
-                    "Check y+ distribution and refine near-wall mesh if needed"
-                )
+            steps.extend(_cfd_next_steps(all_text))
 
         if not steps:
             steps.append("Implement the most relevant fix from the findings above")
             steps.append("Run a minimal test case to verify the fix works")
 
         return steps
+
+
+def _search_software_entries(
+    kb: dict[str, Any], software: str, error_lower: str
+) -> list[dict[str, Any]]:
+    """Search in software-specific troubleshooting entries."""
+    findings: list[dict[str, Any]] = []
+    if software and software in {k.lower() for k in kb}:
+        for sw_name, entries in kb.items():
+            if sw_name.lower() == software:
+                for entry in entries:
+                    entry_text = entry.get("text", "").lower()
+                    # Score by keyword overlap
+                    score = sum(
+                        1
+                        for word in error_lower.split()
+                        if len(word) > 3 and word in entry_text
+                    )
+                    if score > 0:
+                        findings.append(
+                            {
+                                "source": sw_name,
+                                "title": entry.get("title", ""),
+                                "text": entry.get("text", ""),
+                                "score": score,
+                                "relevance": "high" if score >= 3 else "medium",
+                            }
+                        )
+    return findings
+
+
+def _search_all_entries(
+    kb: dict[str, Any], software: str, error_lower: str
+) -> list[dict[str, Any]]:
+    """Also search across all software if no specific match or few results."""
+    findings: list[dict[str, Any]] = []
+    for sw_name, entries in kb.items():
+        if software and sw_name.lower() == software:
+            continue  # Already searched
+        for entry in entries:
+            entry_text = entry.get("text", "").lower()
+            score = sum(
+                1
+                for word in error_lower.split()
+                if len(word) > 3 and word in entry_text
+            )
+            if score >= 2:
+                findings.append(
+                    {
+                        "source": sw_name,
+                        "title": entry.get("title", ""),
+                        "text": entry.get("text", ""),
+                        "score": score,
+                        "relevance": "medium",
+                    }
+                )
+    return findings
+
+
+def _scf_advice() -> list[str]:
+    """SCF / DFT convergence advice."""
+    return [
+        "Check initial guess quality — read converged wavefunction from previous calculation if available",
+        "Try different convergence algorithms (DIIS → RCA → EDIIS in Gaussian; DIIS → SOSCF in ORCA)",
+        "Verify that your geometry is chemically reasonable (no overlapping atoms)",
+        "For metallic systems, ensure proper smearing and k-point density",
+    ]
+
+
+def _md_advice() -> list[str]:
+    """Molecular dynamics advice."""
+    return [
+        "Check energy conservation in NVE ensemble (drift should be < 1% over 1 ns)",
+        "Verify force field parameters — especially for non-standard residues or ions",
+        "Inspect trajectory for atom clashes or unusual bond breaking",
+        "Ensure proper thermostat/barostat coupling constants (not too aggressive)",
+    ]
+
+
+def _td_advice() -> list[str]:
+    """TDDFT / excited states advice."""
+    return [
+        "Increase number of roots if target state is higher in energy",
+        "Check for root flipping — the state ordering may change along a coordinate",
+        "For charge transfer states, range-separated functionals (CAM-B3LYP, ωB97X) are often necessary",
+        "Verify that oscillator strengths are physically reasonable",
+    ]
+
+
+def _fea_advice() -> list[str]:
+    """FEA / Solid Mechanics advice."""
+    return [
+        "Check mesh quality — aspect ratio, skewness, and Jacobian distortion",
+        "Verify boundary conditions are statically admissible (no over/under-constraint)",
+        "Check material property units — GPa vs Pa vs MPa is a common source of error",
+        "For contact problems, ensure proper master/slave pairing and penalty stiffness",
+    ]
+
+
+def _cpfem_advice() -> list[str]:
+    """Crystal plasticity FEA advice."""
+    return [
+        "Verify crystal orientation input format (Euler angles, Rodrigues, or quaternion)",
+        "Check that slip system definitions match the crystal structure (fcc, bcc, hcp)",
+        "Ensure mesh resolves grain boundaries adequately",
+        "For spectral solvers (DAMASK), check FFT grid resolution",
+    ]
+
+
+def _cfd_advice() -> list[str]:
+    """CFD / Fluid Mechanics advice."""
+    return [
+        "Check mesh quality — orthogonality, skewness, and y+ values",
+        "Verify boundary condition consistency (mass flux balance)",
+        "For transient simulations, ensure CFL condition is satisfied",
+        "Check that turbulence model is appropriate for the flow regime",
+    ]
+
+
+def _quantum_software_advice(sw: str) -> list[str]:
+    """Gaussian / ORCA / VASP 专属建议."""
+    advice: list[str] = []
+    if "gaussian" in sw:
+        advice.append(
+            "Check Gaussian output for 'Error termination' lines — they usually indicate the specific problem"
+        )
+    if "orca" in sw:
+        advice.append("Check ORCA output for 'ABORTING THE RUN' and preceding warnings")
+    if "vasp" in sw:
+        advice.extend(
+            [
+                "Check for 'ZBRENT' or 'EDDDAV' errors — usually SCF convergence issues",
+                "Verify ENCUT ≥ max(ENMAX) across all species",
+                "For magnetic systems, ensure correct MAGMOM initialization",
+            ]
+        )
+    return advice
+
+
+def _fea_software_advice(sw: str) -> list[str]:
+    """Abaqus / Ansys 专属建议."""
+    advice: list[str] = []
+    if "abaqus" in sw:
+        advice.extend(
+            [
+                "Check .dat and .msg files for detailed error diagnostics",
+                "'Too many attempts' → reduce increment size or improve initial guess",
+                "'Negative eigenvalues' → check for buckling or material instability",
+                "'Excessive distortion' → check element quality or material properties",
+            ]
+        )
+    if "ansys" in sw:
+        advice.extend(
+            [
+                "Check .err and .out files for specific error codes",
+                "'Solution diverges' → check contact settings, element distortion, or material units",
+                "Verify license availability for required features",
+            ]
+        )
+    return advice
+
+
+def _cfd_software_advice(sw: str) -> list[str]:
+    """OpenFOAM / Fluent 专属建议."""
+    advice: list[str] = []
+    if "openfoam" in sw:
+        advice.extend(
+            [
+                "Check log.simpleFoam (or corresponding solver log) for residual history",
+                "'Floating point exception' → check boundary conditions, initial fields, or mesh quality",
+                "'Continuity error' → check pressure-velocity coupling or boundary flux consistency",
+                "Run checkMesh to identify mesh quality issues",
+            ]
+        )
+    if "fluent" in sw:
+        advice.extend(
+            [
+                "Check console output for divergence warnings",
+                "Reduce under-relaxation factors if solution diverges",
+                "Verify mesh quality metrics (skewness < 0.85, orthogonal quality > 0.15)",
+            ]
+        )
+    return advice
+
+
+def _keyword_next_steps(all_text: str) -> list[str]:
+    """按 findings 关键词给出通用下一步."""
+    steps = []
+    if "converg" in all_text:
+        steps.append("Adjust convergence criteria or switch algorithms")
+    if "basis" in all_text or "diffuse" in all_text:
+        steps.append(
+            "Review basis set choice — consider adding diffuse functions for anions/Rydberg states"
+        )
+    if "smear" in all_text:
+        steps.append(
+            "Check smearing parameters — SIGMA too large can cause unphysical occupancies"
+        )
+    if "grid" in all_text:
+        steps.append(
+            "Increase integration grid quality (fine or ultrafine in Gaussian)"
+        )
+    if "memory" in all_text or "disk" in all_text:
+        steps.append(
+            "Increase memory/disk allocation or reduce system size for testing"
+        )
+    return steps
+
+
+def _fea_next_steps(all_text: str) -> list[str]:
+    """FEA 专属下一步."""
+    steps = []
+    if "mesh" in all_text or "distortion" in all_text or "element" in all_text:
+        steps.append("Remesh with finer resolution or better element type")
+    if "contact" in all_text:
+        steps.append("Review contact pair definitions and penalty stiffness")
+    if "convergence" in all_text and (
+        "newton" in all_text or "equilibrium" in all_text
+    ):
+        steps.append("Reduce load increment or enable line search")
+    if "material" in all_text:
+        steps.append("Verify material property units and consistency")
+    return steps
+
+
+def _cfd_next_steps(all_text: str) -> list[str]:
+    """CFD 专属下一步."""
+    steps = []
+    if "mesh" in all_text or "quality" in all_text or "skewness" in all_text:
+        steps.append("Improve mesh quality or add inflation layers")
+    if "boundary" in all_text or "flux" in all_text:
+        steps.append("Check boundary condition types and values for consistency")
+    if "divergence" in all_text or "residual" in all_text:
+        steps.append("Reduce under-relaxation factors or improve initial guess")
+    if "courant" in all_text or "cfl" in all_text:
+        steps.append("Reduce time step size to satisfy CFL condition")
+    if "turbulence" in all_text or "yplus" in all_text:
+        steps.append("Check y+ distribution and refine near-wall mesh if needed")
+    return steps

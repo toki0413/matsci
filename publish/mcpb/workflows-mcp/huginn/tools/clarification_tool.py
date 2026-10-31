@@ -25,7 +25,6 @@ from huginn.tools.base import HuginnTool
 logger = logging.getLogger(__name__)
 
 
-
 class ClarificationInput(BaseModel):
     """工具输入. action=ask 时 question 必填, 其它 action 自动生成."""
 
@@ -107,26 +106,16 @@ class ClarificationInput(BaseModel):
         # 避免运行到一半才发现参数缺了
         if self.action == "socratic_probes":
             if not self.probes:
-                raise ValueError(
-                    "action=socratic_probes 需要 probes 字段 (非空列表)"
-                )
+                raise ValueError("action=socratic_probes 需要 probes 字段 (非空列表)")
             if len(self.probes) > 5:
-                raise ValueError(
-                    "socratic_probes 最多 5 个探针, 避免疲劳轰炸"
-                )
+                raise ValueError("socratic_probes 最多 5 个探针, 避免疲劳轰炸")
         elif self.action == "decision_tree":
             if not self.tree_nodes:
-                raise ValueError(
-                    "action=decision_tree 需要 tree_nodes 字段 (非空)"
-                )
+                raise ValueError("action=decision_tree 需要 tree_nodes 字段 (非空)")
             if not self.start_node:
-                raise ValueError(
-                    "action=decision_tree 需要 start_node 字段"
-                )
+                raise ValueError("action=decision_tree 需要 start_node 字段")
             if self.start_node not in self.tree_nodes:
-                raise ValueError(
-                    f"start_node '{self.start_node}' 不在 tree_nodes 里"
-                )
+                raise ValueError(f"start_node '{self.start_node}' 不在 tree_nodes 里")
         return self
 
 
@@ -150,6 +139,67 @@ class ClarificationOutput(BaseModel):
         default="",
         description="decision_tree 叶子节点的 result",
     )
+
+
+def _disabled_by_flag_result(args: ClarificationInput) -> ToolResult | None:
+    # flag 关掉时不问, 直接走默认行为
+    try:
+        from huginn.feature_flags import FeatureFlags
+
+        if not FeatureFlags.shared().is_enabled("clarification"):
+            return ToolResult(
+                data=ClarificationOutput(
+                    answer=args.default_answer or "",
+                    question_id="",
+                    timed_out=True,
+                ).model_dump(),
+                success=True,
+                side_effects=["clarification disabled by feature flag"],
+            )
+    except Exception:
+        logger.debug("call failed", exc_info=True)
+    return None
+
+
+def _tree_leaf_result(current: str, final: str, path: list[str]) -> ToolResult:
+    return ToolResult(
+        data=ClarificationOutput(
+            answer=final,
+            question_id="",
+            timed_out=False,
+            tree_path=path,
+            final_result=final,
+        ).model_dump(),
+        success=True,
+        side_effects=[
+            f"decision_tree: reached leaf '{current}'",
+        ],
+    )
+
+
+def _tree_fallback_result(current: str, final: str, path: list[str]) -> ToolResult:
+    return ToolResult(
+        data=ClarificationOutput(
+            answer=final,
+            question_id="",
+            timed_out=True,
+            tree_path=path,
+            final_result=final,
+        ).model_dump(),
+        success=True,
+        side_effects=[
+            f"decision_tree: stopped at '{current}' (max depth or broken link)",
+        ],
+    )
+
+
+def _next_tree_node(
+    node: dict[str, Any], ans: str | None, default_answer: str, options: list[str]
+) -> str | None:
+    next_node = node["options"].get(ans)
+    if next_node is None:
+        next_node = node["options"].get(default_answer, options[0])
+    return next_node
 
 
 class ClarificationTool(HuginnTool[ClarificationInput, ClarificationOutput]):
@@ -196,25 +246,11 @@ class ClarificationTool(HuginnTool[ClarificationInput, ClarificationOutput]):
             self._manager = get_clarification_manager()
         return self._manager
 
-    async def call(
-        self, args: ClarificationInput, context: ToolContext
-    ) -> ToolResult:
+    async def call(self, args: ClarificationInput, context: ToolContext) -> ToolResult:
         """提问并等回答. 按 action 自动生成提问模板."""
-        # flag 关掉时不问, 直接走默认行为
-        try:
-            from huginn.feature_flags import FeatureFlags
-            if not FeatureFlags.shared().is_enabled("clarification"):
-                return ToolResult(
-                    data=ClarificationOutput(
-                        answer=args.default_answer or "",
-                        question_id="",
-                        timed_out=True,
-                    ).model_dump(),
-                    success=True,
-                    side_effects=["clarification disabled by feature flag"],
-                )
-        except Exception:
-            logger.debug("call failed", exc_info=True)
+        disabled = _disabled_by_flag_result(args)
+        if disabled is not None:
+            return disabled
 
         thread_id = getattr(context, "session_id", None) or "default"
 
@@ -229,7 +265,9 @@ class ClarificationTool(HuginnTool[ClarificationInput, ClarificationOutput]):
         if question is None:
             return ToolResult(
                 data=ClarificationOutput(
-                    answer=default_answer, question_id="", timed_out=True,
+                    answer=default_answer,
+                    question_id="",
+                    timed_out=True,
                 ).model_dump(),
                 success=False,
                 error="action=ask 需要 question 字段",
@@ -242,12 +280,26 @@ class ClarificationTool(HuginnTool[ClarificationInput, ClarificationOutput]):
         ):
             return ToolResult(
                 data=ClarificationOutput(
-                    answer=default_answer, question_id="", timed_out=True,
+                    answer=default_answer,
+                    question_id="",
+                    timed_out=True,
                 ).model_dump(),
                 success=True,
                 side_effects=["clarification skipped: too many pending"],
             )
 
+        return await ClarificationTool._ask_with_manager(
+            self, args, thread_id, question, options, default_answer
+        )
+
+    async def _ask_with_manager(
+        self,
+        args: ClarificationInput,
+        thread_id: str,
+        question: str,
+        options: list[str],
+        default_answer: str,
+    ) -> ToolResult:
         try:
             answer = await self.manager.ask(
                 thread_id=thread_id,
@@ -265,7 +317,9 @@ class ClarificationTool(HuginnTool[ClarificationInput, ClarificationOutput]):
             timed_out = answer == default_answer and default_answer != ""
             return ToolResult(
                 data=ClarificationOutput(
-                    answer=answer, question_id="", timed_out=timed_out,
+                    answer=answer,
+                    question_id="",
+                    timed_out=timed_out,
                 ).model_dump(),
                 success=True,
                 side_effects=[
@@ -276,15 +330,15 @@ class ClarificationTool(HuginnTool[ClarificationInput, ClarificationOutput]):
         except Exception as exc:
             return ToolResult(
                 data=ClarificationOutput(
-                    answer=default_answer, question_id="", timed_out=True,
+                    answer=default_answer,
+                    question_id="",
+                    timed_out=True,
                 ).model_dump(),
                 success=False,
                 error=f"clarification failed: {exc}",
             )
 
-    def _prepare(
-        self, args: ClarificationInput
-    ) -> tuple[str | None, list[str], str]:
+    def _prepare(self, args: ClarificationInput) -> tuple[str | None, list[str], str]:
         """按 action 生成提问文案/选项/默认值. 返回 (question, options, default)."""
         if args.action == "ask":
             if not args.question:
@@ -304,9 +358,7 @@ class ClarificationTool(HuginnTool[ClarificationInput, ClarificationOutput]):
         if args.action == "confirm_plan":
             steps = args.plan_steps or []
             if steps:
-                numbered = "\n".join(
-                    f"  {i}. {s}" for i, s in enumerate(steps, 1)
-                )
+                numbered = "\n".join(f"  {i}. {s}" for i, s in enumerate(steps, 1))
                 question = f"📋 执行计划审批:\n{numbered}\n\n确认执行此计划？"
             else:
                 question = "📋 执行计划审批: 确认执行？"
@@ -387,55 +439,21 @@ class ClarificationTool(HuginnTool[ClarificationInput, ClarificationOutput]):
 
             if node.get("leaf", False):
                 final = node.get("result", "")
-                return ToolResult(
-                    data=ClarificationOutput(
-                        answer=final,
-                        question_id="",
-                        timed_out=False,
-                        tree_path=path,
-                        final_result=final,
-                    ).model_dump(),
-                    success=True,
-                    side_effects=[
-                        f"decision_tree: reached leaf '{current}'",
-                    ],
-                )
+                return _tree_leaf_result(current, final, path)
 
-            question = node.get("question", "")
-            options = list(node.get("options", {}).keys())
-            if not question or not options:
-                break  # 节点结构不完整
-
-            if not self.manager.should_ask(
-                "decision_tree", context={"thread_id": thread_id}
-            ):
+            prepared = ClarificationTool._tree_question_options(self, node, thread_id)
+            if prepared is None:
                 break
+            question, options = prepared
 
-            try:
-                ans = await self.manager.ask(
-                    thread_id=thread_id,
-                    question=question,
-                    options=options,
-                    context=args.context,
-                    default_answer=args.default_answer or options[0],
-                    timeout=args.timeout_seconds,
-                    metadata={
-                        "engine_kind": "clarification_tool",
-                        "action": "decision_tree",
-                        "session_id": thread_id,
-                        "node": current,
-                    },
-                )
-            except Exception:
-                logger.debug("best-effort op failed", exc_info=True)
+            ok, ans = await ClarificationTool._ask_tree_node(
+                self, args, thread_id, current, question, options
+            )
+            if not ok:
                 break
 
             # 用户答案不在 options 里 -> 走 default_answer 对应的边, 再不行取第一个
-            next_node = node["options"].get(ans)
-            if next_node is None:
-                next_node = node["options"].get(
-                    args.default_answer, options[0]
-                )
+            next_node = _next_tree_node(node, ans, args.default_answer, options)
             if next_node is None:
                 break
             current = next_node
@@ -443,16 +461,45 @@ class ClarificationTool(HuginnTool[ClarificationInput, ClarificationOutput]):
         # 走到上限或断链: 用当前节点的 result 或 default 兜底
         node = args.tree_nodes.get(current, {})
         final = node.get("result", args.default_answer)
-        return ToolResult(
-            data=ClarificationOutput(
-                answer=final,
-                question_id="",
-                timed_out=True,
-                tree_path=path,
-                final_result=final,
-            ).model_dump(),
-            success=True,
-            side_effects=[
-                f"decision_tree: stopped at '{current}' (max depth or broken link)",
-            ],
-        )
+        return _tree_fallback_result(current, final, path)
+
+    def _tree_question_options(
+        self, node: dict[str, Any], thread_id: str
+    ) -> tuple[str, list[str]] | None:
+        question = node.get("question", "")
+        options = list(node.get("options", {}).keys())
+        if not question or not options:
+            return None  # 节点结构不完整
+        if not self.manager.should_ask(
+            "decision_tree", context={"thread_id": thread_id}
+        ):
+            return None
+        return question, options
+
+    async def _ask_tree_node(
+        self,
+        args: ClarificationInput,
+        thread_id: str,
+        current: str,
+        question: str,
+        options: list[str],
+    ) -> tuple[bool, str | None]:
+        try:
+            ans = await self.manager.ask(
+                thread_id=thread_id,
+                question=question,
+                options=options,
+                context=args.context,
+                default_answer=args.default_answer or options[0],
+                timeout=args.timeout_seconds,
+                metadata={
+                    "engine_kind": "clarification_tool",
+                    "action": "decision_tree",
+                    "session_id": thread_id,
+                    "node": current,
+                },
+            )
+            return True, ans
+        except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
+            return False, None

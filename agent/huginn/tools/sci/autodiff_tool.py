@@ -26,6 +26,57 @@ from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 logger = logging.getLogger(__name__)
 
 
+# Birch-Murnaghan EOS: E(V) = E0 + B0*V0/BP * [f^BP * (BP-1) + 1] * exp(-f)
+# where f = (V/V0)^(-1/3) - 1
+def _birch_murnaghan(V, E0=0.0, B0=100.0, V0=100.0, BP=4.0):
+    # Guard against division by zero or negative V0
+    V0 = np.where(np.asarray(V0) <= 0, 1e-3, V0)
+    f = (V / V0) ** (-1.0 / 3.0) - 1.0
+    # numpy float exponent on negative base yields nan; handle sign explicitly
+    bp_int = int(round(BP))
+    f_arr = np.asarray(f, dtype=float)
+    f_pow = np.empty_like(f_arr, dtype=float)
+    pos = f_arr >= 0
+    f_pow[pos] = f_arr[pos] ** BP
+    neg = ~pos
+    f_pow[neg] = np.sign(f_arr[neg]) ** bp_int * np.abs(f_arr[neg]) ** BP
+    return E0 + B0 * V0 / BP * (f_pow * (BP - 1) + 1) * np.exp(-f)
+
+
+# Murnaghan EOS: E(V) = E0 + B0*V/BP * [ (V0/V)^BP / (BP-1) + 1 ] - B0*V0/(BP-1)
+def _murnaghan(V, E0=0.0, B0=100.0, V0=100.0, BP=4.0):
+    return E0 + B0 * V / BP * ((V0 / V) ** BP / (BP - 1) + 1) - B0 * V0 / (BP - 1)
+
+
+# Vinet EOS
+def _vinet(V, E0=0.0, B0=100.0, V0=100.0, BP=4.0):
+    x = (V / V0) ** (1.0 / 3.0)
+    eta = 1.5 * (BP - 1)
+    return E0 + 2 * B0 * V0 / (BP - 1) ** 2 * (
+        1 - (1 + eta * (x - 1)) * np.exp(-eta * (x - 1))
+    )
+
+
+# Neo-Hookean hyperelastic energy: Ψ = C10*(I1-3) + D1*(J-1)²
+def _neo_hookean(I1, J, C10=0.5, D1=2.0):
+    return C10 * (I1 - 3) + D1 * (J - 1) ** 2
+
+
+# Mooney-Rivlin: Ψ = C10*(I1-3) + C01*(I2-3) + D1*(J-1)²
+def _mooney_rivlin(I1, I2, J, C10=0.5, C01=0.1, D1=2.0):
+    return C10 * (I1 - 3) + C01 * (I2 - 3) + D1 * (J - 1) ** 2
+
+
+# Lennard-Jones potential: E(r) = 4ε[(σ/r)^12 - (σ/r)^6]
+def _lennard_jones(r, epsilon=1.0, sigma=1.0):
+    sr6 = (sigma / r) ** 6
+    return 4 * epsilon * (sr6**2 - sr6)
+
+
+# Morse potential: E(r) = D_e * [1 - exp(-a*(r-r_e))]²
+def _morse(r, De=1.0, a=1.0, re=1.0):
+    return De * (1 - np.exp(-a * (r - re))) ** 2
+
 
 class AutoDiffInput(BaseModel):
     action: str = Field(
@@ -75,7 +126,9 @@ class AutoDiffTool(HuginnTool):
 
     name = "autodiff_tool"
     category = "sci"
-    profile = ToolProfile(phases=frozenset({ResearchPhase.HYPOTHESIS, ResearchPhase.VALIDATION}))
+    profile = ToolProfile(
+        phases=frozenset({ResearchPhase.HYPOTHESIS, ResearchPhase.VALIDATION})
+    )
     description = (
         "Compute gradients, Hessians, and Jacobians using automatic differentiation. "
         "Supports built-in material models (EOS, elastic, potential) and custom functions."
@@ -94,70 +147,15 @@ class AutoDiffTool(HuginnTool):
 
     def _register_functions(self) -> dict[str, Callable]:
         """Register built-in material science functions."""
-        functions = {}
-
-        # Birch-Murnaghan EOS: E(V) = E0 + B0*V0/BP * [f^BP * (BP-1) + 1] * exp(-f)
-        # where f = (V/V0)^(-1/3) - 1
-        def birch_murnaghan(V, E0=0.0, B0=100.0, V0=100.0, BP=4.0):
-            # Guard against division by zero or negative V0
-            V0 = np.where(np.asarray(V0) <= 0, 1e-3, V0)
-            f = (V / V0) ** (-1.0 / 3.0) - 1.0
-            # numpy float exponent on negative base yields nan; handle sign explicitly
-            bp_int = int(round(BP))
-            f_arr = np.asarray(f, dtype=float)
-            f_pow = np.empty_like(f_arr, dtype=float)
-            pos = f_arr >= 0
-            f_pow[pos] = f_arr[pos] ** BP
-            neg = ~pos
-            f_pow[neg] = np.sign(f_arr[neg]) ** bp_int * np.abs(f_arr[neg]) ** BP
-            return E0 + B0 * V0 / BP * (f_pow * (BP - 1) + 1) * np.exp(-f)
-
-        functions["birch_murnaghan"] = birch_murnaghan
-
-        # Murnaghan EOS: E(V) = E0 + B0*V/BP * [ (V0/V)^BP / (BP-1) + 1 ] - B0*V0/(BP-1)
-        def murnaghan(V, E0=0.0, B0=100.0, V0=100.0, BP=4.0):
-            return (
-                E0 + B0 * V / BP * ((V0 / V) ** BP / (BP - 1) + 1) - B0 * V0 / (BP - 1)
-            )
-
-        functions["murnaghan"] = murnaghan
-
-        # Vinet EOS
-        def vinet(V, E0=0.0, B0=100.0, V0=100.0, BP=4.0):
-            x = (V / V0) ** (1.0 / 3.0)
-            eta = 1.5 * (BP - 1)
-            return E0 + 2 * B0 * V0 / (BP - 1) ** 2 * (
-                1 - (1 + eta * (x - 1)) * np.exp(-eta * (x - 1))
-            )
-
-        functions["vinet"] = vinet
-
-        # Neo-Hookean hyperelastic energy: Ψ = C10*(I1-3) + D1*(J-1)²
-        def neo_hookean(I1, J, C10=0.5, D1=2.0):
-            return C10 * (I1 - 3) + D1 * (J - 1) ** 2
-
-        functions["neo_hookean"] = neo_hookean
-
-        # Mooney-Rivlin: Ψ = C10*(I1-3) + C01*(I2-3) + D1*(J-1)²
-        def mooney_rivlin(I1, I2, J, C10=0.5, C01=0.1, D1=2.0):
-            return C10 * (I1 - 3) + C01 * (I2 - 3) + D1 * (J - 1) ** 2
-
-        functions["mooney_rivlin"] = mooney_rivlin
-
-        # Lennard-Jones potential: E(r) = 4ε[(σ/r)^12 - (σ/r)^6]
-        def lennard_jones(r, epsilon=1.0, sigma=1.0):
-            sr6 = (sigma / r) ** 6
-            return 4 * epsilon * (sr6**2 - sr6)
-
-        functions["lennard_jones"] = lennard_jones
-
-        # Morse potential: E(r) = D_e * [1 - exp(-a*(r-r_e))]²
-        def morse(r, De=1.0, a=1.0, re=1.0):
-            return De * (1 - np.exp(-a * (r - re))) ** 2
-
-        functions["morse"] = morse
-
-        return functions
+        return {
+            "birch_murnaghan": _birch_murnaghan,
+            "murnaghan": _murnaghan,
+            "vinet": _vinet,
+            "neo_hookean": _neo_hookean,
+            "mooney_rivlin": _mooney_rivlin,
+            "lennard_jones": _lennard_jones,
+            "morse": _morse,
+        }
 
     def is_read_only(self, args: AutoDiffInput) -> bool:
         return True
@@ -303,58 +301,10 @@ class AutoDiffTool(HuginnTool):
         result: dict[str, Any] | None = None
 
         if self._jax_available and args.use_jax:
-            import jax
-            import jax.numpy as jnp
-
-            def jax_fn(x_dict):
-                kw = {k: x_dict[k] for k in var_names}
-                kw.update(args.function_params)
-                out = fn(**kw)
-                # Flatten output so jacfwd/jacrev produce a 2-D Jacobian
-                return jnp.atleast_1d(jnp.ravel(jnp.asarray(out)))
-
-            x0 = {name: jnp.array(v).sum() for name, v in args.variables.items()}
-
-            # Forward-mode first, then reverse-mode. Each may fail depending on
-            # whether the underlying function is JAX-traceable.
-            for mode in ("jacfwd", "jacrev"):
-                try:
-                    jac_fn = getattr(jax, mode)(jax_fn)
-                    J = jac_fn(x0)
-                    jac_dict: dict[str, Any] = {}
-                    for name in var_names:
-                        col = np.asarray(J[name]).ravel()
-                        jac_dict[name] = (
-                            float(col[0]) if col.size == 1 else col.tolist()
-                        )
-                    result = {
-                        "jacobian": jac_dict,
-                        "variables": var_names,
-                        "method": f"JAX {mode}",
-                    }
-                    break
-                except Exception:
-                    logger.debug("best-effort op failed", exc_info=True)
-                    continue
+            result = _jacobian_via_jax(args, fn, var_names)
 
         if result is None:
-            # Last resort: central finite differences
-            h = args.step_size
-            jac: dict[str, Any] = {}
-            for name in var_names:
-                plus = dict(var_values)
-                minus = dict(var_values)
-                plus[name] = plus[name] + h
-                minus[name] = minus[name] - h
-                f_plus = np.ravel(np.asarray(fn(**plus, **args.function_params)))
-                f_minus = np.ravel(np.asarray(fn(**minus, **args.function_params)))
-                diff = (f_plus - f_minus) / (2 * h)
-                jac[name] = float(diff[0]) if diff.size == 1 else diff.tolist()
-            result = {
-                "jacobian": jac,
-                "variables": var_names,
-                "method": "finite difference",
-            }
+            result = _jacobian_via_fd(args, fn, var_names, var_values)
 
         return ToolResult(data=result, success=True)
 
@@ -417,15 +367,9 @@ class AutoDiffTool(HuginnTool):
         n_data = len(target_data)
         x0 = np.array([params[name] for name in param_names], dtype=float)
 
-        # Sum-of-squared-residuals loss in pure numpy
-        def loss_np(x):
-            current = dict(zip(param_names, x))
-            total = 0.0
-            for i in range(n_data):
-                kwargs = {k: np.array([input_data[k][i]]) for k in input_keys}
-                pred = float(np.squeeze(fn(**kwargs, **current)))
-                total += (pred - target_data[i]) ** 2
-            return total
+        loss_np = _make_loss_np(
+            fn, param_names, input_keys, input_data, n_data, target_data
+        )
 
         # Try to obtain an analytic gradient via JAX. Falls back to None when
         # the function isn't JAX-traceable (e.g. uses raw numpy ops).
@@ -433,34 +377,11 @@ class AutoDiffTool(HuginnTool):
             fn, param_names, input_keys, input_data, n_data, target_data, x0, args
         )
 
-        # Central finite-difference gradient — used when JAX isn't available
-        def num_grad(x, h=1e-6):
-            g = np.zeros_like(x)
-            for i in range(len(x)):
-                xp = x.copy()
-                xm = x.copy()
-                xp[i] += h
-                xm[i] -= h
-                g[i] = (loss_np(xp) - loss_np(xm)) / (2 * h)
-            return g
+        num_grad = _make_num_grad(loss_np)
 
-        method = args.method
-
-        if method == "lbfgs":
-            return self._opt_scipy(
-                loss_np, grad_fn, num_grad, x0, param_names, args, "L-BFGS-B"
-            )
-        if method == "slsqp":
-            return self._opt_scipy(
-                loss_np, grad_fn, num_grad, x0, param_names, args, "SLSQP"
-            )
-        if method == "adam":
-            return self._opt_adam(
-                loss_np, grad_fn, num_grad, x0, param_names
-            )
-
-        # Vanilla gradient descent — same defaults as the original implementation
-        return self._opt_gd(loss_np, num_grad, x0, param_names)
+        return _run_optimizer(
+            args.method, loss_np, grad_fn, num_grad, x0, param_names, args
+        )
 
     # ------------------------------------------------------------------
     # Optimizer helpers
@@ -540,8 +461,8 @@ class AutoDiffTool(HuginnTool):
             g = grad_fn(x) if grad_fn is not None else num_grad(x)
             m = beta1 * m + (1 - beta1) * g
             v = beta2 * v + (1 - beta2) * (g * g)
-            m_hat = m / (1 - beta1 ** t)
-            v_hat = v / (1 - beta2 ** t)
+            m_hat = m / (1 - beta1**t)
+            v_hat = v / (1 - beta2**t)
             x = x - lr * m_hat / (np.sqrt(v_hat) + eps)
 
         optimized = dict(zip(param_names, x))
@@ -562,8 +483,19 @@ class AutoDiffTool(HuginnTool):
         lr = 0.01
         n_iter = 100
         positive_params = {
-            "V0", "V", "r", "re", "sigma", "B0", "BP",
-            "C10", "D1", "C01", "De", "a", "epsilon",
+            "V0",
+            "V",
+            "r",
+            "re",
+            "sigma",
+            "B0",
+            "BP",
+            "C10",
+            "D1",
+            "C01",
+            "De",
+            "a",
+            "epsilon",
         }
 
         x = x0.copy()
@@ -608,3 +540,133 @@ class AutoDiffTool(HuginnTool):
         raise ValueError(
             f"Unknown function: {fn_name}. Available: {list(self._built_in_functions.keys())}"
         )
+
+
+# ----------------------------------------------------------------------
+# Module-level helpers
+# ----------------------------------------------------------------------
+
+
+def _jacobian_via_jax(
+    args: AutoDiffInput, fn: Callable, var_names: list[str]
+) -> dict[str, Any] | None:
+    """JAX jacfwd / jacrev Jacobian; returns None when tracing fails."""
+    import jax
+    import jax.numpy as jnp
+
+    def jax_fn(x_dict):
+        kw = {k: x_dict[k] for k in var_names}
+        kw.update(args.function_params)
+        out = fn(**kw)
+        # Flatten output so jacfwd/jacrev produce a 2-D Jacobian
+        return jnp.atleast_1d(jnp.ravel(jnp.asarray(out)))
+
+    x0 = {name: jnp.array(v).sum() for name, v in args.variables.items()}
+
+    # Forward-mode first, then reverse-mode. Each may fail depending on
+    # whether the underlying function is JAX-traceable.
+    for mode in ("jacfwd", "jacrev"):
+        try:
+            jac_fn = getattr(jax, mode)(jax_fn)
+            J = jac_fn(x0)
+            jac_dict: dict[str, Any] = {}
+            for name in var_names:
+                col = np.asarray(J[name]).ravel()
+                jac_dict[name] = float(col[0]) if col.size == 1 else col.tolist()
+            return {
+                "jacobian": jac_dict,
+                "variables": var_names,
+                "method": f"JAX {mode}",
+            }
+        except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
+            continue
+    return None
+
+
+def _jacobian_via_fd(
+    args: AutoDiffInput,
+    fn: Callable,
+    var_names: list[str],
+    var_values: dict[str, np.ndarray],
+) -> dict[str, Any]:
+    """Jacobian via central finite differences (last resort)."""
+    h = args.step_size
+    jac: dict[str, Any] = {}
+    for name in var_names:
+        plus = dict(var_values)
+        minus = dict(var_values)
+        plus[name] = plus[name] + h
+        minus[name] = minus[name] - h
+        f_plus = np.ravel(np.asarray(fn(**plus, **args.function_params)))
+        f_minus = np.ravel(np.asarray(fn(**minus, **args.function_params)))
+        diff = (f_plus - f_minus) / (2 * h)
+        jac[name] = float(diff[0]) if diff.size == 1 else diff.tolist()
+    return {
+        "jacobian": jac,
+        "variables": var_names,
+        "method": "finite difference",
+    }
+
+
+def _make_loss_np(
+    fn: Callable,
+    param_names: list[str],
+    input_keys: list[str],
+    input_data: dict[str, Any],
+    n_data: int,
+    target_data: list[float],
+) -> Callable:
+    """Build the sum-of-squared-residuals loss in pure numpy."""
+
+    def loss_np(x):
+        current = dict(zip(param_names, x))
+        total = 0.0
+        for i in range(n_data):
+            kwargs = {k: np.array([input_data[k][i]]) for k in input_keys}
+            pred = float(np.squeeze(fn(**kwargs, **current)))
+            total += (pred - target_data[i]) ** 2
+        return total
+
+    return loss_np
+
+
+def _make_num_grad(loss_np: Callable) -> Callable:
+    """Central finite-difference gradient — used when JAX isn't available."""
+
+    def num_grad(x, h=1e-6):
+        g = np.zeros_like(x)
+        for i in range(len(x)):
+            xp = x.copy()
+            xm = x.copy()
+            xp[i] += h
+            xm[i] -= h
+            g[i] = (loss_np(xp) - loss_np(xm)) / (2 * h)
+        return g
+
+    return num_grad
+
+
+def _run_optimizer(
+    method: str,
+    loss_np: Callable,
+    grad_fn: Callable | None,
+    num_grad: Callable,
+    x0: np.ndarray,
+    param_names: list[str],
+    args: AutoDiffInput,
+) -> ToolResult:
+    """Dispatch to the requested optimizer backend."""
+    if method == "lbfgs":
+        return AutoDiffTool._opt_scipy(
+            loss_np, grad_fn, num_grad, x0, param_names, args, "L-BFGS-B"
+        )
+    if method == "slsqp":
+        return AutoDiffTool._opt_scipy(
+            loss_np, grad_fn, num_grad, x0, param_names, args, "SLSQP"
+        )
+    if method == "adam":
+        return AutoDiffTool._opt_adam(loss_np, grad_fn, num_grad, x0, param_names)
+
+    # Vanilla gradient descent — same defaults as the original implementation
+    return AutoDiffTool._opt_gd(loss_np, num_grad, x0, param_names)

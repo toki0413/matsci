@@ -17,10 +17,20 @@ from .runner import BenchmarkReport, BenchmarkRunner
 from .task import BenchmarkTask, TaskResult
 
 __all__ = [
-    "BenchmarkRunner", "BenchmarkReport", "BenchmarkTask", "TaskResult",
-    "get_suite_tasks", "judge_task", "judge_with_regex_fallback", "JudgeRubric",
-    "BASELINES", "get_baselines_for_suite", "format_baseline_table",
-    "AtomMotor2KSubtask", "MISISubtask", "SUBTASKS",
+    "BenchmarkRunner",
+    "BenchmarkReport",
+    "BenchmarkTask",
+    "TaskResult",
+    "get_suite_tasks",
+    "judge_task",
+    "judge_with_regex_fallback",
+    "JudgeRubric",
+    "BASELINES",
+    "get_baselines_for_suite",
+    "format_baseline_table",
+    "AtomMotor2KSubtask",
+    "MISISubtask",
+    "SUBTASKS",
 ]
 
 # CIF-in/CIF-out / image-in/text-out 类子任务注册点. 这类子任务不 fit BenchmarkTask
@@ -56,41 +66,31 @@ def get_suite_tasks(suite: str, max_tasks: int | None = None) -> list[BenchmarkT
 
     max_tasks: 限制题量 (从全量随机抽样), None 表示不限制.
     """
-    if suite == "general":
-        from .runner import DEFAULT_TASKS
-        return list(DEFAULT_TASKS)
-    if suite == "mmlu":
-        from .adapters import load_mmlu_tasks
-        return load_mmlu_tasks(max_tasks=max_tasks or 500)
-    if suite == "sciq":
-        from .adapters import load_sciq_tasks
-        return load_sciq_tasks(max_tasks=max_tasks or 500)
-    if suite == "arc":
-        from .adapters import load_arc_tasks
-        return load_arc_tasks(max_tasks=max_tasks or 500)
-    if suite == "gpqa":
-        from .adapters import load_gpqa_tasks
-        return load_gpqa_tasks(max_tasks=max_tasks or 100)
-    if suite == "cmmlu":
-        from .adapters import load_cmmlu_tasks
-        return load_cmmlu_tasks(max_tasks=max_tasks or 500)
-    if suite == "mmlu_pro":
-        from .adapters import load_mmlu_pro_tasks
-        return load_mmlu_pro_tasks(max_tasks=max_tasks or 500)
-    if suite == "external":
-        from .adapters import load_all_external
-        return load_all_external(max_per_dataset=max_tasks or 400)
+    return _resolve_suite_tasks(suite, max_tasks)
+
+
+_NO_SUCH_SUITE = object()
+
+
+def _resolve_suite_tasks(suite: str, max_tasks: int | None) -> list[BenchmarkTask]:
+    tasks = _resolve_dataset_suite(suite, max_tasks)
+    if tasks is not _NO_SUCH_SUITE:
+        return tasks
     if suite == "lineage":
         from .ideagene_bench import build_ideagene_tasks
+
         return build_ideagene_tasks()
     if suite == "repro":
         from .paper_repro_bench import build_repro_tasks
+
         return build_repro_tasks()
     if suite == "optim":
         from .optim_bench import build_optim_tasks
+
         return build_optim_tasks()
     if suite == "naturebench":
         from .naturebench import build_naturebench_tasks
+
         return build_naturebench_tasks()
     if suite == "physics":
         return _build_physics_tasks()
@@ -101,6 +101,42 @@ def get_suite_tasks(suite: str, max_tasks: int | None = None) -> list[BenchmarkT
         # image-in/text-out, 不 fit BenchmarkTask. 走 SUBTASKS["misi_microscopic_spatial"].
         return []
     return []
+
+
+def _resolve_dataset_suite(suite: str, max_tasks: int | None):
+    if suite == "general":
+        from .runner import DEFAULT_TASKS
+
+        return list(DEFAULT_TASKS)
+    if suite == "mmlu":
+        from .adapters import load_mmlu_tasks
+
+        return load_mmlu_tasks(max_tasks=max_tasks or 500)
+    if suite == "sciq":
+        from .adapters import load_sciq_tasks
+
+        return load_sciq_tasks(max_tasks=max_tasks or 500)
+    if suite == "arc":
+        from .adapters import load_arc_tasks
+
+        return load_arc_tasks(max_tasks=max_tasks or 500)
+    if suite == "gpqa":
+        from .adapters import load_gpqa_tasks
+
+        return load_gpqa_tasks(max_tasks=max_tasks or 100)
+    if suite == "cmmlu":
+        from .adapters import load_cmmlu_tasks
+
+        return load_cmmlu_tasks(max_tasks=max_tasks or 500)
+    if suite == "mmlu_pro":
+        from .adapters import load_mmlu_pro_tasks
+
+        return load_mmlu_pro_tasks(max_tasks=max_tasks or 500)
+    if suite == "external":
+        from .adapters import load_all_external
+
+        return load_all_external(max_per_dataset=max_tasks or 400)
+    return _NO_SUCH_SUITE
 
 
 def _build_physics_tasks() -> list[BenchmarkTask]:
@@ -117,24 +153,27 @@ def _build_physics_tasks() -> list[BenchmarkTask]:
 
         def _make_eval(exp: float, tolerance: float, k: str):
             def evaluate(output: str) -> tuple[bool, str, float]:
-                nums = [float(x) for x in re.findall(
-                    r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", output
-                )]
+                nums = [
+                    float(x)
+                    for x in re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", output)
+                ]
                 if not nums:
                     return False, f"未找到数值 ({k})", 0.0
                 closest = min(nums, key=lambda n: abs(n - exp))
                 if abs(closest - exp) <= tolerance:
                     return True, f"{k}={closest} (期望 {exp}±{tolerance})", 1.0
                 return False, f"{k}={closest}, 期望 {exp}±{tolerance}", 0.3
+
             return evaluate
 
-        tasks.append(BenchmarkTask(
-            id=bt.id,
-            category=bt.category,
-            prompt=bt.prompt,
-            evaluator=_make_eval(expected, tol, key),
-            tags=["physics"] + list(bt.metadata.values()),
-            requires_api_key=True,
-        ))
+        tasks.append(
+            BenchmarkTask(
+                id=bt.id,
+                category=bt.category,
+                prompt=bt.prompt,
+                evaluator=_make_eval(expected, tol, key),
+                tags=["physics"] + list(bt.metadata.values()),
+                requires_api_key=True,
+            )
+        )
     return tasks
-

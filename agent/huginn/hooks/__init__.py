@@ -90,6 +90,63 @@ class HookContext:
     _cached_text: str | None = field(default=None, repr=False)
 
 
+def _build_post_context(
+    tool_name: str,
+    args: Any,
+    result: Any,
+    error: BaseException | None,
+    duration_ms: float,
+    agent: Any,
+) -> HookContext:
+    ctx = HookContext(
+        tool_name=tool_name,
+        args=args,
+        result=result,
+        error=error,
+        duration_ms=duration_ms,
+    )
+    ctx.agent = agent
+    return ctx
+
+
+async def _run_post_callbacks(
+    callbacks: list[HookCallback], ctx: HookContext, tool_name: str
+) -> None:
+    for cb in callbacks:
+        try:
+            await cb(ctx)
+        except Exception:
+            logger.warning("post_tool_use hook for %s raised", tool_name, exc_info=True)
+
+
+async def _trigger_post_failure(
+    manager: HookManager,
+    tool_name: str,
+    args: Any,
+    result: Any,
+    error: BaseException | None,
+    duration_ms: float,
+    thread_id: str | None,
+    user_message: str | None,
+) -> None:
+    # 工具失败时再补一个 POST_TOOL_USE_FAILURE 事件, 让专门处理异常的
+    # 钩子也能拿到上下文. 普通观察钩子不需要关心失败, 所以单独走一个事件.
+    if error is not None and manager._callbacks[POST_TOOL_USE_FAILURE]:
+        fail_ctx = HookContext(
+            tool_name=tool_name,
+            args=args,
+            result=result,
+            error=error,
+            duration_ms=duration_ms,
+        )
+        fail_ctx.agent = manager.agent
+        if thread_id:
+            fail_ctx.metadata["thread_id"] = thread_id
+        if user_message:
+            fail_ctx.metadata["user_message"] = user_message
+        await manager.trigger(POST_TOOL_USE_FAILURE, fail_ctx)
+
+
 class HookManager:
     """管理各类钩子的注册和触发.
 
@@ -120,7 +177,7 @@ class HookManager:
         """
         if event not in self._callbacks:
             raise ValueError(
-                f"Unknown hook event: {event!r}. " f"Supported: {', '.join(ALL_EVENTS)}"
+                f"Unknown hook event: {event!r}. Supported: {', '.join(ALL_EVENTS)}"
             )
         callbacks = self._callbacks[event]
         if before is not None and after is not None:
@@ -231,53 +288,28 @@ class HookManager:
         只看工具自身的 args/result.
         """
         callbacks = self._callbacks[POST_TOOL_USE]
+        ctx = _build_post_context(
+            tool_name, args, result, error, duration_ms, self.agent
+        )
         if not callbacks:
-            ctx = HookContext(
-                tool_name=tool_name,
-                args=args,
-                result=result,
-                error=error,
-                duration_ms=duration_ms,
-            )
-            ctx.agent = self.agent
             return ctx
 
-        ctx = HookContext(
-            tool_name=tool_name,
-            args=args,
-            result=result,
-            error=error,
-            duration_ms=duration_ms,
-        )
-        ctx.agent = self.agent
         if thread_id:
             ctx.metadata["thread_id"] = thread_id
         if user_message:
             ctx.metadata["user_message"] = user_message
-        for cb in callbacks:
-            try:
-                await cb(ctx)
-            except Exception:
-                logger.warning(
-                    "post_tool_use hook for %s raised", tool_name, exc_info=True
-                )
+        await _run_post_callbacks(callbacks, ctx, tool_name)
 
-        # 工具失败时再补一个 POST_TOOL_USE_FAILURE 事件, 让专门处理异常的
-        # 钩子也能拿到上下文. 普通观察钩子不需要关心失败, 所以单独走一个事件.
-        if error is not None and self._callbacks[POST_TOOL_USE_FAILURE]:
-            fail_ctx = HookContext(
-                tool_name=tool_name,
-                args=args,
-                result=result,
-                error=error,
-                duration_ms=duration_ms,
-            )
-            fail_ctx.agent = self.agent
-            if thread_id:
-                fail_ctx.metadata["thread_id"] = thread_id
-            if user_message:
-                fail_ctx.metadata["user_message"] = user_message
-            await self.trigger(POST_TOOL_USE_FAILURE, fail_ctx)
+        await _trigger_post_failure(
+            self,
+            tool_name,
+            args,
+            result,
+            error,
+            duration_ms,
+            thread_id,
+            user_message,
+        )
 
         return ctx
 
@@ -352,6 +384,145 @@ _DEVIATION_THRESHOLD = 0.15
 _WATCHED_TOOLS = {"validate_tool", "numerical_tool", "structure_tool"}
 
 
+def _tool_failure_anomaly(tool: str, args: dict, ctx: HookContext) -> Any:
+    """1) 工具抛异常 或 返回 error 字段 -> TOOL_FAILURE."""
+    from datetime import datetime
+
+    from huginn.anomaly_log import Anomaly
+
+    result = ctx.result if isinstance(ctx.result, dict) else {}
+    if ctx.error is None and not result.get("error"):
+        return None
+    err_msg = result.get("error") or str(ctx.error)
+    return Anomaly(
+        id="",
+        ts=datetime.now(),
+        category="TOOL_FAILURE",
+        severity="MEDIUM",
+        description=(
+            f"{tool} 调用失败: {AnomalyDetectionHook._truncate(err_msg, 160)}"
+        ),
+        detection_method="tool_call_failed",
+        source="tool_output",
+        context_snapshot={
+            "tool": tool,
+            "args": AnomalyDetectionHook._shrink(args),
+            "error": AnomalyDetectionHook._truncate(err_msg, 400),
+            "duration_ms": ctx.duration_ms,
+        },
+        unresolved_dimensions=[f"{tool} 为什么失败？需要重试还是换参数？"],
+    )
+
+
+def _validate_anomaly(
+    tool: str, args: dict, result_data: dict, result_text: str
+) -> Any:
+    """2) validate_tool 返回不合格 -> COMPUTATION_RESULT."""
+    from datetime import datetime
+
+    from huginn.anomaly_log import Anomaly
+
+    all_passed = result_data.get("all_passed")
+    checks = result_data.get("checks") or []
+    failed_msgs = [
+        c.get("message") or c.get("name") for c in checks if not c.get("passed", True)
+    ]
+    keyword_hit = any(kw in result_text for kw in _VALIDATE_FAIL_KEYWORDS)
+    if not (all_passed is False or keyword_hit or failed_msgs):
+        return None
+
+    desc = "validate_tool 判定结果不合格"
+    if failed_msgs:
+        desc += f": {AnomalyDetectionHook._truncate('; '.join(str(m) for m in failed_msgs[:3]), 160)}"
+    return Anomaly(
+        id="",
+        ts=datetime.now(),
+        category="COMPUTATION_RESULT",
+        severity="HIGH",
+        description=desc,
+        detection_method="validate_tool_error",
+        source="tool_output",
+        context_snapshot={
+            "tool": tool,
+            "args": AnomalyDetectionHook._shrink(args),
+            "all_passed": all_passed,
+            "failed_checks": failed_msgs[:5],
+            "result_type": args.get("result_type"),
+        },
+        unresolved_dimensions=[
+            "计算结果物理上为什么不合理？参数/模型/输入哪个环节出问题？"
+        ],
+    )
+
+
+def _data_conflict_anomaly(tool: str, args: dict, result_text: str) -> Any:
+    """4) 输出含冲突类关键词 -> DATA_CONFLICT."""
+    from datetime import datetime
+
+    from huginn.anomaly_log import Anomaly
+
+    if not any(kw in result_text for kw in _CONFLICT_KEYWORDS):
+        return None
+    return Anomaly(
+        id="",
+        ts=datetime.now(),
+        category="DATA_CONFLICT",
+        severity="MEDIUM",
+        description=f"{tool} 输出疑似存在数据冲突",
+        detection_method="keyword_match",
+        source="tool_output",
+        context_snapshot={
+            "tool": tool,
+            "args": AnomalyDetectionHook._shrink(args),
+            "snippet": AnomalyDetectionHook._truncate(result_text, 400),
+        },
+        unresolved_dimensions=["多源数据哪里对不上？以哪个为准？"],
+    )
+
+
+def _lattice_deviation_anomaly(
+    cn: str,
+    material: str,
+    param: str,
+    val_f: float,
+    std: float,
+    dev: float,
+    formula: str,
+    lattice: dict,
+) -> Any:
+    from datetime import datetime
+
+    from huginn.anomaly_log import Anomaly
+
+    return Anomaly(
+        id="",
+        ts=datetime.now(),
+        category="INPUT_DATA",
+        severity="HIGH",
+        description=(
+            f"{cn}({material}) 晶格常数 {param}={val_f:.3f}Å "
+            f"与标准 {std:.2f}Å 偏差 {dev * 100:.1f}%"
+        ),
+        detection_method="standard_value_compare",
+        source="tool_output",
+        context_snapshot={
+            "tool": "structure_tool",
+            "formula": formula,
+            "material": material,
+            "param": param,
+            "value": val_f,
+            "standard": std,
+            "deviation": dev,
+            "lattice_params": lattice,
+        },
+        unresolved_dimensions=[
+            f"为什么 {param}={val_f:.3f}Å 而非标准 {std:.2f}Å？"
+            "单位混淆(Å vs nm)? 文件读错? 结构本身就有问题?"
+            " 或者是新颖结构/相——需独立计算验证"
+        ],
+    )
+
+
 class AnomalyDetectionHook:
     """PostToolUse 钩子: 扫工具输出, 把异常信号登记进 AnomalyLogStore.
 
@@ -377,8 +548,6 @@ class AnomalyDetectionHook:
     # ---- 检测逻辑 ----
 
     def _detect(self, ctx: HookContext) -> list:
-        from datetime import datetime
-
         from huginn.anomaly_log import Anomaly
 
         results: list[Anomaly] = []
@@ -393,71 +562,24 @@ class AnomalyDetectionHook:
         )
         result_text = self._stringify(result)
 
-        def add(anomaly: Anomaly) -> None:
+        def add(anomaly: Anomaly | None) -> None:
+            if anomaly is None:
+                return
             if anomaly.category in seen_categories:
                 return
             seen_categories.add(anomaly.category)
             results.append(anomaly)
 
         # 1) 工具抛异常 或 返回 error 字段 -> TOOL_FAILURE
-        if ctx.error is not None or result.get("error"):
-            err_msg = result.get("error") or str(ctx.error)
-            add(
-                Anomaly(
-                    id="",
-                    ts=datetime.now(),
-                    category="TOOL_FAILURE",
-                    severity="MEDIUM",
-                    description=f"{tool} 调用失败: {self._truncate(err_msg, 160)}",
-                    detection_method="tool_call_failed",
-                    source="tool_output",
-                    context_snapshot={
-                        "tool": tool,
-                        "args": self._shrink(args),
-                        "error": self._truncate(err_msg, 400),
-                        "duration_ms": ctx.duration_ms,
-                    },
-                    unresolved_dimensions=[f"{tool} 为什么失败？需要重试还是换参数？"],
-                )
-            )
+        fa = _tool_failure_anomaly(tool, args, ctx)
+        if fa is not None:
+            add(fa)
             # 工具都挂了, 后面的数据校验意义不大, 直接返回
             return results
 
         # 2) validate_tool 返回不合格 -> COMPUTATION_RESULT
         if tool == "validate_tool":
-            all_passed = result_data.get("all_passed")
-            checks = result_data.get("checks") or []
-            failed_msgs = [
-                c.get("message") or c.get("name")
-                for c in checks
-                if not c.get("passed", True)
-            ]
-            keyword_hit = any(kw in result_text for kw in _VALIDATE_FAIL_KEYWORDS)
-            if all_passed is False or keyword_hit or failed_msgs:
-                desc = "validate_tool 判定结果不合格"
-                if failed_msgs:
-                    desc += f": {self._truncate('; '.join(str(m) for m in failed_msgs[:3]), 160)}"
-                add(
-                    Anomaly(
-                        id="",
-                        ts=datetime.now(),
-                        category="COMPUTATION_RESULT",
-                        severity="HIGH",
-                        description=desc,
-                        detection_method="validate_tool_error",
-                        source="tool_output",
-                        context_snapshot={
-                            "tool": tool,
-                            "args": self._shrink(args),
-                            "all_passed": all_passed,
-                            "failed_checks": failed_msgs[:5],
-                            "result_type": args.get("result_type"),
-                        },
-                        unresolved_dimensions=[
-                            "计算结果物理上为什么不合理？参数/模型/输入哪个环节出问题？"
-                        ],
-                    )
-                )
+            add(_validate_anomaly(tool, args, result_data, result_text))
 
         # 3) 晶格常数与标准值偏差 > 20% -> INPUT_DATA
         if tool == "structure_tool":
@@ -465,31 +587,12 @@ class AnomalyDetectionHook:
                 add(anomaly)
 
         # 4) 输出含冲突类关键词 -> DATA_CONFLICT
-        if any(kw in result_text for kw in _CONFLICT_KEYWORDS):
-            add(
-                Anomaly(
-                    id="",
-                    ts=datetime.now(),
-                    category="DATA_CONFLICT",
-                    severity="MEDIUM",
-                    description=f"{tool} 输出疑似存在数据冲突",
-                    detection_method="keyword_match",
-                    source="tool_output",
-                    context_snapshot={
-                        "tool": tool,
-                        "args": self._shrink(args),
-                        "snippet": self._truncate(result_text, 400),
-                    },
-                    unresolved_dimensions=["多源数据哪里对不上？以哪个为准？"],
-                )
-            )
+        add(_data_conflict_anomaly(tool, args, result_text))
 
         return results
 
     def _check_lattice(self, args: dict, result_data: dict) -> list:
         """对比 structure_tool 输出的晶格常数和标准值."""
-        from datetime import datetime
-
         from huginn.anomaly_log import Anomaly
 
         out: list[Anomaly] = []
@@ -519,32 +622,8 @@ class AnomalyDetectionHook:
             dev = abs(val_f - std) / std
             if dev > _DEVIATION_THRESHOLD:
                 out.append(
-                    Anomaly(
-                        id="",
-                        ts=datetime.now(),
-                        category="INPUT_DATA",
-                        severity="HIGH",
-                        description=(
-                            f"{cn}({material}) 晶格常数 {param}={val_f:.3f}Å "
-                            f"与标准 {std:.2f}Å 偏差 {dev*100:.1f}%"
-                        ),
-                        detection_method="standard_value_compare",
-                        source="tool_output",
-                        context_snapshot={
-                            "tool": "structure_tool",
-                            "formula": formula,
-                            "material": material,
-                            "param": param,
-                            "value": val_f,
-                            "standard": std,
-                            "deviation": dev,
-                            "lattice_params": lattice,
-                        },
-                        unresolved_dimensions=[
-                            f"为什么 {param}={val_f:.3f}Å 而非标准 {std:.2f}Å？"
-                            "单位混淆(Å vs nm)? 文件读错? 结构本身就有问题?"
-                            " 或者是新颖结构/相——需独立计算验证"
-                        ],
+                    _lattice_deviation_anomaly(
+                        cn, material, param, val_f, std, dev, formula, lattice
                     )
                 )
         return out

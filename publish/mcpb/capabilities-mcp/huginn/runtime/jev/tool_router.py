@@ -68,16 +68,7 @@ def jev_expand_subset(
         return empty
 
     # 候选 = available 中不在常驻 CORE、且规则未覆盖的 (见并集里其它分支).
-    from huginn.runtime.task_tool_router import CORE_TOOL_NAMES
-
-    candidates = [
-        name for name in available if name not in set(CORE_TOOL_NAMES)
-    ]
-    instructions: dict[str, str] = {}
-    for name in candidates:
-        desc = _tool_description(name)
-        if desc:
-            instructions[name] = f"工具 '{name}' 对当前任务是否相关? 相关则约为 1. 工具用途: {desc}"
+    candidates, instructions = _candidate_instructions(available)
 
     if not instructions:
         return empty
@@ -87,6 +78,34 @@ def jev_expand_subset(
     if not results:
         return empty
 
+    picked = _pick_by_threshold(results, candidates, threshold, min_confidence)
+
+    logger.debug("jev: expanded %, chose %d extra tools", len(candidates), len(picked))
+    return (picked, {"source": "jev:advisory", "eval": True, "picked": picked})
+
+
+def _candidate_instructions(
+    available: list[str],
+) -> tuple[list[str], dict[str, str]]:
+    from huginn.runtime.task_tool_router import CORE_TOOL_NAMES
+
+    candidates = [name for name in available if name not in set(CORE_TOOL_NAMES)]
+    instructions: dict[str, str] = {}
+    for name in candidates:
+        desc = _tool_description(name)
+        if desc:
+            instructions[name] = (
+                f"工具 '{name}' 对当前任务是否相关? 相关则约为 1. 工具用途: {desc}"
+            )
+    return candidates, instructions
+
+
+def _pick_by_threshold(
+    results: dict[str, dict],
+    candidates: list[str],
+    threshold: float,
+    min_confidence: float,
+) -> list[str]:
     picked: list[str] = []
     for name in candidates:
         entry = results.get(name)
@@ -96,6 +115,4 @@ def jev_expand_subset(
         conf = entry.get("confidence")
         if p >= threshold and (conf is None or conf >= min_confidence):
             picked.append(name)
-
-    logger.debug("jev: expanded %, chose %d extra tools", len(candidates), len(picked))
-    return (picked, {"source": "jev:advisory", "eval": True, "picked": picked})
+    return picked

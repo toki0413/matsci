@@ -74,6 +74,100 @@ class ExportStats:
         }
 
 
+def _merge_sessions_into_threads(sessions: list, merge: bool) -> None:
+    """把导入的会话写进 server_core 的线程表 (merge 时跳过已存在 id)."""
+    from huginn import server_core
+
+    with server_core._state_lock:
+        for s in sessions:
+            tid = s.get("id")
+            if tid and (merge or tid not in server_core._threads):
+                server_core._threads[tid] = s
+
+
+def _chunk_records(
+    ids: list,
+    documents: list,
+    metadatas: list,
+    embeddings: list,
+) -> list[dict[str, Any]]:
+    """把 ChromaDB get() 的平行数组拼成 chunk 记录列表."""
+    records: list[dict[str, Any]] = []
+    for idx, cid in enumerate(ids):
+        records.append(
+            {
+                "id": cid,
+                "document": documents[idx] if idx < len(documents) else "",
+                "metadata": metadatas[idx] if idx < len(metadatas) else {},
+                "embedding": embeddings[idx] if idx < len(embeddings) else None,
+            }
+        )
+    return records
+
+
+def _kb_import_batched(kb: Any, records: Any) -> int:
+    """按 _CHUNK_BATCH 分批把记录 upsert 进 ChromaDB, 返回导入条数."""
+    batch_ids: list[str] = []
+    batch_docs: list[str] = []
+    batch_metas: list[dict] = []
+    batch_embs: list[list[float]] = []
+    imported = 0
+
+    for record in records:
+        batch_ids.append(record["id"])
+        batch_docs.append(record.get("document", ""))
+        batch_metas.append(record.get("metadata", {}))
+        emb = record.get("embedding")
+        if emb is not None:
+            batch_embs.append(emb)
+
+        if len(batch_ids) >= _CHUNK_BATCH:
+            ExportShareManager._kb_upsert(
+                kb, batch_ids, batch_docs, batch_metas, batch_embs
+            )
+            imported += len(batch_ids)
+            batch_ids, batch_docs, batch_metas, batch_embs = [], [], [], []
+
+    if batch_ids:
+        ExportShareManager._kb_upsert(
+            kb, batch_ids, batch_docs, batch_metas, batch_embs
+        )
+        imported += len(batch_ids)
+    return imported
+
+
+def _component_zip_bytes(
+    write_fn: Any,
+    subdir: str,
+) -> bytes:
+    """把单个组件目录打成内存 zip, 返回字节."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        write_fn(tmp_dir / subdir, ExportStats())
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for fp in (tmp_dir / subdir).rglob("*"):
+                if fp.is_file():
+                    zf.write(str(fp), fp.relative_to(tmp_dir / subdir))
+        return buf.getvalue()
+
+
+# 归档后缀 → 导入方法名 (未命中走文件头嗅探)
+_IMPORT_EXT_HANDLERS: tuple[tuple[tuple[str, ...], str], ...] = (
+    ((".json",), "_import_from_json"),
+    ((".zip",), "_import_zip"),
+    ((".gz", ".tar.gz"), "_import_targz"),
+)
+
+
+def _import_handler(ext: str, name: str) -> str:
+    """按归档后缀选择导入方法名."""
+    for suffixes, handler in _IMPORT_EXT_HANDLERS:
+        if ext in suffixes or (".tar.gz" in suffixes and name.endswith(".tar.gz")):
+            return handler
+    return "_import_by_magic"
+
+
 class ExportShareManager:
     """统一管理 Huginn 数据的导出、导入、压缩和分享."""
 
@@ -208,6 +302,50 @@ class ExportShareManager:
                 return c
         return None
 
+    def _ekd_documents(self, kb: Any, target_dir: Path, stats: ExportStats) -> None:
+        """把知识库文档列表写到 documents.json."""
+        try:
+            docs = kb.list_documents()
+            (target_dir / "documents.json").write_text(
+                json.dumps(docs, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+            stats.knowledge_documents = len(docs)
+        except Exception as e:
+            stats.errors.append(f"knowledge docs: {e}")
+
+    def _ekd_chunks(self, kb: Any, target_dir: Path, stats: ExportStats) -> None:
+        """把全部 chunks + embeddings 分批写到 chunks.jsonl."""
+        chunks_path = target_dir / "chunks.jsonl"
+        total_chunks = 0
+        try:
+            with open(chunks_path, "w", encoding="utf-8") as f:
+                data = kb.collection.get(
+                    include=["documents", "metadatas", "embeddings"]
+                )
+                ids = data.get("ids") or []
+                for i in range(0, len(ids), _CHUNK_BATCH):
+                    batch = ids[i : i + _CHUNK_BATCH]
+                    records = _chunk_records(
+                        batch,
+                        (data.get("documents") or [])[i : i + _CHUNK_BATCH],
+                        (data.get("metadatas") or [])[i : i + _CHUNK_BATCH],
+                        (data.get("embeddings") or [])[i : i + _CHUNK_BATCH],
+                    )
+                    for record in records:
+                        f.write(
+                            json.dumps(record, ensure_ascii=False, default=str) + "\n"
+                        )
+                    total_chunks += len(batch)
+            stats.knowledge_chunks = total_chunks
+        except Exception as e:
+            stats.errors.append(f"knowledge chunks: {e}")
+
+    def _ekd_raw_docs(self, target_dir: Path) -> None:
+        """拷贝知识库原始文档文件."""
+        kb_docs = self.workspace / ".huginn_kb" / "docs"
+        if kb_docs.is_dir():
+            self._copy_tree(kb_docs, target_dir / "docs")
+
     def _export_knowledge_to_dir(self, target_dir: Path, stats: ExportStats) -> None:
         """把知识库导出到指定目录."""
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -220,52 +358,9 @@ class ExportShareManager:
                 self._copy_tree(kb_dir, target_dir / "kb_raw")
             return
 
-        # 1) 文档列表
-        try:
-            docs = kb.list_documents()
-            (target_dir / "documents.json").write_text(
-                json.dumps(docs, indent=2, ensure_ascii=False), encoding="utf-8"
-            )
-            stats.knowledge_documents = len(docs)
-        except Exception as e:
-            stats.errors.append(f"knowledge docs: {e}")
-
-        # 2) 全部 chunks + embeddings（分批写出，防止内存炸）
-        chunks_path = target_dir / "chunks.jsonl"
-        total_chunks = 0
-        try:
-            with open(chunks_path, "w", encoding="utf-8") as f:
-                data = kb.collection.get(
-                    include=["documents", "metadatas", "embeddings"]
-                )
-                ids = data.get("ids") or []
-                documents = data.get("documents") or []
-                metadatas = data.get("metadatas") or []
-                embeddings = data.get("embeddings") or []
-
-                for i in range(0, len(ids), _CHUNK_BATCH):
-                    batch = ids[i : i + _CHUNK_BATCH]
-                    for j, cid in enumerate(batch):
-                        idx = i + j
-                        record = {
-                            "id": cid,
-                            "document": documents[idx] if idx < len(documents) else "",
-                            "metadata": metadatas[idx] if idx < len(metadatas) else {},
-                            "embedding": embeddings[idx]
-                            if idx < len(embeddings)
-                            else None,
-                        }
-                        f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
-                    total_chunks += len(batch)
-            stats.knowledge_chunks = total_chunks
-        except Exception as e:
-            stats.errors.append(f"knowledge chunks: {e}")
-
-        # 3) 原始文档文件
-        docs_dir = target_dir / "docs"
-        kb_docs = self.workspace / ".huginn_kb" / "docs"
-        if kb_docs.is_dir():
-            self._copy_tree(kb_docs, docs_dir)
+        self._ekd_documents(kb, target_dir, stats)
+        self._ekd_chunks(kb, target_dir, stats)
+        self._ekd_raw_docs(target_dir)
 
     def _export_graph_to_dir(self, target_dir: Path, stats: ExportStats) -> None:
         """把知识图谱导出到指定目录."""
@@ -365,6 +460,77 @@ class ExportShareManager:
         with tarfile.open(str(output_path), "w:gz") as tf:
             tf.add(str(src_dir), arcname="huginn_export")
 
+    def _wjs_memory(self, payload: dict[str, Any], stats: ExportStats) -> None:
+        """JSON 单文件导出: 长期记忆."""
+        longterm = self._get_longterm()
+        if longterm is not None:
+            try:
+                # 导到临时文件再读回来，LongTermMemory 只支持文件路径导出
+                with tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".json", delete=False, encoding="utf-8"
+                ) as tf:
+                    tf_path = tf.name
+                longterm.export(tf_path)
+                with open(tf_path, encoding="utf-8") as f:
+                    mem_data = json.load(f)
+                os.unlink(tf_path)
+                payload["memory"] = {"entries": mem_data}
+                stats.memory_entries = (
+                    len(mem_data) if isinstance(mem_data, list) else 0
+                )
+            except Exception as e:
+                stats.errors.append(f"memory json: {e}")
+        memory_md = self.workspace / "MEMORY.md"
+        if memory_md.exists():
+            payload["memory_md"] = memory_md.read_text(encoding="utf-8")
+            stats.memory_md_exists = True
+
+    def _wjs_knowledge(self, payload: dict[str, Any], stats: ExportStats) -> None:
+        """JSON 单文件导出: 知识库."""
+        kb = self._get_kb()
+        if kb is None:
+            return
+        try:
+            docs = kb.list_documents()
+            data = kb.collection.get(include=["documents", "metadatas", "embeddings"])
+            chunks = _chunk_records(
+                data.get("ids") or [],
+                data.get("documents") or [],
+                data.get("metadatas") or [],
+                data.get("embeddings") or [],
+            )
+            payload["knowledge"] = {"documents": docs, "chunks": chunks}
+            stats.knowledge_documents = len(docs)
+            stats.knowledge_chunks = len(chunks)
+        except Exception as e:
+            stats.errors.append(f"knowledge json: {e}")
+
+    def _wjs_graph(self, payload: dict[str, Any], stats: ExportStats) -> None:
+        """JSON 单文件导出: 知识图谱."""
+        kg = self._get_kg()
+        if kg is None:
+            return
+        try:
+            graph_data = kg.export(fmt="json")
+            payload["graph"] = graph_data
+            stats.graph_nodes = len(graph_data.get("nodes", []))
+            stats.graph_edges = len(graph_data.get("links", []))
+        except Exception as e:
+            stats.errors.append(f"graph json: {e}")
+
+    def _wjs_sessions(self, payload: dict[str, Any], stats: ExportStats) -> None:
+        """JSON 单文件导出: 会话."""
+        sessions = self._get_sessions()
+        payload["sessions"] = sessions
+        stats.sessions = len(sessions)
+
+    def _wjs_config(self, payload: dict[str, Any], stats: ExportStats) -> None:
+        """JSON 单文件导出: 配置."""
+        cfg_dict = self._get_config_dict()
+        if cfg_dict is not None:
+            payload["config"] = cfg_dict
+            stats.config_exported = True
+
     def _write_json_single(
         self,
         include: list[str] | None,
@@ -379,75 +545,16 @@ class ExportShareManager:
             "included": include,
         }
 
-        if "memory" in include:
-            longterm = self._get_longterm()
-            if longterm is not None:
-                try:
-                    # 导到临时文件再读回来，LongTermMemory 只支持文件路径导出
-                    with tempfile.NamedTemporaryFile(
-                        mode="w", suffix=".json", delete=False, encoding="utf-8"
-                    ) as tf:
-                        tf_path = tf.name
-                    longterm.export(tf_path)
-                    with open(tf_path, encoding="utf-8") as f:
-                        mem_data = json.load(f)
-                    os.unlink(tf_path)
-                    payload["memory"] = {"entries": mem_data}
-                    stats.memory_entries = len(mem_data) if isinstance(mem_data, list) else 0
-                except Exception as e:
-                    stats.errors.append(f"memory json: {e}")
-            memory_md = self.workspace / "MEMORY.md"
-            if memory_md.exists():
-                payload["memory_md"] = memory_md.read_text(encoding="utf-8")
-                stats.memory_md_exists = True
-
-        if "knowledge" in include:
-            kb = self._get_kb()
-            if kb is not None:
-                try:
-                    docs = kb.list_documents()
-                    data = kb.collection.get(
-                        include=["documents", "metadatas", "embeddings"]
-                    )
-                    chunks = []
-                    ids = data.get("ids") or []
-                    documents = data.get("documents") or []
-                    metadatas = data.get("metadatas") or []
-                    embeddings = data.get("embeddings") or []
-                    for idx, cid in enumerate(ids):
-                        chunks.append({
-                            "id": cid,
-                            "document": documents[idx] if idx < len(documents) else "",
-                            "metadata": metadatas[idx] if idx < len(metadatas) else {},
-                            "embedding": embeddings[idx] if idx < len(embeddings) else None,
-                        })
-                    payload["knowledge"] = {"documents": docs, "chunks": chunks}
-                    stats.knowledge_documents = len(docs)
-                    stats.knowledge_chunks = len(chunks)
-                except Exception as e:
-                    stats.errors.append(f"knowledge json: {e}")
-
-        if "graph" in include:
-            kg = self._get_kg()
-            if kg is not None:
-                try:
-                    graph_data = kg.export(fmt="json")
-                    payload["graph"] = graph_data
-                    stats.graph_nodes = len(graph_data.get("nodes", []))
-                    stats.graph_edges = len(graph_data.get("links", []))
-                except Exception as e:
-                    stats.errors.append(f"graph json: {e}")
-
-        if "sessions" in include:
-            sessions = self._get_sessions()
-            payload["sessions"] = sessions
-            stats.sessions = len(sessions)
-
-        if "config" in include:
-            cfg_dict = self._get_config_dict()
-            if cfg_dict is not None:
-                payload["config"] = cfg_dict
-                stats.config_exported = True
+        exporters = {
+            "memory": self._wjs_memory,
+            "knowledge": self._wjs_knowledge,
+            "graph": self._wjs_graph,
+            "sessions": self._wjs_sessions,
+            "config": self._wjs_config,
+        }
+        for component, export in exporters.items():
+            if component in include:
+                export(payload, stats)
 
         payload["stats"] = stats.to_dict()
         output_path.write_text(
@@ -499,6 +606,29 @@ class ExportShareManager:
             "items": stats.to_dict(),
         }
 
+    def _import_zip(self, src: Path, merge: bool, result: dict) -> None:
+        """从 zip 归档导入."""
+        with tempfile.TemporaryDirectory() as tmp:
+            with zipfile.ZipFile(str(src), "r") as zf:
+                safe_archive_extract(zf, tmp)
+            self._import_from_dir(Path(tmp), merge, result)
+
+    def _import_targz(self, src: Path, merge: bool, result: dict) -> None:
+        """从 tar.gz 归档导入."""
+        with tempfile.TemporaryDirectory() as tmp:
+            with tarfile.open(str(src), "r:gz") as tf:
+                safe_archive_extract(tf, tmp)
+            self._import_from_dir(Path(tmp), merge, result)
+
+    def _import_by_magic(self, src: Path, merge: bool, result: dict) -> None:
+        """后缀未知时按文件头判断归档格式."""
+        with open(src, "rb") as f:
+            magic = f.read(4)
+        if magic[:2] == b"PK":
+            self._import_zip(src, merge, result)
+        else:
+            result["errors"].append(f"无法识别的归档格式: {src.name}")
+
     def import_all(self, archive_path: str, merge: bool = True) -> dict:
         """从归档导入数据，可选择合并而非覆盖.
 
@@ -517,29 +647,8 @@ class ExportShareManager:
         ext = "".join(src.suffixes).lower()
 
         try:
-            if ext == ".json":
-                self._import_from_json(src, merge, result)
-            elif ext in (".zip",):
-                with tempfile.TemporaryDirectory() as tmp:
-                    with zipfile.ZipFile(str(src), "r") as zf:
-                        safe_archive_extract(zf, tmp)
-                    self._import_from_dir(Path(tmp), merge, result)
-            elif ext in (".gz",) or src.name.endswith(".tar.gz"):
-                with tempfile.TemporaryDirectory() as tmp:
-                    with tarfile.open(str(src), "r:gz") as tf:
-                        safe_archive_extract(tf, tmp)
-                    self._import_from_dir(Path(tmp), merge, result)
-            else:
-                # 尝试根据文件头判断
-                with open(src, "rb") as f:
-                    magic = f.read(4)
-                if magic[:2] == b"PK":
-                    with tempfile.TemporaryDirectory() as tmp:
-                        with zipfile.ZipFile(str(src), "r") as zf:
-                            safe_archive_extract(zf, tmp)
-                        self._import_from_dir(Path(tmp), merge, result)
-                else:
-                    result["errors"].append(f"无法识别的归档格式: {src.name}")
+            handler = _import_handler(ext, src.name)
+            getattr(self, handler)(src, merge, result)
         except Exception as e:
             result["errors"].append(f"导入失败: {e}")
             logger.error("导入归档失败", exc_info=True)
@@ -566,7 +675,9 @@ class ExportShareManager:
         """从解压后的目录结构导入."""
         root = self._find_export_root(base)
         if root is None:
-            result["errors"].append("归档中找不到 manifest.json，可能不是 Huginn 导出文件")
+            result["errors"].append(
+                "归档中找不到 manifest.json，可能不是 Huginn 导出文件"
+            )
             return
 
         manifest_path = root / "manifest.json"
@@ -589,57 +700,106 @@ class ExportShareManager:
         if "config" in included:
             self._import_config(root / "config", merge, result)
 
+    @staticmethod
+    def _im_json_merge(mem_json: Path, longterm: Any, result: dict) -> None:
+        """优先用 JSON 合并（增量导入）."""
+        try:
+            result["imported"]["memory_entries"] = longterm.import_(str(mem_json))
+        except Exception as e:
+            result["errors"].append(f"记忆 JSON 导入失败: {e}")
+
+    @staticmethod
+    def _im_clear_and_import(mem_json: Path, longterm: Any, result: dict) -> None:
+        """不合并时，先清空再导入."""
+        try:
+            with longterm._connect() as conn:
+                conn.execute("DELETE FROM memories")
+                conn.commit()
+            # G35: bulk clear 绕过 FTS5, 重建索引 (import_ 会重新灌 FTS5,
+            # 但先清掉孤儿索引行防止 import_ 失败时留下脏状态)
+            longterm._rebuild_fts_index()
+            imported = longterm.import_(str(mem_json)) if mem_json.exists() else 0
+            result["imported"]["memory_entries"] = imported
+        except Exception as e:
+            result["errors"].append(f"记忆覆盖导入失败: {e}")
+
+    def _im_memory_md(self, mem_dir: Path, result: dict) -> None:
+        """恢复 MEMORY.md."""
+        memory_md = mem_dir / "MEMORY.md"
+        if not memory_md.exists():
+            return
+        try:
+            shutil.copy2(str(memory_md), str(self.workspace / "MEMORY.md"))
+            result["imported"]["memory_md"] = True
+        except Exception as e:
+            result["errors"].append(f"MEMORY.md 恢复失败: {e}")
+
+    def _im_topics(self, mem_dir: Path, merge: bool, result: dict) -> None:
+        """恢复主题记忆目录."""
+        topics_src = mem_dir / "memory_topics"
+        if not topics_src.is_dir():
+            return
+        topics_dst = self.workspace / HUGINN_DIR_NAME / "memory"
+        try:
+            if not merge and topics_dst.is_dir():
+                shutil.rmtree(str(topics_dst))
+            self._copy_tree(topics_src, topics_dst)
+            result["imported"]["memory_topics"] = True
+        except Exception as e:
+            result["errors"].append(f"主题记忆恢复失败: {e}")
+
     def _import_memory(self, mem_dir: Path, merge: bool, result: dict) -> None:
         """导入长期记忆."""
         if not mem_dir.is_dir():
             return
-        imported = 0
         longterm = self._get_longterm()
-
-        # 优先用 JSON 合并（增量导入）
         mem_json = mem_dir / "memories.json"
+
         if mem_json.exists() and longterm is not None:
-            try:
-                imported = longterm.import_(str(mem_json))
-                result["imported"]["memory_entries"] = imported
-            except Exception as e:
-                result["errors"].append(f"记忆 JSON 导入失败: {e}")
-
-        # 不合并时，先清空再导入
+            self._im_json_merge(mem_json, longterm, result)
         if not merge and longterm is not None:
-            try:
-                with longterm._connect() as conn:
-                    conn.execute("DELETE FROM memories")
-                    conn.commit()
-                # G35: bulk clear 绕过 FTS5, 重建索引 (import_ 会重新灌 FTS5,
-                # 但先清掉孤儿索引行防止 import_ 失败时留下脏状态)
-                longterm._rebuild_fts_index()
-                imported = longterm.import_(str(mem_json)) if mem_json.exists() else 0
-                result["imported"]["memory_entries"] = imported
-            except Exception as e:
-                result["errors"].append(f"记忆覆盖导入失败: {e}")
+            self._im_clear_and_import(mem_json, longterm, result)
 
-        # 恢复 MEMORY.md
-        memory_md = mem_dir / "MEMORY.md"
-        if memory_md.exists():
-            dst = self.workspace / "MEMORY.md"
-            try:
-                shutil.copy2(str(memory_md), str(dst))
-                result["imported"]["memory_md"] = True
-            except Exception as e:
-                result["errors"].append(f"MEMORY.md 恢复失败: {e}")
+        self._im_memory_md(mem_dir, result)
+        self._im_topics(mem_dir, merge, result)
 
-        # 恢复主题记忆目录
-        topics_src = mem_dir / "memory_topics"
-        if topics_src.is_dir():
-            topics_dst = self.workspace / HUGINN_DIR_NAME / "memory"
-            try:
-                if not merge and topics_dst.is_dir():
-                    shutil.rmtree(str(topics_dst))
-                self._copy_tree(topics_src, topics_dst)
-                result["imported"]["memory_topics"] = True
-            except Exception as e:
-                result["errors"].append(f"主题记忆恢复失败: {e}")
+    @staticmethod
+    def _ik_clear(kb: Any, result: dict, *, record_error: bool = True) -> None:
+        """不合并时先清空知识库."""
+        try:
+            all_data = kb.collection.get(include=[])
+            ids = all_data.get("ids") or []
+            if ids:
+                kb.collection.delete(ids=ids)
+        except Exception as e:
+            if record_error:
+                result["errors"].append(f"知识库清空失败: {e}")
+            else:
+                logger.debug("get failed", exc_info=True)
+
+    @staticmethod
+    def _ik_chunks(kb: Any, chunks_path: Path, result: dict) -> None:
+        """从 chunks.jsonl 逐行导入."""
+        try:
+            with open(chunks_path, encoding="utf-8") as f:
+                records = (json.loads(line) for line in f if line.strip())
+                result["imported"]["knowledge_chunks"] = _kb_import_batched(kb, records)
+        except Exception as e:
+            result["errors"].append(f"知识库 chunks 导入失败: {e}")
+
+    def _ik_docs(self, kb_dir: Path, merge: bool, result: dict) -> None:
+        """恢复原始文档文件."""
+        docs_src = kb_dir / "docs"
+        if not docs_src.is_dir():
+            return
+        docs_dst = self.workspace / ".huginn_kb" / "docs"
+        try:
+            if not merge and docs_dst.is_dir():
+                shutil.rmtree(str(docs_dst))
+            self._copy_tree(docs_src, docs_dst)
+            result["imported"]["knowledge_docs"] = True
+        except Exception as e:
+            result["errors"].append(f"文档文件恢复失败: {e}")
 
     def _import_knowledge(self, kb_dir: Path, merge: bool, result: dict) -> None:
         """导入知识库."""
@@ -650,71 +810,14 @@ class ExportShareManager:
             result["errors"].append("知识库不可用，无法导入")
             return
 
-        # 不合并时先清空
         if not merge:
-            try:
-                all_data = kb.collection.get(include=[])
-                ids = all_data.get("ids") or []
-                if ids:
-                    kb.collection.delete(ids=ids)
-            except Exception as e:
-                result["errors"].append(f"知识库清空失败: {e}")
+            self._ik_clear(kb, result)
 
-        # 从 chunks.jsonl 逐行导入
         chunks_path = kb_dir / "chunks.jsonl"
         if chunks_path.exists():
-            try:
-                batch_ids: list[str] = []
-                batch_docs: list[str] = []
-                batch_metas: list[dict] = []
-                batch_embs: list[list[float]] = []
-                imported = 0
+            self._ik_chunks(kb, chunks_path, result)
 
-                with open(chunks_path, encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        record = json.loads(line)
-                        batch_ids.append(record["id"])
-                        batch_docs.append(record.get("document", ""))
-                        batch_metas.append(record.get("metadata", {}))
-                        emb = record.get("embedding")
-                        if emb is not None:
-                            batch_embs.append(emb)
-
-                        if len(batch_ids) >= _CHUNK_BATCH:
-                            self._kb_upsert(
-                                kb, batch_ids, batch_docs, batch_metas, batch_embs
-                            )
-                            imported += len(batch_ids)
-                            batch_ids, batch_docs, batch_metas, batch_embs = (
-                                [],
-                                [],
-                                [],
-                                [],
-                            )
-
-                # 写入剩余
-                if batch_ids:
-                    self._kb_upsert(kb, batch_ids, batch_docs, batch_metas, batch_embs)
-                    imported += len(batch_ids)
-
-                result["imported"]["knowledge_chunks"] = imported
-            except Exception as e:
-                result["errors"].append(f"知识库 chunks 导入失败: {e}")
-
-        # 恢复原始文档文件
-        docs_src = kb_dir / "docs"
-        if docs_src.is_dir():
-            docs_dst = self.workspace / ".huginn_kb" / "docs"
-            try:
-                if not merge and docs_dst.is_dir():
-                    shutil.rmtree(str(docs_dst))
-                self._copy_tree(docs_src, docs_dst)
-                result["imported"]["knowledge_docs"] = True
-            except Exception as e:
-                result["errors"].append(f"文档文件恢复失败: {e}")
+        self._ik_docs(kb_dir, merge, result)
 
     @staticmethod
     def _kb_upsert(
@@ -734,6 +837,40 @@ class ExportShareManager:
             kwargs["embeddings"] = embs
         kb.collection.upsert(**kwargs)
 
+    def _write_kg_file(self, data: dict[str, Any]) -> None:
+        """把图谱数据直接写到 project_kg.json."""
+        dst = self.workspace / HUGINN_DIR_NAME / "project_kg.json"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    def _ig_merge(self, kg: Any, data: dict[str, Any], result: dict) -> None:
+        """合并：加载当前图谱，逐个添加节点和边."""
+        try:
+            nodes_added = 0
+            edges_added = 0
+            for node in data.get("nodes", []):
+                kg.add_entity(
+                    label=node.get("label", node.get("id", "unknown")),
+                    entity_type=node.get("type", "Unknown"),
+                    source=node.get("source", "import"),
+                    confidence=node.get("confidence", 0.5),
+                )
+                nodes_added += 1
+            for edge in data.get("links", []):
+                kg.add_relation(
+                    src_id=edge.get("source", ""),
+                    relation=edge.get("relation", "related_to"),
+                    dst_id=edge.get("target", ""),
+                    source=edge.get("source_attr", "import"),
+                    confidence=edge.get("confidence", 0.5),
+                )
+                edges_added += 1
+            kg.save()
+            result["imported"]["graph_nodes"] = nodes_added
+            result["imported"]["graph_edges"] = edges_added
+        except Exception as e:
+            result["errors"].append(f"知识图谱合并失败: {e}")
+
     def _import_graph(self, graph_dir: Path, merge: bool, result: dict) -> None:
         """导入知识图谱."""
         if not graph_dir.is_dir():
@@ -749,50 +886,18 @@ class ExportShareManager:
             return
 
         if not merge:
-            # 直接覆盖文件
-            dst = self.workspace / HUGINN_DIR_NAME / "project_kg.json"
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            dst.write_text(
-                json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-            )
+            self._write_kg_file(data)
             result["imported"]["graph"] = "overwritten"
-        else:
-            # 合并：加载当前图谱，逐个添加节点和边
-            kg = self._get_kg()
-            if kg is None:
-                # 退而求其次，直接写文件
-                dst = self.workspace / HUGINN_DIR_NAME / "project_kg.json"
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                dst.write_text(
-                    json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-                )
-                result["imported"]["graph"] = "written"
-            else:
-                try:
-                    nodes_added = 0
-                    edges_added = 0
-                    for node in data.get("nodes", []):
-                        kg.add_entity(
-                            label=node.get("label", node.get("id", "unknown")),
-                            entity_type=node.get("type", "Unknown"),
-                            source=node.get("source", "import"),
-                            confidence=node.get("confidence", 0.5),
-                        )
-                        nodes_added += 1
-                    for edge in data.get("links", []):
-                        kg.add_relation(
-                            src_id=edge.get("source", ""),
-                            relation=edge.get("relation", "related_to"),
-                            dst_id=edge.get("target", ""),
-                            source=edge.get("source_attr", "import"),
-                            confidence=edge.get("confidence", 0.5),
-                        )
-                        edges_added += 1
-                    kg.save()
-                    result["imported"]["graph_nodes"] = nodes_added
-                    result["imported"]["graph_edges"] = edges_added
-                except Exception as e:
-                    result["errors"].append(f"知识图谱合并失败: {e}")
+            return
+
+        kg = self._get_kg()
+        if kg is None:
+            # 退而求其次，直接写文件
+            self._write_kg_file(data)
+            result["imported"]["graph"] = "written"
+            return
+
+        self._ig_merge(kg, data, result)
 
     def _import_sessions(self, sess_dir: Path, merge: bool, result: dict) -> None:
         """导入会话元数据."""
@@ -803,15 +908,7 @@ class ExportShareManager:
             sessions = json.loads(threads_file.read_text(encoding="utf-8"))
             # 会话是临时状态，合并时直接加入内存
             try:
-                from huginn import server_core
-
-                with server_core._state_lock:
-                    for s in sessions:
-                        tid = s.get("id")
-                        if tid:
-                            if not merge and tid in server_core._threads:
-                                continue
-                            server_core._threads[tid] = s
+                _merge_sessions_into_threads(sessions, merge)
                 result["imported"]["sessions"] = len(sessions)
             except Exception:
                 # server_core 不可用，只记录数量
@@ -828,9 +925,114 @@ class ExportShareManager:
             data = json.loads(cfg_file.read_text(encoding="utf-8"))
             result["imported"]["config"] = data
             # 配置不自动写入运行时，避免误覆盖密钥等敏感信息
-            result["imported"]["config_note"] = "配置已加载但未自动写入运行时，请手动确认"
+            result["imported"]["config_note"] = (
+                "配置已加载但未自动写入运行时，请手动确认"
+            )
         except Exception as e:
             result["errors"].append(f"配置导入失败: {e}")
+
+    def _ijf_memory(self, payload: dict[str, Any], merge: bool, result: dict) -> None:
+        """从 JSON payload 导入记忆."""
+        longterm = self._get_longterm()
+        if longterm is not None:
+            entries = payload["memory"].get("entries", [])
+            if not merge:
+                try:
+                    with longterm._connect() as conn:
+                        conn.execute("DELETE FROM memories")
+                        conn.commit()
+                    # G35: bulk clear 绕过 FTS5, 重建索引
+                    longterm._rebuild_fts_index()
+                except Exception:
+                    logger.debug("connect failed", exc_info=True)
+            # 写到临时文件再用 import_ 方法
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False, encoding="utf-8"
+            ) as tf:
+                json.dump(entries, tf, ensure_ascii=False)
+                tf_path = tf.name
+            try:
+                result["imported"]["memory_entries"] = longterm.import_(tf_path)
+            except Exception as e:
+                result["errors"].append(f"记忆导入失败: {e}")
+            finally:
+                os.unlink(tf_path)
+
+        if "memory_md" in payload:
+            dst = self.workspace / "MEMORY.md"
+            dst.write_text(payload["memory_md"], encoding="utf-8")
+            result["imported"]["memory_md"] = True
+
+    def _ijf_knowledge(
+        self, payload: dict[str, Any], merge: bool, result: dict
+    ) -> None:
+        """从 JSON payload 导入知识库."""
+        kb = self._get_kb()
+        if kb is None:
+            return
+        if not merge:
+            self._ik_clear(kb, result, record_error=False)
+        chunks = payload["knowledge"].get("chunks", [])
+        records = (
+            {
+                "id": chunk.get("id", ""),
+                "document": chunk.get("document", ""),
+                "metadata": chunk.get("metadata", {}),
+                "embedding": chunk.get("embedding"),
+            }
+            for chunk in chunks
+        )
+        result["imported"]["knowledge_chunks"] = _kb_import_batched(kb, records)
+
+    def _ijf_graph(self, payload: dict[str, Any], merge: bool, result: dict) -> None:
+        """从 JSON payload 导入知识图谱."""
+        graph_data = payload["graph"]
+        kg = self._get_kg()
+        if kg is not None and merge:
+            try:
+                for node in graph_data.get("nodes", []):
+                    kg.add_entity(
+                        label=node.get("label", "unknown"),
+                        entity_type=node.get("type", "Unknown"),
+                        source=node.get("source", "import"),
+                        confidence=node.get("confidence", 0.5),
+                    )
+                for edge in graph_data.get("links", []):
+                    kg.add_relation(
+                        src_id=edge.get("source", ""),
+                        relation=edge.get("relation", "related_to"),
+                        dst_id=edge.get("target", ""),
+                        source=edge.get("source_attr", "import"),
+                        confidence=edge.get("confidence", 0.5),
+                    )
+                kg.save()
+                result["imported"]["graph"] = "merged"
+            except Exception as e:
+                result["errors"].append(f"图谱合并失败: {e}")
+        else:
+            self._write_kg_file(graph_data)
+            result["imported"]["graph"] = "written"
+
+    @staticmethod
+    def _ijf_sessions(payload: dict[str, Any], result: dict) -> None:
+        """从 JSON payload 导入会话."""
+        try:
+            from huginn import server_core
+
+            with server_core._state_lock:
+                for s in payload["sessions"]:
+                    tid = s.get("id")
+                    if tid:
+                        server_core._threads[tid] = s
+            result["imported"]["sessions"] = len(payload["sessions"])
+        except Exception:
+            result["imported"]["sessions_count"] = len(payload.get("sessions", []))
+
+    @staticmethod
+    def _ijf_config(payload: dict[str, Any], result: dict) -> None:
+        """从 JSON payload 导入配置（只读展示）."""
+        result["imported"]["config"] = payload["config"]
+        result["imported"]["config_note"] = "配置已加载但未自动写入运行时，请手动确认"
 
     def _import_from_json(self, json_path: Path, merge: bool, result: dict) -> None:
         """从单个 JSON 文件导入（对应 export_all format=json）."""
@@ -842,124 +1044,19 @@ class ExportShareManager:
 
         included = payload.get("included", ALL_COMPONENTS)
 
-        # 记忆
-        if "memory" in included and "memory" in payload:
-            longterm = self._get_longterm()
-            if longterm is not None:
-                entries = payload["memory"].get("entries", [])
-                if not merge:
-                    try:
-                        with longterm._connect() as conn:
-                            conn.execute("DELETE FROM memories")
-                            conn.commit()
-                        # G35: bulk clear 绕过 FTS5, 重建索引
-                        longterm._rebuild_fts_index()
-                    except Exception:
-                        logger.debug("connect failed", exc_info=True)
-                # 写到临时文件再用 import_ 方法
-                with tempfile.NamedTemporaryFile(
-                    mode="w", suffix=".json", delete=False, encoding="utf-8"
-                ) as tf:
-                    json.dump(entries, tf, ensure_ascii=False)
-                    tf_path = tf.name
-                try:
-                    count = longterm.import_(tf_path)
-                    result["imported"]["memory_entries"] = count
-                except Exception as e:
-                    result["errors"].append(f"记忆导入失败: {e}")
-                finally:
-                    os.unlink(tf_path)
-
-            if "memory_md" in payload:
-                dst = self.workspace / "MEMORY.md"
-                dst.write_text(payload["memory_md"], encoding="utf-8")
-                result["imported"]["memory_md"] = True
-
-        # 知识库
-        if "knowledge" in included and "knowledge" in payload:
-            kb = self._get_kb()
-            if kb is not None:
-                if not merge:
-                    try:
-                        all_data = kb.collection.get(include=[])
-                        ids = all_data.get("ids") or []
-                        if ids:
-                            kb.collection.delete(ids=ids)
-                    except Exception:
-                        logger.debug("get failed", exc_info=True)
-                chunks = payload["knowledge"].get("chunks", [])
-                batch_ids: list[str] = []
-                batch_docs: list[str] = []
-                batch_metas: list[dict] = []
-                batch_embs: list[list[float]] = []
-                imported = 0
-                for chunk in chunks:
-                    batch_ids.append(chunk.get("id", ""))
-                    batch_docs.append(chunk.get("document", ""))
-                    batch_metas.append(chunk.get("metadata", {}))
-                    emb = chunk.get("embedding")
-                    if emb is not None:
-                        batch_embs.append(emb)
-                    if len(batch_ids) >= _CHUNK_BATCH:
-                        self._kb_upsert(kb, batch_ids, batch_docs, batch_metas, batch_embs)
-                        imported += len(batch_ids)
-                        batch_ids, batch_docs, batch_metas, batch_embs = [], [], [], []
-                if batch_ids:
-                    self._kb_upsert(kb, batch_ids, batch_docs, batch_metas, batch_embs)
-                    imported += len(batch_ids)
-                result["imported"]["knowledge_chunks"] = imported
-
-        # 知识图谱
-        if "graph" in included and "graph" in payload:
-            graph_data = payload["graph"]
-            kg = self._get_kg()
-            if kg is not None and merge:
-                try:
-                    for node in graph_data.get("nodes", []):
-                        kg.add_entity(
-                            label=node.get("label", "unknown"),
-                            entity_type=node.get("type", "Unknown"),
-                            source=node.get("source", "import"),
-                            confidence=node.get("confidence", 0.5),
-                        )
-                    for edge in graph_data.get("links", []):
-                        kg.add_relation(
-                            src_id=edge.get("source", ""),
-                            relation=edge.get("relation", "related_to"),
-                            dst_id=edge.get("target", ""),
-                            source=edge.get("source_attr", "import"),
-                            confidence=edge.get("confidence", 0.5),
-                        )
-                    kg.save()
-                    result["imported"]["graph"] = "merged"
-                except Exception as e:
-                    result["errors"].append(f"图谱合并失败: {e}")
-            else:
-                dst = self.workspace / HUGINN_DIR_NAME / "project_kg.json"
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                dst.write_text(
-                    json.dumps(graph_data, indent=2, ensure_ascii=False), encoding="utf-8"
-                )
-                result["imported"]["graph"] = "written"
-
-        # 会话
-        if "sessions" in included and "sessions" in payload:
-            try:
-                from huginn import server_core
-
-                with server_core._state_lock:
-                    for s in payload["sessions"]:
-                        tid = s.get("id")
-                        if tid:
-                            server_core._threads[tid] = s
-                result["imported"]["sessions"] = len(payload["sessions"])
-            except Exception:
-                result["imported"]["sessions_count"] = len(payload.get("sessions", []))
-
-        # 配置
-        if "config" in included and "config" in payload:
-            result["imported"]["config"] = payload["config"]
-            result["imported"]["config_note"] = "配置已加载但未自动写入运行时，请手动确认"
+        importers = {
+            "memory": self._ijf_memory,
+            "knowledge": self._ijf_knowledge,
+            "graph": self._ijf_graph,
+            "sessions": self._ijf_sessions,
+            "config": self._ijf_config,
+        }
+        for component, importer in importers.items():
+            if component in included and component in payload:
+                if component in ("memory", "knowledge", "graph"):
+                    importer(payload, merge, result)
+                else:
+                    importer(payload, result)
 
     # ── 单组件导出（返回 bytes）────────────────────────────────────
 
@@ -988,18 +1085,28 @@ class ExportShareManager:
                 payload, indent=2, ensure_ascii=False, default=str
             ).encode("utf-8")
         elif format.lower() == "zip":
-            with tempfile.TemporaryDirectory() as tmp:
-                tmp_dir = Path(tmp)
-                stats = ExportStats()
-                self._export_memory_to_dir(tmp_dir / "memory", stats)
-                buf = io.BytesIO()
-                with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                    for fp in (tmp_dir / "memory").rglob("*"):
-                        if fp.is_file():
-                            zf.write(str(fp), fp.relative_to(tmp_dir / "memory"))
-                return buf.getvalue()
+            return _component_zip_bytes(self._export_memory_to_dir, "memory")
         else:
             raise ValueError(f"不支持的格式: {format}，可选 json / zip")
+
+    def _ek_json_payload(self) -> dict[str, Any]:
+        """把知识库拼成单文件 JSON payload."""
+        kb = self._get_kb()
+        payload: dict[str, Any] = {"documents": [], "chunks": []}
+        if kb is None:
+            return payload
+        try:
+            payload["documents"] = kb.list_documents()
+            data = kb.collection.get(include=["documents", "metadatas", "embeddings"])
+            payload["chunks"] = _chunk_records(
+                data.get("ids") or [],
+                data.get("documents") or [],
+                data.get("metadatas") or [],
+                data.get("embeddings") or [],
+            )
+        except Exception as e:
+            payload["error"] = str(e)
+        return payload
 
     def export_knowledge(self, format: str = "json") -> bytes:
         """只导出知识库，返回 bytes.
@@ -1007,41 +1114,12 @@ class ExportShareManager:
         包含 ChromaDB collection 数据 + 文档文件。
         """
         if format.lower() == "json":
-            kb = self._get_kb()
-            payload: dict[str, Any] = {"documents": [], "chunks": []}
-            if kb is not None:
-                try:
-                    payload["documents"] = kb.list_documents()
-                    data = kb.collection.get(
-                        include=["documents", "metadatas", "embeddings"]
-                    )
-                    ids = data.get("ids") or []
-                    documents = data.get("documents") or []
-                    metadatas = data.get("metadatas") or []
-                    embeddings = data.get("embeddings") or []
-                    for idx, cid in enumerate(ids):
-                        payload["chunks"].append({
-                            "id": cid,
-                            "document": documents[idx] if idx < len(documents) else "",
-                            "metadata": metadatas[idx] if idx < len(metadatas) else {},
-                            "embedding": embeddings[idx] if idx < len(embeddings) else None,
-                        })
-                except Exception as e:
-                    payload["error"] = str(e)
+            payload = self._ek_json_payload()
             return json.dumps(
                 payload, indent=2, ensure_ascii=False, default=str
             ).encode("utf-8")
         elif format.lower() == "zip":
-            with tempfile.TemporaryDirectory() as tmp:
-                tmp_dir = Path(tmp)
-                stats = ExportStats()
-                self._export_knowledge_to_dir(tmp_dir / "knowledge", stats)
-                buf = io.BytesIO()
-                with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                    for fp in (tmp_dir / "knowledge").rglob("*"):
-                        if fp.is_file():
-                            zf.write(str(fp), fp.relative_to(tmp_dir / "knowledge"))
-                return buf.getvalue()
+            return _component_zip_bytes(self._export_knowledge_to_dir, "knowledge")
         else:
             raise ValueError(f"不支持的格式: {format}，可选 json / zip")
 

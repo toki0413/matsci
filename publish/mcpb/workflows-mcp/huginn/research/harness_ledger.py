@@ -11,6 +11,7 @@
 
 纯 stdlib: json / pathlib / tempfile / os / hashlib / collections / dataclasses / statistics.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -93,7 +94,9 @@ class HarnessLedger:
                 lines.append(json.dumps(e, ensure_ascii=False))
             except (TypeError, ValueError):  # 无法序列化 → 跳过此条, 不破坏整本
                 self.skipped += 1
-        fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=p.name + ".", suffix=".tmp")
+        fd, tmp = tempfile.mkstemp(
+            dir=str(p.parent), prefix=p.name + ".", suffix=".tmp"
+        )
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write("\n".join(lines) + ("\n" if lines else ""))
@@ -147,7 +150,9 @@ class HarnessLedger:
         }
 
     # ── 聚合查询 ───────────────────────────────────────────────────────────
-    def summary(self, task_episode: str | None = None, *, by: str = "overall") -> dict[str, Any]:
+    def summary(
+        self, task_episode: str | None = None, *, by: str = "overall"
+    ) -> dict[str, Any]:
         """跨 run 聚合: 同一 task_episode 的多条实录合成一条治理账本行.
 
         - ``task_episode=None`` → 返回 {ep: 该 episode 的聚合} (列出所有 episode);
@@ -169,9 +174,22 @@ class HarnessLedger:
 
         rows = [e for e in self.entries if e.get("task_episode") == task_episode]
         # 只对数值字段聚合(fail-open: 缺这个字段/非数值的 run 不计入, 也让 count 暴露了覆盖率)
-        metric = self._stats([v for e in rows
-                              if isinstance(v := self._metric(e, by), int | float)])
+        metric = self._stats(
+            [v for e in rows if isinstance(v := self._metric(e, by), int | float)]
+        )
 
+        dims = HarnessLedger._dim_summaries(rows)
+
+        return {
+            "task_episode": task_episode,
+            "runs": len(rows),
+            by: metric,
+            "dimensions": dims,
+            **self._world_model_lessons(rows),
+        }
+
+    @staticmethod
+    def _dim_summaries(rows: list[dict]) -> dict[str, dict[str, Any]]:
         dims: dict[str, dict[str, Any]] = {}
         for dim in _DIMENSIONS:
             scores: list[float] = []
@@ -194,19 +212,14 @@ class HarnessLedger:
                     "unobserved": evidence.get("unobserved", 0),
                     "missing": evidence.get("missing", 0),
                     **{
-                        f"{bit}_ratio": (round(evidence.get(bit, 0) / total, 3) if total else None)
+                        f"{bit}_ratio": (
+                            round(evidence.get(bit, 0) / total, 3) if total else None
+                        )
                         for bit in _EVIDENCE_BITS
                     },
                 },
             }
-
-        return {
-            "task_episode": task_episode,
-            "runs": len(rows),
-            by: metric,
-            "dimensions": dims,
-            **self._world_model_lessons(rows),
-        }
+        return dims
 
     # ── 世界模型教训聚合(物理 AI 诚实扩展) ──────────────────────────────
     @staticmethod
@@ -220,6 +233,7 @@ class HarnessLedger:
         不硬解析 reconcile 数值, 只消费 harness 已判定的 outcome —— 保持 ledger「不重复
         实现评分, 只消费已产出」的红线。fail-open: 无此 check 的 run 计为 not_evaluated。
         """
+
         def _check_ev(e: dict) -> str:
             # 该 run 的 safety_authority 维下 "世界模型真用?" 项的状态
             for d in e.get("dimensions", []):
@@ -232,7 +246,7 @@ class HarnessLedger:
                         if outcome == "passed":
                             return "confirmed"
                         if outcome == "failed":
-                            return "falsified"      # 用了但被证伪 → 教训
+                            return "falsified"  # 用了但被证伪 → 教训
                         return str(outcome or "unobserved")
             return "not_evaluated"
 

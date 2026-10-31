@@ -41,14 +41,69 @@ _CONFIDENCE_FLOOR = 0.3
 _RE_KEYWORD_TOKEN = re.compile(r"[A-Za-z][A-Za-z\-]{3,}")
 _KEYWORD_STOPWORDS = frozenset(
     {
-        "the", "and", "for", "with", "that", "this", "from", "are", "was",
-        "were", "which", "where", "into", "such", "using", "based", "must",
-        "should", "would", "could", "have", "has", "had", "not", "but", "all",
-        "any", "can", "will", "then", "than", "each", "more", "most", "some",
-        "only", "also", "over", "under", "between", "within", "when", "while",
-        "their", "there", "these", "those", "they", "them", "its", "about",
-        "after", "before", "because", "been", "being", "does", "doing", "done",
-        "yes", "none", "true", "false",
+        "the",
+        "and",
+        "for",
+        "with",
+        "that",
+        "this",
+        "from",
+        "are",
+        "was",
+        "were",
+        "which",
+        "where",
+        "into",
+        "such",
+        "using",
+        "based",
+        "must",
+        "should",
+        "would",
+        "could",
+        "have",
+        "has",
+        "had",
+        "not",
+        "but",
+        "all",
+        "any",
+        "can",
+        "will",
+        "then",
+        "than",
+        "each",
+        "more",
+        "most",
+        "some",
+        "only",
+        "also",
+        "over",
+        "under",
+        "between",
+        "within",
+        "when",
+        "while",
+        "their",
+        "there",
+        "these",
+        "those",
+        "they",
+        "them",
+        "its",
+        "about",
+        "after",
+        "before",
+        "because",
+        "been",
+        "being",
+        "does",
+        "doing",
+        "done",
+        "yes",
+        "none",
+        "true",
+        "false",
     }
 )
 
@@ -64,7 +119,11 @@ def _content_keywords(records: list[Any], limit: int = 8) -> list[str]:
         if not isinstance(ti, dict):
             continue
         for v in ti.values():
-            text = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, default=str)
+            text = (
+                v
+                if isinstance(v, str)
+                else json.dumps(v, ensure_ascii=False, default=str)
+            )
             for tok in _RE_KEYWORD_TOKEN.findall(text.lower()):
                 if tok in _KEYWORD_STOPWORDS:
                     continue
@@ -72,10 +131,20 @@ def _content_keywords(records: list[Any], limit: int = 8) -> list[str]:
     ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
     return [tok for tok, _ in ranked[:limit]]
 
+
+def _merge_keywords(primary: list[str], extra: list[str]) -> list[str]:
+    """合并触发词并去重, 保持首次出现顺序."""
+    merged: list[str] = []
+    for token in [*primary, *extra]:
+        if token and token not in merged:
+            merged.append(token)
+    return merged
+
+
 # ── 元技能规则阈值 (HiSME: 从技能有效性与复用性反馈学习"如何维护技能") ──
 # record_invocation 把运行时 usage/success 写进 metadata['evolution'],
 # evaluate_meta_skill_rules 读回并施加这些规则, 反哺技能库维护决策.
-_META_PROMOTE_USAGE = 5      # 复用 ≥5 次才谈"值得提升为基元"
+_META_PROMOTE_USAGE = 5  # 复用 ≥5 次才谈"值得提升为基元"
 _META_PROMOTE_SUCCESS = 0.8  # 且成功率 ≥80%
 _META_FLAG_FAILURE_USAGE = 3  # 至少 3 次调用才有资格判"高失败"
 _META_FLAG_FAILURE_RATE = 0.5  # 成功率 <50% → 标注待排查/合并
@@ -168,7 +237,21 @@ class SkillTemplate:
         → 声明式 SkillRegistry. usage_count/success_count/extraction_confidence
         塞进 metadata['evolution'], 供运行时复用统计与"提升基元/淘汰"元规则取用.
         """
-        from huginn.skills.base import SkillDefinition, SkillStep
+        from huginn.skills.base import SkillDefinition
+
+        return SkillDefinition(
+            name=_snake_case(self.name),
+            description=self.description,
+            category="distilled",
+            steps=self._build_skill_steps(),
+            required_tools=list(self.required_tools),
+            tags=list(self.trigger_keywords) + ["evolved"],
+            metadata=self._evolution_metadata(),
+        )
+
+    def _build_skill_steps(self) -> list[Any]:
+        """按 workflow_steps 构造 SkillStep; 抽不出时用 required_tools 兜底."""
+        from huginn.skills.base import SkillStep
 
         steps = [
             SkillStep(
@@ -194,24 +277,20 @@ class SkillTemplate:
                 )
                 for i, tool in enumerate(self.required_tools)
             ]
-        return SkillDefinition(
-            name=_snake_case(self.name),
-            description=self.description,
-            category="distilled",
-            steps=steps,
-            required_tools=list(self.required_tools),
-            tags=list(self.trigger_keywords) + ["evolved"],
-            metadata={
-                "evolution": {
-                    "skill_id": self.skill_id,
-                    "source_session": self.source_session,
-                    "extraction_confidence": self.extraction_confidence,
-                    "usage_count": self.usage_count,
-                    "success_count": self.success_count,
-                    "created_at": self.created_at,
-                }
-            },
-        )
+        return steps
+
+    def _evolution_metadata(self) -> dict[str, Any]:
+        """把复用统计写入 metadata['evolution'], 供元技能规则读回."""
+        return {
+            "evolution": {
+                "skill_id": self.skill_id,
+                "source_session": self.source_session,
+                "extraction_confidence": self.extraction_confidence,
+                "usage_count": self.usage_count,
+                "success_count": self.success_count,
+                "created_at": self.created_at,
+            }
+        }
 
 
 class EvolutionEngine:
@@ -270,7 +349,10 @@ class EvolutionEngine:
             except (OSError, UnicodeDecodeError, ValueError):
                 # 损坏/非法编码的规则文件不阻断主循环: 保留当前已加载状态,
                 # 失败仅记日志, 避免因读取失败把规则集清空.
-                logger.warning("failed to load evolution rules (%s); keep current state", self.rules_path)
+                logger.warning(
+                    "failed to load evolution rules (%s); keep current state",
+                    self.rules_path,
+                )
 
     def _save_rules(self) -> None:
         with self._lock, self.rules_path.open("w", encoding="utf-8") as f:
@@ -303,7 +385,9 @@ class EvolutionEngine:
                 data = json.load(f)
                 self.skills = [SkillTemplate(**s) for s in data]
         except (OSError, UnicodeDecodeError, ValueError):
-            logger.warning("failed to load skills (%s); keep current state", self.skills_path)
+            logger.warning(
+                "failed to load skills (%s); keep current state", self.skills_path
+            )
 
     def _save_skills(self) -> None:
         with self._lock, self.skills_path.open("w", encoding="utf-8") as f:
@@ -367,8 +451,19 @@ class EvolutionEngine:
 
     def evolve_from_failures(self) -> list[EvolutionRule]:
         """Analyze recent failures and generate heuristic fix rules."""
-        new_rules: list[EvolutionRule] = []
         patterns = self.logger.get_failure_patterns(min_count=2)
+        new_rules = self._rules_from_failure_patterns(patterns)
+        new_rules += self._rules_from_stable_principles()
+
+        if new_rules:
+            self._prune_rules()
+            self._save_rules()
+        return new_rules
+
+    def _rules_from_failure_patterns(
+        self, patterns: list[dict[str, Any]]
+    ) -> list[EvolutionRule]:
+        new_rules: list[EvolutionRule] = []
 
         for pat in patterns:
             # Check if we already have a rule for this
@@ -397,12 +492,18 @@ class EvolutionEngine:
                 self.rules.append(rule)
                 new_rules.append(rule)
 
+        return new_rules
+
+    def _rules_from_stable_principles(self) -> list[EvolutionRule]:
+        new_rules: list[EvolutionRule] = []
+
         # 桥 I: stable_principles → evolution rules. 蒸馏出的原则作为高置信度
         # rule 注入规则库, 让 PMK/autoloop 消费 evolution_rules 时能感知到
         # 长期原则. ponytail: 原则文本同时当 trigger 和 action, 不做语义拆分.
         # ceiling: 纯文本匹配, 不捕捉原则的适用条件. 升级: LLM 抽 trigger/condition.
         try:
             from huginn.memory.longterm import load_stable_principles
+
             _principles = load_stable_principles()
         except Exception:
             _principles = []
@@ -428,9 +529,6 @@ class EvolutionEngine:
             self.rules.append(rule)
             new_rules.append(rule)
 
-        if new_rules:
-            self._prune_rules()
-            self._save_rules()
         return new_rules
 
     def evolve_from_successes(self) -> list[SkillTemplate]:
@@ -447,40 +545,8 @@ class EvolutionEngine:
             grouped[key].append(r)
 
         for key, records in grouped.items():
-            if len(records) < 3:
-                continue  # Need enough examples
-
-            # Check if we already have a similar skill
-            calc_type, software = key.rsplit("_", 1)
-            existing = [
-                s
-                for s in self.skills
-                if calc_type in s.trigger_keywords or software in s.trigger_keywords
-            ]
-            if existing:
-                continue
-
-            # Extract common workflow pattern
-            tools_used = list({r.tool_name for r in records})
-            # 同 evolve_from_rewards: 触发词必须带执行内容显著词, 否则技能检索不到.
-            _kw: list[str] = []
-            for _k in [calc_type, software, *_content_keywords(records)]:
-                if _k and _k not in _kw:
-                    _kw.append(_k)
-            skill = SkillTemplate(
-                skill_id=f"skill_{key}_{int(time.time() * 1000)}",
-                name=f"{calc_type.title()} Workflow ({software})",
-                description=f"Auto-extracted workflow for {calc_type} using {software}",
-                trigger_keywords=_kw,
-                workflow_steps=[
-                    {"tool": r.tool_name, "input_keys": list(r.tool_input.keys())}
-                    for r in records[:5]
-                ],
-                required_tools=tools_used,
-                source_session=records[0].session_id,
-                extraction_confidence=min(0.4 + len(records) * 0.05, 0.9),
-            )
-            if not self._adoption_allowed(skill.skill_id):
+            skill = self._skill_from_success_group(key, records)
+            if skill is None:
                 continue
             self.skills.append(skill)
             new_skills.append(skill)
@@ -488,6 +554,43 @@ class EvolutionEngine:
         if new_skills:
             self._save_skills()
         return new_skills
+
+    def _skill_from_success_group(
+        self, key: str, records: list[Any]
+    ) -> SkillTemplate | None:
+        if len(records) < 3:
+            return None  # Need enough examples
+
+        # Check if we already have a similar skill
+        calc_type, software = key.rsplit("_", 1)
+        existing = [
+            s
+            for s in self.skills
+            if calc_type in s.trigger_keywords or software in s.trigger_keywords
+        ]
+        if existing:
+            return None
+
+        # Extract common workflow pattern
+        tools_used = list({r.tool_name for r in records})
+        # 同 evolve_from_rewards: 触发词必须带执行内容显著词, 否则技能检索不到.
+        _kw = _merge_keywords([calc_type, software], _content_keywords(records))
+        skill = SkillTemplate(
+            skill_id=f"skill_{key}_{int(time.time() * 1000)}",
+            name=f"{calc_type.title()} Workflow ({software})",
+            description=f"Auto-extracted workflow for {calc_type} using {software}",
+            trigger_keywords=_kw,
+            workflow_steps=[
+                {"tool": r.tool_name, "input_keys": list(r.tool_input.keys())}
+                for r in records[:5]
+            ],
+            required_tools=tools_used,
+            source_session=records[0].session_id,
+            extraction_confidence=min(0.4 + len(records) * 0.05, 0.9),
+        )
+        if not self._adoption_allowed(skill.skill_id):
+            return None
+        return skill
 
     def sync_to_registry(self) -> list[SkillDefinition]:
         """把本地 SkillTemplate 池同步进 SkillRegistry, 弥合两个技能池.
@@ -536,31 +639,7 @@ class EvolutionEngine:
         flag_failure: list[dict[str, Any]] = []
         untested: list[str] = []
         for s in SkillRegistry.get_all_definitions():
-            meta = getattr(s, "metadata", None) or {}
-            ev = meta.get("evolution") or {}
-            usage = int(ev.get("usage_count", 0))
-            success = int(ev.get("success_count", 0))
-            rate = (success / usage) if usage else 0.0
-            name = s.name
-            rec = {
-                "name": name,
-                "usage": usage,
-                "success_rate": round(rate, 3),
-                "parent": getattr(s, "parent", None),
-            }
-            status = None
-            if usage >= _META_PROMOTE_USAGE and rate >= _META_PROMOTE_SUCCESS:
-                promote.append(rec)
-                status = "promote"
-            elif usage >= _META_FLAG_FAILURE_USAGE and rate < _META_FLAG_FAILURE_RATE:
-                flag_failure.append(rec)
-                status = "flag_failure"
-            elif usage == 0:
-                untested.append(name)
-                status = "untested"
-            if status and isinstance(meta, dict):
-                evol = meta.setdefault("evolution", {})
-                evol["meta_status"] = status
+            self._apply_meta_decision(s, promote, flag_failure, untested)
 
         report = {
             "timestamp": datetime.now().isoformat(),
@@ -569,13 +648,49 @@ class EvolutionEngine:
             "untested": untested,
             "total_skills": len(SkillRegistry.get_all_definitions()),
         }
+        self._write_meta_skill_report(report)
+        return report
+
+    def _apply_meta_decision(
+        self,
+        s: Any,
+        promote: list[dict[str, Any]],
+        flag_failure: list[dict[str, Any]],
+        untested: list[str],
+    ) -> None:
+        meta = getattr(s, "metadata", None) or {}
+        ev = meta.get("evolution") or {}
+        usage = int(ev.get("usage_count", 0))
+        success = int(ev.get("success_count", 0))
+        rate = (success / usage) if usage else 0.0
+        name = s.name
+        rec = {
+            "name": name,
+            "usage": usage,
+            "success_rate": round(rate, 3),
+            "parent": getattr(s, "parent", None),
+        }
+        status = None
+        if usage >= _META_PROMOTE_USAGE and rate >= _META_PROMOTE_SUCCESS:
+            promote.append(rec)
+            status = "promote"
+        elif usage >= _META_FLAG_FAILURE_USAGE and rate < _META_FLAG_FAILURE_RATE:
+            flag_failure.append(rec)
+            status = "flag_failure"
+        elif usage == 0:
+            untested.append(name)
+            status = "untested"
+        if status and isinstance(meta, dict):
+            evol = meta.setdefault("evolution", {})
+            evol["meta_status"] = status
+
+    def _write_meta_skill_report(self, report: dict[str, Any]) -> None:
         try:
             report_path = self.logger.persist_dir / "meta_skill_rules.json"
             with report_path.open("w", encoding="utf-8") as f:
                 json.dump(report, f, ensure_ascii=False, indent=2)
         except Exception:
             logger.warning("meta_skill_rules sidecar write failed", exc_info=True)
-        return report
 
     def evolve_prompt_patches(self) -> list[EvolutionRule]:
         """Generate system prompt patches based on execution patterns."""
@@ -622,9 +737,25 @@ class EvolutionEngine:
                 "low_reward_patches": [],
             }
 
+        new_skills, refreshed_skills = self._evolve_high_reward_skills(rewarded)
+        new_rules = self._evolve_low_reward_patches(rewarded)
+
+        if new_skills or refreshed_skills:
+            self._save_skills()
+        if new_rules:
+            self._prune_rules()
+            self._save_rules()
+        return {
+            "high_reward_skills": [self._skill_to_dict(s) for s in new_skills],
+            "refreshed_skills": [self._skill_to_dict(s) for s in refreshed_skills],
+            "low_reward_patches": [self._rule_to_dict(r) for r in new_rules],
+        }
+
+    def _evolve_high_reward_skills(
+        self, rewarded: list[Any]
+    ) -> tuple[list[SkillTemplate], list[SkillTemplate]]:
         new_skills: list[SkillTemplate] = []
         refreshed_skills: list[SkillTemplate] = []
-        new_rules: list[EvolutionRule] = []
 
         # 高奖励记录: 提取为可复用技能 (R_phys >= 0.7 视为高质量执行)
         high = [r for r in rewarded if r.reward >= 0.7 and r.success]
@@ -635,69 +766,115 @@ class EvolutionEngine:
             key = f"{r.calculation_type or 'unknown'}_{r.software or 'general'}"
             grouped[key].append(r)
         for key, records in grouped.items():
-            if len(records) < 2:
+            applied = self._apply_high_reward_group(key, records)
+            if applied is None:
                 continue
-            calc_type, software = key.rsplit("_", 1)
-            # 按 reward 降序, 取 top 记录提取 workflow
-            records.sort(key=lambda r: r.reward, reverse=True)
-            tools_used = list({r.tool_name for r in records})
-            avg_reward = sum(r.reward for r in records) / len(records)
-            # 触发词 = 平台标签 (保留, 供分组/去重) + 执行内容显著词 (供真实检索命中).
-            _kw: list[str] = []
-            for _k in [calc_type, software, *_content_keywords(records)]:
-                if _k and _k not in _kw:
-                    _kw.append(_k)
-            steps = [
-                {
-                    "tool": r.tool_name,
-                    "input_keys": list(r.tool_input.keys()),
-                    "reward": r.reward,
-                }
-                for r in records[:5]
-            ]
-            # 去重按"工作流内容签名"(同组内工具集相同 = 同一技能), 不再只按组名.
-            # 之前按组名去重: 首条技能一旦存在, 该组此后永久 continue → RSI 一次性
-            # 冻结(每轮照记奖励却再不产出). 现在: 签名相同 → 原地刷新(不增殖);
-            # 签名不同 = 真正的新工作流 → 允许新增.
-            same_group = [
+            skill, refreshed = applied
+            if refreshed:
+                refreshed_skills.append(skill)
+            else:
+                self.skills.append(skill)
+                new_skills.append(skill)
+        return new_skills, refreshed_skills
+
+    def _apply_high_reward_group(
+        self, key: str, records: list[Any]
+    ) -> tuple[SkillTemplate, bool] | None:
+        workflow = self._high_reward_workflow(key, records)
+        if workflow is None:
+            return None
+        twin = self._find_twin_skill(workflow)
+        if twin is not None:
+            self._refresh_skill(twin, workflow, records)
+            return twin, True
+        skill = SkillTemplate(
+            skill_id=f"skill_reward_{key}_{int(time.time() * 1000)}",
+            name=(
+                f"{workflow['calc_type'].title()} High-Reward Workflow "
+                f"({workflow['software']})"
+            ),
+            description=(
+                f"Auto-extracted from R_phys>=0.7 executions, "
+                f"avg reward {workflow['avg_reward']:.2f}"
+            ),
+            trigger_keywords=workflow["keywords"],
+            workflow_steps=workflow["steps"],
+            required_tools=workflow["tools"],
+            source_session=records[0].session_id,
+            extraction_confidence=min(0.5 + workflow["avg_reward"] * 0.4, 0.95),
+        )
+        if not self._adoption_allowed(skill.skill_id):
+            return None
+        return skill, False
+
+    def _high_reward_workflow(
+        self, key: str, records: list[Any]
+    ) -> dict[str, Any] | None:
+        if len(records) < 2:
+            return None
+        calc_type, software = key.rsplit("_", 1)
+        # 按 reward 降序, 取 top 记录提取 workflow
+        records.sort(key=lambda r: r.reward, reverse=True)
+        tools_used = list({r.tool_name for r in records})
+        avg_reward = sum(r.reward for r in records) / len(records)
+        # 触发词 = 平台标签 (保留, 供分组/去重) + 执行内容显著词 (供真实检索命中).
+        _kw = _merge_keywords([calc_type, software], _content_keywords(records))
+        steps = [
+            {
+                "tool": r.tool_name,
+                "input_keys": list(r.tool_input.keys()),
+                "reward": r.reward,
+            }
+            for r in records[:5]
+        ]
+        return {
+            "calc_type": calc_type,
+            "software": software,
+            "tools": tools_used,
+            "avg_reward": avg_reward,
+            "keywords": _kw,
+            "steps": steps,
+        }
+
+    def _find_twin_skill(self, workflow: dict[str, Any]) -> SkillTemplate | None:
+        calc_type = workflow["calc_type"]
+        software = workflow["software"]
+        tools_used = workflow["tools"]
+        # 去重按"工作流内容签名"(同组内工具集相同 = 同一技能), 不再只按组名.
+        # 之前按组名去重: 首条技能一旦存在, 该组此后永久 continue → RSI 一次性
+        # 冻结(每轮照记奖励却再不产出). 现在: 签名相同 → 原地刷新(不增殖);
+        # 签名不同 = 真正的新工作流 → 允许新增.
+        same_group = [
+            s
+            for s in self.skills
+            if calc_type in s.trigger_keywords or software in s.trigger_keywords
+        ]
+        return next(
+            (
                 s
-                for s in self.skills
-                if calc_type in s.trigger_keywords or software in s.trigger_keywords
-            ]
-            twin = next(
-                (
-                    s
-                    for s in same_group
-                    if frozenset(s.required_tools) == frozenset(tools_used)
-                ),
-                None,
-            )
-            if twin is not None:
-                twin.workflow_steps = steps
-                twin.required_tools = tools_used
-                twin.trigger_keywords = _kw
-                twin.description = (
-                    f"Auto-refreshed from R_phys>=0.7 executions, "
-                    f"avg reward {avg_reward:.2f}"
-                )
-                twin.extraction_confidence = min(0.5 + avg_reward * 0.4, 0.95)
-                twin.source_session = records[0].session_id
-                refreshed_skills.append(twin)
-                continue
-            skill = SkillTemplate(
-                skill_id=f"skill_reward_{key}_{int(time.time() * 1000)}",
-                name=f"{calc_type.title()} High-Reward Workflow ({software})",
-                description=f"Auto-extracted from R_phys>=0.7 executions, avg reward {avg_reward:.2f}",
-                trigger_keywords=_kw,
-                workflow_steps=steps,
-                required_tools=tools_used,
-                source_session=records[0].session_id,
-                extraction_confidence=min(0.5 + avg_reward * 0.4, 0.95),
-            )
-            if not self._adoption_allowed(skill.skill_id):
-                continue
-            self.skills.append(skill)
-            new_skills.append(skill)
+                for s in same_group
+                if frozenset(s.required_tools) == frozenset(tools_used)
+            ),
+            None,
+        )
+
+    def _refresh_skill(
+        self, twin: SkillTemplate, workflow: dict[str, Any], records: list[Any]
+    ) -> None:
+        twin.workflow_steps = workflow["steps"]
+        twin.required_tools = workflow["tools"]
+        twin.trigger_keywords = workflow["keywords"]
+        twin.description = (
+            f"Auto-refreshed from R_phys>=0.7 executions, "
+            f"avg reward {workflow['avg_reward']:.2f}"
+        )
+        twin.extraction_confidence = min(0.5 + workflow["avg_reward"] * 0.4, 0.95)
+        twin.source_session = records[0].session_id
+
+    def _evolve_low_reward_patches(self, rewarded: list[Any]) -> list[EvolutionRule]:
+        from collections import defaultdict
+
+        new_rules: list[EvolutionRule] = []
 
         # 低奖励记录: 生成提示补丁 (R_phys < 0.3 视为需要改进)
         low = [r for r in rewarded if r.reward < 0.3]
@@ -726,16 +903,7 @@ class EvolutionEngine:
                 self.rules.append(rule)
                 new_rules.append(rule)
 
-        if new_skills or refreshed_skills:
-            self._save_skills()
-        if new_rules:
-            self._prune_rules()
-            self._save_rules()
-        return {
-            "high_reward_skills": [self._skill_to_dict(s) for s in new_skills],
-            "refreshed_skills": [self._skill_to_dict(s) for s in refreshed_skills],
-            "low_reward_patches": [self._rule_to_dict(r) for r in new_rules],
-        }
+        return new_rules
 
     def run_full_evolution_cycle(self) -> dict[str, Any]:
         """Run all evolution mechanisms and return a report."""
@@ -935,6 +1103,11 @@ class EvolutionEngine:
                 return '{"fix_nvt": "check_damping", "timestep": "reduce"}'
 
         # 通用 fix — action 必须含 description, 否则 _try_evolved_fix 拿不到可重跑的描述
+        return self._common_heuristic_fix(tool, error, error_lower)
+
+    def _common_heuristic_fix(
+        self, tool: str, error: str, error_lower: str
+    ) -> str | None:
         if "not found" in error_lower or "no such file" in error_lower:
             return '{"description": "re-check file path and try alternative locations"}'
         if "permission denied" in error_lower or "access" in error_lower:
@@ -943,7 +1116,16 @@ class EvolutionEngine:
             return '{"description": "retry with smaller scope or increased timeout"}'
 
         # 通用工具 fallback: 至少给个带上下文的 description
-        if tool.lower() in ("read_file", "edit_file", "bash_tool", "ls", "file_write_tool", "execute", "code_tool", "file_read_tool"):
+        if tool.lower() in (
+            "read_file",
+            "edit_file",
+            "bash_tool",
+            "ls",
+            "file_write_tool",
+            "execute",
+            "code_tool",
+            "file_read_tool",
+        ):
             # ponytail: error 截 200 字符防 token 爆炸; 含双引号时 _parse_fix_action 的 fallback 兜底
             return f'{{"description": "retry {tool} with corrected input after checking error: {error[:200]}"}}'
 
@@ -981,7 +1163,9 @@ class EvolutionEngine:
         from .logger import _generalize_error
 
         gen_error = _generalize_error(error)
-        return pattern.lower() in gen_error.lower() or gen_error.lower() in pattern.lower()
+        return (
+            pattern.lower() in gen_error.lower() or gen_error.lower() in pattern.lower()
+        )
 
     def _parse_fix_action(
         self, action: str, original_input: dict[str, Any]

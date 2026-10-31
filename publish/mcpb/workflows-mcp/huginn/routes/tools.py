@@ -26,49 +26,31 @@ async def list_tools() -> list[dict[str, Any]]:
     return ToolRegistry.get_all_schemas()
 
 
-@router.post("/tools/{tool_name}")
-async def call_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
-    """Call a tool directly via HTTP."""
-
-    tool = ToolRegistry.get(tool_name)
-    if not tool:
-        return {"error": f"Tool '{tool_name}' not found"}
-
-    if not tool.input_schema:
-        return {"error": f"Tool '{tool_name}' has no input schema"}
-
+def _validate_tool_input(tool: Any, args: dict[str, Any]) -> tuple[Any, str | None]:
+    """按 strict 模式校验入参, 失败再退一步尝试宽松模式."""
     try:
-        input_data = tool.input_schema.model_validate(args, strict=True)
+        return tool.input_schema.model_validate(args, strict=True), None
     except Exception as strict_err:
         # Retry with lenient mode for backward compat, but log the strict failure
         try:
-            input_data = tool.input_schema(**args)
+            return tool.input_schema(**args), None
         except Exception:
-            return {"error": f"Invalid input (strict): {strict_err}"}
+            return None, f"Invalid input (strict): {strict_err}"
 
-    allowed, reason = _server_allows_tool(tool_name, input_data)
-    if not allowed:
-        get_context().audit_logger.log(
-            event_type="tool_call",
-            actor="http",
-            action=tool_name,
-            details={"approved": False, "reason": reason},
-            input_data=json.dumps(args, sort_keys=True, default=str),
-        )
-        return {"error": reason}
 
-    context = ToolContext(
-        session_id="http",
-        workspace=".",
-        memory_manager=get_memory_manager(),
-        agent_factory=get_agent_factory(),
-        audit_logger=get_context().audit_logger,
+def _audit_denied(tool_name: str, args: dict[str, Any], reason: str) -> None:
+    """记录一次被拒绝的工具调用."""
+    get_context().audit_logger.log(
+        event_type="tool_call",
+        actor="http",
+        action=tool_name,
+        details={"approved": False, "reason": reason},
+        input_data=json.dumps(args, sort_keys=True, default=str),
     )
-    if inspect.iscoroutinefunction(tool.call):
-        result = await tool.call(input_data.model_dump(), context)
-    else:
-        result = tool.call(input_data.model_dump(), context)
 
+
+def _audit_success(tool_name: str, args: dict[str, Any], result: Any) -> None:
+    """记录一次成功的工具调用."""
     get_context().audit_logger.log(
         event_type="tool_call",
         actor="http",
@@ -81,6 +63,44 @@ async def call_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
             else None
         ),
     )
+
+
+async def _invoke_tool(tool: Any, input_data: Any, context: ToolContext) -> Any:
+    if inspect.iscoroutinefunction(tool.call):
+        return await tool.call(input_data.model_dump(), context)
+    return tool.call(input_data.model_dump(), context)
+
+
+@router.post("/tools/{tool_name}")
+async def call_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Call a tool directly via HTTP."""
+
+    tool = ToolRegistry.get(tool_name)
+    if not tool:
+        return {"error": f"Tool '{tool_name}' not found"}
+
+    if not tool.input_schema:
+        return {"error": f"Tool '{tool_name}' has no input schema"}
+
+    input_data, invalid_reason = _validate_tool_input(tool, args)
+    if invalid_reason is not None:
+        return {"error": invalid_reason}
+
+    allowed, reason = _server_allows_tool(tool_name, input_data)
+    if not allowed:
+        _audit_denied(tool_name, args, reason)
+        return {"error": reason}
+
+    context = ToolContext(
+        session_id="http",
+        workspace=".",
+        memory_manager=get_memory_manager(),
+        agent_factory=get_agent_factory(),
+        audit_logger=get_context().audit_logger,
+    )
+    result = await _invoke_tool(tool, input_data, context)
+
+    _audit_success(tool_name, args, result)
 
     return {
         "success": result.success,

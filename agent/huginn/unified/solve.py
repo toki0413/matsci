@@ -16,6 +16,15 @@ from huginn.unified.core import UnifiedProblem
 from huginn.unified.discretize import discretize
 
 
+def _apply_dirichlet_ends(K: np.ndarray, F: np.ndarray) -> None:
+    """Pin u = 0 at both ends of a 1D FEM system."""
+    for idx in (0, -1):
+        K[idx, :] = 0.0
+        K[:, idx] = 0.0
+        K[idx, idx] = 1.0
+        F[idx] = 0.0
+
+
 def solve(
     problem: UnifiedProblem,
     method: str = "fem",
@@ -45,11 +54,7 @@ def solve(
     # 1D FEM lacks built-in boundary conditions; fix u=0 at ends.
     # 2D FEM already applies Dirichlet in the discretizer.
     if method_used == "fem" and "shape" not in disc:
-        for idx in (0, -1):
-            K[idx, :] = 0.0
-            K[:, idx] = 0.0
-            K[idx, idx] = 1.0
-            F[idx] = 0.0
+        _apply_dirichlet_ends(K, F)
 
     try:
         u = np.linalg.solve(K, F)

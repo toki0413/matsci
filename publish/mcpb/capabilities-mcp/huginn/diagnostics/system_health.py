@@ -123,6 +123,35 @@ class ThresholdPolicy:
 # ── 监控器 ──────────────────────────────────────────────────────────
 
 
+def _auto_fix_disk() -> str:
+    """磁盘满了清工具缓存，缓存是可重建的。"""
+    cache_dir = os.environ.get("HUGINN_CACHE_DIR")
+    if not cache_dir:
+        return ""
+    try:
+        import shutil
+        from pathlib import Path
+
+        cache_path = Path(cache_dir)
+        if not cache_path.exists():
+            return ""
+        # 只清 cache 子目录下的 .tmp 和 tool_cache，不动配置和审计日志
+        freed = 0.0
+        for sub in ("tool_cache", "tmp"):
+            target = cache_path / sub
+            if target.exists() and target.is_dir():
+                size = sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
+                shutil.rmtree(target, ignore_errors=True)
+                target.mkdir(parents=True, exist_ok=True)
+                freed += size / 1024**3
+        if freed > 0:
+            return f"cleared tool cache, freed {freed:.2f} GB"
+    except Exception as exc:
+        logger.debug("auto-fix disk cleanup failed: %s", exc)
+
+    return ""
+
+
 class SystemHealthMonitor:
     """进程级单例，后台守护线程采样系统资源。
 
@@ -328,7 +357,9 @@ class SystemHealthMonitor:
         cpu_list: list[dict[str, Any]] = []
         mem_list: list[dict[str, Any]] = []
         own_pid = os.getpid()
-        for proc in psutil.process_iter(attrs=["pid", "name", "cpu_percent", "memory_percent", "memory_info"]):
+        for proc in psutil.process_iter(
+            attrs=["pid", "name", "cpu_percent", "memory_percent", "memory_info"]
+        ):
             try:
                 info = proc.info
                 if info["pid"] == own_pid:
@@ -469,27 +500,29 @@ class SystemHealthMonitor:
                 continue
             critical = d["percent"] >= self._policy.disk_critical_percent
             severity = "critical" if critical else "warning"
-            events.append(AnomalyEvent(
-                timestamp=m.timestamp,
-                resource="disk",
-                severity=severity,
-                value=d["percent"],
-                threshold=self._policy.disk_percent,
-                message=f"Disk {mountpoint} usage {d['percent']:.1f}% above {self._policy.disk_percent:.0f}%",
-                evidence={
-                    "mountpoint": mountpoint,
-                    "used_gb": d["used_gb"],
-                    "free_gb": d["free_gb"],
-                    "total_gb": d["total_gb"],
-                },
-                recommendations=[
-                    "清理 HUGINN_CACHE_DIR 下的缓存文件",
-                    "归档旧的作业输出 (job_tool 的结果文件)",
-                    "删除临时文件: find $HUGINN_CACHE_DIR -name '*.tmp' -delete",
-                    "VASP: 清理 WAVECAR/CHGCAR (大文件)",
-                    "检查日志文件是否过大",
-                ],
-            ))
+            events.append(
+                AnomalyEvent(
+                    timestamp=m.timestamp,
+                    resource="disk",
+                    severity=severity,
+                    value=d["percent"],
+                    threshold=self._policy.disk_percent,
+                    message=f"Disk {mountpoint} usage {d['percent']:.1f}% above {self._policy.disk_percent:.0f}%",
+                    evidence={
+                        "mountpoint": mountpoint,
+                        "used_gb": d["used_gb"],
+                        "free_gb": d["free_gb"],
+                        "total_gb": d["total_gb"],
+                    },
+                    recommendations=[
+                        "清理 HUGINN_CACHE_DIR 下的缓存文件",
+                        "归档旧的作业输出 (job_tool 的结果文件)",
+                        "删除临时文件: find $HUGINN_CACHE_DIR -name '*.tmp' -delete",
+                        "VASP: 清理 WAVECAR/CHGCAR (大文件)",
+                        "检查日志文件是否过大",
+                    ],
+                )
+            )
         return events
 
     def _diagnose_swap(self, m: SystemMetrics) -> AnomalyEvent | None:
@@ -564,29 +597,6 @@ class SystemHealthMonitor:
                 return ""
 
         if event.resource == "disk":
-            # 磁盘满了清工具缓存，缓存是可重建的
-            cache_dir = os.environ.get("HUGINN_CACHE_DIR")
-            if not cache_dir:
-                return ""
-            try:
-                import shutil
-                from pathlib import Path
-
-                cache_path = Path(cache_dir)
-                if not cache_path.exists():
-                    return ""
-                # 只清 cache 子目录下的 .tmp 和 tool_cache，不动配置和审计日志
-                freed = 0.0
-                for sub in ("tool_cache", "tmp"):
-                    target = cache_path / sub
-                    if target.exists() and target.is_dir():
-                        size = sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
-                        shutil.rmtree(target, ignore_errors=True)
-                        target.mkdir(parents=True, exist_ok=True)
-                        freed += size / 1024**3
-                if freed > 0:
-                    return f"cleared tool cache, freed {freed:.2f} GB"
-            except Exception as exc:
-                logger.debug("auto-fix disk cleanup failed: %s", exc)
+            return _auto_fix_disk()
 
         return ""

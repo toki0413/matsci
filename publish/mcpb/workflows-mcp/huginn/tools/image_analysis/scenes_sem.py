@@ -1,4 +1,5 @@
 """SEM 形貌分析 — 衬度统计 / 粗糙度 / 暗区分割 / 边缘密度."""
+
 from __future__ import annotations
 
 import json
@@ -16,34 +17,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def sem_analysis(args: ImageAnalysisInput) -> ToolResult:
-    arr = load_gray(args.image_path)
-    pixel_size = float(args.parameters.get("pixel_size_nm", 1.0))
-    contrast_threshold = args.parameters.get("contrast_threshold", None)
-
-    mean_i = float(arr.mean())
-    std_i = float(arr.std())
-    p5, p50, p95 = np.percentile(arr, [5, 50, 95])
-
-    # 表面粗糙度: 用 uniform_filter 算局部均值, 残差的 RMS
+def _roughness_rms(arr: np.ndarray, std_i: float) -> float:
+    """表面粗糙度: 用 uniform_filter 算局部均值, 残差的 RMS."""
     roughness_rms = std_i
     try:
         from scipy.ndimage import uniform_filter
 
         local_mean = uniform_filter(arr, size=15)
         residual = arr - local_mean
-        roughness_rms = float(np.sqrt((residual ** 2).mean()))
+        roughness_rms = float(np.sqrt((residual**2).mean()))
     except ImportError:
         logger.debug("scipy 不可用, 粗糙度退化为全局 std")
+    return roughness_rms
 
-    # 阈值分割找暗区 (颗粒/孔洞)
-    if contrast_threshold is None:
-        thr = mean_i - 0.5 * std_i
-    else:
-        thr = float(contrast_threshold)
-    binary = arr < thr
 
-    # 连通域统计
+def _dark_regions(binary: np.ndarray) -> tuple[list[float], int]:
+    """连通域统计; scipy 不可用时只返回暗像素总数."""
     areas: list[float] = []
     n_regions = 0
     try:
@@ -56,8 +45,11 @@ def sem_analysis(args: ImageAnalysisInput) -> ToolResult:
     except ImportError:
         n_regions = int(binary.sum())
         logger.debug("scipy 不可用, 仅返回暗像素总数")
+    return areas, n_regions
 
-    # 用 cv2 跑一遍边缘统计作为可选增强
+
+def _edge_density(arr: np.ndarray) -> float:
+    """用 cv2 跑一遍边缘统计作为可选增强, numpy Sobel 兜底."""
     edge_density = 0.0
     try:
         import cv2
@@ -71,22 +63,35 @@ def sem_analysis(args: ImageAnalysisInput) -> ToolResult:
 
             gx = sobel(arr, axis=1)
             gy = sobel(arr, axis=0)
-            grad = np.sqrt(gx ** 2 + gy ** 2)
+            grad = np.sqrt(gx**2 + gy**2)
             edge_density = float((grad > grad.mean() + 2 * grad.std()).mean())
         except ImportError:
             logger.debug("best-effort op failed", exc_info=True)
+    return edge_density
 
-    # 直方图 (32 bins)
-    hist, _ = np.histogram(arr, bins=32, range=(0, 255))
 
-    mean_area = float(np.mean(areas)) if areas else 0.0
+def _sem_data(
+    arr: np.ndarray,
+    pixel_size: float,
+    mean_i: float,
+    std_i: float,
+    pcts: tuple[float, float, float],
+    roughness_rms: float,
+    edge_density: float,
+    thr: float,
+    n_regions: int,
+    areas: list[float],
+    mean_area: float,
+    hist: np.ndarray,
+) -> dict:
+    """组装 summary + measurements + histogram."""
+    p5, p50, p95 = pcts
     summary = (
         f"SEM 图像 {arr.shape[0]}x{arr.shape[1]} px, 平均衬度 {mean_i:.1f}, "
         f"RMS 粗糙度 {roughness_rms:.2f}, 检测到 {n_regions} 个暗区, "
         f"平均面积 {mean_area:.1f} px²"
     )
-
-    data = {
+    return {
         "summary": summary,
         "measurements": {
             "image_shape": [int(arr.shape[0]), int(arr.shape[1])],
@@ -102,35 +107,61 @@ def sem_analysis(args: ImageAnalysisInput) -> ToolResult:
             "n_dark_regions": int(n_regions),
             "dark_region_areas_px2": [float(a) for a in areas[:200]],
             "mean_area_px2": mean_area,
-            "mean_area_nm2": mean_area * pixel_size ** 2,
+            "mean_area_nm2": mean_area * pixel_size**2,
         },
         "histogram": hist.astype(float).tolist(),
     }
+
+
+def sem_analysis(args: ImageAnalysisInput) -> ToolResult:
+    arr = load_gray(args.image_path)
+    pixel_size = float(args.parameters.get("pixel_size_nm", 1.0))
+    contrast_threshold = args.parameters.get("contrast_threshold", None)
+
+    mean_i = float(arr.mean())
+    std_i = float(arr.std())
+    p5, p50, p95 = np.percentile(arr, [5, 50, 95])
+
+    # 表面粗糙度: 用 uniform_filter 算局部均值, 残差的 RMS
+    roughness_rms = _roughness_rms(arr, std_i)
+
+    # 阈值分割找暗区 (颗粒/孔洞)
+    if contrast_threshold is None:
+        thr = mean_i - 0.5 * std_i
+    else:
+        thr = float(contrast_threshold)
+    binary = arr < thr
+
+    # 连通域统计
+    areas, n_regions = _dark_regions(binary)
+
+    # 用 cv2 跑一遍边缘统计作为可选增强
+    edge_density = _edge_density(arr)
+
+    # 直方图 (32 bins)
+    hist, _ = np.histogram(arr, bins=32, range=(0, 255))
+
+    mean_area = float(np.mean(areas)) if areas else 0.0
+    data = _sem_data(
+        arr,
+        pixel_size,
+        mean_i,
+        std_i,
+        (p5, p50, p95),
+        roughness_rms,
+        edge_density,
+        thr,
+        n_regions,
+        areas,
+        mean_area,
+        hist,
+    )
     return ToolResult(data=data)
 
 
-def generate_verification_code(image_path: str, analysis_result: dict) -> str:
-    """根据 SEM 分析结果声称的测量值, 生成独立验证代码.
-
-    SWE-Vision 范式: 不信 VLM 的 "看图说话", 而是生成 Python 代码做
-    结构化测量来交叉验证. 代码用 PIL 重新加载图像, 用 numpy/scipy
-    独立测量衬度和暗区, 然后断言 measured vs claimed 在容差内.
-
-    生成的代码在沙箱里跑, 失败返回错误不阻塞主流程.
-    """
-    m = analysis_result.get("measurements", {})
-    claimed = {
-        "image_shape": m.get("image_shape"),
-        "contrast_mean": m.get("contrast_mean"),
-        "contrast_std": m.get("contrast_std"),
-        "n_dark_regions": m.get("n_dark_regions"),
-        "mean_area_px2": m.get("mean_area_px2"),
-        "threshold_used": m.get("threshold_used"),
-    }
-    claimed_json = json.dumps(claimed, default=str)
-    safe_path = image_path.replace("\\", "/")
-
-    lines = [
+def _verification_header(safe_path: str, claimed_json: str) -> list[str]:
+    """验证代码头部: 导入 / 载图 / 基础测量."""
+    return [
         "import json",
         "from PIL import Image",
         "import numpy as np",
@@ -146,6 +177,12 @@ def generate_verification_code(image_path: str, analysis_result: dict) -> str:
         "measured['contrast_mean'] = float(arr.mean())",
         "measured['contrast_std'] = float(arr.std())",
         "",
+    ]
+
+
+def _verification_measure_body() -> list[str]:
+    """验证代码的暗区重测段."""
+    return [
         "# 用同样的阈值重新分割暗区, skimage 优先, scipy 兜底",
         "thr = CLAIMED.get('threshold_used')",
         "if thr is None:",
@@ -168,6 +205,12 @@ def generate_verification_code(image_path: str, analysis_result: dict) -> str:
         "measured['n_dark_regions'] = int(n)",
         "measured['mean_area_px2'] = float(areas.mean()) if len(areas) > 0 else 0.0",
         "",
+    ]
+
+
+def _verification_checks_body() -> list[str]:
+    """验证代码的逐项对比 + 断言段."""
+    return [
         "# 逐项对比 measured vs claimed, 15% 容差",
         "checks = []",
         "for key in ['contrast_mean', 'contrast_std', 'n_dark_regions', 'mean_area_px2']:",
@@ -195,4 +238,32 @@ def generate_verification_code(image_path: str, analysis_result: dict) -> str:
         "          'measured': measured, 'claimed': CLAIMED}",
         "print('__VERIFY_RESULT__:' + json.dumps(result, default=str))",
     ]
+
+
+def generate_verification_code(image_path: str, analysis_result: dict) -> str:
+    """根据 SEM 分析结果声称的测量值, 生成独立验证代码.
+
+    SWE-Vision 范式: 不信 VLM 的 "看图说话", 而是生成 Python 代码做
+    结构化测量来交叉验证. 代码用 PIL 重新加载图像, 用 numpy/scipy
+    独立测量衬度和暗区, 然后断言 measured vs claimed 在容差内.
+
+    生成的代码在沙箱里跑, 失败返回错误不阻塞主流程.
+    """
+    m = analysis_result.get("measurements", {})
+    claimed = {
+        "image_shape": m.get("image_shape"),
+        "contrast_mean": m.get("contrast_mean"),
+        "contrast_std": m.get("contrast_std"),
+        "n_dark_regions": m.get("n_dark_regions"),
+        "mean_area_px2": m.get("mean_area_px2"),
+        "threshold_used": m.get("threshold_used"),
+    }
+    claimed_json = json.dumps(claimed, default=str)
+    safe_path = image_path.replace("\\", "/")
+
+    lines = (
+        _verification_header(safe_path, claimed_json)
+        + _verification_measure_body()
+        + _verification_checks_body()
+    )
     return "\n".join(lines)

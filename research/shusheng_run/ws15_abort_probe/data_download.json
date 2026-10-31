@@ -1,0 +1,25 @@
+{
+  "dataset": "heart_disease_cleveland",
+  "source_url": "https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.cleveland.data",
+  "used_fallback": false,
+  "local_path": "data/heart_cleveland.csv",
+  "sha256": "a74b7efa387bc9d108d7d0115d831fe9b414b29ae7124f331b622b4efa0427c8",
+  "n_rows": 0,
+  "n_cols": 12,
+  "columns": [
+    "age",
+    "sex",
+    "chest_pain_type",
+    "resting_blood_pressure",
+    "cholesterol",
+    "fasting_blood_sugar",
+    "rest_ecg",
+    "max_heart_rate_achieved",
+    "exercise_induced_angina",
+    "st_depression",
+    "st_slope",
+    "num"
+  ],
+  "target_column": "num",
+  "notes": "UCI processed.cleveland.data: 14 comma-separated columns, missing values encoded as '?' (converted to empty). 'num' is the diagnosis (0 = no disease, 1-4 = presence)."
+}

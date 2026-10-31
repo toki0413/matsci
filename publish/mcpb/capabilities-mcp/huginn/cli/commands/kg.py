@@ -71,6 +71,12 @@ def build_kg(
             total[key] += stats.get(key, 0)
 
     kg.save()
+    _print_build_summary(ctx, kg, total)
+
+
+def _print_build_summary(
+    ctx: CliContext, kg: ProjectKnowledgeGraph, total: dict[str, int]
+) -> None:
     ctx.console.print(
         Panel(
             f"[bold blue]Project Knowledge Graph[/bold blue]\n"

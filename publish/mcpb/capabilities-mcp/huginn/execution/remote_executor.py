@@ -66,6 +66,7 @@ def _classify_remote_exception(exc: Any) -> str:
         return "transient"
     return "fatal"
 
+
 # Kwargs that are meant for the remote scheduler and must not reach subprocess.run.
 _REMOTE_SCHEDULER_KWARGS = {
     "queue",
@@ -75,6 +76,194 @@ _REMOTE_SCHEDULER_KWARGS = {
     "modules",
     "job_name",
 }
+
+
+def _record_job_submission(
+    executor: RemoteExecutor,
+    local_job_id: str,
+    cmd: list[str],
+    local_cwd: str,
+    selection: Any,
+) -> None:
+    """登记 QUEUED 状态的 job record (提交前)."""
+    executor._jobs[local_job_id] = RemoteJobRecord(
+        local_id=local_job_id,
+        scheduler_id="",
+        command=cmd,
+        cwd=local_cwd,
+        queue=selection.queue,
+        status="QUEUED",
+        submitted_at=time.time(),
+    )
+
+
+def _dispatch_job_task(
+    executor: RemoteExecutor,
+    local_job_id: str,
+    cmd: list[str],
+    local_cwd: str,
+    remote_job_dir: str,
+    safe_job_name: str,
+    selection: Any,
+    kwargs: dict[str, Any],
+    env: dict[str, str] | None,
+    timeout: float | None,
+) -> None:
+    """把远程作业投递到 task backend (不阻塞等待)."""
+    executor._task_backend.send_task(
+        "huginn.remote.execute",
+        args=(
+            local_job_id,
+            cmd,
+            local_cwd,
+            remote_job_dir,
+            safe_job_name,
+            selection.queue,
+            selection.gpus_per_node,
+        ),
+        kwargs={
+            "task_kwargs": kwargs,
+            "env": env,
+            "timeout": timeout,
+        },
+        task_id=local_job_id,
+    )
+
+
+def _build_remote_shell_command(
+    cmd: list[str], remote_job_dir: str, env: dict[str, str] | None
+) -> str:
+    """拼远程 shell 命令: cd 到 job 目录 + 可选 env 导出 + 原命令."""
+    command = (
+        f"cd {shlex.quote(remote_job_dir)} && {' '.join(shlex.quote(c) for c in cmd)}"
+    )
+    if env:
+        exports = " ".join(
+            f"export {shlex.quote(k)}={shlex.quote(v)}" for k, v in env.items()
+        )
+        command = f"{exports} && {command}"
+    return command
+
+
+def _submit_scheduler_job(
+    executor: RemoteExecutor,
+    *,
+    local_job_id: str,
+    cmd: list[str],
+    local_cwd: Path,
+    command: str,
+    safe_job_name: str,
+    queue: str | None,
+    gpus_per_node: int,
+    task_kwargs: dict[str, Any],
+) -> tuple[str, RemoteJobRecord]:
+    """生成调度脚本 → 提交 → 落 job record 并持久化."""
+    script = executor._client.generate_job_script(
+        command=command,
+        job_name=safe_job_name,
+        queue=queue,
+        walltime=task_kwargs.get("walltime"),
+        nodes=task_kwargs.get("nodes"),
+        ntasks_per_node=task_kwargs.get("ntasks_per_node"),
+        modules=task_kwargs.get("modules"),
+        env_vars=None,
+        gpus_per_node=gpus_per_node,
+    )
+    scheduler_job_id = executor._client.submit_job(script, job_name=safe_job_name)
+
+    record = RemoteJobRecord(
+        local_id=local_job_id,
+        scheduler_id=scheduler_job_id,
+        command=cmd,
+        cwd=str(local_cwd),
+        queue=queue,
+        status="PENDING",
+        submitted_at=time.time(),
+    )
+    executor._jobs[local_job_id] = record
+    executor._persist_record(record)
+    return scheduler_job_id, record
+
+
+def _make_job_result(
+    status: Any, stdout: str, stderr: str, cmd: list[str]
+) -> SandboxResult:
+    """把最终调度状态 + 输出组装成 SandboxResult."""
+    return SandboxResult(
+        success=status.exit_code == 0,
+        returncode=status.exit_code if status.exit_code is not None else -1,
+        stdout=stdout,
+        stderr=stderr,
+        command=cmd,
+        dry_run=False,
+        # T3: 调度器明确失败 (非零退出) 归为 FATAL; 超时轮询归 TRANSIENT.
+        error_kind=(
+            "none"
+            if status.exit_code == 0
+            else ("transient" if status.state == "UNKNOWN" else "fatal")
+        ),
+    )
+
+
+def _make_failure_result(exc: Exception, cmd: list[str]) -> SandboxResult:
+    """远程执行异常时的失败结果.
+
+    T3: 抛出异常时, 若是连接/权限类走相应分类, 否则不可重试.
+    """
+    return SandboxResult(
+        success=False,
+        returncode=-1,
+        stdout="",
+        stderr=f"Remote execution failed: {exc}",
+        command=cmd,
+        dry_run=False,
+        error_kind=_classify_remote_exception(exc),
+    )
+
+
+def _run_remote_job(
+    executor: RemoteExecutor,
+    *,
+    local_job_id: str,
+    cmd: list[str],
+    local_cwd: Path,
+    remote_job_dir: str,
+    safe_job_name: str,
+    queue: str | None,
+    gpus_per_node: int,
+    task_kwargs: dict[str, Any],
+    env: dict[str, str] | None,
+    timeout: float | None,
+) -> SandboxResult:
+    """单次远程作业: 连接 → 上传 → 提交 → 轮询 → 下载 → 汇总."""
+    executor._client.connect()
+    executor._stage_to_remote(local_cwd, remote_job_dir)
+
+    command = _build_remote_shell_command(cmd, remote_job_dir, env)
+    scheduler_job_id, record = _submit_scheduler_job(
+        executor,
+        local_job_id=local_job_id,
+        cmd=cmd,
+        local_cwd=local_cwd,
+        command=command,
+        safe_job_name=safe_job_name,
+        queue=queue,
+        gpus_per_node=gpus_per_node,
+        task_kwargs=task_kwargs,
+    )
+
+    poll_timeout = int(timeout) if timeout else 86400
+    status = executor._client.wait_for_job(
+        scheduler_job_id,
+        poll_interval=10,
+        timeout=poll_timeout,
+    )
+    executor._update_record(record, status)
+
+    executor._fetch_from_remote(remote_job_dir, local_cwd, scheduler_job_id)
+    stdout, stderr = executor._read_job_outputs(local_cwd, scheduler_job_id)
+
+    return _make_job_result(status, stdout, stderr, cmd)
 
 
 class RemoteExecutor:
@@ -149,33 +338,19 @@ class RemoteExecutor:
             gpus_per_node=kwargs.get("gpus_per_node"),
         )
 
-        self._jobs[local_job_id] = RemoteJobRecord(
-            local_id=local_job_id,
-            scheduler_id="",
-            command=cmd,
-            cwd=local_cwd,
-            queue=selection.queue,
-            status="QUEUED",
-            submitted_at=time.time(),
-        )
+        _record_job_submission(self, local_job_id, cmd, local_cwd, selection)
 
-        self._task_backend.send_task(
-            "huginn.remote.execute",
-            args=(
-                local_job_id,
-                cmd,
-                local_cwd,
-                remote_job_dir,
-                safe_job_name,
-                selection.queue,
-                selection.gpus_per_node,
-            ),
-            kwargs={
-                "task_kwargs": kwargs,
-                "env": env,
-                "timeout": timeout,
-            },
-            task_id=local_job_id,
+        _dispatch_job_task(
+            self,
+            local_job_id,
+            cmd,
+            local_cwd,
+            remote_job_dir,
+            safe_job_name,
+            selection,
+            kwargs,
+            env,
+            timeout,
         )
         return local_job_id
 
@@ -256,84 +431,25 @@ class RemoteExecutor:
         timeout: float | None,
     ) -> SandboxResult:
         """Body of the remote job that is dispatched by the task backend."""
-        local_cwd = Path(local_cwd_str)
-
-        def _execute() -> SandboxResult:
-            self._client.connect()
-            self._stage_to_remote(local_cwd, remote_job_dir)
-
-            command = f"cd {shlex.quote(remote_job_dir)} && {' '.join(shlex.quote(c) for c in cmd)}"
-            if env:
-                exports = " ".join(
-                    f"export {shlex.quote(k)}={shlex.quote(v)}" for k, v in env.items()
-                )
-                command = f"{exports} && {command}"
-
-            script = self._client.generate_job_script(
-                command=command,
-                job_name=safe_job_name,
-                queue=queue,
-                walltime=task_kwargs.get("walltime"),
-                nodes=task_kwargs.get("nodes"),
-                ntasks_per_node=task_kwargs.get("ntasks_per_node"),
-                modules=task_kwargs.get("modules"),
-                env_vars=None,
-                gpus_per_node=gpus_per_node,
-            )
-            scheduler_job_id = self._client.submit_job(script, job_name=safe_job_name)
-
-            record = RemoteJobRecord(
-                local_id=local_job_id,
-                scheduler_id=scheduler_job_id,
-                command=cmd,
-                cwd=str(local_cwd),
-                queue=queue,
-                status="PENDING",
-                submitted_at=time.time(),
-            )
-            self._jobs[local_job_id] = record
-            self._persist_record(record)
-
-            poll_timeout = int(timeout) if timeout else 86400
-            status = self._client.wait_for_job(
-                scheduler_job_id,
-                poll_interval=10,
-                timeout=poll_timeout,
-            )
-            self._update_record(record, status)
-
-            self._fetch_from_remote(remote_job_dir, local_cwd, scheduler_job_id)
-            stdout, stderr = self._read_job_outputs(local_cwd, scheduler_job_id)
-
-            return SandboxResult(
-                success=status.exit_code == 0,
-                returncode=status.exit_code if status.exit_code is not None else -1,
-                stdout=stdout,
-                stderr=stderr,
-                command=cmd,
-                dry_run=False,
-                # T3: 调度器明确失败 (非零退出) 归为 FATAL; 超时轮询归 TRANSIENT.
-                error_kind=(
-                    "none"
-                    if status.exit_code == 0
-                    else ("transient" if status.state == "UNKNOWN" else "fatal")
-                ),
-            )
-
         try:
-            return self._with_retry(_execute)
+            return self._with_retry(
+                lambda: _run_remote_job(
+                    self,
+                    local_job_id=local_job_id,
+                    cmd=cmd,
+                    local_cwd=Path(local_cwd_str),
+                    remote_job_dir=remote_job_dir,
+                    safe_job_name=safe_job_name,
+                    queue=queue,
+                    gpus_per_node=gpus_per_node,
+                    task_kwargs=task_kwargs,
+                    env=env,
+                    timeout=timeout,
+                )
+            )
         except Exception as exc:
             logger.exception("Remote execution failed")
-            return SandboxResult(
-                success=False,
-                returncode=-1,
-                stdout="",
-                stderr=f"Remote execution failed: {exc}",
-                command=cmd,
-                dry_run=False,
-                # T3: 抛出异常时, 若是连接/权限类走相应分类, 否则不可重试.
-                error_kind=_classify_remote_exception(exc),
-            )
+            return _make_failure_result(exc, cmd)
         finally:
             with contextlib.suppress(Exception):
                 self._client.disconnect()
@@ -471,6 +587,7 @@ class RemoteExecutor:
                 # safe_archive_extract 会用 data_filter (3.12+) 或手动路径检查,
                 # 拒绝 .. 和绝对路径.
                 from huginn.utils.archive_safety import safe_archive_extract
+
                 safe_archive_extract(tar, local_dir)
         finally:
             local_archive.unlink(missing_ok=True)
@@ -502,53 +619,31 @@ class RemoteExecutor:
         return stdout, stderr
 
 
-def build_executor(config: Any) -> Any:
-    """Build the right executor from a HuginnConfig.
+def _local_sandbox(config: Any) -> Any:
+    """Build a local SandboxExecutor scoped to the configured workspace.
 
-    Returns a ``RemoteExecutor`` when ``execution_backend == "remote"`` and
-    the required HPC host/username are configured. When a container runtime and
-    image are configured, wraps the local sandbox in a ``ContainerExecutor``.
-    Otherwise returns a local ``SandboxExecutor``.
+    Populate the soft-sandbox's allowed_work_dirs from the configured
+    workspace so path scoping is actually enforced. Without this the
+    executor logs "path scoping inactive" and cwd checks are no-ops.
     """
-    from huginn.security import ContainerExecutor, SandboxExecutor
+    from huginn.security.sandbox import SandboxConfig as SecuritySandboxConfig
+    from huginn.security.sandbox import SandboxExecutor
 
-    # Populate the soft-sandbox's allowed_work_dirs from the configured
-    # workspace so path scoping is actually enforced. Without this the
-    # executor logs "path scoping inactive" and cwd checks are no-ops.
-    def _local_sandbox() -> SandboxExecutor:
-        from huginn.security.sandbox import SandboxConfig as SecuritySandboxConfig
+    work_dirs: set[Path] = set()
+    ws = (getattr(config, "workspace", None) or ".").strip()
+    if ws:
+        try:
+            work_dirs = {Path(os.path.expandvars(ws)).expanduser().resolve()}
+        except Exception:  # noqa: BLE001 — never block on workspace resolution
+            work_dirs = {Path.cwd()}
+    return SandboxExecutor(SecuritySandboxConfig(allowed_work_dirs=work_dirs))
 
-        work_dirs: set[Path] = set()
-        ws = (getattr(config, "workspace", None) or ".").strip()
-        if ws:
-            try:
-                work_dirs = {Path(os.path.expandvars(ws)).expanduser().resolve()}
-            except Exception:  # noqa: BLE001 — never block on workspace resolution
-                work_dirs = {Path.cwd()}
-        return SandboxExecutor(
-            SecuritySandboxConfig(allowed_work_dirs=work_dirs)
-        )
 
-    if getattr(config, "execution_backend", "local") != "remote":
-        base = _local_sandbox()
-        runtime = getattr(config, "container_runtime", "none") or "none"
-        image = getattr(config, "container_image", None)
-        if runtime != "none" and image:
-            return ContainerExecutor(runtime=runtime, image=image)
-        return base
-
-    host = getattr(config, "hpc_host", None)
-    username = getattr(config, "hpc_username", None)
-    if not host or not username:
-        logger.warning(
-            "execution_backend=remote but hpc_host/hpc_username missing; "
-            "falling back to local sandbox."
-        )
-        return SandboxExecutor()
-
-    hpc_config = HPCConfig(
-        host=host,
-        username=username,
+def _hpc_config_from(config: Any) -> HPCConfig:
+    """把 HuginnConfig 的 hpc_* 字段映射成 HPCConfig."""
+    return HPCConfig(
+        host=getattr(config, "hpc_host", None),
+        username=getattr(config, "hpc_username", None),
         scheduler=getattr(config, "hpc_scheduler", "slurm"),
         key_path=getattr(config, "hpc_key_path", None),
         password=getattr(config, "hpc_password", None),
@@ -565,5 +660,34 @@ def build_executor(config: Any) -> Any:
         retry_backoff=getattr(config, "hpc_retry_backoff", 1.0),
         strict_host_key_checking=getattr(config, "hpc_strict_host_key_checking", True),
     )
+
+
+def build_executor(config: Any) -> Any:
+    """Build the right executor from a HuginnConfig.
+
+    Returns a ``RemoteExecutor`` when ``execution_backend == "remote"`` and
+    the required HPC host/username are configured. When a container runtime and
+    image are configured, wraps the local sandbox in a ``ContainerExecutor``.
+    Otherwise returns a local ``SandboxExecutor``.
+    """
+    from huginn.security import ContainerExecutor, SandboxExecutor
+
+    if getattr(config, "execution_backend", "local") != "remote":
+        base = _local_sandbox(config)
+        runtime = getattr(config, "container_runtime", "none") or "none"
+        image = getattr(config, "container_image", None)
+        if runtime != "none" and image:
+            return ContainerExecutor(runtime=runtime, image=image)
+        return base
+
+    host = getattr(config, "hpc_host", None)
+    username = getattr(config, "hpc_username", None)
+    if not host or not username:
+        logger.warning(
+            "execution_backend=remote but hpc_host/hpc_username missing; "
+            "falling back to local sandbox."
+        )
+        return SandboxExecutor()
+
     job_store = RemoteJobStore(workspace=config.workspace)
-    return RemoteExecutor(hpc_config, job_store=job_store)
+    return RemoteExecutor(_hpc_config_from(config), job_store=job_store)

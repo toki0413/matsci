@@ -59,15 +59,7 @@ def plot(
         raise click.ClickException(str(e)) from e
 
     suffix = data_file.suffix.lower()
-    if suffix == ".csv":
-        records = _load_csv(data_file)
-    elif suffix in (".json", ".jsonl"):
-        records = _load_json(data_file)
-    else:
-        ctx.console.print(
-            f"[red]Unsupported file format: {suffix}. Use .csv or .json.[/red]"
-        )
-        raise click.Abort()
+    records = _load_plot_records(ctx, data_file, suffix)
 
     if not records:
         ctx.console.print("[yellow]No data records found.[/yellow]")
@@ -81,6 +73,33 @@ def plot(
         raise click.Abort()
 
     fig, ax = plt.subplots(figsize=(8, 5))
+    _draw_plot(ax, kind, x_values, y_values)
+    _apply_plot_labels(ax, title, xlabel, ylabel, y_column)
+    fig.tight_layout()
+
+    if output is None:
+        output = ctx.workspace / f"{data_file.stem}_{kind}.png"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=dpi)
+    ctx.console.print(f"[green]✓[/green] Plot saved to {output}")
+
+
+def _load_plot_records(
+    ctx: CliContext, data_file: Path, suffix: str
+) -> list[dict[str, Any]]:
+    if suffix == ".csv":
+        return _load_csv(data_file)
+    if suffix in (".json", ".jsonl"):
+        return _load_json(data_file)
+    ctx.console.print(
+        f"[red]Unsupported file format: {suffix}. Use .csv or .json.[/red]"
+    )
+    raise click.Abort()
+
+
+def _draw_plot(
+    ax, kind: str, x_values: list[Any] | None, y_values: list[float]
+) -> None:
     if kind == "line":
         ax.plot(x_values or range(len(y_values)), y_values, marker="o")
     elif kind == "scatter":
@@ -94,6 +113,8 @@ def plot(
     elif kind == "hist":
         ax.hist(y_values, bins=min(20, max(5, len(y_values) // 5)))
 
+
+def _apply_plot_labels(ax, title: str, xlabel: str, ylabel: str, y_column: str) -> None:
     if title:
         ax.set_title(title)
     if xlabel:
@@ -102,14 +123,6 @@ def plot(
         ax.set_ylabel(ylabel)
     elif y_column:
         ax.set_ylabel(y_column)
-
-    fig.tight_layout()
-
-    if output is None:
-        output = ctx.workspace / f"{data_file.stem}_{kind}.png"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=dpi)
-    ctx.console.print(f"[green]✓[/green] Plot saved to {output}")
 
 
 def _load_csv(path: Path) -> list[dict[str, Any]]:

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 # Config
 # ──────────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class ResearchWorkflowConfig:
     max_concurrent_branches: int = 3
@@ -60,6 +61,7 @@ class ResearchWorkflowConfig:
 # Persona — 从 personas.py 取, 不再本地定义
 # ──────────────────────────────────────────────────────────────────────
 
+
 def _get_research_persona() -> Persona:
     """从 BUILT_IN_PERSONAS 查找 research persona."""
     for p in BUILT_IN_PERSONAS:
@@ -68,12 +70,14 @@ def _get_research_persona() -> Persona:
     # fallback: 内联构造 (不应发生, 但防御性处理)
     return Persona(name="research", system_prompt=MATH_DEPTH_GUIDE)
 
+
 RESEARCH_PERSONA = _get_research_persona()
 
 
 # ──────────────────────────────────────────────────────────────────────
 # Workflow
 # ──────────────────────────────────────────────────────────────────────
+
 
 class ResearchWorkflow:
     """Runs the Deli pipeline and streams events to the WS layer.
@@ -107,38 +111,9 @@ class ResearchWorkflow:
         """
         queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
 
-        async def _on_progress(event: dict[str, Any]) -> None:
-            # 透传完整事件, 保留 stage_index/total_stages/progress_pct 等字段
-            event["type"] = "status"
-            event["message"] = event.pop("detail", "")
-            await queue.put(event)
-            # keep PhaseManager in sync with the current Deli stage
-            stage = event.get("stage", "")
-            if stage:
-                phase = stage_to_phase(stage)
-                if phase != ResearchPhase.OPEN:
-                    mgr = getattr(self.agent, "_phase_manager", None)
-                    if mgr is not None:
-                        mgr.transition(phase)
+        token = progress_cb.set(_make_progress_cb(self, queue))
 
-        token = progress_cb.set(_on_progress)
-
-        async def _run_pipeline() -> ResearchState | None:
-            try:
-                return await self.deli.run_full_pipeline(
-                    topic=topic,
-                    target_journal=self.config.target_journal,
-                    rag_search_fn=self._rag_search,
-                    research_intuition=self.config.research_intuition,
-                    allow_empirical=self.config.allow_empirical,
-                )
-            except Exception as exc:
-                await queue.put({"type": "error", "message": str(exc)})
-                return None
-            finally:
-                await queue.put(None)  # sentinel: pipeline finished
-
-        pipeline_task = asyncio.create_task(_run_pipeline())
+        pipeline_task = asyncio.create_task(_run_pipeline_task(self, topic, queue))
 
         try:
             # drain progress events until the pipeline signals completion
@@ -152,34 +127,8 @@ class ResearchWorkflow:
             if state is None:
                 return
 
-            # gap 分析输出即假设
-            if self.config.enable_hypothesis_generation:
-                for gap in state.gaps:
-                    text = gap.get("gap", str(gap)) if isinstance(gap, dict) else str(gap)
-                    yield {"type": "hypothesis", "hypothesis": text}
-
-            # 计算循环填充的 gap
-            for desc in state.gaps_filled:
-                yield {"type": "experiment", "description": desc}
-
-            yield {
-                "type": "result",
-                "summary": (
-                    f"Pipeline complete: {len(state.literature)} papers, "
-                    f"{len(state.gaps)} gaps, {len(state.citations)} citations, "
-                    f"{len(state.integrated_draft)} chars in draft"
-                ),
-            }
-
-            if state.integrated_draft:
-                yield {"type": "draft", "content": state.integrated_draft}
-
-            # final phase sync
-            final_phase = stage_to_phase(state.stage.value)
-            if final_phase != ResearchPhase.OPEN:
-                mgr = getattr(self.agent, "_phase_manager", None)
-                if mgr is not None:
-                    mgr.transition(final_phase)
+            for event in _state_events(self, state):
+                yield event
         finally:
             progress_cb.reset(token)
             if not pipeline_task.done():
@@ -213,6 +162,82 @@ class ResearchWorkflow:
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Run helpers
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _make_progress_cb(
+    workflow: ResearchWorkflow, queue: asyncio.Queue[dict[str, Any] | None]
+) -> Any:
+    async def _on_progress(event: dict[str, Any]) -> None:
+        # 透传完整事件, 保留 stage_index/total_stages/progress_pct 等字段
+        event["type"] = "status"
+        event["message"] = event.pop("detail", "")
+        await queue.put(event)
+        # keep PhaseManager in sync with the current Deli stage
+        stage = event.get("stage", "")
+        if stage:
+            phase = stage_to_phase(stage)
+            if phase != ResearchPhase.OPEN:
+                mgr = getattr(workflow.agent, "_phase_manager", None)
+                if mgr is not None:
+                    mgr.transition(phase)
+
+    return _on_progress
+
+
+async def _run_pipeline_task(
+    workflow: ResearchWorkflow, topic: str, queue: asyncio.Queue[dict[str, Any] | None]
+) -> ResearchState | None:
+    try:
+        return await workflow.deli.run_full_pipeline(
+            topic=topic,
+            target_journal=workflow.config.target_journal,
+            rag_search_fn=workflow._rag_search,
+            research_intuition=workflow.config.research_intuition,
+            allow_empirical=workflow.config.allow_empirical,
+        )
+    except Exception as exc:
+        await queue.put({"type": "error", "message": str(exc)})
+        return None
+    finally:
+        await queue.put(None)  # sentinel: pipeline finished
+
+
+def _state_events(
+    workflow: ResearchWorkflow, state: ResearchState
+) -> Iterator[dict[str, Any]]:
+    # gap 分析输出即假设
+    if workflow.config.enable_hypothesis_generation:
+        for gap in state.gaps:
+            text = gap.get("gap", str(gap)) if isinstance(gap, dict) else str(gap)
+            yield {"type": "hypothesis", "hypothesis": text}
+
+    # 计算循环填充的 gap
+    for desc in state.gaps_filled:
+        yield {"type": "experiment", "description": desc}
+
+    yield {
+        "type": "result",
+        "summary": (
+            f"Pipeline complete: {len(state.literature)} papers, "
+            f"{len(state.gaps)} gaps, {len(state.citations)} citations, "
+            f"{len(state.integrated_draft)} chars in draft"
+        ),
+    }
+
+    if state.integrated_draft:
+        yield {"type": "draft", "content": state.integrated_draft}
+
+    # final phase sync
+    final_phase = stage_to_phase(state.stage.value)
+    if final_phase != ResearchPhase.OPEN:
+        mgr = getattr(workflow.agent, "_phase_manager", None)
+        if mgr is not None:
+            mgr.transition(final_phase)
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Self-check
 # ──────────────────────────────────────────────────────────────────────
 
@@ -231,7 +256,9 @@ if __name__ == "__main__":
 
     # PHASE_STAGE_MAP imported from phases -- StrEnum values match strings
     assert PHASE_STAGE_MAP[ResearchPhase.LITERATURE] == [
-        "topic_analysis", "literature_search", "gap_analysis"
+        "topic_analysis",
+        "literature_search",
+        "gap_analysis",
     ]
     assert PHASE_STAGE_MAP[ResearchPhase.HYPOTHESIS] == []
     assert stage_to_phase("drafting") == ResearchPhase.EXECUTION

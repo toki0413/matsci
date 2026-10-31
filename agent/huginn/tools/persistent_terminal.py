@@ -215,7 +215,9 @@ class PersistentTerminal:
     """
 
     def __init__(self, timeout_seconds: int | None = None) -> None:
-        self.timeout = timeout_seconds if timeout_seconds is not None else _env_timeout()
+        self.timeout = (
+            timeout_seconds if timeout_seconds is not None else _env_timeout()
+        )
         self._sessions: dict[str, _Session] = {}
 
     # ── START ──────────────────────────────────────────────────────
@@ -313,6 +315,7 @@ def resolve_persistent_terminal_flag(
     if use_persistent_terminal is not None:
         return use_persistent_terminal
     from huginn.feature_flags import FeatureFlags
+
     return FeatureFlags.shared().is_enabled("persistent_terminal")
 
 
@@ -342,6 +345,59 @@ def _extract_finding(output: str) -> dict | str | None:
         logger.debug("best-effort op failed", exc_info=True)
         return None
     return None
+
+
+def _terminal_unfinished_result(status: str, buffer: str) -> dict[str, Any]:
+    """session 还没拿到 finding 时的返回 (status=dead / running)."""
+    return {
+        "status": status,
+        "finding": None,
+        "h1_status": None,
+        "h1_reason": None,
+        "partial_output": buffer,
+    }
+
+
+def _support_found_result(
+    finding: dict,
+    buffer: str,
+    core_context: str,
+    workspace: str | Path | None,
+    session_id: str,
+) -> dict[str, Any]:
+    """拿到 finding 后做 H¹ 一致性检查并组装返回结果."""
+    result: dict[str, Any] = {
+        "status": "found",
+        "finding": finding,
+        "partial_output": buffer,
+    }
+    # v14 Task 13.4: 收到 finding 后做 Čech H¹ 一致性检查
+    if core_context:
+        try:
+            from huginn.agents.subagent import (
+                _check_finding_consistency,
+                _write_support_rejection,
+            )
+
+            h1_zero, h1_reason = _check_finding_consistency(
+                finding,
+                core_context,
+            )
+            result["h1_status"] = "zero" if h1_zero else "nonzero"
+            result["h1_reason"] = h1_reason
+            if not h1_zero and workspace:
+                _write_support_rejection(
+                    workspace,
+                    finding,
+                    h1_reason,
+                    core_context,
+                )
+        except Exception as exc:
+            # H¹ 检查失败不阻塞 finding 返回, 标记 unknown
+            logger.warning("H¹ check failed for session %s: %s", session_id, exc)
+            result["h1_status"] = "unknown"
+            result["h1_reason"] = f"check error: {exc}"
+    return result
 
 
 def poll_support_session(
@@ -374,64 +430,26 @@ def poll_support_session(
             chunk = term.read(session_id, timeout=poll_interval)
         except KeyError:
             # session 已死 (被 kill 或 timeout 自动清理)
-            return {
-                "status": "dead",
-                "finding": None,
-                "h1_status": None,
-                "h1_reason": None,
-                "partial_output": buffer,
-            }
+            return _terminal_unfinished_result("dead", buffer)
         if chunk:
             buffer += chunk
 
         finding = _extract_finding(buffer)
         if finding is not None:
             term.kill(session_id)
-            result: dict[str, Any] = {
-                "status": "found",
-                "finding": finding,
-                "partial_output": buffer,
-            }
-            # v14 Task 13.4: 收到 finding 后做 Čech H¹ 一致性检查
-            if core_context:
-                try:
-                    from huginn.agents.subagent import (
-                        _check_finding_consistency,
-                        _write_support_rejection,
-                    )
-                    h1_zero, h1_reason = _check_finding_consistency(
-                        finding, core_context,
-                    )
-                    result["h1_status"] = "zero" if h1_zero else "nonzero"
-                    result["h1_reason"] = h1_reason
-                    if not h1_zero and workspace:
-                        _write_support_rejection(
-                            workspace, finding, h1_reason, core_context,
-                        )
-                except Exception as exc:
-                    # H¹ 检查失败不阻塞 finding 返回, 标记 unknown
-                    logger.warning("H¹ check failed for session %s: %s", session_id, exc)
-                    result["h1_status"] = "unknown"
-                    result["h1_reason"] = f"check error: {exc}"
-            return result
+            return _support_found_result(
+                finding,
+                buffer,
+                core_context,
+                workspace,
+                session_id,
+            )
 
         # session 还在不在
         if session_id not in term.list_sessions():
-            return {
-                "status": "dead",
-                "finding": None,
-                "h1_status": None,
-                "h1_reason": None,
-                "partial_output": buffer,
-            }
+            return _terminal_unfinished_result("dead", buffer)
 
-    return {
-        "status": "running",
-        "finding": None,
-        "h1_status": None,
-        "h1_reason": None,
-        "partial_output": buffer,
-    }
+    return _terminal_unfinished_result("running", buffer)
 
 
 # ── self-check ────────────────────────────────────────────────────────
@@ -442,12 +460,8 @@ def poll_support_session(
 # Windows 上 python -i 跑在非 PTY 模式, >>> prompt 可能不被 flush, 所以 case 3
 # 只断言 "2" 出现, 不断言 prompt.
 
-def _selfcheck() -> None:
-    print("[selfcheck] PersistentTerminal v14 Task 12")
-    print(f"[selfcheck] platform={sys.platform} _USE_PEXPECT={_USE_PEXPECT}")
 
-    term = PersistentTerminal(timeout_seconds=1800)
-
+def _selfcheck_case1(term: PersistentTerminal) -> None:
     # case 1: 启动 sleep 60, 立即 read 非阻塞, 持续 5s 不被枪毙, kill 后消失.
     sid1 = term.start([sys.executable, "-c", "import time; time.sleep(60)"])
     assert sid1 in term.list_sessions(), "session should be active right after start"
@@ -461,11 +475,17 @@ def _selfcheck() -> None:
     assert sid1 not in term.list_sessions(), "kill should remove session"
     print("[case1] kill OK")
 
+
+def _selfcheck_case2(term: PersistentTerminal) -> None:
     # case 2: print hello, sleep 2, print world. -u 强制 unbuffered, 多次 read 拿两段.
-    sid2 = term.start([
-        sys.executable, "-u", "-c",
-        "print('hello'); import time; time.sleep(2); print('world')",
-    ])
+    sid2 = term.start(
+        [
+            sys.executable,
+            "-u",
+            "-c",
+            "print('hello'); import time; time.sleep(2); print('world')",
+        ]
+    )
     parts: list[str] = []
     deadline = time.time() + 10
     while time.time() < deadline and "world" not in "".join(parts):
@@ -476,6 +496,8 @@ def _selfcheck() -> None:
     print(f"[case2] got hello + world: {combined!r}")
     term.kill(sid2)
 
+
+def _selfcheck_case3(term: PersistentTerminal) -> None:
     # case 3: python -u -i REPL, write "print(1+1)\n", read 应拿到 "2".
     # ponytail: Windows 非 PTY 下 prompt 不一定出现, 只断言 "2".
     sid3 = term.start([sys.executable, "-u", "-i"])
@@ -491,6 +513,8 @@ def _selfcheck() -> None:
     print(f"[case3] REPL print(1+1) -> 2 OK: {out3!r}")
     term.kill(sid3)
 
+
+def _selfcheck_case4() -> None:
     # case 4: timeout=2, sleep 60, 等 3s 后 list_sessions 应自动 kill.
     term_short = PersistentTerminal(timeout_seconds=2)
     sid4 = term_short.start([sys.executable, "-c", "import time; time.sleep(60)"])
@@ -502,6 +526,21 @@ def _selfcheck() -> None:
     )
     print("[case4] auto-kill on timeout OK")
 
+
+def _selfcheck() -> None:
+    print("[selfcheck] PersistentTerminal v14 Task 12")
+    print(f"[selfcheck] platform={sys.platform} _USE_PEXPECT={_USE_PEXPECT}")
+
+    term = PersistentTerminal(timeout_seconds=1800)
+
+    _selfcheck_case1(term)
+
+    _selfcheck_case2(term)
+
+    _selfcheck_case3(term)
+
+    _selfcheck_case4()
+
     print("v14 Task 12 self-check PASSED")
 
 
@@ -511,10 +550,8 @@ def _selfcheck() -> None:
 # 出 JSON finding 的合成任务模拟 Support. case 2 用 timer 验非阻塞, 不上 mock
 # 框架. case 3 改 env 后必须复位, 否则污染后续测试.
 
-def _selfcheck_task13() -> None:
-    print("\n[selfcheck] PersistentTerminal v14 Task 13 dispatch 接入")
-    term = PersistentTerminal(timeout_seconds=1800)
 
+def _selfcheck_task13_case1(term: PersistentTerminal) -> None:
     # case 1: dispatch 长任务, poll 拿 finding, kill 后不在 list_sessions.
     # 任务: sleep 2s 后 print 一个 JSON finding.
     finding_code = (
@@ -528,7 +565,10 @@ def _selfcheck_task13() -> None:
     print(f"[case1] dispatch started session {sid1}")
 
     result = poll_support_session(
-        sid1, max_wait_seconds=20, core_context="", terminal=term,
+        sid1,
+        max_wait_seconds=20,
+        core_context="",
+        terminal=term,
     )
     assert result["status"] == "found", (
         f"poll should find JSON finding, got status={result['status']}, "
@@ -544,9 +584,11 @@ def _selfcheck_task13() -> None:
     )
     print("[case1] session killed after finding received")
 
+
+def _selfcheck_task13_case2(term: PersistentTerminal) -> None:
     # case 2: dispatch 立即返回 (不等 Support), mock 主循环跑 2 次 tool call 不阻塞.
     # 跑一个 sleep 5s 的长任务, dispatch 应 <1s 返回, 主循环立刻能跑第二次.
-    long_code = "import time; time.sleep(5); print('{\"finding\": \"late\"}')"
+    long_code = 'import time; time.sleep(5); print(\'{"finding": "late"}\')'
     cmd2 = [sys.executable, "-u", "-c", long_code]
     t_start = time.time()
     sid2 = term.start(cmd2)
@@ -568,8 +610,11 @@ def _selfcheck_task13() -> None:
     term.kill(sid2)
     assert sid2 not in term.list_sessions()
 
+
+def _selfcheck_task13_case3() -> None:
     # case 3: env HUGINN_PERSISTENT_TERMINAL=0 → resolve_persistent_terminal_flag 返回 False
     from huginn.feature_flags import FeatureFlags
+
     saved = FeatureFlags.shared().is_enabled("persistent_terminal")
     try:
         FeatureFlags.shared().disable("persistent_terminal")
@@ -592,6 +637,8 @@ def _selfcheck_task13() -> None:
     finally:
         FeatureFlags.shared().toggle("persistent_terminal", saved)
 
+
+def _selfcheck_task13_case4(term: PersistentTerminal) -> None:
     # case 4 (额外): <FINDING_END> marker 也能被 _extract_finding 识别.
     marker_code = (
         "import time; time.sleep(0.3); "
@@ -604,6 +651,19 @@ def _selfcheck_task13() -> None:
     )
     assert result4["finding"].get("finding") == "marker test", result4["finding"]
     print(f"[case4] <FINDING_END> marker extraction OK: {result4['finding']}")
+
+
+def _selfcheck_task13() -> None:
+    print("\n[selfcheck] PersistentTerminal v14 Task 13 dispatch 接入")
+    term = PersistentTerminal(timeout_seconds=1800)
+
+    _selfcheck_task13_case1(term)
+
+    _selfcheck_task13_case2(term)
+
+    _selfcheck_task13_case3()
+
+    _selfcheck_task13_case4(term)
 
     print("v14 Task 13 self-check PASSED")
 

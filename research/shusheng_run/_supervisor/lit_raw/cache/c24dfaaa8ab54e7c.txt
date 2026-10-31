@@ -1,0 +1,1971 @@
+SRC https://pmc.ncbi.nlm.nih.gov/articles/PMC11096980/
+
+ 
+ 
+     
+
+         
+         
+         
+         
+         
+
+        
+        
+
+        
+        
+   
+ 
+
+   
+ 
+ 
+
+  
+  
+     
+
+  
+
+
+
+        
+             
+             
+             
+             
+             
+             
+             
+             
+        
+
+         
+            Modification of MgH2 hydrogen storage performance by nickel-based composite catalyst Ni/NiO - PMC
+         
+
+        
+        
+  
+   
+ 
+ 
+ 
+ 
+ 
+ 
+  
+     
+
+    
+         
+    
+
+     
+     
+
+
+     
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+    
+    
+
+     
+     
+        
+     
+      Skip to main content
+     
+
+
+        
+            
+
+ 
+     
+         
+             
+                 
+                     
+                 
+
+                 
+                     
+                        An official website of the United States government
+                     
+                     Here's how you know 
+                 
+
+                
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+         
+    
+        
+
+        
+                     Here's how you know 
+                
+
+        
+    
+        
+             
+        
+
+
+             
+         
+
+         
+             
+                 
+                     
+                     
+                         
+                             Official websites use .gov 
+                             
+                            A
+                             .gov  website belongs to an official
+                            government organization in the United States.
+                         
+                     
+                 
+
+                 
+                     
+
+                     
+                         
+                             Secure .gov websites use HTTPS 
+                             
+                            A  lock  (
+                             
+                                 
+                                     Lock 
+                                     
+                                    Locked padlock icon
+                                     
+                                     
+                                 
+ ) or  https://  means you've safely
+                                connected to the .gov website. Share sensitive
+                                information only on official, secure websites.
+                             
+                         
+                     
+                 
+             
+         
+     
+
+        
+
+        
+    
+    
+    
+
+ 
+ 
+
+
+
+ 
+     
+         
+             
+                 
+             
+
+             
+            
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+         
+    
+        
+
+        
+                 
+                     
+                 
+            
+
+        
+    
+        
+             
+        
+
+
+
+            
+                 
+                 
+                    
+                         
+                        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+         
+    
+        
+
+        
+                            
+
+
+
+     
+
+
+                            Search
+                        
+
+        
+    
+        
+             
+        
+
+
+                    
+
+                     
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+         
+    
+        
+
+        
+                                
+
+
+
+     
+
+
+
+                                 Log in 
+
+                                 
+                                
+
+
+
+     
+
+
+
+                                 
+                                
+
+
+
+     
+
+
+                            
+
+        
+    
+        
+             
+        
+
+
+
+                             
+                             
+                                
+                                     
+                                         
+                                        
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            Dashboard
+        
+
+        
+     
+
+
+                                     
+                                
+                                     
+                                         
+                                        
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            Publications
+        
+
+        
+     
+
+
+                                     
+                                
+                                     
+                                         
+                                        
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            Account settings
+        
+
+        
+     
+
+
+                                     
+                                
+                                 
+                                    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+         
+    
+        
+
+        Log out
+
+        
+    
+        
+             
+        
+
+
+                                 
+                             
+                         
+                    
+                 
+            
+         
+     
+
+     
+    
+         
+             
+                 
+                     
+                        Search…
+                     
+                     
+                    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+         
+    
+        
+
+        
+                         
+                            Search NCBI
+                         
+                    
+
+        
+    
+        
+             
+        
+
+
+                 
+
+                
+             
+         
+    
+
+     
+         
+            Primary site navigation
+         
+
+         
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+         
+    
+        
+
+        
+             
+        
+
+        
+    
+        
+             
+        
+
+
+
+        
+             
+             
+                 
+                    Search
+                 
+
+                 
+
+                
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+         
+    
+        
+
+        
+                     
+                     
+                
+
+        
+    
+        
+             
+        
+
+
+             
+
+            
+        
+
+         
+         
+        
+
+        
+             
+                 
+                    Logged in as:
+                      
+                 
+                 
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            Dashboard
+        
+
+        
+     
+
+
+                         
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            Publications
+        
+
+        
+     
+
+
+                         
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            Account settings
+        
+
+        
+     
+
+
+                         
+                    
+                 
+             
+        
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+         
+    
+        
+
+        Log in
+
+        
+    
+        
+             
+        
+
+
+     
+ 
+
+    
+    
+        
+
+ 
+     
+         
+            
+                 
+            
+             
+                 
+                 
+             
+         
+         
+            
+
+
+ 
+ Search PMC Full-Text Archive 
+ 
+ 
+ 
+ 
+ Search in PMC 
+ 
+ 
+ 
+             
+                 
+                     
+                        
+                             
+                                Journal List
+                             
+                        
+                     
+                     
+                        
+                             
+                                User Guide
+                             
+                        
+                     
+                 
+             
+         
+     
+ 
+
+    
+
+
+        
+        
+
+       
+   
+
+    
+
+   
+
+
+
+ 
+     
+         
+              
+                 
+                     
+                         
+                             
+                         
+                     
+                    
+                     
+                         
+                                 
+                         
+                     
+                    
+                    
+                         
+                              
+
+                                  
+                             
+                         
+                    
+                     
+                         
+                             
+                             
+                         
+                     
+                    
+                     
+                         
+                             
+                         
+                     
+                    
+                     
+                          
+                             
+                         
+                        
+
+ 
+     
+           PERMALINK 
+           
+               
+               
+                   
+                   Copy 
+               
+           
+     
+ 
+                     
+                 
+             
+             
+                 
+             
+         
+     
+ 
+     
+       
+         
+             
+                 
+                     
+                         
+    As a library, NLM provides access to scientific literature. Inclusion in an NLM database does not imply endorsement of, or agreement with,
+    the contents by NLM or the National Institutes of Health. 
+    Learn more:
+     PMC Disclaimer 
+    |
+     
+        PMC Copyright Notice
+     
+ 
+                     
+                 
+                 
+                     
+                     
+
+                      
+                                  
+  Heliyon  . 2024 May 4;10(9):e30688. doi:  10.1016/j.heliyon.2024.e30688 
+ 
+  
+  Search in PMC  
+  Search in PubMed  
+  View in NLM Catalog  
+  Add to search  
+     
+  Modification of MgH 2  hydrogen storage performance by nickel-based composite catalyst Ni/NiO   
+  Wenxuan Li   
+  Wenxuan Li  
+ 
+ a School of Energy and Power, Jiangsu University of Science and Technology, Zhenjiang, 212003, China 
+ Find articles by   Wenxuan Li  
+ 
+ 
+ a ,   Xinglin Yang   
+  Xinglin Yang  
+ 
+ a School of Energy and Power, Jiangsu University of Science and Technology, Zhenjiang, 212003, China 
+ Find articles by   Xinglin Yang  
+ 
+ 
+ a,  ⁎ ,   Quanhui Hou   
+  Quanhui Hou  
+ 
+ b School of Automotive Engineering, Yancheng Institute of Technology, Yancheng, 224051, China 
+ Find articles by   Quanhui Hou  
+ 
+ 
+ b ,   Xiaohui Lu   
+  Xiaohui Lu  
+ 
+ a School of Energy and Power, Jiangsu University of Science and Technology, Zhenjiang, 212003, China 
+ Find articles by   Xiaohui Lu  
+ 
+ 
+ a ,   Jie Kong   
+  Jie Kong  
+ 
+ a School of Energy and Power, Jiangsu University of Science and Technology, Zhenjiang, 212003, China 
+ Find articles by   Jie Kong  
+ 
+ 
+ a ,   Jianye Su   
+  Jianye Su  
+ 
+ a School of Energy and Power, Jiangsu University of Science and Technology, Zhenjiang, 212003, China 
+ Find articles by   Jianye Su  
+ 
+ 
+ a 
+ 
+ 
+  Author information  
+  Article notes  
+  Copyright and License information  
+ 
+ 
+ 
+ 
+ a School of Energy and Power, Jiangsu University of Science and Technology, Zhenjiang, 212003, China 
+ 
+ b School of Automotive Engineering, Yancheng Institute of Technology, Yancheng, 224051, China 
+  
+ ⁎  Corresponding author.  yangxl23320@163.com  
+  
+ 
+    Received 2024 Feb 15; Revised 2024 May 1; Accepted 2024 May 2; Collection date 2024 May 15.    
+ 
+ © 2024 The Authors 
+ This is an open access article under the CC BY-NC-ND license (http://creativecommons.org/licenses/by-nc-nd/4.0/). 
+  PMC Copyright notice  
+ 
+ 
+ PMCID: PMC11096980  PMID:  38756560 
+ 
+       Abstract 
+ In this study, the Ni/NiO catalyst was demonstrated to enhance the hydrogen storage performance of MgH 2 . The dehydrogenation of MgH 2 +10 wt% Ni/NiO started at approximately 180 °C, achieving 5.83 wt% of dehydrogenation within 10 min at 300 °C. Completely dehydrogenated, MgH 2  began to rehydrogenate at about 50 °C, absorbing about 4.56 wt% of hydrogen in 10 min at 150 °C. In addition, the activation energies of dehydrogenation and rehydrogenation of MgH 2 +10 wt% Ni/NiO were 87.21 and 34.84 kJ/mol. During the dehydrogenation/rehydrogenation cycle, Mg 2 Ni/Mg 2 NiH 4  could promote hydrogen diffusion, thus enhancing the hydrogen storage performance of Mg/MgH 2 . 
+   Keywords:  MgH 2 , Hydrogen storage performance, Modification, Ni/NiO     Graphical abstract 
+      
+  Open in a new tab      1. Introduction 
+ Energy is an indispensable part of human life. However, the extensive use of fossil energy sources has resulted in an escalating energy predicament and environmental degradation. Hydrogen is a promising alternative to fossil fuels because of its elevated fuel effectiveness and ecological benevolence (the combustion product is water) [ 1 ]. However, hydrogen containment currently poses a pivotal challenge in advancing hydrogen energy. Solid hydrogen storage materials, which offer high safety and heightened hydrogen density while capable of containing hydrogen under low pressure, have attracted much attention [ 2 ]. 
+ MgH 2 , distinguished by its elevated hydrogen storage capability and favorable reversibility, emerges prominently among numerous solid hydrogen storage substances. Nevertheless, the pragmatic advancement of MgH 2  faces impediments due to its considerable thermodynamic stability and sluggish kinetics in the dehydrogenation/rehydrogenation processes [ 3 ]. Many studies have demonstrated that catalyst doping can significantly improve the kinetic properties of Mg/MgH 2 , leading to its rapid dehydrogenation/rehydrogenation at low temperatures. 
+ Currently, various types of transition metals (e.g., Ni [ 4 ], Fe [ 5 ], Ti [ 6 ]) and their constituent metal alloys (e.g., Ni 3 Fe [ 7 ], CoFeB [ 8 ]), metal compounds (e.g., FeOOH [ 9 ], TiO 2  [ 10 ]), and metal composites (e.g., the complexes of carbon materials with Ni——Ni@C [ 11 ], graphene-supported TiNiFe [ 12 ]) have been widely used to improve the hydrogen storage properties of Mg/MgH 2 . In contrast to alternative transition metals, Ni is cost-effective and demonstrates the capacity to enhance the hydrogen storage characteristics of Mg/MgH 2 , drawing considerable interest from researchers. 
+ Rahwanto et al. [ 4 ] found that the incorporation of 2 mol% Ni resulted in 5.3 wt% hydrogen uptake by Mg/MgH2 within 5 min at 300 °C and was able to complete dehydrogenation within 4 min at 50 mbar. In addition, Dan et al. [ 13 ] discovered that the dehydrogenation/rehydrogenation kinetics of Mg/MgH 2  were significantly enhanced by compositing 2–6 nm nickel nanoparticles with MgH 2 , and MgH 2 -Ni exhibited rapid dehydrogenation, releasing more than 6.5 wt% at 275 °C within 10 min. This enhancement was attributed to Mg 2 NiH 0.3  during dehydrogenation/rehydrogenation cycling. 
+ Not only that, building upon the foundation of nickel, researchers have devised a variety of nickel-based compounds (e.g., NiB [ 14 ], NiO [ 15 ]) or nickel-based composites (e.g., Ni/Fe 3 O 4 @MIL [ 16 ], NiO@KNbO 3  [ 17 ]）to enhance the kinetic of the dehydrogenation/rehydrogenation process of Mg/MgH 2 . Liu et al. [ 14 ] observed significant improvement in the kinetic properties of MgH 2  by adding 10 wt% NiB, and MgH 2 -10 wt% NiB demonstrated the release of 6.0 wt% hydrogen within 10 min at 300 °C. In addition, Zhang et al. [ 15 ] explored compound catalysts, including NiO, Ni 3 C, Ni 3 N, Ni 2 P, etc. The experimental findings indicated that all these catalysts exhibited commendable catalytic effects. 
+ Based on the element nickel, various nickel-based composites developed by scholars have likewise exhibited good catalytic properties [ [16] ,  [17] ,  [18] ,  [19] ,  [20] ,  [21] ]. For example, Ren et al. [ 16 ] prepared Ni/Fe 3 O 4 @MIL based on nickel and found that at 598 K, MgH 2 -Ni/Fe 3 O 4 @MIL could dehydrogenate about 3.3 wt% in 10 min. In addition, Hou et al. [ 20 ] found that MgH 2 +10 wt% Ni/BC-3 commenced hydrogen liberation at 187.8 °C. At 300 °C, MgH 2 +10 wt% Ni/BC-3 can dehydrogenate about 6.3 wt% in 5 min. It is worth mentioning that Hou's team developed Ni/BC-3 based on Ni and NiO/C based on NiO. It was demonstrated that the incorporation of 9 wt% NiO/C resulted in a 155 °C decrease in the initial dehydrogenation temperature of MgH 2 . Moreover, MgH 2 +9 wt% NiO/C could dehydrogenate 6.21 wt% at 300 °C for 10 min [ 21 ]. Wu et al. [ 17 ] observed a reduction of 111 °C in the initial dehydrogenation temperature of MgH 2 , decreasing from the original 286 °C–175 °C, adding 5 wt% NiO@KNbO 3 . Additionally, at 300 °C, MgH 2 -5wt% NiO@KNbO 3  demonstrated the release of 3.92 wt% within 10 min. These studies show that Ni or NiO with good catalytic properties can be combined with more active catalytic substances to form high-quality, high-performance catalysts to boost the hydrogen storage capabilities of Mg/MgH 2 . 
+ Considering the excellent modification ability of Ni and NiO and their composites to Mg/MgH 2 , there is no research on catalysts combining Ni and NiO. It was decided to prepare a catalyst combining Ni and NiO's advantages to enhance the hydrogen storage capabilities of Mg/MgH 2 . In this study, Ni/NiO was synthesized using the co-precipitation method, and its impact on the hydrogen storage capabilities of Mg/MgH 2  was investigated.    2. Experimental 
+  2.1. Synthesis of Ni/NiO 
+ The synthesis process of the Ni/NiO catalyst is based on the relevant literature that has been reported [ 22 ]. First, NH 4 OH was added dropwise to a 10% mass fraction of NiCl 2 ·6H 2 O solution, stirred constantly until the pH of the solution reached 11, and the mixture was aged for 24 h. Then, the light green sediment produced by the mixture was washed with deionized water and anhydrous ethanol, respectively, and filtered, and the sediment was dried at 70 °C. Finally, the dried sediment was mixed and ground with glucose in a mortar at a mass ratio of 1:2, and then the mixture was calcined in a covered crucible at 400 °C for 4 h to obtain a Ni/NiO catalyst. The prepared catalyst was placed in a glove box before use.  Fig. 1  briefly shows the preparation steps of the Ni/NiO catalyst. 
+  Fig. 1. 
+     
+  Open in a new tab  
+  Schematic diagram of the preparation process of Ni/NiO catalyst.      2.2. Preparation of MgH 2 +Ni/NiO 
+ First, the Mg powder was hydrogenated at a hydrogen pressure of 70 bar and 380 °C for 2 h. Subsequently, the MgH 2  powder was placed into a ball mill jar and ball-milled at a rotational speed of 450 r/min for 5 h in a planetary ball mill. After the ball milling, the sample was hydrogenated again under the same conditions as the first time. Next, the sample was ball-milled at 450 r/min for 5 h and pounded every 1 h. Finally, the sample was subjected to the last hydrogenation under hydrogenation conditions consistent with the first time. After these operations, the MgH 2  powder was successfully prepared. 
+ MgH 2  and Ni/NiO were mixed into ball mills in an argon atmosphere according to mass ratios of 95:5, 90:10, and 85:15 and mixed at a rotational speed of 450 r/min for 2 h. After ball milling, the samples were pounded and collected, recorded as MgH 2 +5 wt% Ni/NiO, MgH 2 +10 wt% Ni/NiO, and MgH 2 +15 wt% Ni/NiO, respectively. All samples were processed in a glove box with water and oxygen concentrations below 0.1 ppm.     3. Results and discussions 
+  3.1. Characterization of Ni/NiO 
+ The XRD of the Ni/NiO catalyst is shown in  Fig. 2 (a), where two different colors of diffraction peaks can be found. The red diffraction peaks are typical of Ni (PDF#04-0850), and it can be seen that there are robust diffraction features at 2θ = 44.507°, 51.846°, and 76.370°, aligning with the (111), (200) and (220) lattice planes, respectively. In addition, the blue diffraction peaks are typical of NiO (PDF#47-1049), and the diffraction peaks mainly appear at 2θ = 37.248°, 43.275°, and 62.878°, corresponding to the (111), (200), and (220) lattice planes, respectively.  Fig. 2 (b) shows that the Ni/NiO catalyst exhibits a large-scale, micron-scale irregular structure.  Fig. 2  (c, d) shows the elemental composition of the catalyst as Ni and O, and their relative elemental contents are 64.1% and 35.9%, respectively. 
+  Fig. 2. 
+     
+  Open in a new tab  
+  XRD image (a), SEM image (b), EDS images (c, d) of Ni/NiO catalyst.      3.2. Characterization and testing of MgH 2 
+ 
+ To verify the authenticity and validity of the homemade MgH 2 , XRD and PSDA characterization were performed, as illustrated in  Fig. 3 (a) and (b). The diffraction features of XRD are in complete agreement with the standard card for MgH 2  (PDF#12-0697), which indicates that the preparation of MgH 2  was successful.  Fig. 3 (b) shows that the particle dimensions of MgH 2  vary between 400 and 900 nm, with a mean particle size of 609.35 nm.  Fig. 3 (c) shows the dehydrogenated and rehydrogenated properties of pure MgH 2 . MgH 2  exhibited a dehydrogenation onset temperature of approximately 340 °C, and the hydrogen absorption temperature was about 150 °C. The final dehydrogenation and rehydrogenation could reach about 7.31 wt% and 7.27 wt%, respectively, reaching 96.2% and 95.7% of the theoretical value (7.6 wt%). 
+  Fig. 3. 
+     
+  Open in a new tab  
+  XRD (a), PSDA (b), and hydrogen storage performance test chart (c) of MgH 2 .      3.3. Preliminary exploration of the dehydrogenation/rehydrogenation performance of MgH 2 +Ni/NiO 
+  Fig. 4 (a) shows the influence of various ratios of Ni/NiO catalysts on the dehydrogenation efficacy of MgH 2 . The dehydrogenation temperature after Ni/NiO doping was significantly reduced compared with pure MgH 2 . The effect of 10 wt% Ni/NiO was the most significant, and its introduction reduced the initiation temperature of MgH 2  dehydrogenation from around 340 °C–180 °C. The doping of 5 wt% Ni/NiO and 15 wt% Ni/NiO resulted in the dehydrogenation of MgH 2  at 200 °C and 190 °C, with final dehydrogenation amounts of 6.71 wt% and 6.05 wt%, respectively. It is worth mentioning that the dehydrogenation rate of MgH 2 +10 wt% Ni/NiO was very rapid, with 6.42 wt% dehydrogenation at 360 °C, reaching 97.7% of the total dehydrogenation (6.57 wt%).  Fig. 4 (b) shows the rehydrogenation performance of the MgH 2 +Ni/NiO. The introduction of Ni/NiO significantly reduced the reabsorption temperature of MgH 2 . The temperature for reabsorption of hydrogen by MgH 2  was approximately 150 °C, and the composite could start reabsorption at 50 °C after adding the Ni/NiO catalyst. After hydrogen reabsorption, the hydrogen reabsorption of MgH 2 +10 wt% Ni/NiO could reach 6.54 wt%, while the reabsorption of MgH 2 +15 wt% Ni/NiO could reach 5.87 wt%. From the view of total hydrogen storage, the hydrogen storage capacities of MgH 2 +5 wt% Ni/NiO and MgH 2 +10 wt% Ni/NiO were highly similar. However, the dehydrogenation/rehydrogenation rate of MgH 2 +10 wt% Ni/NiO was more significant. Considering the dehydrogenation/rehydrogenation characteristics of MgH 2 +Ni/NiO, MgH 2 +10 wt% Ni/NiO was used for further research. 
+  Fig. 4. 
+     
+  Open in a new tab  
+  Heating dehydrogenation plots (a) and heating rehydrogenation plots (b) of pure MgH 2 , MgH 2 +5 wt% Ni/NiO, MgH 2 +10 wt% Ni/NiO and MgH 2 +15 wt% Ni/NiO.      3.4. Further exploration of the dehydrogenation/rehydrogenation performance of MgH 2 +10 wt% Ni/NiO 
+ In  Fig. 5 (a), the dehydrogenation rate of MgH 2  at 300 °C was prolonged, with only 0.60 wt% dehydrogenation in 60 min. However, under the same condition, the dehydrogenation rate of MgH 2 +10 wt% Ni/NiO was very significant, with about 5.83 wt% dehydrogenation in 10 min and a total dehydrogenation of 6.46 wt%. Compared with previous reports, MgH 2 -NiO could dehydrogenate 4.1 wt% in 20 min at 300 °C [ 15 ]. The dehydrogenation of MgH 2 +9 wt% Ni could reach 6.3 wt% in 2.5min at 300 °C [ 23 ]. Furthermore, MgH 2  doped with catalyst MgCCo 1.5 Ni 1.5  released about 5 wt% hydrogen within 10 min at 325 °C [ 24 ]. MgH 2  doped with Ni-50%Cu released about 5.14 wt% hydrogen in 15 min at 300 °C [ 25 ]. MgH 2  doped with 10 wt% Ni@C released about 4.8 wt% within 10 min at 300 °C [ 11 ].  Fig. 5 (b) shows that the total amount and rate of dehydrogenation of MgH 2 +10 wt% Ni/NiO increased effectively with the increase in temperature. Under the condition of 260 °C, the dehydrogenation of MgH 2 +10 wt% Ni/NiO could reach 5.38 wt% within 30min. 
+  Fig. 5. 
+     
+  Open in a new tab  
+  Isothermal dehydrogenation profiles of pure MgH 2  and MgH 2 +10 wt% Ni/NiO at 300 °C (a), isothermal dehydrogenation profiles of MgH 2 +10 wt% Ni/NiO at different temperatures (b), isothermal dehydrogenation profiles of MgH 2 +10 wt% NiO and MgH 2 +10 wt% Ni/NiO at 280 °C and 300 °C (c) and dehydrogenated activation energy of pure MgH 2  and MgH 2 +10 wt% Ni/NiO (d).    In this paper, the excellent performance of the Ni/NiO catalyst was further verified by the comparative experiments in  Fig. 5 (c). With the increase in temperature, although the dehydrogenation rate of MgH 2 +10 wt% NiO was improved, it still needed to be improved compared to that of MgH 2 +10 wt% Ni/NiO. It is worth mentioning that the dehydrogenation of MgH 2 +10 wt% NiO was only 5.18 wt% in 60 min at 300 °C, which was not as good as the dehydrogenation (5.24 wt%) of MgH 2 +10 wt% Ni/NiO in 12 min at 280 °C. It can be seen that the Ni/NiO catalyst formed by combining Ni and NiO has a better catalytic performance than NiO, and the introduction of Ni may help improve NiO's catalytic effect, which is a crucial point to be explored in future research. 
+ The activation energy for dehydrogenation in pure MgH 2  and MgH 2 +10 wt% Ni/NiO calculated by combining the Kissinger formula [ 26 ] is depicted in  Fig. 5 (d). The activation energy of pure MgH 2  was recorded at 132.19 kJ/mol, which decreased to 87.21 kJ/mol following the incorporation of 10 wt% Ni/NiO. Therefore, adding 10 wt% Ni/NiO enhanced the dehydrogenation reaction of MgH 2 , decreased its dehydrogenation temperature and activation energy and enhanced its dehydrogenation rate.  Table 1  shows the dehydrogenation activation energy of Mg/MgH 2  hydrogen storage systems doped with nickel-based materials. 
+  Table 1. 
+  The dehydrogenation activation energy of Mg/MgH 2  hydrogen storage systems doped with different nickel-based catalysts.  
+  
+  
+ Hydrogen storage systems 
+ E a  (kJ/mol) 
+ Ref. 
+  
+ 
+ 
+ MgH 2 +10 wt% Ni/NiO 
+ 87.21 
+ This work 
+ 
+ 
+ MgH 2 +10 wt% Ni@C 
+ 93.08 
+ [ 11 ] 
+ 
+ 
+ MgH 2 +5 wt% Ni 3 C 
+ 97.8 
+ [ 15 ] 
+ 
+ 
+ MgH 2 +10 wt% ZrNi 5 
+ 
+ 110.06 
+ [ 27 ] 
+ 
+ 
+ MgH 2 +10 wt% NiMoO 4 
+ 
+ 119.47 
+ [ 28 ] 
+ 
+ 
+ MgH 2 +Ni 3 S 2 @C-4 
+ 115.2 
+ [ 29 ] 
+ 
+ 
+ MgH 2 +10 wt% CrFeCoNi 
+ 133.06 
+ [ 30 ] 
+ 
+ 
+ MgH 2 +10 wt% TiMgVNi 3 
+ 
+ 94.42 
+ [ 31 ] 
+ 
+ 
+  
+  Open in a new tab    For MgH 2 +10 wt% Ni/NiO, the constant temperature rehydrogenation performance test is also critical.  Fig. 6 (b) shows the continuous temperature rehydrogenation performance of fully dehydrogenated MgH 2 +10 wt% Ni/NiO within 60 min. The fully dehydrogenated MgH 2 +10 wt% Ni/NiO had a reasonable hydrogen uptake rate at 150 °C, with reabsorption up to 5.35 wt% in 60 min. Even when the temperature was reduced to 100 °C, the fully dehydrogenated MgH 2 +10 wt% Ni/NiO could still absorb 4.29 wt% of hydrogen. As a comparison, the completely dehydrogenated MgH 2  was tested for constant temperature reabsorption at various temperatures, and the outcomes are presented in  Fig. 6 (a). When the temperature exceeded 210 °C, the reabsorption of hydrogen by MgH 2  was comparable to that of MgH 2 +10 wt% Ni/NiO. Incorporating Ni/NiO catalyst enhanced the hydrogen reuptake kinetics of MgH 2 . The activation energy for hydrogen absorption is a crucial parameter characterizing the kinetic of hydrogen reuptake. Data from constant temperature hydrogen reabsorption was utilized as the foundational parameter, and the curves were fitted with the help of the JMAK equation [ 26 ], as depicted in  Fig. 6 (c) and (d). The curves at different temperatures have a good fit. The Arrhenius equation [ 30 ] was used to calculate the activation energy of the hydrogen uptake.  Fig. 6 (e) illustrates that the two curves exhibited strong fits, one at 0.999 and the other at 0.994. The activation energies of pure MgH 2  and MgH 2 +10 wt% Ni/NiO were 68.36 and 34.84 kJ/mol. Introducing Ni/NiO reduced the reabsorption temperature of fully dehydrogenated MgH 2 , greatly reduced its reaction energy barrier, and significantly improved its rehydrogenation kinetic.  Table 2  shows the hydrogen absorption activation energy of the Mg/MgH 2  hydrogen storage systems doped with nickel-based materials. 
+  Fig. 6. 
+     
+  Open in a new tab  
+  Isothermal reabsorption curves of fully dehydrogenated pure MgH 2 (a) and MgH 2 +10 wt% Ni/NiO(b) under various temperature conditions, JMAK plots of pure MgH 2 (c) and MgH 2 +10 wt% Ni/NiO(d), absorption activation energy of pure MgH 2  and MgH 2 +10 wt% Ni/NiO (e).     Table 2. 
+  Absorption activation energy of Mg/MgH 2  hydrogen storage systems doped with different nickel-based catalysts.  
+  
+  
+ Hydrogen storage systems 
+ E a  (kJ/mol) 
+ Refs. 
+  
+ 
+ 
+ MgH 2 +10 wt% Ni/NiO 
+ 34.84 
+ This work 
+ 
+ 
+ MgH 2 +Ni 3 S 2 @C-4 
+ 39.6 
+ [ 29 ] 
+ 
+ 
+ MgH 2 +10 wt% CrFeCoNi 
+ 55.73 
+ [ 30 ] 
+ 
+ 
+ MgH 2 +10 wt% Ni nps 
+ 
+ 87.0 
+ [ 32 ] 
+ 
+ 
+ MgH 2 +Ni@rGO 
+ 51.2 
+ [ 33 ] 
+ 
+ 
+ MgH 2 +Pd 30 Ni 70 /CMK-3 
+ 78.5 
+ [ 34 ] 
+ 
+ 
+ Mg-Ni-V 
+ 52.8 
+ [ 35 ] 
+ 
+ 
+ Mg-5wt% NiS 
+ 45.45 
+ [ 36 ] 
+ 
+ 
+  
+  Open in a new tab      3.5. Study on the stability of the dehydrogenation/rehydrogenation cycle of MgH 2 +10 wt% Ni/NiO 
+ To explore the cycling stability of MgH 2 +10 wt% Ni/NiO, 10 dehydrogenation/rehydrogenation cycles were tested under hydrogen at 3 MPa and 320 °C, as depicted in  Fig. 7 . The extent of hydrogen release and rehydrogenation during the initial cycle was 6.34 wt% and 6.01 wt%. At the end of the third cycle, the dehydrogenation value of the composite decayed from 6.34 wt% to 5.90 wt%, a decrease of 0.44 wt%. Within the subsequent seven cycles, the dehydrogenation value of the composite decayed from 5.90 wt% to 5.72 wt%, a decrease of only 0.18 wt%. This suggests that the dehydrogenation of the composite stabilized at the end of the third cycle. In addition, in the first cycle, the rehydrogenation value of the composite was 0.33 wt% less than the dehydrogenation value. However, after ten cycles, the rehydrogenation value of the composite only decayed by 0.29 wt%, which indicated that the rehydrogenation performance of the composite stabilized within ten cycles. Although the quantity of hydrogen assimilated and released decreased, the final dehydrogenation and reabsorption remained at 90.22% and 95.17%. In general, MgH 2 +10 wt% Ni/NiO has both rapid dehydrogenation/rehydrogenation kinetic and relatively stable cycling performance. 
+  Fig. 7. 
+     
+  Open in a new tab  
+  Dehydrogenation/reabsorption cycle plots of MgH 2 +10 wt% Ni/NiO at 320 °C.      3.6. Catalytic mechanism of Ni/NiO on the hydrogen storage performance of MgH 2 
+ 
+ To reveal the catalytic mechanism of Ni/NiO, transmission electron microscopy and XRD were used to study the structural changes in the composite during the dehydrogenation/rehydrogenation process. 
+  Fig. 8  shows the XRD plot of MgH 2 +10 wt% Ni/NiO after ball milling, dehydrogenation, reabsorption, and 10 cycles. In addition,  Fig. 9 (a–d) shows the details of the catalyst and its derivatives in the XRD plots. The MgH 2  and Mg phases dominated the XRD curves. Following ball milling, the peak of Ni/NiO appeared in the MgH 2 +10 wt% Ni/NiO sample, and no new phase was found, which was because there was no chemical reaction between MgH 2  and Ni/NiO, and no new species were produced. After the initial dehydrogenation, the Mg phase was dominant, and a diffraction peak of Mg 2 Ni appeared. This was due to the chemical reaction between MgH 2  and Ni/NiO during the high-temperature hydrogen release process, where Ni/NiO promoted the decomposition of MgH 2  to produce hydrogen and in-situ generation of the active factor Mg 2 Ni. After the initial reuptake of the sample, the diffraction peak of MgH 2  regained its dominance. It is worth mentioning that Mg 2 Ni disappeared, and Mg 2 NiH 4  appeared. This was because Mg 2 Ni induced Mg to absorb hydrogen at high temperatures to form MgH 2 , while Mg 2 Ni formed Mg 2 NiH 4 . Mg 2 Ni/Mg 2 NiH 4  aided hydrogen diffusion and thus enhanced the rate of dehydrogenation and hydrogen absorption [ 21 , 29 ]. After 10 cycles, the MgH 2  phase was dominant, and Mg 2 NiH 4  still existed because the last cycle caused Mg 2 Ni to form Mg 2 NiH 4  again in situ. It can be seen that Mg 2 Ni and Mg 2 NiH 4  are the factors for Ni/NiO to enhance the hydrogen storage capabilities of MgH 2 . Mg 2 Ni/Mg 2 NiH 4  repeatedly switches during the dehydrogenation/rehydrogenation of composite, promoting the diffusion of hydrogen and increasing the dehydrogenation/rehydrogenation rate, which has been confirmed in many reports [ 21 , 28 , 29 ]. 
+  Fig. 8. 
+     
+  Open in a new tab  
+  XRD of MgH 2 +10 wt% Ni/NiO after ball milling, dehydrogenation, hydrogen resorption, and 10 cycles.     Fig. 9. 
+     
+  Open in a new tab  
+  XRD of Ni/NiO and its derivatives after ball milling (a), dehydrogenation (b), hydrogen resorption (c), and 10 cycles (d).     Fig. 10 (b) shows the interplanar spacing at MgH 2 (101), Ni(200), and NiO(200), recorded at distances of 0.251, 0.176, and 0.209 nm, respectively. In addition, the diffraction patterns related to MgH 2 (101), Ni(200), and NiO(200) are observable in  Fig. 10 (c). The authenticity of the composite is further demonstrated in  Fig. 10 (d), where the sample's elemental composition includes Mg, Ni, and O. 
+  Fig. 10. 
+     
+  Open in a new tab  
+  TEM image (a), HRTEM image (b), SAED image (c), and EDS images (d) of MgH 2 +10 wt%Ni/NiO.    To further illustrate the evolution of the Ni/NiO catalyst, Ni 2p XPS tests were performed on the MgH 2 +10 wt% Ni/NiO samples after ball-milling and hydrogen release as shown in  Fig. 11 . The peak shapes of Ni 0  and Ni 2+  valence states can be seen from the xps plot of  Fig. 11 (a), indicating the presence of Ni and NiO in the ball-milled sample, respectively. The Ni 0  peak has a binding energy of 853 eV, and the peaks with binding energies of 855 eV and 873 eV are attributed to Ni 2+ . After the dehydrogenation of MgH 2 +10 wt% Ni/NiO, only the peak of Ni 0  is retained in the XPS plot, which is derived from the Mg 2 Ni produced by the reaction of MgH 2  and Ni/NiO, which is a further confirmation of the presence of Mg 2 Ni. 
+  Fig. 11. 
+     
+  Open in a new tab  
+  Ni 2p XPS spectra of MgH 2 +10 wt% Ni/NiO after ball-milling (a) and dehydrogenation (b).    Combined with XRD, TEM, EDS, and other characterization images, the catalytic mechanism of Ni/NiO for MgH 2  was analyzed, as shown in  Fig. 12 . After ball milling, Ni/NiO was dispersed on the surface of MgH 2 . Subsequently, during the initial dehydrogenation process of the composite, Ni/NiO not only assisted in the conversion of MgH 2  into Mg but also increased the hydrogen release rate and transformed it into the catalytic factor Mg 2 Ni. Then, during the first rehydrogenation process, Mg 2 Ni assisted in converting Mg into MgH 2 , increased the reabsorption rate, and converted itself into Mg 2 NiH 4 . In the dehydrogenation/rehydrogenation cycles, Mg 2 Ni/Mg 2 NiH 4  promoted hydrogen migration across the interface of Mg/MgH 2 , thereby improving the dehydrogenation/rehydrogenation kinetic of Mg/MgH 2 . 
+  Fig. 12. 
+     
+  Open in a new tab  
+  Catalytic mechanism diagram of Ni/NiO catalyst.       4. Conclusion 
+ Ni/NiO was synthesized by co-precipitation and introduced into MgH 2 . At the same time, the excellent modification effect of the Ni/NiO on the hydrogen storage performance of MgH 2  was proved. 
+ The dehydrogenation temperature of MgH 2 +10 wt% Ni/NiO was approximately 180 °C. Moreover, the composite dehydrated 5.83 wt% within 10 min at 300 °C. The activation energies of dehydrogenation and rehydrogenation of MgH 2 +10 wt% Ni/NiO were 87.21 and 34.84 kJ/mol. In the stability test of 10 cycles, the final dehydrogenation and reabsorption of MgH 2 +10 wt% Ni/NiO were maintained at 90.22% and 95.17%, respectively. During the cycles of the composite system, Mg 2 Ni and Mg 2 NiH 4  were interconverted to promote hydrogen migration across the interface of Mg/MgH 2 .    Data availability 
+ Sharing research data helps other researchers evaluate your findings, build on your work and to increase trust in your article. We encourage all our authors to make as much of their data publicly available as reasonably possible. Please note that your response to the following questions regarding the public data availability and the reasons for potentially not making data available will be available alongside your article upon publication. 
+ Has data associated with your study been deposited into a publicly available repository? 
+ No.    CRediT authorship contribution statement 
+  Wenxuan Li:  Writing – review &amp; editing, Writing – original draft.  Xinglin Yang:  Writing – review &amp; editing.  Quanhui Hou:  Writing – review &amp; editing.  Xiaohui Lu:  Writing – review &amp; editing.  Jie Kong:  Writing – review &amp; editing.  Jianye Su:  Writing – review &amp; editing.    Declaration of competing interest 
+ The authors declare that they have no known competing financial interests or personal relationships that could have appeared to influence the work reported in this paper.    Acknowledgements 
+ This research was funded by the Postgraduate Research &amp; Practice Innovation Program of Jiangsu Province (Grant No. SJCX23_2217).    Contributor Information 
+ Wenxuan Li, Email: liwenxuan4084@163.com. 
+ Xinglin Yang, Email: yangxl23320@163.com. 
+ Quanhui Hou, Email: hqhdyx66@ycit.edu.cn. 
+ Xiaohui Lu, Email: xiaohuilu6@163.com. 
+ Jie Kong, Email: 221210801120@stu.just.edu.cn. 
+ Jianye Su, Email: sujianye2022@163.com.    References 
+  
+ 
+ 1.  Gupta A., Baron G.V., Perreault P., Lenaerts S., Ciocarlan R.-G., Cool P., Mileo P.G.M., Rogge S., Van Speybroeck V., Watson G., Van Der Voort P., Houlleberghs M., Breynaert E., Martens J., Denayer J.F.M. Hydrogen clathrates: next generation hydrogen storage materials. Energy Storage Mater. 2021;41:69–107.  [ Google Scholar ] 
+ 
+ 2.  Liu H., Zhang L., Ma H., Lu C., Luo H., Wang X., Huang X., Lan Z., Guo J. Aluminum hydride for solid-state hydrogen storage: structure, synthesis, thermodynamics, kinetics, and regeneration. J. Energy Chem. 2021;52:428–440.  [ Google Scholar ] 
+ 
+ 3.  Li Q., Lu Y., Luo Q., Yang X., Yang Y., Tan J., Dong Z., Dang J., Li J., Chen Y., Jiang B., Sun S., Pan F. Thermodynamics and kinetics of hydriding and dehydriding reactions in Mg-based hydrogen storage materials. J. Magnesium Alloys. 2021;9(6):1922–1941.  [ Google Scholar ] 
+ 
+ 4.  Rahwanto A., Ismail I., Nurmalita N., Mustanir, Jalil Z. Nanoscale Ni as a catalyst in MgH2 for hydrogen storage material. J. Phys. Conf. 2021;1882(1)  [ Google Scholar ] 
+ 
+ 5.  Zhang L., Ji L., Yao Z., Yan N., Sun Z., Yang X., Zhu X., Hu S., Chen L. Facile synthesized Fe nanosheets as superior active catalyst for hydrogen storage in MgH2. Int. J. Hydrogen Energy. 2019;44(39):21955–21964.  [ Google Scholar ] 
+ 
+ 6.  Shahi R.R., Bhatnagar A., Pandey S.K., Dixit V., Srivastava O.N. Effects of Ti-based catalysts and synergistic effect of SWCNTs-TiF3 on hydrogen uptake and release from MgH2. Int. J. Hydrogen Energy. 2014;39(26):14255–14261.  [ Google Scholar ] 
+ 
+ 7.  Liu J., Ma Z., Liu Z., Tang Q., Zhu Y., Lin H., Zhang Y., Zhang J., Liu Y., Li L. Synergistic effect of rGO supported Ni3Fe on hydrogen storage performance of MgH2. Int. J. Hydrogen Energy. 2020;45(33):16622–16633.  [ Google Scholar ] 
+ 
+ 8.  Gao S., Wang X., Liu H., He T., Wang Y., Li S., Yan M. CNTs decorated with CoFeB as a dopant to remarkably improve the dehydrogenation/rehydrogenation performance and cyclic stability of MgH2. Int. J. Hydrogen Energy. 2020;45(53):28964–28973.  [ Google Scholar ] 
+ 
+ 9.  Song M., Zhang L., Zheng J., Yu Z., Wang S. Constructing graphene nanosheet-supported FeOOH nanodots for hydrogen storage of MgH2. Int. J. Miner. Metall. Mater. 2022;29(7):1464–1473.  [ Google Scholar ] 
+ 
+ 10.  Liu G., Wang L., Hu Y., Sun C., Leng H., Li Q., Wu C. Enhanced catalytic effect of TiO2@rGO synthesized by one-pot ethylene glycol-assisted solvothermal method for MgH2. J. Alloys Compd. 2021;881  [ Google Scholar ] 
+ 
+ 11.  Meng Q., Huang Y., Ye J., Xia G., Wang G., Dong L., Yang Z., Yu X. Electrospun carbon nanofibers with in-situ encapsulated Ni nanoparticles as catalyst for enhanced hydrogen storage of MgH2. J. Alloys Compd. 2021;851  [ Google Scholar ] 
+ 
+ 12.  Soni P.K., Bhatnagar A., Shukla V., Shaz M.A. Improved de/re-hydrogenation properties of MgH2 catalyzed by graphene templated Ti-Ni–Fe nanoparticles. Int. J. Hydrogen Energy. 2022;47(50):21391–21402.  [ Google Scholar ] 
+ 
+ 13.  Dan L., Wang H., Liu J., Ouyang L., Zhu M. H2 plasma reducing Ni nanoparticles for superior catalysis on hydrogen sorption of MgH2. ACS Appl. Energy Mater. 2022;5(4):4976–4984.  [ Google Scholar ] 
+ 
+ 14.  Liu G., Qiu F., Li J., Wang Y., Li L., Yan C., Jiao L., Yuan H. NiB nanoparticles: a new nickel-based catalyst for hydrogen storage properties of MgH2. Int. J. Hydrogen Energy. 2012;37(22):17111–17117.  [ Google Scholar ] 
+ 
+ 15.  Zhang Q., Zang L., Huang Y., Gao P., Jiao L., Yuan H., Wang Y. Improved hydrogen storage properties of MgH2 with Ni-based compounds. Int. J. Hydrogen Energy. 2017;42(38):24247–24255.  [ Google Scholar ] 
+ 
+ 16.  Ren S., Fu Y., Zhang L., Cong L., Xie Y., Yu H., Wang W., Li Y., Jian L., Wang Y., Han S. An improved hydrogen storage performance of MgH2 enabled by core-shell structure Ni/Fe3O4@MIL. J. Alloys Compd. 2022;892  [ Google Scholar ] 
+ 
+ 17.  Wu J., Zhang H., Wang Y., Zou Y., Li B., Xiang C., Sun L., Xu F., Yu T. Hydrangea-like NiO@KNbO3 as catalyst doping for MgH2: boosting hydrogen storage performance. J. Alloys Compd. 2023;961  [ Google Scholar ] 
+ 
+ 18.  Duan C., Tian Y., Wang X., Wu M., Fu D., Zhang Y., Lv W., Su Z., Xue Z., Wu Y. Ni-CNTs as an efficient confining framework and catalyst for improving dehydriding/rehydriding properties of MgH2. Renew. Energy. 2022;187:417–427.  [ Google Scholar ] 
+ 
+ 19.  Yu Z., Liu X., Liu Y., Li Y., Zhang Z., Chen K., Han S. Synergetic catalysis of Ni@C@CeO2 for driving ab/desorption of MgH2 at moderate temperature. Fuel. 2024;357  [ Google Scholar ] 
+ 
+ 20.  Hou Q., Zhang J., XinTao G., Xu G., Yang X. Synthesis of low-cost biomass charcoal-based Ni nanocatalyst and evaluation of their kinetic enhancement of MgH2. Int. J. Hydrogen Energy. 2022;47(34):15209–15223.  [ Google Scholar ] 
+ 
+ 21.  Hou Q., Yang X., Zhang J., Yang W., Lv E. Catalytic effect of NiO/C derived from Ni-UMOFNs on the hydrogen storage performance of magnesium hydride. J. Alloys Compd. 2022;899  [ Google Scholar ] 
+ 
+ 22.  Mohamed S.K., Elhgrasi A.M., Ali O.I. Facile synthesis of mesoporous nano Ni/NiO and its synergistic role as super adsorbent and photocatalyst under sunlight irradiation. Environ. Sci. Pollut. Res. Int. 2022;29(43):64792–64806. doi: 10.1007/s11356-022-19970-w.  [ DOI ] [ PMC free article ] [ PubMed ] [ Google Scholar ] 
+ 
+ 23.  Yang X., Hou Q., Yu L., Zhang J. Improvement of the hydrogen storage characteristics of MgH2 with a flake Ni nano-catalyst composite. Dalton Trans. 2021;50(5):1797–1807. doi: 10.1039/d0dt03627g.  [ DOI ] [ PubMed ] [ Google Scholar ] 
+ 
+ 24.  Ding Z., Zhang L., Fu Y., Wang W., Wang Y., Bi J., Li Y., Han S. Enhanced kinetics of MgH2 via in situ formed catalysts derived from MgCCo1.5Ni1.5. J. Alloys Compd. 2020;822  [ Google Scholar ] 
+ 
+ 25.  Zhang J., He L., Yao Y., Zhou X.J., Yu L.P., Lu X.Z., Zhou D.W. Catalytic effect and mechanism of NiCu solid solutions on hydrogen storage properties of MgH2. Renew. Energy. 2020;154:1229–1239.  [ Google Scholar ] 
+ 
+ 26.  Zhang J., Hou Q., Chang J., Zhang D., Peng Y., Yang X. Improvement of hydrogen storage performance of MgH2 by MnMoO4 rod composite catalyst. Solid State Sci. 2021;121  [ Google Scholar ] 
+ 
+ 27.  El-Eskandarany M.S., Shaban E., Al-Matrouk H., Behbehani M., Alkandary A., Aldakheel F., Ali N., Ahmed S.A. Structure, morphology and hydrogen storage kinetics of nanocomposite MgH2/10 wt% ZrNi5 powders. Mater. Today Energy. 2017;3:60–71.  [ Google Scholar ] 
+ 
+ 28.  Hou Q., Zhang J., Guo X., Yang X. Improved MgH2 kinetics and cyclic stability by fibrous spherical NiMoO4 and rGO. J. Taiwan Inst. Chem. Eng. 2022;134  [ Google Scholar ] 
+ 
+ 29.  Zeng L., Lan Z., Li B., Liang H., Wen X., Huang X., Tan J., Liu H., Zhou W., Guo J. Facile synthesis of a Ni3S2@C composite using cation exchange resin as an efficient catalyst to improve the kinetic properties of MgH2. J. Magnesium Alloys. 2022;10(12):3628–3640.  [ Google Scholar ] 
+ 
+ 30.  Wang L., Zhang L., Lu X., Wu F., Sun X., Zhao H., Li Q. Surprising cocktail effect in high entropy alloys on catalyzing magnesium hydride for solid-state hydrogen storage. Chem. Eng. J. 2023;465  [ Google Scholar ] 
+ 
+ 31.  Hu C., Zheng Z., Si T., Zhang Q. Enhanced hydrogen desorption kinetics and cycle durability of amorphous TiMgVNi3-doped MgH2. Int. J. Hydrogen Energy. 2022;47(6):3918–3926.  [ Google Scholar ] 
+ 
+ 32.  Wang S., Gao M., Yao Z., Xian K., Wu M., Liu Y., Sun W., Pan H. High-loading, ultrafine Ni nanoparticles dispersed on porous hollow carbon nanospheres for fast (de)hydrogenation kinetics of MgH2. J. Magnesium Alloys. 2022;10(12):3354–3366.  [ Google Scholar ] 
+ 
+ 33.  Lan Z., Zeng L., Jiong G., Huang X., Liu H., Hua N., Guo J. Synthetical catalysis of nickel and graphene on enhanced hydrogen storage properties of magnesium. Int. J. Hydrogen Energy. 2019;44(45):24849–24855.  [ Google Scholar ] 
+ 
+ 34.  Cheng H., Chen G., Zhang Y., Zhu Y., Li L. Boosting low-temperature de/re-hydrogenation performances of MgH2 with Pd-Ni bimetallic nanoparticles supported by mesoporous carbon. Int. J. Hydrogen Energy. 2019;44(21):10777–10787.  [ Google Scholar ] 
+ 
+ 35.  Xie X., Chen M., Liu P., Shang J., Liu T. Synergistic catalytic effects of the Ni and V nanoparticles on the hydrogen storage properties of Mg-Ni-V nanocomposite. Chem. Eng. J. 2018;347:145–155.  [ Google Scholar ] 
+ 
+ 36.  Xie X., Ma X., Liu P., Shang J., Li X., Liu T. Formation of multiple-phase catalysts for the hydrogen storage of Mg nanoparticles by adding flowerlike NiS. ACS Appl. Mater. Interfaces. 2017;9(7):5937–5946. doi: 10.1021/acsami.6b13222.  [ DOI ] [ PubMed ] [ Google Scholar ] 
+     Associated Data 
+  This section collects any data citations, data availability statements, or supplementary materials included in this article.  
+  Data Availability Statement 
+ Sharing research data helps other researchers evaluate your findings, build on your work and to increase trust in your article. We encourage all our authors to make as much of their data publicly available as reasonably possible. Please note that your response to the following questions regarding the public data availability and the reasons for potentially not making data available will be available alongside your article upon publication. 
+ Has data associated with your study been deposited into a publicly available repository? 
+ No.      
+ Articles from Heliyon are provided here courtesy of  Elsevier     
+
+                      
+
+                     
+                 
+             
+         
+
+        
+
+
+
+ 
+ 
+     
+         
+             
+         
+     
+        
+               ACTIONS 
+            
+               
+                
+                      
+                          
+                          View on publisher site 
+                      
+                
+               
+               
+                
+                     
+                          
+                         PDF (10.4 MB) 
+                     
+                
+               
+                
+                
+                    
+                        
+                        Cite 
+                     
+                
+                
+                
+
+                         
+                             
+                             
+                             Collections 
+                        
+                
+                
+                     
+                         
+                         Permalink 
+                     
+                   
+
+ 
+     
+           PERMALINK 
+           
+               
+               
+                   
+                   Copy 
+               
+           
+     
+ 
+                
+            
+        
+      
+
+         
+             RESOURCES 
+            
+                 
+                     
+                         
+                            Similar articles
+                         
+                     
+                     
+                        
+                     
+                     
+                         
+                             Cited by other articles
+                         
+                     
+                     
+                          
+                     
+                    
+                         
+                             
+                                 Links to NCBI Databases
+                             
+                         
+                         
+                         
+                    
+                    
+                 
+            
+         
+
+
+          
+     
+ 
+
+        
+
+ 
+     
+         
+             Cite 
+              
+                  
+              
+         
+
+        
+
+ 
+    
+   
+       
+         
+             
+             Copy 
+         
+       
+       
+           
+                 
+                 Download .nbib 
+                 .nbib 
+             
+       
+       
+          
+
+ 
+   Format: 
+   
+    
+       
+        AMA
+       
+    
+       
+        APA
+       
+    
+       
+        MLA
+       
+    
+       
+        NLM
+       
+    
+   
+ 
+       
+   
+ 
+     
+ 
+
+         
+   
+    
+         Add to Collections 
+     
+     
+      
+
+
+ 
+
+     
+
+     
+         
+             
+             Create a new collection 
+         
+         
+             
+             Add to an existing collection 
+         
+     
+
+     
+         
+            
+                Name your collection
+                * 
+           
+           
+         
+         
+              
+                Choose a collection
+               
+               
+               
+               
+                Unable to load your collection due to an error 
+                 Please try again 
+               
+         
+     
+
+     
+         
+          Add
+         
+         
+          Cancel
+         
+     
+ 
+     
+   
+ 
+
+        
+
+       
+     
+   
+
+
+
+        
+    
+    
+
+ 
+    
+         
+             
+                Follow NCBI
+             
+
+             
+                
+                     
+                         
+                             
+                             
+                         
+                         NCBI on X (formerly known as Twitter) 
+                     
+                
+
+                
+                     
+                         
+                             
+                             
+                         
+                         NCBI on Facebook 
+                     
+                
+
+                
+                     
+                         
+                             
+                             
+                             
+                             
+                             
+                             
+                         
+                         NCBI on LinkedIn 
+                     
+                
+
+                
+                     
+                         
+                             
+                             
+                         
+                         NCBI on GitHub 
+                     
+                
+
+                
+                     
+                         
+                             
+                             
+                             
+                             
+                             
+                             
+                         
+                         NCBI RSS feed 
+                     
+                
+             
+         
+    
+
+     
+         
+            
+                 
+                    
+                         
+                            Connect with NLM
+                         
+                    
+
+                     
+                        
+                             
+                                 
+                                     
+                                     
+                                 
+                                 NLM on X (formerly known as Twitter) 
+                             
+                        
+
+                        
+                             
+                                 
+                                     
+                                     
+                                 
+                                 NLM on Facebook 
+                             
+                        
+
+                        
+                             
+                                 
+                                     
+                                 
+                                 NLM on YouTube 
+                             
+                        
+                     
+                 
+            
+
+            
+                 
+                    
+         
+             National Library of Medicine
+              8600 Rockville Pike  Bethesda, MD 20894 
+         
+    
+                 
+            
+
+            
+                 
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            Web Policies
+        
+
+        
+     
+
+
+                         
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            FOIA
+        
+
+        
+     
+
+
+                         
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            HHS Vulnerability Disclosure
+        
+
+        
+     
+
+
+                         
+                    
+                 
+            
+
+            
+                 
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            Help
+        
+
+        
+     
+
+
+                         
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            Accessibility
+        
+
+        
+     
+
+
+                         
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            Careers
+        
+
+        
+     
+
+
+                         
+                    
+                 
+            
+         
+
+        
+             
+                 
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            NLM
+        
+
+        
+     
+
+
+                         
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            NIH
+        
+
+        
+     
+
+
+                         
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            HHS
+        
+
+        
+     
+
+
+                         
+                    
+                         
+                            
+
+
+
+
+
+
+
+
+
+     
+        
+
+        
+            USA.gov
+        
+
+        
+     
+
+
+                         
+                    
+                 
+             
+        
+     
+ 
+
+    
+
+
+        
+        
+    
+   
+
+
+    
+        
+
+ 
+     Back to Top 
+     
+ 
+    
+
+
+        
+    
+      
+    
+    
+        
+     
+     
+ 
+    
+     
+     
+
+
+     
+      
+
+     
+ 
+ 
+ 
+    
+    
+
+     
+ 

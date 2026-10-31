@@ -9,7 +9,7 @@ from typing import Any
 
 import networkx as nx
 
-from huginn.kg.entities import node_id, normalize_props
+from huginn.kg.entities import EntityType, Relation, node_id, normalize_props
 from huginn.utils.common import atomic_write_json
 
 # Episodic memory node + dependency edge types (Graphiti-style DAG).
@@ -40,10 +40,435 @@ def _filter_by_since(result: dict[str, Any], since: str) -> dict[str, Any]:
                 continue
         kept_nodes.append(n)
     kept_edges = [
-        e for e in result.get("edges", [])
+        e
+        for e in result.get("edges", [])
         if e.get("source") not in dropped_ids and e.get("target") not in dropped_ids
     ]
     return {"nodes": kept_nodes, "edges": kept_edges}
+
+
+def _seed_terms_from_query(query: str, extract_entities: Any) -> list[str]:
+    """从 query 抽实体作为图检索种子; 抽不到就整句当种子."""
+    entities = extract_entities(query)
+    seed_terms = (
+        list(entities.get("tools", set()))
+        + list(entities.get("methods", set()))
+        + list(entities.get("materials", set()))
+        + list(entities.get("elements", set()))
+    )
+    return seed_terms or [query]
+
+
+def _vector_merged_text(vector_chunks: list[dict[str, Any]] | None) -> str:
+    """前 5 条 vector chunk 的文本拼成上下文块."""
+    if not vector_chunks:
+        return ""
+    return "\n\n".join(c.get("text", "")[:500] for c in vector_chunks[:5])
+
+
+def _community_labels(nodes_data: list[dict[str, Any]]) -> list[str]:
+    """社区内节点的 type:label 列表."""
+    return [f"{d.get('type', '?')}:{d.get('label', '?')}" for d in nodes_data]
+
+
+def _community_edge_descs(graph: Any, comm: Any) -> list[str]:
+    """社区内部边的 src relation dst 描述."""
+    sub = graph.subgraph(comm)
+    edge_descs: list[str] = []
+    for u, v, d in sub.edges(data=True):
+        rel = d.get("relation", "→")
+        src_label = graph.nodes[u].get("label", u)
+        dst_label = graph.nodes[v].get("label", v)
+        edge_descs.append(f"{src_label} {rel} {dst_label}")
+    return edge_descs
+
+
+def _community_summary_record(
+    idx: int, comm: Any, graph: Any, nodes_data: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """单个社区的摘要记录."""
+    labels = _community_labels(nodes_data)
+    return {
+        "community_id": idx,
+        "size": len(comm),
+        "members": labels[:20],
+        "key_relations": _community_edge_descs(graph, comm)[:15],
+        "summary": f"Community {idx} ({len(comm)} nodes): " + ", ".join(labels[:10]),
+    }
+
+
+def _build_community_summaries(
+    graph: Any, communities: list[Any]
+) -> list[dict[str, Any]]:
+    """所有 (size >= 2 的) 社区 → 摘要记录列表."""
+    summaries: list[dict[str, Any]] = []
+    for i, comm in enumerate(communities):
+        if len(comm) < 2:
+            continue
+        nodes_data = [graph.nodes[n] for n in comm if n in graph]
+        summaries.append(_community_summary_record(i, comm, graph, nodes_data))
+    return summaries
+
+
+def _mermaid_limited_graph(graph: Any, max_nodes: int) -> Any:
+    """节点超限时按度排序只保留 top-N 子图."""
+    if graph.number_of_nodes() <= max_nodes:
+        return graph
+    nodes_by_degree = sorted(graph.degree(), key=lambda x: x[1], reverse=True)[
+        :max_nodes
+    ]
+    return graph.subgraph({n for n, _ in nodes_by_degree}).copy()
+
+
+def _mermaid_node_lines(graph: Any, type_classes: dict[str, list[str]]) -> list[str]:
+    """节点行 + 顺带登记 type → 节点 id (供 classDef 用)."""
+    lines: list[str] = []
+    for i, (nid, data) in enumerate(graph.nodes(data=True)):
+        mid = f"K{i}"
+        label = data.get("label", nid)[:30]
+        etype = data.get("type", "Unknown")
+        conf = data.get("confidence", 0)
+        # Mermaid 节点 label 里引号要转义
+        safe_label = label.replace('"', "'").replace("\n", " ")
+        lines.append(
+            f'  {mid}["{safe_label}<br/><small>{etype} · conf={conf:.2f}</small>"]'
+        )
+        type_classes.setdefault(etype, []).append(mid)
+    return lines
+
+
+def _mermaid_edge_lines(graph: Any) -> list[str]:
+    """边行. ponytail: O(n) lookup per edge, ok for <100 nodes."""
+    node_list = list(graph.nodes())
+    lines: list[str] = []
+    for src, dst, edge_data in graph.edges(data=True):
+        rel = edge_data.get("relation", "→")
+        lines.append(f"  K{node_list.index(src)} -->|{rel}| K{node_list.index(dst)}")
+    return lines
+
+
+def _mermaid_class_lines(
+    type_classes: dict[str, list[str]], colors: dict[str, str]
+) -> list[str]:
+    """按类型上色的 classDef 行."""
+    lines: list[str] = []
+    for etype, ids in type_classes.items():
+        color = colors.get(etype, "#f5f5f5")
+        # Mermaid classDef 名不能有空格
+        cls = etype.replace(" ", "_").lower()
+        lines.append(f"  classDef {cls} fill:{color},stroke:#666")
+        lines.append(f"  class {','.join(ids)} {cls}")
+    return lines
+
+
+def _amcg_add_concepts(graph: Any, all_concepts: set[str], now: str) -> int:
+    """把 concept 邻域作为 MathConcept 节点加进项目 KG, 返回新增节点数."""
+    added = 0
+    for c in all_concepts:
+        eid = node_id(c, "MathConcept")
+        if eid not in graph:
+            graph.add_node(
+                eid,
+                label=c,
+                type="MathConcept",
+                source="math_concept_graph",
+                confidence=1.0,
+                created_at=now,
+                mentions=1,
+            )
+            added += 1
+    return added
+
+
+def _amcg_add_path_edges(graph: Any, mcg: Any, paths: list[list[str]], now: str) -> int:
+    """复制 MathConceptGraph 的依赖边 (depends_on / generalizes), 返回新增边数."""
+    added = 0
+    for path in paths:
+        for i in range(len(path) - 1):
+            src_eid = node_id(path[i], "MathConcept")
+            dst_eid = node_id(path[i + 1], "MathConcept")
+            # 查 MathConceptGraph 里这条边的 relation
+            edge_data = mcg._graph.get_edge_data(path[i], path[i + 1])
+            rel = edge_data.get("relation", "depends_on") if edge_data else "depends_on"
+            if not graph.has_edge(src_eid, dst_eid):
+                graph.add_edge(
+                    src_eid,
+                    dst_eid,
+                    relation=rel,
+                    source="math_concept_graph",
+                    confidence=1.0,
+                    created_at=now,
+                )
+                added += 1
+    return added
+
+
+def _amcg_add_dual_edges(graph: Any, concept: str, duals: Any, now: str) -> int:
+    """concept → 每个 dual 的 dual_to 边, 返回新增边数."""
+    added = 0
+    src_eid = node_id(concept, "MathConcept")
+    for dual in duals:
+        dst_eid = node_id(dual, "MathConcept")
+        if not graph.has_edge(src_eid, dst_eid):
+            graph.add_edge(
+                src_eid,
+                dst_eid,
+                relation="dual_to",
+                source="math_concept_graph",
+                confidence=1.0,
+                created_at=now,
+            )
+            added += 1
+    return added
+
+
+def _transfer_fields(transfer: Any) -> dict[str, Any]:
+    """从 transfer 对象取字段, 缺失时 getattr 兜底, 不 raise."""
+    return {
+        "original_problem": getattr(transfer, "original_problem", "") or "",
+        "target_domain": getattr(transfer, "target_domain", "") or "",
+        "math_concept": getattr(transfer, "math_concept", "") or "",
+        "lca_concept": getattr(transfer, "lca_concept", "") or "",
+        "shared_math": getattr(transfer, "shared_math", []) or [],
+        "reframed_problem": getattr(transfer, "reframed_problem", "") or "",
+        "confidence": float(getattr(transfer, "confidence", 0.0) or 0.0),
+    }
+
+
+def _transfer_node_attrs(fields: dict[str, Any], now: str) -> dict[str, Any]:
+    """transfer 节点本体的属性."""
+    original = fields["original_problem"]
+    target = fields["target_domain"]
+    return {
+        "type": EntityType.CROSS_DOMAIN_TRANSFER,
+        "label": f"{original[:40]} → {target}",
+        "original_problem": original,
+        "target_domain": target,
+        "math_concept": fields["math_concept"],
+        "lca_concept": fields["lca_concept"],
+        "shared_math": list(fields["shared_math"]),
+        "reframed_problem": fields["reframed_problem"],
+        "confidence": fields["confidence"],
+        "status": "proposed",  # 后续 hypothesis 验证时更新
+        "created_at": now,
+        "last_seen": now,
+        "mentions": 1,
+    }
+
+
+def _ensure_topic_node(
+    graph: Any, eid: str, label: str, confidence: float, now: str
+) -> None:
+    """Topic 节点不存在就建一个 (cross_domain 来源)."""
+    if eid in graph:
+        return
+    graph.add_node(
+        eid,
+        label=label,
+        type=EntityType.TOPIC,
+        source="cross_domain",
+        confidence=confidence,
+        created_at=now,
+        last_seen=now,
+        mentions=1,
+    )
+
+
+def _add_transfer_source_edge(
+    graph: Any, transfer_id: str, original: str, confidence: float, now: str
+) -> None:
+    """original_problem 节点 → transfer 节点, cross_domain_analogy 边."""
+    if not original:
+        return
+    src_eid = node_id(original[:80], EntityType.TOPIC)
+    _ensure_topic_node(graph, src_eid, original[:80], 0.5, now)
+    graph.add_edge(
+        src_eid,
+        transfer_id,
+        relation=Relation.CROSS_DOMAIN_ANALOGY,
+        source="cross_domain",
+        confidence=confidence,
+        created_at=now,
+        last_seen=now,
+        mentions=1,
+    )
+
+
+def _add_transfer_target_edge(
+    graph: Any, transfer_id: str, target: str, confidence: float, now: str
+) -> None:
+    """transfer 节点 → target_domain 节点, transfers_to 边."""
+    if not target:
+        return
+    dst_eid = node_id(target, EntityType.TOPIC)
+    _ensure_topic_node(graph, dst_eid, target, 0.5, now)
+    graph.add_edge(
+        transfer_id,
+        dst_eid,
+        relation=Relation.TRANSFERS_TO,
+        source="cross_domain",
+        confidence=confidence,
+        created_at=now,
+        last_seen=now,
+        mentions=1,
+    )
+
+
+def _add_transfer_math_edges(
+    graph: Any, transfer_id: str, math_concept: str, confidence: float, now: str
+) -> None:
+    """transfer 节点 ↔ math_concept 节点, 双向 structurally_isomorphic 边."""
+    if not math_concept:
+        return
+    mc_eid = node_id(math_concept, EntityType.MATH_CONCEPT)
+    if mc_eid not in graph:
+        graph.add_node(
+            mc_eid,
+            label=math_concept,
+            type=EntityType.MATH_CONCEPT,
+            source="cross_domain",
+            confidence=1.0,
+            created_at=now,
+            last_seen=now,
+            mentions=1,
+        )
+    for src, dst in ((transfer_id, mc_eid), (mc_eid, transfer_id)):
+        graph.add_edge(
+            src,
+            dst,
+            relation=Relation.STRUCTURALLY_ISOMORPHIC,
+            source="cross_domain",
+            confidence=confidence,
+            created_at=now,
+            last_seen=now,
+            mentions=1,
+        )
+
+
+def _claim_merge_existing(
+    graph: Any, eid: str, now: str, evidence_strength: float, confidence: float
+) -> None:
+    """已有结论节点: 累加 mentions, 提升置信度 (重复出现=更可信)."""
+    node = graph.nodes[eid]
+    node["mentions"] = node.get("mentions", 0) + 1
+    node["last_seen"] = now
+    node["confidence"] = min(0.99, node.get("confidence", confidence) + 0.05)
+    # 新证据强度取更强者 (多次独立来源更强)
+    node["evidence_strength"] = max(
+        float(node.get("evidence_strength", 0.0)), evidence_strength
+    )
+
+
+def _claim_new_node(
+    graph: Any, eid: str, claim_text: str, meta: dict[str, Any], now: str
+) -> None:
+    """新建 CLAIM 节点."""
+    graph.add_node(
+        eid,
+        label=claim_text,
+        type=EntityType.CLAIM,
+        source=meta["source"],
+        confidence=meta["confidence"],
+        evidence_strength=meta["evidence_strength"],
+        condition=meta["condition"] or "",
+        status=meta["status"],
+        literature_id=meta["literature_id"],
+        created_at=now,
+        last_seen=now,
+        mentions=1,
+    )
+
+
+def _claim_register(
+    graph: Any,
+    eid: str,
+    claim_text: str,
+    meta: dict[str, Any],
+    premises: list[str] | None,
+    now: str,
+) -> None:
+    """注册 claim 节点 + 前提/文献边 (调用方已持锁)."""
+    if eid in graph:
+        _claim_merge_existing(
+            graph, eid, now, meta["evidence_strength"], meta["confidence"]
+        )
+    else:
+        _claim_new_node(graph, eid, claim_text, meta, now)
+    _claim_premise_edges(graph, eid, premises, meta["source"], meta["confidence"], now)
+    _claim_literature_edge(
+        graph,
+        eid,
+        meta["literature_id"],
+        meta["evidence_strength"],
+        meta["source"],
+        meta["confidence"],
+        now,
+    )
+
+
+def _claim_premise_edges(
+    graph: Any,
+    eid: str,
+    premises: list[str] | None,
+    source: str,
+    confidence: float,
+    now: str,
+) -> None:
+    """前提 → 结论 的 depends_on 边 (结论级依赖)."""
+    for premise in premises or []:
+        if not premise:
+            continue
+        # 前提若已作为实体/结论存在就指向它, 否则建一个占位 Topic 节点
+        p_eid = premise if premise in graph else node_id(premise, EntityType.TOPIC)
+        if p_eid not in graph:
+            graph.add_node(
+                p_eid,
+                label=premise,
+                type=EntityType.TOPIC,
+                source="claim_layer",
+                confidence=0.5,
+                created_at=now,
+                last_seen=now,
+                mentions=1,
+            )
+        if not graph.has_edge(p_eid, eid):
+            graph.add_edge(
+                p_eid,
+                eid,
+                relation=Relation.DEPENDS_ON,
+                source=source,
+                confidence=confidence,
+                created_at=now,
+                last_seen=now,
+                mentions=1,
+            )
+
+
+def _claim_literature_edge(
+    graph: Any,
+    eid: str,
+    literature_id: str,
+    evidence_strength: float,
+    source: str,
+    confidence: float,
+    now: str,
+) -> None:
+    """文献来源 → 结论 的 supports_claim 边."""
+    if not literature_id:
+        return
+    lit_eid = f"{literature_id}"
+    if lit_eid in graph and not graph.has_edge(lit_eid, eid):
+        graph.add_edge(
+            lit_eid,
+            eid,
+            relation=Relation.SUPPORTS_CLAIM,
+            source=source,
+            confidence=confidence,
+            evidence_strength=evidence_strength,
+            created_at=now,
+            last_seen=now,
+            mentions=1,
+        )
 
 
 class ProjectKnowledgeGraph:
@@ -65,7 +490,9 @@ class ProjectKnowledgeGraph:
         with self._lock:
             data = json.loads(self.path.read_text(encoding="utf-8"))
             edges_key = "links" if "links" in data else "edges"
-            self._graph = nx.node_link_graph(data, directed=True, multigraph=False, edges=edges_key)
+            self._graph = nx.node_link_graph(
+                data, directed=True, multigraph=False, edges=edges_key
+            )
 
     def save(self) -> None:
         """Persist graph as JSON node-link data. Thread-safe via RLock."""
@@ -165,15 +592,29 @@ class ProjectKnowledgeGraph:
         he_id = f"he_{relation}_{hash(tuple(sorted(node_ids))) & 0xFFFFFFFF:x}"
 
         with self._lock:
-            self._graph.add_node(he_id, type="hyperedge", relation=relation,
-                                 created_at=now, last_seen=now, mentions=1,
-                                 members=node_ids, **normalize_props(attrs))
+            self._graph.add_node(
+                he_id,
+                type="hyperedge",
+                relation=relation,
+                created_at=now,
+                last_seen=now,
+                mentions=1,
+                members=node_ids,
+                **normalize_props(attrs),
+            )
 
             for nid in node_ids:
                 if nid in self._graph:
-                    self._graph.add_edge(nid, he_id, relation="member_of",
-                                         source=source, confidence=confidence,
-                                         created_at=now, last_seen=now, mentions=1)
+                    self._graph.add_edge(
+                        nid,
+                        he_id,
+                        relation="member_of",
+                        source=source,
+                        confidence=confidence,
+                        created_at=now,
+                        last_seen=now,
+                        mentions=1,
+                    )
         return he_id
 
     def has_entity(self, label: str, entity_type: str) -> bool:
@@ -206,7 +647,10 @@ class ProjectKnowledgeGraph:
         return nx.node_link_data(self._graph, edges="links")
 
     def query(
-        self, seed: str, depth: int = 1, top_k: int = 10,
+        self,
+        seed: str,
+        depth: int = 1,
+        top_k: int = 10,
         since: str | None = None,
     ) -> dict[str, Any]:
         """Query the graph for seed entities and return a subgraph.
@@ -242,42 +686,24 @@ class ProjectKnowledgeGraph:
         If None, only graph retrieval is used.
         """
         from huginn.kg.extractor import extract_entities
-
-        # 1. Extract entities from the query itself
-        entities = extract_entities(query)
-        seed_terms = (
-            list(entities.get("tools", set()))
-            + list(entities.get("methods", set()))
-            + list(entities.get("materials", set()))
-            + list(entities.get("elements", set()))
-        )
-        if not seed_terms:
-            seed_terms = [query]
-
-        # 2. Graph neighborhood expansion
         from huginn.kg.query import GraphQuery
 
+        seed_terms = _seed_terms_from_query(query, extract_entities)
+
+        # Graph neighborhood expansion
         gq = GraphQuery(self._graph)
         graph_result = gq.community_aware_query(
             " ".join(seed_terms), depth=depth, top_k=top_k
         )
 
-        # 3. Merge: if vector_chunks provided, add their text to the result
-        merged_text = ""
-        if vector_chunks:
-            merged_text = "\n\n".join(
-                c.get("text", "")[:500] for c in vector_chunks[:5]
-            )
-
-        # 4. Convert graph nodes to text for context injection
+        # Convert graph nodes to text for context injection
         graph_text = ""
         if graph_result["nodes"]:
-            node_ids = {n["id"] for n in graph_result["nodes"]}
-            graph_text = self.to_text(node_ids)
+            graph_text = self.to_text({n["id"] for n in graph_result["nodes"]})
 
         return {
             "graph_context": graph_text,
-            "vector_context": merged_text,
+            "vector_context": _vector_merged_text(vector_chunks),
             "graph_nodes": graph_result["nodes"],
             "graph_edges": graph_result["edges"],
             "seed_terms": seed_terms,
@@ -310,36 +736,7 @@ class ProjectKnowledgeGraph:
         except Exception:
             return []
 
-        summaries: list[dict[str, Any]] = []
-        for i, comm in enumerate(communities):
-            if len(comm) < 2:
-                continue
-            nodes_data = [
-                self._graph.nodes[n] for n in comm if n in self._graph
-            ]
-            # Build a simple text summary from node labels
-            labels = [
-                f"{d.get('type', '?')}:{d.get('label', '?')}"
-                for d in nodes_data
-            ]
-            # Extract key edges within community
-            sub = self._graph.subgraph(comm)
-            edge_descs = []
-            for u, v, d in sub.edges(data=True):
-                rel = d.get("relation", "→")
-                src_label = self._graph.nodes[u].get("label", u)
-                dst_label = self._graph.nodes[v].get("label", v)
-                edge_descs.append(f"{src_label} {rel} {dst_label}")
-
-            summaries.append({
-                "community_id": i,
-                "size": len(comm),
-                "members": labels[:20],
-                "key_relations": edge_descs[:15],
-                "summary": f"Community {i} ({len(comm)} nodes): "
-                + ", ".join(labels[:10]),
-            })
-
+        summaries = _build_community_summaries(self._graph, communities)
         setattr(self, cache_key, summaries)
         return summaries
 
@@ -389,45 +786,13 @@ class ProjectKnowledgeGraph:
             return 'graph TD\n  empty["(empty knowledge graph)"]'
 
         # 超限: 按度排序只取 top-N, 避免图太大没法看
-        if g.number_of_nodes() > max_nodes:
-            nodes_by_degree = sorted(
-                g.degree(), key=lambda x: x[1], reverse=True
-            )[:max_nodes]
-            keep = {n for n, _ in nodes_by_degree}
-            g = g.subgraph(keep).copy()
+        g = _mermaid_limited_graph(g, max_nodes)
 
         lines: list[str] = ["graph TD"]
         type_classes: dict[str, list[str]] = {}
-
-        # 节点
-        for i, (nid, data) in enumerate(g.nodes(data=True)):
-            mid = f"K{i}"
-            label = data.get("label", nid)[:30]
-            etype = data.get("type", "Unknown")
-            conf = data.get("confidence", 0)
-            # Mermaid 节点 label 里引号要转义
-            safe_label = label.replace('"', "'").replace("\n", " ")
-            lines.append(f'  {mid}["{safe_label}<br/><small>{etype} · conf={conf:.2f}</small>"]')
-            type_classes.setdefault(etype, []).append(mid)
-
-        # 边
-        for src, dst, edge_data in g.edges(data=True):
-            # 找回 Mermaid 节点 id — 用 enumerate 顺序做映射
-            # ponytail: O(n) lookup per edge, ok for <100 nodes;
-            # build index if graph grows past 500.
-            src_idx = list(g.nodes()).index(src)
-            dst_idx = list(g.nodes()).index(dst)
-            rel = edge_data.get("relation", "→")
-            lines.append(f"  K{src_idx} -->|{rel}| K{dst_idx}")
-
-        # 按类型上色
-        for etype, ids in type_classes.items():
-            color = self._TYPE_COLORS.get(etype, "#f5f5f5")
-            # Mermaid classDef 名不能有空格
-            cls = etype.replace(" ", "_").lower()
-            lines.append(f"  classDef {cls} fill:{color},stroke:#666")
-            lines.append(f"  class {','.join(ids)} {cls}")
-
+        lines.extend(_mermaid_node_lines(g, type_classes))
+        lines.extend(_mermaid_edge_lines(g))
+        lines.extend(_mermaid_class_lines(type_classes, self._TYPE_COLORS))
         return "\n".join(lines)
 
     # ── Episodic memory DAG (Graphiti-style) ──
@@ -492,7 +857,9 @@ class ProjectKnowledgeGraph:
             )
 
     def query_episode_path(
-        self, step_id: int, direction: str = "backward",
+        self,
+        step_id: int,
+        direction: str = "backward",
         since: str | None = None,
     ) -> list[dict]:
         """Walk the episode DAG backward (predecessors) or forward (successors).
@@ -530,9 +897,11 @@ class ProjectKnowledgeGraph:
                 dict(self._graph.nodes[n])
                 for n in visited
                 if self._graph.nodes[n].get("type") == NODE_TYPE_EPISODE
-                and (since is None
-                     or not self._graph.nodes[n].get("timestamp", "")
-                     or self._graph.nodes[n].get("timestamp", "") >= since)
+                and (
+                    since is None
+                    or not self._graph.nodes[n].get("timestamp", "")
+                    or self._graph.nodes[n].get("timestamp", "") >= since
+                )
             ]
         episodes.sort(key=lambda d: d.get("step_id", 0))
         return episodes
@@ -596,50 +965,24 @@ class ProjectKnowledgeGraph:
         if not nb.get("found"):
             return {"added_nodes": 0, "added_edges": 0, "error": "concept_not_found"}
 
-        added_nodes = 0
-        added_edges = 0
+        # 把 concept + ancestors + descendants + duals 全部作为 MathConcept
+        # 节点加进项目 KG
+        all_concepts = (
+            {nb["concept"]}
+            | set(nb["ancestors"])
+            | set(nb["descendants"])
+            | set(nb["duals"])
+        )
+        paths = nb.get("paths_to_ancestors", []) + nb.get("paths_to_descendants", [])
+        now = datetime.now().isoformat()
+
         with self._lock:
-            # 把 concept + ancestors + descendants + duals 全部作为 MathConcept
-            # 节点加进项目 KG
-            all_concepts = {nb["concept"]} | set(nb["ancestors"]) | \
-                           set(nb["descendants"]) | set(nb["duals"])
-            for c in all_concepts:
-                eid = node_id(c, "MathConcept")
-                if eid not in self._graph:
-                    self._graph.add_node(
-                        eid, label=c, type="MathConcept",
-                        source="math_concept_graph", confidence=1.0,
-                        created_at=datetime.now().isoformat(), mentions=1,
-                    )
-                    added_nodes += 1
-
-            # 从 MathConceptGraph 复制依赖边 (depends_on / generalizes / dual_to)
-            for path in nb.get("paths_to_ancestors", []) + nb.get("paths_to_descendants", []):
-                for i in range(len(path) - 1):
-                    src_eid = node_id(path[i], "MathConcept")
-                    dst_eid = node_id(path[i + 1], "MathConcept")
-                    # 查 MathConceptGraph 里这条边的 relation
-                    edge_data = mcg._graph.get_edge_data(path[i], path[i + 1])
-                    rel = edge_data.get("relation", "depends_on") if edge_data else "depends_on"
-                    if not self._graph.has_edge(src_eid, dst_eid):
-                        self._graph.add_edge(
-                            src_eid, dst_eid, relation=rel,
-                            source="math_concept_graph", confidence=1.0,
-                            created_at=datetime.now().isoformat(),
-                        )
-                        added_edges += 1
-
+            added_nodes = _amcg_add_concepts(self._graph, all_concepts, now)
+            added_edges = _amcg_add_path_edges(self._graph, mcg, paths, now)
             # duals 加双向 dual_to 边
-            for dual in nb["duals"]:
-                src_eid = node_id(nb["concept"], "MathConcept")
-                dst_eid = node_id(dual, "MathConcept")
-                if not self._graph.has_edge(src_eid, dst_eid):
-                    self._graph.add_edge(
-                        src_eid, dst_eid, relation="dual_to",
-                        source="math_concept_graph", confidence=1.0,
-                        created_at=datetime.now().isoformat(),
-                    )
-                    added_edges += 1
+            added_edges += _amcg_add_dual_edges(
+                self._graph, nb["concept"], nb["duals"], now
+            )
 
         return {"added_nodes": added_nodes, "added_edges": added_edges}
 
@@ -656,87 +999,40 @@ class ProjectKnowledgeGraph:
         返回 transfer_node_id. 字段缺失时 getattr 兜底, 不 raise.
         ponytail: 节点 id 用 uuid 防冲突 — 同一 source→target 可能多次 transfer.
         """
-        from huginn.kg.entities import EntityType, Relation
-
-        original = getattr(transfer, "original_problem", "") or ""
-        target = getattr(transfer, "target_domain", "") or ""
-        math_concept = getattr(transfer, "math_concept", "") or ""
-        lca = getattr(transfer, "lca_concept", "") or ""
-        shared_math = getattr(transfer, "shared_math", []) or []
-        reframed = getattr(transfer, "reframed_problem", "") or ""
-        confidence = float(getattr(transfer, "confidence", 0.0) or 0.0)
-
-        transfer_id = f"transfer:{datetime.now().strftime('%Y%m%d%H%M%S%f')}_{id(transfer) & 0xFFFFFF:x}"
+        fields = _transfer_fields(transfer)
+        transfer_id = (
+            f"transfer:{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+            f"_{id(transfer) & 0xFFFFFF:x}"
+        )
         now = datetime.now().isoformat()
 
         with self._lock:
             # transfer 节点本体
-            self._graph.add_node(
-                transfer_id,
-                type=EntityType.CROSS_DOMAIN_TRANSFER,
-                label=f"{original[:40]} → {target}",
-                original_problem=original,
-                target_domain=target,
-                math_concept=math_concept,
-                lca_concept=lca,
-                shared_math=list(shared_math),
-                reframed_problem=reframed,
-                confidence=confidence,
-                status="proposed",  # 后续 hypothesis 验证时更新
-                created_at=now,
-                last_seen=now,
-                mentions=1,
-            )
-
+            self._graph.add_node(transfer_id, **_transfer_node_attrs(fields, now))
             # source 节点 (Topic) + cross_domain_analogy 边
-            if original:
-                src_eid = node_id(original[:80], EntityType.TOPIC)
-                if src_eid not in self._graph:
-                    self._graph.add_node(
-                        src_eid, label=original[:80], type=EntityType.TOPIC,
-                        source="cross_domain", confidence=0.5,
-                        created_at=now, last_seen=now, mentions=1,
-                    )
-                self._graph.add_edge(
-                    src_eid, transfer_id, relation=Relation.CROSS_DOMAIN_ANALOGY,
-                    source="cross_domain", confidence=confidence,
-                    created_at=now, last_seen=now, mentions=1,
-                )
-
+            _add_transfer_source_edge(
+                self._graph,
+                transfer_id,
+                fields["original_problem"],
+                fields["confidence"],
+                now,
+            )
             # target 节点 (Topic) + transfers_to 边
-            if target:
-                dst_eid = node_id(target, EntityType.TOPIC)
-                if dst_eid not in self._graph:
-                    self._graph.add_node(
-                        dst_eid, label=target, type=EntityType.TOPIC,
-                        source="cross_domain", confidence=0.5,
-                        created_at=now, last_seen=now, mentions=1,
-                    )
-                self._graph.add_edge(
-                    transfer_id, dst_eid, relation=Relation.TRANSFERS_TO,
-                    source="cross_domain", confidence=confidence,
-                    created_at=now, last_seen=now, mentions=1,
-                )
-
+            _add_transfer_target_edge(
+                self._graph,
+                transfer_id,
+                fields["target_domain"],
+                fields["confidence"],
+                now,
+            )
             # math_concept 节点 (MathConcept) + 双向 structurally_isomorphic 边
-            if math_concept:
-                mc_eid = node_id(math_concept, EntityType.MATH_CONCEPT)
-                if mc_eid not in self._graph:
-                    self._graph.add_node(
-                        mc_eid, label=math_concept, type=EntityType.MATH_CONCEPT,
-                        source="cross_domain", confidence=1.0,
-                        created_at=now, last_seen=now, mentions=1,
-                    )
-                self._graph.add_edge(
-                    transfer_id, mc_eid, relation=Relation.STRUCTURALLY_ISOMORPHIC,
-                    source="cross_domain", confidence=confidence,
-                    created_at=now, last_seen=now, mentions=1,
-                )
-                self._graph.add_edge(
-                    mc_eid, transfer_id, relation=Relation.STRUCTURALLY_ISOMORPHIC,
-                    source="cross_domain", confidence=confidence,
-                    created_at=now, last_seen=now, mentions=1,
-                )
+            _add_transfer_math_edges(
+                self._graph,
+                transfer_id,
+                fields["math_concept"],
+                fields["confidence"],
+                now,
+            )
 
         return transfer_id
 
@@ -761,7 +1057,9 @@ class ProjectKnowledgeGraph:
                     continue
                 if target_domain and data.get("target_domain", "") != target_domain:
                     continue
-                if source_domain and source_domain not in data.get("original_problem", ""):
+                if source_domain and source_domain not in data.get(
+                    "original_problem", ""
+                ):
                     continue
                 row = dict(data)
                 row["node_id"] = nid
@@ -799,73 +1097,23 @@ class ProjectKnowledgeGraph:
         返回 claim 节点 id. 真正的高阶 (AND/OR/传播) 由 ClaimHypergraph 承担,
         这里只负责把结论注册进二元 KG 以便现有 hybrid_retrieve/社区检索召回.
         """
-        from huginn.kg.entities import EntityType, Relation
-
         eid = node_id(claim_text, EntityType.CLAIM)
+        meta = {
+            "source": source,
+            "confidence": confidence,
+            "evidence_strength": evidence_strength,
+            "condition": condition,
+            "status": status,
+            "literature_id": literature_id,
+        }
         now = datetime.now().isoformat()
         with self._lock:
-            if eid in self._graph:
-                # 已有结论节点: 累加 mentions, 提升置信度 (重复出现=更可信)
-                self._graph.nodes[eid]["mentions"] = (
-                    self._graph.nodes[eid].get("mentions", 0) + 1
-                )
-                self._graph.nodes[eid]["last_seen"] = now
-                old_conf = self._graph.nodes[eid].get("confidence", confidence)
-                self._graph.nodes[eid]["confidence"] = min(0.99, old_conf + 0.05)
-                # 新证据强度取更强者 (多次独立来源更强)
-                self._graph.nodes[eid]["evidence_strength"] = max(
-                    float(self._graph.nodes[eid].get("evidence_strength", 0.0)),
-                    evidence_strength,
-                )
-            else:
-                self._graph.add_node(
-                    eid,
-                    label=claim_text,
-                    type=EntityType.CLAIM,
-                    source=source,
-                    confidence=confidence,
-                    evidence_strength=evidence_strength,
-                    condition=condition or "",
-                    status=status,
-                    literature_id=literature_id,
-                    created_at=now,
-                    last_seen=now,
-                    mentions=1,
-                )
-
-            # 前提 → 结论 的 depends_on 边 (结论级依赖)
-            for premise in premises or []:
-                if not premise:
-                    continue
-                # 前提若已作为实体/结论存在就指向它, 否则建一个占位 Topic 节点
-                p_eid = premise if premise in self._graph else node_id(premise, EntityType.TOPIC)
-                if p_eid not in self._graph:
-                    self._graph.add_node(
-                        p_eid, label=premise, type=EntityType.TOPIC,
-                        source="claim_layer", confidence=0.5,
-                        created_at=now, last_seen=now, mentions=1,
-                    )
-                if not self._graph.has_edge(p_eid, eid):
-                    self._graph.add_edge(
-                        p_eid, eid, relation=Relation.DEPENDS_ON,
-                        source=source, confidence=confidence,
-                        created_at=now, last_seen=now, mentions=1,
-                    )
-
-            # 文献来源 → 结论 的 supports_claim 边
-            if literature_id:
-                lit_eid = f"{literature_id}"
-                if lit_eid in self._graph and not self._graph.has_edge(lit_eid, eid):
-                    self._graph.add_edge(
-                        lit_eid, eid, relation=Relation.SUPPORTS_CLAIM,
-                        source=source, confidence=confidence,
-                        evidence_strength=evidence_strength,
-                        created_at=now, last_seen=now, mentions=1,
-                    )
+            _claim_register(self._graph, eid, claim_text, meta, premises, now)
         return eid
 
     def get_claim(
-        self, claim_text: str,
+        self,
+        claim_text: str,
     ) -> dict[str, Any] | None:
         """按文本取回 CLAIM 节点属性, 不存在返回 None."""
         from huginn.kg.entities import EntityType
@@ -873,7 +1121,9 @@ class ProjectKnowledgeGraph:
         return self.get_entity(claim_text, EntityType.CLAIM)
 
     def query_claim_deps(
-        self, claim_text: str, direction: str = "backward",
+        self,
+        claim_text: str,
+        direction: str = "backward",
     ) -> dict[str, Any]:
         """查某结论的依赖邻域.
 
@@ -895,8 +1145,11 @@ class ProjectKnowledgeGraph:
                 else self._graph.successors(eid)
             )
             for n in neighbors:
-                ed = self._graph.get_edge_data(n, eid) if direction == "backward" \
+                ed = (
+                    self._graph.get_edge_data(n, eid)
+                    if direction == "backward"
                     else self._graph.get_edge_data(eid, n)
+                )
                 if not ed or ed.get("relation") != "depends_on":
                     continue
                 nodes.append({"id": n, **dict(self._graph.nodes[n])})
@@ -1012,6 +1265,28 @@ class MathConceptGraph:
             self._graph.add_node(child, type="MathConcept", label=child)
             self._graph.add_edge(child, parent, relation=rel)
 
+    def _collect_direction(
+        self, concept: str, direction: str, depth: int
+    ) -> tuple[set[str], list[list[str]]]:
+        """沿指定方向 BFS depth 跳, 返回 (节点集合, 路径列表)."""
+        collected: set[str] = set()
+        paths: list[list[str]] = []
+        self._bfs_collect(
+            concept, direction=direction, depth=depth, collected=collected, paths=paths
+        )
+        return collected, paths
+
+    def _collect_duals(self, concept: str) -> set[str]:
+        """dual_to 关系 (双向) 的对偶概念."""
+        duals: set[str] = set()
+        for _, nbr, ed in self._graph.edges(concept, data=True):
+            if ed.get("relation") == "dual_to":
+                duals.add(nbr)
+        for nbr, _, ed in self._graph.in_edges(concept, data=True):
+            if ed.get("relation") == "dual_to":
+                duals.add(nbr)
+        return duals
+
     def query_concept_neighborhood(
         self, concept: str, depth: int = 1
     ) -> dict[str, Any]:
@@ -1029,32 +1304,18 @@ class MathConceptGraph:
                 return {"concept": concept, "found": False}
 
             # ancestors: 沿出边走 (child → parent)
-            ancestors = set()
-            paths: list[list[str]] = []
-            self._bfs_collect(concept, direction="successors", depth=depth,
-                              collected=ancestors, paths=paths)
-
+            ancestors, paths = self._collect_direction(concept, "successors", depth)
             # descendants: 沿入边走 (parent ← child)
-            descendants = set()
-            desc_paths: list[list[str]] = []
-            self._bfs_collect(concept, direction="predecessors", depth=depth,
-                              collected=descendants, paths=desc_paths)
-
-            # duals: dual_to 关系 (双向)
-            duals = set()
-            for _, nbr, ed in self._graph.edges(concept, data=True):
-                if ed.get("relation") == "dual_to":
-                    duals.add(nbr)
-            for nbr, _, ed in self._graph.in_edges(concept, data=True):
-                if ed.get("relation") == "dual_to":
-                    duals.add(nbr)
+            descendants, desc_paths = self._collect_direction(
+                concept, "predecessors", depth
+            )
 
             return {
                 "concept": concept,
                 "found": True,
                 "ancestors": sorted(ancestors),
                 "descendants": sorted(descendants),
-                "duals": sorted(duals),
+                "duals": sorted(self._collect_duals(concept)),
                 "paths_to_ancestors": paths,
                 "paths_to_descendants": desc_paths,
             }
@@ -1069,6 +1330,7 @@ class MathConceptGraph:
     ) -> None:
         """BFS 走 depth 跳, 收集节点 + 记录路径."""
         from collections import deque
+
         queue: deque[tuple[str, int, list[str]]] = deque([(start, 0, [start])])
         visited: set[str] = {start}
         while queue:
@@ -1168,8 +1430,9 @@ if __name__ == "__main__":
     lca = mcg.find_common_ancestor("hilbert_space", "banach_space")
     # hilbert → banach → metric → topological; banach → metric → topological
     # LCA 应是 banach_space 或 metric_space (近似 LCA)
-    assert lca in {"banach_space", "metric_space", "topological_space"}, \
+    assert lca in {"banach_space", "metric_space", "topological_space"}, (
         f"LCA 应在祖先链上, got {lca}"
+    )
 
     # 不存在的概念
     assert not mcg.query_concept_neighborhood("nonexistent_concept")["found"]
@@ -1269,9 +1532,7 @@ if __name__ == "__main__":
         assert hist[0]["status"] == "proposed"
         assert hist[0]["confidence"] == 0.7
         # 3 条边都建了
-        edges_out = [
-            d for _, _, d in kg_t._graph.out_edges(tid1, data=True)
-        ]
+        edges_out = [d for _, _, d in kg_t._graph.out_edges(tid1, data=True)]
         edge_rels = {d.get("relation") for d in edges_out}
         assert "transfers_to" in edge_rels, edge_rels
         assert "structurally_isomorphic" in edge_rels, edge_rels
@@ -1283,6 +1544,7 @@ if __name__ == "__main__":
 
         # 场景 2: 3 条不同 transfer 写入 → limit=3 拿到 3 条
         import time as _t
+
         for i in range(3):
             _ti = TransferHypothesis(
                 original_problem=f"problem_{i} Fe based",

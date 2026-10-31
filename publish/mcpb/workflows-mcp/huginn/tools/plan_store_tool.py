@@ -17,6 +17,7 @@ actions:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
@@ -118,178 +119,13 @@ class PlanStoreTool(HuginnTool):
         self, args: dict[str, Any], context: ToolContext | None = None
     ) -> ToolResult:
         input_data = PlanStoreInput(**args)
-        from huginn.autoloop.plan_store import PlanStep
-
         store = self._resolve_store()
+        handler = _PST_ACTIONS.get(input_data.action)
 
         try:
-            if input_data.action == "propose":
-                steps = [PlanStep.from_dict(s) for s in (input_data.steps or [])]
-                plan = store.create_plan(
-                    objective=input_data.objective or "",
-                    steps=steps,
-                    auto_confirm=input_data.auto_confirm,
-                )
-                if input_data.auto_confirm:
-                    store.confirm_plan(plan.id)
-                    plan = store.get_plan(plan.id)
-                return ToolResult(
-                    data={
-                        "plan_id": plan.id,
-                        "status": plan.status,
-                        "steps": [s.to_dict() for s in plan.steps],
-                        "message": (
-                            f"计划已提交, plan_id={plan.id}, 状态={plan.status}."
-                            + (
-                                " 已自动确认, 可执行."
-                                if plan.status == "confirmed"
-                                else " 等待用户 confirm 后执行."
-                            )
-                        ),
-                    },
-                    success=True,
-                )
-
-            if input_data.action == "confirm":
-                plan = store.get_plan(input_data.plan_id or "")
-                if plan is None:
-                    return ToolResult(
-                        data=None,
-                        success=False,
-                        error=f"plan_id={input_data.plan_id} 不存在",
-                    )
-                confirmed = store.confirm_plan(plan.id)
-                return ToolResult(
-                    data={
-                        "plan_id": confirmed.id,
-                        "status": "confirmed",
-                        "message": "计划已确认, executor 可以执行.",
-                    },
-                    success=True,
-                )
-
-            if input_data.action == "reject":
-                plan = store.get_plan(input_data.plan_id or "")
-                if plan is None:
-                    return ToolResult(
-                        data=None,
-                        success=False,
-                        error=f"plan_id={input_data.plan_id} 不存在",
-                    )
-                rejected = store.reject_plan(plan.id, input_data.reject_reason)
-                return ToolResult(
-                    data={
-                        "plan_id": rejected.id,
-                        "status": "abandoned",
-                        "reject_reason": rejected.reject_reason or "",
-                        "message": "计划已拒绝, 请根据原因修改后重新 propose.",
-                    },
-                    success=True,
-                )
-
-            if input_data.action == "status":
-                all_plans = store.list_plans()
-                return ToolResult(
-                    data={
-                        "total": len(all_plans),
-                        "by_status": _count_by_status(all_plans),
-                        "pending": [
-                            {"plan_id": p.id, "objective": p.objective}
-                            for p in all_plans
-                            if p.status == "draft"
-                        ],
-                    },
-                    success=True,
-                )
-
-            if input_data.action == "list_pending":
-                drafts = store.list_plans(status="draft")
-                return ToolResult(
-                    data={
-                        "pending": [
-                            {
-                                "plan_id": p.id,
-                                "objective": p.objective,
-                                "n_steps": len(p.steps),
-                            }
-                            for p in drafts
-                        ]
-                    },
-                    success=True,
-                )
-
-            if input_data.action == "list_all":
-                all_plans = store.list_plans()
-                return ToolResult(
-                    data={
-                        "plans": [
-                            {
-                                "plan_id": p.id,
-                                "objective": p.objective,
-                                "status": p.status,
-                                "n_steps": len(p.steps),
-                                "created_at": p.created_at,
-                            }
-                            for p in all_plans
-                        ]
-                    },
-                    success=True,
-                )
-
-            if input_data.action == "get":
-                plan = store.get_plan(input_data.plan_id or "")
-                if plan is None:
-                    return ToolResult(
-                        data=None,
-                        success=False,
-                        error=f"plan_id={input_data.plan_id} 不存在",
-                    )
-                return ToolResult(data=plan.to_dict(), success=True)
-
-            if input_data.action == "advance_step":
-                plan = store.get_plan(input_data.plan_id or "")
-                if plan is None:
-                    return ToolResult(
-                        data=None,
-                        success=False,
-                        error=f"plan_id={input_data.plan_id} 不存在",
-                    )
-                fields: dict[str, Any] = {}
-                if input_data.step_status is not None:
-                    fields["status"] = input_data.step_status
-                if input_data.step_result is not None:
-                    fields["result"] = input_data.step_result
-                if input_data.step_error is not None:
-                    fields["error"] = input_data.step_error
-                updated = store.update_step(
-                    plan.id, input_data.step_id or "", **fields
-                )
-                step = next(
-                    (s for s in updated.steps if s.id == input_data.step_id), None
-                )
-                if step is None:
-                    return ToolResult(
-                        data=None,
-                        success=False,
-                        error=f"step_id={input_data.step_id} 不在 plan {plan.id} 里",
-                    )
-                return ToolResult(
-                    data={
-                        "plan_id": updated.id,
-                        "step_id": step.id,
-                        "status": step.status,
-                        "result": step.result,
-                        "error": step.error,
-                    },
-                    success=True,
-                )
-
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"未知 action: {input_data.action}",
-            )
-
+            if handler is None:
+                return _pst_unknown_action(input_data.action)
+            return handler(store, input_data)
         except Exception as e:
             logger.warning("plan_store_tool failed: %s", e, exc_info=True)
             return ToolResult(data=None, success=False, error=str(e))
@@ -300,3 +136,182 @@ def _count_by_status(plans: list) -> dict[str, int]:
     for p in plans:
         counts[p.status] = counts.get(p.status, 0) + 1
     return counts
+
+
+def _pst_not_found(plan_id: str | None) -> ToolResult:
+    """统一的 plan 不存在返回."""
+    return ToolResult(
+        data=None, success=False, error=f"plan_id={plan_id} 不存在"
+    )
+
+
+def _pst_unknown_action(action: str) -> ToolResult:
+    return ToolResult(data=None, success=False, error=f"未知 action: {action}")
+
+
+def _pst_propose(store: PlanStore, data: PlanStoreInput) -> ToolResult:
+    from huginn.autoloop.plan_store import PlanStep
+
+    steps = [PlanStep.from_dict(s) for s in (data.steps or [])]
+    plan = store.create_plan(
+        objective=data.objective or "",
+        steps=steps,
+        auto_confirm=data.auto_confirm,
+    )
+    if data.auto_confirm:
+        store.confirm_plan(plan.id)
+        plan = store.get_plan(plan.id)
+    message = f"计划已提交, plan_id={plan.id}, 状态={plan.status}."
+    if plan.status == "confirmed":
+        message += " 已自动确认, 可执行."
+    else:
+        message += " 等待用户 confirm 后执行."
+    return ToolResult(
+        data={
+            "plan_id": plan.id,
+            "status": plan.status,
+            "steps": [s.to_dict() for s in plan.steps],
+            "message": message,
+        },
+        success=True,
+    )
+
+
+def _pst_confirm(store: PlanStore, data: PlanStoreInput) -> ToolResult:
+    plan = store.get_plan(data.plan_id or "")
+    if plan is None:
+        return _pst_not_found(data.plan_id)
+    confirmed = store.confirm_plan(plan.id)
+    return ToolResult(
+        data={
+            "plan_id": confirmed.id,
+            "status": "confirmed",
+            "message": "计划已确认, executor 可以执行.",
+        },
+        success=True,
+    )
+
+
+def _pst_reject(store: PlanStore, data: PlanStoreInput) -> ToolResult:
+    plan = store.get_plan(data.plan_id or "")
+    if plan is None:
+        return _pst_not_found(data.plan_id)
+    rejected = store.reject_plan(plan.id, data.reject_reason)
+    return ToolResult(
+        data={
+            "plan_id": rejected.id,
+            "status": "abandoned",
+            "reject_reason": rejected.reject_reason or "",
+            "message": "计划已拒绝, 请根据原因修改后重新 propose.",
+        },
+        success=True,
+    )
+
+
+def _pst_status(store: PlanStore, data: PlanStoreInput) -> ToolResult:
+    all_plans = store.list_plans()
+    return ToolResult(
+        data={
+            "total": len(all_plans),
+            "by_status": _count_by_status(all_plans),
+            "pending": [
+                {"plan_id": p.id, "objective": p.objective}
+                for p in all_plans
+                if p.status == "draft"
+            ],
+        },
+        success=True,
+    )
+
+
+def _pst_list_pending(store: PlanStore, data: PlanStoreInput) -> ToolResult:
+    drafts = store.list_plans(status="draft")
+    return ToolResult(
+        data={
+            "pending": [
+                {
+                    "plan_id": p.id,
+                    "objective": p.objective,
+                    "n_steps": len(p.steps),
+                }
+                for p in drafts
+            ]
+        },
+        success=True,
+    )
+
+
+def _pst_list_all(store: PlanStore, data: PlanStoreInput) -> ToolResult:
+    all_plans = store.list_plans()
+    return ToolResult(
+        data={
+            "plans": [
+                {
+                    "plan_id": p.id,
+                    "objective": p.objective,
+                    "status": p.status,
+                    "n_steps": len(p.steps),
+                    "created_at": p.created_at,
+                }
+                for p in all_plans
+            ]
+        },
+        success=True,
+    )
+
+
+def _pst_get(store: PlanStore, data: PlanStoreInput) -> ToolResult:
+    plan = store.get_plan(data.plan_id or "")
+    if plan is None:
+        return _pst_not_found(data.plan_id)
+    return ToolResult(data=plan.to_dict(), success=True)
+
+
+def _pst_step_fields(data: PlanStoreInput) -> dict[str, Any]:
+    """把 step_* 参数组装成 update_step 的字段."""
+    fields: dict[str, Any] = {}
+    if data.step_status is not None:
+        fields["status"] = data.step_status
+    if data.step_result is not None:
+        fields["result"] = data.step_result
+    if data.step_error is not None:
+        fields["error"] = data.step_error
+    return fields
+
+
+def _pst_advance_step(store: PlanStore, data: PlanStoreInput) -> ToolResult:
+    plan = store.get_plan(data.plan_id or "")
+    if plan is None:
+        return _pst_not_found(data.plan_id)
+    updated = store.update_step(
+        plan.id, data.step_id or "", **_pst_step_fields(data)
+    )
+    step = next((s for s in updated.steps if s.id == data.step_id), None)
+    if step is None:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"step_id={data.step_id} 不在 plan {plan.id} 里",
+        )
+    return ToolResult(
+        data={
+            "plan_id": updated.id,
+            "step_id": step.id,
+            "status": step.status,
+            "result": step.result,
+            "error": step.error,
+        },
+        success=True,
+    )
+
+
+_PST_ACTIONS: dict[str, Callable[[PlanStore, PlanStoreInput], ToolResult]] = {
+    "propose": _pst_propose,
+    "confirm": _pst_confirm,
+    "reject": _pst_reject,
+    "status": _pst_status,
+    "list_pending": _pst_list_pending,
+    "list_all": _pst_list_all,
+    "get": _pst_get,
+    "advance_step": _pst_advance_step,
+}

@@ -17,6 +17,7 @@
 SubResearch 的 ``run`` 仍必须返回真实实验数值; planner 只是安排这些真实实验的
 依赖与并行顺序。
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -36,6 +37,7 @@ class SubResearch:
     run: 执行真实实验, 返回 {objectives, summary, success}.
     depends_on: 依赖的上游子研究名 (先验依赖, LLM/人工给的领域次序).
     """
+
     name: str
     hypothesis: str
     run: Callable[[], dict[str, Any]]
@@ -86,12 +88,30 @@ def _budget_recommend(n_sub_research: int, parallel_cap: int) -> dict:
     """
     try:
         from huginn.agents.budget_decomp import recommend as _rec
+
         budget = _rec(2 * max(n_sub_research, 1))
     except Exception:  # noqa: BLE001 — 预算模块不可用(轻量)时用朴素预算
-        budget = {"depth": 1, "parallel": parallel_cap, "per_subagent": max(n_sub_research, 1)}
+        budget = {
+            "depth": 1,
+            "parallel": parallel_cap,
+            "per_subagent": max(n_sub_research, 1),
+        }
     budget = dict(budget)
     budget["parallel"] = min(budget.get("parallel", parallel_cap), parallel_cap)
     return budget
+
+
+def _build_deps(
+    sub_research: list[SubResearch],
+    by_name: dict[str, SubResearch],
+) -> list[tuple[str, str]]:
+    deps: list[tuple[str, str]] = []
+    for s in sub_research:
+        for up in s.depends_on:
+            if up not in by_name:
+                raise ValueError(f"{s.name} 依赖不存在的子研究 '{up}'")
+            deps.append((up, s.name))
+    return deps
 
 
 def build_research_plan(
@@ -114,12 +134,7 @@ def build_research_plan(
     if len(set(names)) != len(names):
         raise ValueError(f"sub_research 名必须唯一: {names}")
     by_name = {s.name: s for s in sub_research}
-    deps: list[tuple[str, str]] = []
-    for s in sub_research:
-        for up in s.depends_on:
-            if up not in by_name:
-                raise ValueError(f"{s.name} 依赖不存在的子研究 '{up}'")
-            deps.append((up, s.name))
+    deps = _build_deps(sub_research, by_name)
 
     dag = TaskDAG(tasks=names, dependencies=deps)
     order = dag.topological_order()

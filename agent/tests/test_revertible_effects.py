@@ -134,7 +134,7 @@ def test_sandbox_transaction_rolls_back(tmp_path: Path) -> None:
 
 
 def test_sandbox_run_revertible_removes_new_files(tmp_path: Path) -> None:
-    cfg = SandboxConfig(allowed_executables={"sh"})
+    cfg = SandboxConfig(allowed_executables={"sh"}, allowed_work_dirs={tmp_path})
     sb = SandboxExecutor(cfg)
     env = {"PATH": "/usr/bin:/bin"}
     result, dispose = sb.run_revertible(
@@ -150,7 +150,7 @@ def test_sandbox_run_revertible_removes_new_files(tmp_path: Path) -> None:
 
 
 def test_sandbox_run_revertible_keeps_preexisting(tmp_path: Path) -> None:
-    cfg = SandboxConfig(allowed_executables={"sh"})
+    cfg = SandboxConfig(allowed_executables={"sh"}, allowed_work_dirs={tmp_path})
     sb = SandboxExecutor(cfg)
     pre = tmp_path / "keep.txt"
     pre.write_text("keep")
@@ -179,7 +179,8 @@ def test_code_tool_failure_rolls_back_new_files(
     # 让子进程解析到当前解释器 (.venv, 带 numpy), 否则 code_tool 用全局
     # python 缺 numpy 而无法执行到创建文件那一步.
     monkeypatch.setenv(
-        "PATH", str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", "")
+        "PATH",
+        str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""),
     )
     from huginn.tools.code_tool import CodeTool
 
@@ -208,35 +209,18 @@ def test_bash_tool_failure_rolls_back_new_files(
         "open('created.txt', 'w').write('x'); import sys; sys.exit(3)",
     ]
     res = asyncio.run(
-        tool.call(
-            {"command": cmd, "working_dir": str(tmp_path), "timeout": 30}
-        )
+        tool.call({"command": cmd, "working_dir": str(tmp_path), "timeout": 30})
     )
     assert not res.success
     assert not (tmp_path / "created.txt").exists(), "命令失败应回滚新建文件"
 
 
 # ── 技能生态集成 (技能多步组合失败 → 原子回滚) ─────────────────
-def test_skill_execution_failure_rolls_back_new_files(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """技能是原子事务: 多步组合整体失败 (abort) → 回滚本次技能新建的文件.
+def _atomic_skill_definition():
+    """技能: step1 用 code_tool 建文件, step2 必失败 (abort)."""
+    from huginn.skills.base import SkillDefinition, SkillStep
 
-    验证 skill_tool 的 workspace 透传 + 快照回滚: 第一步成功产物文件,
-    第二步失败, 整体失败后第一步的产物也被回滚 (时间可组合).
-    """
-    monkeypatch.setenv("HUGINN_ALLOW_LOCAL_BASH", "1")
-    monkeypatch.setenv(
-        "PATH", str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", "")
-    )
-    from huginn.core_types import ToolContext
-    from huginn.skills.base import DeclarativeSkillExecutor, SkillDefinition, SkillStep
-    from huginn.skills.registry import SkillRegistry
-    from huginn.tools.registry import ToolRegistry
-    from huginn.tools.skill_tool import SkillTool, SkillToolInput
-
-    # 技能: step1 用 code_tool 建文件, step2 必失败 (abort).
-    skill = SkillDefinition(
+    return SkillDefinition(
         name="test_atomic_skill",
         description="atomic rollback test",
         category="test",
@@ -247,9 +231,7 @@ def test_skill_execution_failure_rolls_back_new_files(
                 tool="code_tool",
                 input_mapping={
                     "code": (
-                        "import numpy as np\n"
-                        "np.save('step1_out.npy', [1])\n"
-                        "'ok'\n"
+                        "import numpy as np\nnp.save('step1_out.npy', [1])\n'ok'\n"
                     ),
                     "working_dir": "$workspace",
                     "timeout": "30",
@@ -270,6 +252,28 @@ def test_skill_execution_failure_rolls_back_new_files(
             ),
         ],
     )
+
+
+def test_skill_execution_failure_rolls_back_new_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """技能是原子事务: 多步组合整体失败 (abort) → 回滚本次技能新建的文件.
+
+    验证 skill_tool 的 workspace 透传 + 快照回滚: 第一步成功产物文件,
+    第二步失败, 整体失败后第一步的产物也被回滚 (时间可组合).
+    """
+    monkeypatch.setenv("HUGINN_ALLOW_LOCAL_BASH", "1")
+    monkeypatch.setenv(
+        "PATH",
+        str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""),
+    )
+    from huginn.core_types import ToolContext
+    from huginn.skills.base import DeclarativeSkillExecutor
+    from huginn.skills.registry import SkillRegistry
+    from huginn.tools.registry import ToolRegistry
+    from huginn.tools.skill_tool import SkillTool, SkillToolInput
+
+    skill = _atomic_skill_definition()
     tool = SkillTool(DeclarativeSkillExecutor(ToolRegistry))
     SkillRegistry.register(skill)
     ctx = ToolContext(session_id="test", workspace=str(tmp_path))
@@ -315,6 +319,7 @@ def test_journal_recover_restores_overwritten_file(tmp_path: Path) -> None:
 
 def test_register_non_jsonable_falls_back_to_closure(tmp_path: Path) -> None:
     """不可序列化的 co-effect 逆退化为闭包, 进程内仍精确恢复."""
+
     class _Opaque:
         pass
 
@@ -343,14 +348,20 @@ def test_git_tool_registers_compensation(tmp_path: Path) -> None:
         subprocess.run(cmd, cwd=repo, check=True, capture_output=True)
     (repo / "f.txt").write_text("v1")
     subprocess.run(["git", "add", "f.txt"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "init"], cwd=repo, check=True, capture_output=True
+    )
 
     rv = RevertibleContext()
     ctx = ToolContext(session_id="s", workspace=str(repo), revertible=rv)
     tool = GitTool()
     (repo / "f.txt").write_text("v2")
     subprocess.run(["git", "add", "f.txt"], cwd=repo, check=True, capture_output=True)
-    res = asyncio.run(tool.call({"action": "commit", "message": "change", "working_dir": str(repo)}, ctx))
+    res = asyncio.run(
+        tool.call(
+            {"action": "commit", "message": "change", "working_dir": str(repo)}, ctx
+        )
+    )
     assert res.success
     kinds = [op["kind"] for op in rv.effects()]
     assert "git_commit" in kinds, f"应登记 git_commit 补偿, got {kinds}"
@@ -379,19 +390,27 @@ def test_git_compensator_runs_on_recover(tmp_path: Path) -> None:
         subprocess.run(cmd, cwd=repo, check=True, capture_output=True)
     (repo / "f.txt").write_text("v1")
     subprocess.run(["git", "add", "f.txt"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True, capture_output=True)
-    prev = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+    subprocess.run(
+        ["git", "commit", "-qm", "init"], cwd=repo, check=True, capture_output=True
+    )
+    prev = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
+    ).stdout.strip()
 
     # 模拟: 一次 commit 写操作 + 崩溃 (逆没执行), journal 记录, 崩溃后重放.
     journal = tmp_path / "j.json"
     ctx = RevertibleContext(journal_path=journal)
     (repo / "f.txt").write_text("v2")
-    subprocess.run(["git", "commit", "-qam", "change"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-qam", "change"], cwd=repo, check=True, capture_output=True
+    )
     ctx.compensate("git_commit", {"work_dir": str(repo), "prev_hash": prev})
 
     applied = recover_from(journal)
     assert applied >= 1
-    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
+    ).stdout.strip()
     assert head == prev, "崩溃后重放应撤销 commit"
 
 
@@ -401,7 +420,9 @@ def test_coeffect_declare_and_activate() -> None:
 
     reg = CoEffectRegistry()
     events: list[tuple[str, str]] = []
-    reg.declare("consumer", requires={"db"}, on_change=lambda k, a: events.append((k, a)))
+    reg.declare(
+        "consumer", requires={"db"}, on_change=lambda k, a: events.append((k, a))
+    )
     reg.declare("producer", provides={"db"})
 
     assert reg.is_available("db"), "producer 声明后 db 应可用"
@@ -415,7 +436,9 @@ def test_coeffect_deactivate_on_provider_removal() -> None:
 
     reg = CoEffectRegistry()
     events: list[tuple[str, str]] = []
-    reg.declare("consumer", requires={"db"}, on_change=lambda k, a: events.append((k, a)))
+    reg.declare(
+        "consumer", requires={"db"}, on_change=lambda k, a: events.append((k, a))
+    )
     reg.declare("producer", provides={"db"})
 
     reg.unbind("producer")
@@ -443,8 +466,15 @@ def test_coeffect_cascade_multi_hop() -> None:
 
     reg = CoEffectRegistry()
     events: list[tuple[str, str]] = []
-    reg.declare("b", provides={"middle"}, requires={"root"}, on_change=lambda k, a: events.append((k, a)))
-    reg.declare("leaf", requires={"middle"}, on_change=lambda k, a: events.append((k, a)))
+    reg.declare(
+        "b",
+        provides={"middle"},
+        requires={"root"},
+        on_change=lambda k, a: events.append((k, a)),
+    )
+    reg.declare(
+        "leaf", requires={"middle"}, on_change=lambda k, a: events.append((k, a))
+    )
     reg.declare("root", provides={"root"})
 
     reg.unbind("root")
@@ -570,8 +600,13 @@ def test_figure_gate_tracks_intermediate_rerenders(tmp_path: Path) -> None:
     # 用 render_fn 强制走 retry 分支 (QA 可能判 error → 不会 retry),
     # 这里直接验证: 若进入重渲染, 旧图被登记为可逆中间产物.
     run_figure_gate(
-        img, expected=None, index=None, attempt=0, max_attempts=2,
-        render_fn=render_fn, revertible=rv,
+        img,
+        expected=None,
+        index=None,
+        attempt=0,
+        max_attempts=2,
+        render_fn=render_fn,
+        revertible=rv,
     )
 
     # 只要有重渲染发生, 原 v1 图应被登记为可逆产物.

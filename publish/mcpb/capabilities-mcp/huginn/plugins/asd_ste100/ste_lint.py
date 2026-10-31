@@ -29,25 +29,58 @@ import sys
 # tagging to avoid constant false positives; add spaCy-backed rule if ever needed.
 # No ellipsis rule by owner's choice: technical writing sometimes earns one.
 RULES = [
-    ("semicolon", "advisory-free",
-     re.compile(r";"),
-     "STE bans the semicolon (Rule 8.1). Split into separate sentences."),
-    ("phrasal-verb", "advisory-free",
-     re.compile(r"\b(spin(?:ning|s)? up|spun up|reach(?:ing|es|ed)? out|div(?:e|es|ing|ed) into|dove into|kick(?:ing|s|ed)? off|circl(?:e|es|ing|ed) back|touch(?:ing|es|ed)? base)\b", re.I),
-     "Soft phrasal verb. Use the single plain verb (start, contact, read, begin)."),
-    ("marketing-adjective", "advisory-free",
-     re.compile(r"\b(seamless(?:ly)?|robust(?:ly)?|cutting-edge|effortless(?:ly)?|blazing[- ]fast|world-class|state-of-the-art|game-chang(?:ing|er))\b", re.I),
-     "Marketing adjective. Delete, or replace with the measurement that earns the claim."),
-    ("nominalization", "advisory-free",
-     re.compile(r"\b(perform|performs|performed|conduct|conducts|conducted|carry out|carries out|carried out)\s+(?:a|an|the)\s+\w+(?:tion|sion|ment|ance|ence|ysis)\b", re.I),
-     "Action frozen into a noun. Use the verb (analyze, not perform an analysis of)."),
-    ("passive-voice", "advisory",
-     re.compile(r"\b(is|are|was|were|been|being)\s+(\w+ed|given|taken|made|done|found|seen|known|shown|written|built|sent|set|run|read|kept|held|left|put)\b(?!\s+(?:to|for|by)\s+\w+ing)", re.I),
-     "Possible passive voice. Name the actor and use an active verb, unless the actor is unknown or irrelevant."),
-    ("present-perfect", "advisory",
-     # modal + perfect infinitive ("may have failed") is a protected hedge, not present perfect
-     re.compile(r"(?<!\bmay )(?<!\bmight )(?<!\bcould )(?<!\bshould )(?<!\bwould )(?<!\bmust )\b(has|have|had)\s+(?:been\s+)?\w+(?:ed|en)\b", re.I),
-     "Compound tense. Use simple past/present unless current relevance is the point (then keep and flag)."),
+    (
+        "semicolon",
+        "advisory-free",
+        re.compile(r";"),
+        "STE bans the semicolon (Rule 8.1). Split into separate sentences.",
+    ),
+    (
+        "phrasal-verb",
+        "advisory-free",
+        re.compile(
+            r"\b(spin(?:ning|s)? up|spun up|reach(?:ing|es|ed)? out|div(?:e|es|ing|ed) into|dove into|kick(?:ing|s|ed)? off|circl(?:e|es|ing|ed) back|touch(?:ing|es|ed)? base)\b",
+            re.I,
+        ),
+        "Soft phrasal verb. Use the single plain verb (start, contact, read, begin).",
+    ),
+    (
+        "marketing-adjective",
+        "advisory-free",
+        re.compile(
+            r"\b(seamless(?:ly)?|robust(?:ly)?|cutting-edge|effortless(?:ly)?|blazing[- ]fast|world-class|state-of-the-art|game-chang(?:ing|er))\b",
+            re.I,
+        ),
+        "Marketing adjective. Delete, or replace with the measurement that earns the claim.",
+    ),
+    (
+        "nominalization",
+        "advisory-free",
+        re.compile(
+            r"\b(perform|performs|performed|conduct|conducts|conducted|carry out|carries out|carried out)\s+(?:a|an|the)\s+\w+(?:tion|sion|ment|ance|ence|ysis)\b",
+            re.I,
+        ),
+        "Action frozen into a noun. Use the verb (analyze, not perform an analysis of).",
+    ),
+    (
+        "passive-voice",
+        "advisory",
+        re.compile(
+            r"\b(is|are|was|were|been|being)\s+(\w+ed|given|taken|made|done|found|seen|known|shown|written|built|sent|set|run|read|kept|held|left|put)\b(?!\s+(?:to|for|by)\s+\w+ing)",
+            re.I,
+        ),
+        "Possible passive voice. Name the actor and use an active verb, unless the actor is unknown or irrelevant.",
+    ),
+    (
+        "present-perfect",
+        "advisory",
+        # modal + perfect infinitive ("may have failed") is a protected hedge, not present perfect
+        re.compile(
+            r"(?<!\bmay )(?<!\bmight )(?<!\bcould )(?<!\bshould )(?<!\bwould )(?<!\bmust )\b(has|have|had)\s+(?:been\s+)?\w+(?:ed|en)\b",
+            re.I,
+        ),
+        "Compound tense. Use simple past/present unless current relevance is the point (then keep and flag).",
+    ),
 ]
 
 # One word, one meaning: groups of verbs commonly rotated for the same action.
@@ -66,7 +99,9 @@ SYNONYM_GROUPS = [
     ("change", "modify", "alter"),
 ]
 
-MAX_WORDS = 25  # descriptions cap; instructions cap is 20 but undetectable without context
+MAX_WORDS = (
+    25  # descriptions cap; instructions cap is 20 but undetectable without context
+)
 
 CODE_FENCE = re.compile(r"^(```|~~~)")
 INLINE_CODE = re.compile(r"`[^`]*`")
@@ -135,9 +170,12 @@ def _markdown_table_cells(lines):
     while index < len(lines):
         separator = _split_table_row(lines[index])
         header = _split_table_row(lines[index - 1])
-        if (not separator or not header or len(separator) != len(header)
-                or not all(TABLE_SEPARATOR_CELL.fullmatch(cell)
-                           for cell, _ in separator)):
+        if (
+            not separator
+            or not header
+            or len(separator) != len(header)
+            or not all(TABLE_SEPARATOR_CELL.fullmatch(cell) for cell, _ in separator)
+        ):
             index += 1
             continue
 
@@ -151,6 +189,65 @@ def _markdown_table_cells(lines):
             table_cells[index] = row
             index += 1
     return table_cells
+
+
+def _collect_item_lines(lines, index, start):
+    """Collect one list item's lines, from ``index`` until the item ends.
+
+    Returns the ``(line_index, text)`` pairs and the index of the first line
+    that no longer belongs to the item.
+    """
+    content_indent = (
+        len(start.group("indent"))
+        + len(start.group("marker"))
+        + len(start.group("gap"))
+    )
+    item_lines = [(index, start.group("body"))]
+    next_index = index + 1
+    item_fence = False
+    while next_index < len(lines):
+        candidate = lines[next_index]
+        candidate_stripped = candidate.strip()
+        if CODE_FENCE.match(candidate_stripped):
+            # Fence delimiters are state markers, not meaningful item lines.
+            item_fence = not item_fence
+            next_index += 1
+            continue
+        if item_fence:
+            next_index += 1
+            continue
+        if not _is_list_continuation(candidate, content_indent):
+            break
+        item_lines.append((next_index, candidate))
+        next_index += 1
+    return item_lines, next_index
+
+
+def _meaningful_item_lines(item_lines):
+    meaningful = []
+    for line_index, item_line in item_lines:
+        # Preserve code spans as neutral operands while ignoring their contents.
+        cleaned = INLINE_CODE.sub(" CODE ", item_line).strip()
+        if cleaned:
+            meaningful.append((line_index, cleaned))
+    return meaningful
+
+
+def _dangling_conjunction_span(index, start, item_lines, end_line_index):
+    """Return the (line, column) where a dangling conjunction is reported."""
+    if end_line_index == index:
+        return index + 1, start.start("marker") + 1
+    raw_end_line = next(
+        raw for line_index, raw in item_lines if line_index == end_line_index
+    )
+    masked_end_line = INLINE_CODE.sub(
+        lambda match: " " * len(match.group(0)), raw_end_line
+    )
+    raw_conjunction = CONJUNCTION_END.search(masked_end_line)
+    return (
+        end_line_index + 1,
+        raw_conjunction.start() + 1 if raw_conjunction else 1,
+    )
 
 
 def _dangling_conjunction_findings(text, filename):
@@ -173,64 +270,100 @@ def _dangling_conjunction_findings(text, filename):
             index += 1
             continue
 
-        content_indent = (len(start.group("indent"))
-                          + len(start.group("marker"))
-                          + len(start.group("gap")))
-        item_lines = [(index, start.group("body"))]
-        next_index = index + 1
-        item_fence = False
-        while next_index < len(lines):
-            candidate = lines[next_index]
-            candidate_stripped = candidate.strip()
-            if CODE_FENCE.match(candidate_stripped):
-                # Fence delimiters are state markers, not meaningful item lines.
-                item_fence = not item_fence
-                next_index += 1
-                continue
-            if item_fence:
-                next_index += 1
-                continue
-            if not _is_list_continuation(candidate, content_indent):
-                break
-            item_lines.append((next_index, candidate))
-            next_index += 1
-
-        meaningful = []
-        for line_index, item_line in item_lines:
-            # Preserve code spans as neutral operands while ignoring their contents.
-            cleaned = INLINE_CODE.sub(" CODE ", item_line).strip()
-            if cleaned:
-                meaningful.append((line_index, cleaned))
+        item_lines, next_index = _collect_item_lines(lines, index, start)
+        meaningful = _meaningful_item_lines(item_lines)
         if meaningful:
             end_line_index, end_line = meaningful[-1]
             conjunction = CONJUNCTION_END.search(end_line)
         else:
             end_line_index, end_line, conjunction = None, None, None
         if conjunction:
-            if end_line_index == index:
-                finding_line = index + 1
-                finding_col = start.start("marker") + 1
-            else:
-                raw_end_line = next(
-                    raw for line_index, raw in item_lines
-                    if line_index == end_line_index
-                )
-                masked_end_line = INLINE_CODE.sub(
-                    lambda match: " " * len(match.group(0)), raw_end_line
-                )
-                raw_conjunction = CONJUNCTION_END.search(masked_end_line)
-                finding_line = end_line_index + 1
-                finding_col = raw_conjunction.start() + 1 if raw_conjunction else 1
-            findings.append({
-                "file": filename,
-                "line": finding_line,
-                "col": finding_col,
-                "rule": "dangling-conjunction",
-                "level": "advisory-free",
-                "match": end_line,
-                "message": "List item ends with a coordinating conjunction. Complete the item or join it with the next item.",
-            })
+            finding_line, finding_col = _dangling_conjunction_span(
+                index, start, item_lines, end_line_index
+            )
+            findings.append(
+                {
+                    "file": filename,
+                    "line": finding_line,
+                    "col": finding_col,
+                    "rule": "dangling-conjunction",
+                    "level": "advisory-free",
+                    "match": end_line,
+                    "message": "List item ends with a coordinating conjunction. Complete the item or join it with the next item.",
+                }
+            )
         index = next_index
+    return findings
+
+
+def _scan_prose_segment(
+    segment, lineno, source_column, filename, findings, seen_synonyms
+):
+    """Record rule/synonym/long-sentence state for one prose segment."""
+    line = INLINE_CODE.sub("", segment)
+    for rule_id, level, pattern, msg in RULES:
+        for m in pattern.finditer(line):
+            findings.append(
+                {
+                    "file": filename,
+                    "line": lineno,
+                    "col": source_column + m.start() + 1,
+                    "rule": rule_id,
+                    "level": level,
+                    "match": m.group(0),
+                    "message": msg,
+                }
+            )
+    for gi, group in enumerate(SYNONYM_GROUPS):
+        for base in group:
+            if (gi, base) in seen_synonyms:
+                continue
+            m = _word_re(base).search(line)
+            if m:
+                seen_synonyms[(gi, base)] = (
+                    lineno,
+                    source_column + m.start() + 1,
+                    m.group(0),
+                )
+    for sent in re.split(r"(?<=[.!?])\s+", line):
+        n = len(sent.split())
+        if n > MAX_WORDS:
+            findings.append(
+                {
+                    "file": filename,
+                    "line": lineno,
+                    "col": source_column + 1,
+                    "rule": "long-sentence",
+                    "level": "advisory-free",
+                    "match": f"{n} words",
+                    "message": f"Sentence has {n} words (cap {MAX_WORDS}). Split it.",
+                }
+            )
+    return len(line.split())
+
+
+def _synonym_rotation_findings(filename, seen_synonyms):
+    """Flag each synonym-group member after the first, at its first occurrence."""
+    findings = []
+    for gi, group in enumerate(SYNONYM_GROUPS):
+        present = [
+            (seen_synonyms[(gi, b)], b) for b in group if (gi, b) in seen_synonyms
+        ]
+        if len(present) > 1:
+            present.sort()  # document order
+            first_base = present[0][1]
+            for (lineno, col, match), base in present[1:]:
+                findings.append(
+                    {
+                        "file": filename,
+                        "line": lineno,
+                        "col": col,
+                        "rule": "synonym-rotation",
+                        "level": "advisory-free",
+                        "match": match,
+                        "message": f"'{base}' and '{first_base}' name the same action. Pick one and use it every time.",
+                    }
+                )
     return findings
 
 
@@ -250,42 +383,10 @@ def lint(text, filename="<stdin>"):
             continue
         segments = table_cells.get(lineno - 1, [(raw_line, 0)])
         for segment, source_column in segments:
-            line = INLINE_CODE.sub("", segment)
-            words_total += len(line.split())
-            for rule_id, level, pattern, msg in RULES:
-                for m in pattern.finditer(line):
-                    findings.append({"file": filename, "line": lineno,
-                                     "col": source_column + m.start() + 1,
-                                     "rule": rule_id, "level": level,
-                                     "match": m.group(0), "message": msg})
-            for gi, group in enumerate(SYNONYM_GROUPS):
-                for base in group:
-                    if (gi, base) in seen_synonyms:
-                        continue
-                    m = _word_re(base).search(line)
-                    if m:
-                        seen_synonyms[(gi, base)] = (
-                            lineno, source_column + m.start() + 1, m.group(0)
-                        )
-            for sent in re.split(r"(?<=[.!?])\s+", line):
-                n = len(sent.split())
-                if n > MAX_WORDS:
-                    findings.append({"file": filename, "line": lineno,
-                                     "col": source_column + 1,
-                                     "rule": "long-sentence", "level": "advisory-free",
-                                     "match": f"{n} words",
-                                     "message": f"Sentence has {n} words (cap {MAX_WORDS}). Split it."})
-    # synonym rotation: flag each member after the first, at its first occurrence
-    for gi, group in enumerate(SYNONYM_GROUPS):
-        present = [(seen_synonyms[(gi, b)], b) for b in group if (gi, b) in seen_synonyms]
-        if len(present) > 1:
-            present.sort()  # document order
-            first_base = present[0][1]
-            for (lineno, col, match), base in present[1:]:
-                findings.append({"file": filename, "line": lineno, "col": col,
-                                 "rule": "synonym-rotation", "level": "advisory-free",
-                                 "match": match,
-                                 "message": f"'{base}' and '{first_base}' name the same action. Pick one and use it every time."})
+            words_total += _scan_prose_segment(
+                segment, lineno, source_column, filename, findings, seen_synonyms
+            )
+    findings.extend(_synonym_rotation_findings(filename, seen_synonyms))
     findings.extend(_dangling_conjunction_findings(text, filename))
     findings.sort(key=lambda f: (f["line"], f["col"]))
     return findings, words_total
@@ -318,33 +419,62 @@ def summarize(text, filename="<text>", baseline=0, disabled=()):
 def report(findings, words_total, as_json, hard_count, baseline):
     rate = round(len(findings) * 100 / words_total, 1) if words_total else 0.0
     if as_json:
-        print(json.dumps({"violations": findings, "count": len(findings),
-                          "hard_count": hard_count, "baseline": baseline,
-                          "words": words_total, "per_100_words": rate}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "violations": findings,
+                    "count": len(findings),
+                    "hard_count": hard_count,
+                    "baseline": baseline,
+                    "words": words_total,
+                    "per_100_words": rate,
+                },
+                indent=2,
+            )
+        )
         return
     for f in findings:
-        print(f"{f['file']}:{f['line']}:{f['col']} {f['rule']}: {f['message']} [{f['match']}]")
-    print(f"\n{len(findings)} violations ({hard_count} hard, baseline {baseline}), "
-          f"{words_total} words, {rate} per 100 words")
-    print("Hedges/modality (may, might, could) are never flagged: confidence is content.")
+        print(
+            f"{f['file']}:{f['line']}:{f['col']} {f['rule']}: {f['message']} [{f['match']}]"
+        )
+    print(
+        f"\n{len(findings)} violations ({hard_count} hard, baseline {baseline}), "
+        f"{words_total} words, {rate} per 100 words"
+    )
+    print(
+        "Hedges/modality (may, might, could) are never flagged: confidence is content."
+    )
 
 
-def selftest():
-    bad = ("The panel is removed; spin up the job. "
-           "Perform an analysis of the seamless log. "
-           "We have received the report.")
+def _selftest_rules_and_hedges():
+    bad = (
+        "The panel is removed; spin up the job. "
+        "Perform an analysis of the seamless log. "
+        "We have received the report."
+    )
     findings, _ = lint(bad)
     rules = {f["rule"] for f in findings}
-    for expected in ("semicolon", "phrasal-verb", "nominalization",
-                     "marketing-adjective", "passive-voice", "present-perfect"):
+    for expected in (
+        "semicolon",
+        "phrasal-verb",
+        "nominalization",
+        "marketing-adjective",
+        "passive-voice",
+        "present-perfect",
+    ):
         assert expected in rules, expected
     # hedges must never be flagged, including modal + perfect infinitive
-    findings, _ = lint("The request may have failed. It could be a timeout. "
-                       "The disk might have filled.")
+    findings, _ = lint(
+        "The request may have failed. It could be a timeout. "
+        "The disk might have filled."
+    )
     assert findings == [], findings
     # code blocks skipped
     findings, _ = lint("```\nx = a; y = b\n```")
     assert findings == []
+
+
+def _selftest_list_markers():
     # all supported list markers, case variants, and trailing whitespace
     findings, _ = lint(
         "- Confirm the target and\n"
@@ -359,6 +489,8 @@ def selftest():
     assert [f["col"] for f in dangling] == [1, 1, 1, 1], dangling
     assert all(f["level"] == "advisory-free" for f in dangling), dangling
 
+
+def _selftest_list_continuations():
     # valid continuation lines and standalone four-space code are ignored
     findings, _ = lint("  - Confirm the target and\n    record the result.")
     assert not any(f["rule"] == "dangling-conjunction" for f in findings)
@@ -376,6 +508,8 @@ def selftest():
     findings, _ = lint("```text\n- code and\n```")
     assert not any(f["rule"] == "dangling-conjunction" for f in findings)
 
+
+def _selftest_list_indentation():
     # one- and three-space markers and ordered continuation width
     findings, _ = lint(" - Start the task and\n   record the result.")
     assert not any(f["rule"] == "dangling-conjunction" for f in findings)
@@ -400,6 +534,8 @@ def selftest():
     dangling = [f for f in findings if f["rule"] == "dangling-conjunction"]
     assert [f["line"] for f in dangling] == [1, 2], dangling
 
+
+def _selftest_prose_and_tables():
     # ordinary prose, inline code, and fenced code are ignored
     findings, _ = lint("The process may include steps and")
     assert not any(f["rule"] == "dangling-conjunction" for f in findings)
@@ -414,24 +550,20 @@ def selftest():
     # Markdown table syntax is layout, not prose. Each cell stays lintable.
     short_cell = " ".join(f"term{number}" for number in range(1, 25)) + "."
     for table in (
-            "| Label | Detail |\n"
-            "| --- | --- |\n"
-            f"| Clear | {short_cell} |",
-            "Label | Detail\n"
-            "--- | ---\n"
-            f"Clear | {short_cell}"):
+        f"| Label | Detail |\n| --- | --- |\n| Clear | {short_cell} |",
+        f"Label | Detail\n--- | ---\nClear | {short_cell}",
+    ):
         findings, words_total = lint(table)
         assert not any(f["rule"] == "long-sentence" for f in findings), findings
         assert words_total == 27, words_total
     long_cell = " ".join(f"term{number}" for number in range(1, 27)) + "."
-    findings, _ = lint(
-        "| Label | Detail |\n"
-        "| --- | --- |\n"
-        f"| Clear | {long_cell} |"
-    )
+    findings, _ = lint(f"| Label | Detail |\n| --- | --- |\n| Clear | {long_cell} |")
     long_sentences = [f for f in findings if f["rule"] == "long-sentence"]
     assert len(long_sentences) == 1, long_sentences
     assert long_sentences[0]["match"] == "26 words", long_sentences
+
+
+def _selftest_synonyms_and_labels():
     # synonym rotation: second member flagged, first named as the keeper
     findings, _ = lint("Check the config file. Then verify the output. Verify twice.")
     rot = [f for f in findings if f["rule"] == "synonym-rotation"]
@@ -442,6 +574,15 @@ def selftest():
     # per-file labels
     findings, _ = lint("a; b", filename="x.md")
     assert findings[0]["file"] == "x.md"
+
+
+def selftest():
+    _selftest_rules_and_hedges()
+    _selftest_list_markers()
+    _selftest_list_continuations()
+    _selftest_list_indentation()
+    _selftest_prose_and_tables()
+    _selftest_synonyms_and_labels()
     print("selftest OK")
 
 

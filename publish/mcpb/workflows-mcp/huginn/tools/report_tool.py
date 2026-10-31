@@ -63,6 +63,19 @@ class ReportSection:
     order: int = 0
 
 
+def _extract_encut(text: str) -> str | None:
+    """从 OUTCAR 前 100 行里抓 ENCUT 值, 没有返回 None."""
+    if "ENCUT" not in text:
+        return None
+    for line in text.split("\n")[:100]:
+        if "ENCUT" in line and "=" in line:
+            parts = line.split("=")
+            if len(parts) >= 2:
+                return parts[-1].strip().split()[0]
+            return None
+    return None
+
+
 class ReportGenerator:
     """Generate computational reports from materials science workflows."""
 
@@ -365,7 +378,14 @@ class ReportComparator:
         lines = ["## Methods Comparison", ""]
         lines.append("| Parameter | " + " | ".join(self.names) + " |")
         lines.append("|-----------|" + "|".join(["-------"] * len(self.names)) + "|")
-        param_keys = ["method", "functional", "encut", "kpoints", "pseudopotentials", "smearing"]
+        param_keys = [
+            "method",
+            "functional",
+            "encut",
+            "kpoints",
+            "pseudopotentials",
+            "smearing",
+        ]
         for key in param_keys:
             vals = []
             for name in self.names:
@@ -416,6 +436,87 @@ class ReportComparator:
         return "\n".join(lines)
 
 
+def _run_latex_passes(
+    engine: str, tex_file: Path, tmp: str
+) -> tuple[list[str], ToolResult | None]:
+    """跑两遍 LaTeX; 超时返回 (errors, 错误结果)."""
+    import subprocess
+
+    errors: list[str] = []
+    for pass_num in (1, 2):
+        try:
+            proc = subprocess.run(
+                [
+                    engine,
+                    "-interaction=nonstopmode",
+                    "-halt-on-error",
+                    str(tex_file),
+                ],
+                cwd=tmp,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            return errors, ToolResult(
+                data=None,
+                success=False,
+                error=f"{engine} timed out on pass {pass_num}.",
+            )
+        if proc.returncode != 0:
+            errors.append(
+                f"Pass {pass_num} failed (exit {proc.returncode}): "
+                f"{proc.stderr[:500] if proc.stderr else proc.stdout[:500]}"
+            )
+            break
+    return errors, None
+
+
+def _compile_pdf_in_dir(engine: str, tex_source: str, tmp: str) -> ToolResult:
+    """在临时目录里写 tex / 跑两遍 / 产出 base64 PDF."""
+    import base64
+
+    tex_file = Path(tmp) / "report.tex"
+    tex_file.write_text(tex_source, encoding="utf-8")
+
+    errors, failure = _run_latex_passes(engine, tex_file, tmp)
+    if failure is not None:
+        return failure
+
+    log_text = ""
+    log_file = Path(tmp) / "report.log"
+    if log_file.exists():
+        log_text = log_file.read_text(errors="ignore")[:5000]
+
+    pdf_file = Path(tmp) / "report.pdf"
+    if not pdf_file.exists() or errors:
+        return ToolResult(
+            data={
+                "engine": engine,
+                "success": False,
+                "log": log_text,
+                "errors": errors,
+            },
+            success=False,
+            error="; ".join(errors) if errors else "PDF not generated.",
+        )
+
+    pdf_bytes = pdf_file.read_bytes()
+    pdf_b64 = base64.b64encode(pdf_bytes).decode("ascii")
+    return ToolResult(
+        data={
+            "pdf_base64": pdf_b64,
+            "pdf_size_bytes": len(pdf_bytes),
+            "log": log_text,
+            "engine": engine,
+            "success": True,
+            "errors": [],
+            "message": f"PDF compiled with {engine}, {len(pdf_bytes)} bytes.",
+        },
+        success=True,
+    )
+
+
 class ReportTool(HuginnTool):
     """Generate computational reports from simulation results."""
 
@@ -450,9 +551,7 @@ class ReportTool(HuginnTool):
 
         engine 不存在时返回 success=False + 安装提示, 不抛异常.
         """
-        import base64
         import shutil
-        import subprocess
         import tempfile
 
         if not args.tex_source:
@@ -474,69 +573,7 @@ class ReportTool(HuginnTool):
             )
 
         with tempfile.TemporaryDirectory() as tmp:
-            tex_file = Path(tmp) / "report.tex"
-            tex_file.write_text(args.tex_source, encoding="utf-8")
-
-            errors: list[str] = []
-            log_text = ""
-            for pass_num in (1, 2):
-                try:
-                    proc = subprocess.run(
-                        [
-                            engine,
-                            "-interaction=nonstopmode",
-                            "-halt-on-error",
-                            str(tex_file),
-                        ],
-                        cwd=tmp,
-                        capture_output=True,
-                        text=True,
-                        timeout=120,
-                    )
-                except subprocess.TimeoutExpired:
-                    return ToolResult(
-                        data=None,
-                        success=False,
-                        error=f"{engine} timed out on pass {pass_num}.",
-                    )
-                if proc.returncode != 0:
-                    errors.append(
-                        f"Pass {pass_num} failed (exit {proc.returncode}): "
-                        f"{proc.stderr[:500] if proc.stderr else proc.stdout[:500]}"
-                    )
-                    break
-
-            log_file = Path(tmp) / "report.log"
-            if log_file.exists():
-                log_text = log_file.read_text(errors="ignore")[:5000]
-
-            pdf_file = Path(tmp) / "report.pdf"
-            if not pdf_file.exists() or errors:
-                return ToolResult(
-                    data={
-                        "engine": engine,
-                        "success": False,
-                        "log": log_text,
-                        "errors": errors,
-                    },
-                    success=False,
-                    error="; ".join(errors) if errors else "PDF not generated.",
-                )
-
-            pdf_bytes = pdf_file.read_bytes()
-            pdf_b64 = base64.b64encode(pdf_bytes).decode("ascii")
-            return ToolResult(
-                data={
-                    "pdf_base64": pdf_b64,
-                    "pdf_size_bytes": len(pdf_bytes),
-                    "log": log_text,
-                    "engine": engine,
-                    "success": True,
-                    "errors": [],
-                    "message": f"PDF compiled with {engine}, {len(pdf_bytes)} bytes.",
-                },
-                success=True,
-            )
+            return _compile_pdf_in_dir(engine, args.tex_source, tmp)
 
     def _generate(self, args: ReportToolInput) -> ToolResult:
         data = args.workflow_results or {}
@@ -612,18 +649,12 @@ class ReportTool(HuginnTool):
 
         # Try to extract basic info from OUTCAR-like files
         for f in files:
-            if f.name.upper() == "OUTCAR":
-                text = f.read_text(errors="ignore")
-                if "ENCUT" in text:
-                    for line in text.split("\n")[:100]:
-                        if "ENCUT" in line and "=" in line:
-                            parts = line.split("=")
-                            if len(parts) >= 2:
-                                data.setdefault("methods", {})["encut"] = (
-                                    parts[-1].strip().split()[0]
-                                )
-                            break
-                break
+            if f.name.upper() != "OUTCAR":
+                continue
+            encut = _extract_encut(f.read_text(errors="ignore"))
+            if encut is not None:
+                data.setdefault("methods", {})["encut"] = encut
+            break
 
         return data
 

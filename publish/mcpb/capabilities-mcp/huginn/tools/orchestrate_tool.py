@@ -37,6 +37,45 @@ class OrchestrateOutput(BaseModel):
     error: str | None = None
 
 
+def _validate_agent_ids(args: OrchestrateInput, factory) -> ToolResult | None:
+    # If agent_ids provided, temporarily narrow factory profiles (orchestrator uses factory.list_profiles)
+    if not args.agent_ids:
+        return None
+    available = {p.id for p in factory.list_profiles()}
+    missing = [a for a in args.agent_ids if a not in available]
+    if missing:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"Unknown agent profiles: {missing}. Available: {sorted(available)}",
+        )
+    return None
+
+
+def _build_output(result, synthesize: bool) -> OrchestrateOutput:
+    if synthesize and result.success:
+        summary = result.summary
+    else:
+        summary = result.summary or ""
+
+    return OrchestrateOutput(
+        success=result.success,
+        objective=result.objective,
+        plan=[
+            {
+                "task_id": t.task_id,
+                "agent_id": t.agent_id,
+                "status": t.status,
+                "prompt": t.prompt,
+            }
+            for t in result.plan.tasks
+        ],
+        outputs=result.outputs,
+        summary=summary,
+        error=result.error,
+    )
+
+
 class OrchestrateTool(HuginnTool[OrchestrateInput, OrchestrateOutput]):
     name = "orchestrate"
     category = "meta"
@@ -62,16 +101,9 @@ class OrchestrateTool(HuginnTool[OrchestrateInput, OrchestrateOutput]):
             from huginn.agents.orchestrator import Orchestrator
 
             factory = context.agent_factory
-            # If agent_ids provided, temporarily narrow factory profiles (orchestrator uses factory.list_profiles)
-            if args.agent_ids:
-                available = {p.id for p in factory.list_profiles()}
-                missing = [a for a in args.agent_ids if a not in available]
-                if missing:
-                    return ToolResult(
-                        data=None,
-                        success=False,
-                        error=f"Unknown agent profiles: {missing}. Available: {sorted(available)}",
-                    )
+            failure = _validate_agent_ids(args, factory)
+            if failure is not None:
+                return failure
 
             orchestrator = Orchestrator(
                 factory=factory,
@@ -79,28 +111,9 @@ class OrchestrateTool(HuginnTool[OrchestrateInput, OrchestrateOutput]):
                 max_concurrent=max(1, factory.config.max_concurrent_subagents),
             )
             result = await orchestrator.run(args.objective)
-            if args.synthesize and result.success:
-                summary = result.summary
-            else:
-                summary = result.summary or ""
 
             return ToolResult(
-                data=OrchestrateOutput(
-                    success=result.success,
-                    objective=result.objective,
-                    plan=[
-                        {
-                            "task_id": t.task_id,
-                            "agent_id": t.agent_id,
-                            "status": t.status,
-                            "prompt": t.prompt,
-                        }
-                        for t in result.plan.tasks
-                    ],
-                    outputs=result.outputs,
-                    summary=summary,
-                    error=result.error,
-                ).model_dump(),
+                data=_build_output(result, args.synthesize).model_dump(),
                 success=result.success,
             )
         except Exception as exc:

@@ -139,20 +139,10 @@ class ImageIndex:
         # image similarity branch
         img_scores: dict[int, float] = {}
         if query is not None:
-            enc = self.encoder
-            if enc is None or not enc.available:
-                # No encoder: only text path can return anything
-                if text_query is None:
-                    return []
-            else:
-                query_vec = enc.encode_image(query)
-                if query_vec is not None:
-                    for i, entry in enumerate(self._entries):
-                        vec_list = entry.get("vector")
-                        if not vec_list:
-                            continue
-                        vec = np.asarray(vec_list, dtype=np.float32)
-                        img_scores[i] = float(enc.similarity(query_vec, vec))
+            img_scores_or_none = self._image_scores(query, text_query)
+            if img_scores_or_none is None:
+                return []
+            img_scores = img_scores_or_none
 
         # QW4: text→image branch (keyword fallback in absence of CLIP text encoder)
         text_scores: dict[int, float] = {}
@@ -163,39 +153,29 @@ class ImageIndex:
         candidate_idx = set(img_scores) | set(text_scores)
         if not candidate_idx:
             return []
-        scored: list[tuple[float, dict[str, Any]]] = []
-        for i in candidate_idx:
-            entry = self._entries[i]
-            sim_img = img_scores.get(i, 0.0)
-            sim_txt = text_scores.get(i, 0.0)
-            if img_scores and text_scores:
-                blended = sim_img * 0.6 + sim_txt * 0.4
-            elif img_scores:
-                blended = sim_img
-            else:
-                blended = sim_txt
-            scored.append((blended, entry))
-            # 记 sub-scores 给 result, 让 LLM 看到来源
-            entry_blended_meta = {
-                "image_similarity": round(float(max(sim_img, 0.0)), 6) if img_scores else None,
-                "text_match_score": round(float(sim_txt), 6) if text_scores else None,
-            }
-            # 临时挂在 entry 上, 后面 result 提取
-            entry["_search_breakdown"] = entry_blended_meta
-
+        scored = _blend_search_scores(self, img_scores, text_scores, candidate_idx)
         scored.sort(key=lambda pair: pair[0], reverse=True)
-        results: list[dict[str, Any]] = []
-        for sim, entry in scored[:top_k]:
-            breakdown = entry.pop("_search_breakdown", {})
-            results.append({
-                "path": entry["path"],
-                "metadata": entry.get("metadata", {}),
-                "similarity": round(float(max(sim, 0.0)), 6),
-                "image_similarity": breakdown.get("image_similarity"),
-                "text_match_score": breakdown.get("text_match_score"),
-                "added_at": entry.get("added_at"),
-            })
-        return results
+        return _build_search_results(scored, top_k)
+
+    def _image_scores(
+        self, query: str | Path | bytes, text_query: str | None
+    ) -> dict[int, float] | None:
+        img_scores: dict[int, float] = {}
+        enc = self.encoder
+        if enc is None or not enc.available:
+            # No encoder: only text path can return anything
+            if text_query is None:
+                return None
+            return img_scores
+        query_vec = enc.encode_image(query)
+        if query_vec is not None:
+            for i, entry in enumerate(self._entries):
+                vec_list = entry.get("vector")
+                if not vec_list:
+                    continue
+                vec = np.asarray(vec_list, dtype=np.float32)
+                img_scores[i] = float(enc.similarity(query_vec, vec))
+        return img_scores
 
     def neighborhood(self, x: Any, radius: float | None = None) -> set[Any]:
         """A 拓扑 Protocol — SupportsNeighborhood 实现.
@@ -256,6 +236,56 @@ class ImageIndex:
 
 # ── QW4: text→image keyword fallback ────────────────────────────────────────
 
+
+def _blend_search_scores(
+    index: ImageIndex,
+    img_scores: dict[int, float],
+    text_scores: dict[int, float],
+    candidate_idx: set[int],
+) -> list[tuple[float, dict[str, Any]]]:
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for i in candidate_idx:
+        entry = index._entries[i]
+        sim_img = img_scores.get(i, 0.0)
+        sim_txt = text_scores.get(i, 0.0)
+        if img_scores and text_scores:
+            blended = sim_img * 0.6 + sim_txt * 0.4
+        elif img_scores:
+            blended = sim_img
+        else:
+            blended = sim_txt
+        scored.append((blended, entry))
+        # 记 sub-scores 给 result, 让 LLM 看到来源
+        entry_blended_meta = {
+            "image_similarity": round(float(max(sim_img, 0.0)), 6)
+            if img_scores
+            else None,
+            "text_match_score": round(float(sim_txt), 6) if text_scores else None,
+        }
+        # 临时挂在 entry 上, 后面 result 提取
+        entry["_search_breakdown"] = entry_blended_meta
+    return scored
+
+
+def _build_search_results(
+    scored: list[tuple[float, dict[str, Any]]], top_k: int
+) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for sim, entry in scored[:top_k]:
+        breakdown = entry.pop("_search_breakdown", {})
+        results.append(
+            {
+                "path": entry["path"],
+                "metadata": entry.get("metadata", {}),
+                "similarity": round(float(max(sim, 0.0)), 6),
+                "image_similarity": breakdown.get("image_similarity"),
+                "text_match_score": breakdown.get("text_match_score"),
+                "added_at": entry.get("added_at"),
+            }
+        )
+    return results
+
+
 # metadata 字段权重 — title 最重, caption 次之, keywords/tags 平, description 轻.
 # ponytail: 启发式权重, 不调 LLM. 升级: encode_text (CLIP) 真语义匹配.
 _TEXT_FIELD_WEIGHTS: dict[str, float] = {
@@ -314,7 +344,16 @@ def _selfcheck() -> None:
     idx = ImageIndex()  # store_path=None
     # encoder 默认走 get_encoder(), 测试环境通常没装 → available=False
     # 手动注入 entries (绕开 add_image 的 encode 步骤)
-    idx._entries = [
+    idx._entries = _selfcheck_entries()
+
+    _selfcheck_text_match(idx)
+    _selfcheck_empty(idx)
+
+    print("QW4 ALL CHECKS PASSED")
+
+
+def _selfcheck_entries() -> list[dict[str, Any]]:
+    return [
         {
             "path": "/fake/band.png",
             "metadata": {
@@ -345,13 +384,17 @@ def _selfcheck() -> None:
         },
     ]
 
+
+def _selfcheck_text_match(idx: ImageIndex) -> None:
     # 场景 1: 单 token "band" → 只命中 band.png
     r1 = idx.search(text_query="band", top_k=3)
     assert len(r1) == 1, f"expected 1 match, got {len(r1)}: {[r['path'] for r in r1]}"
     assert r1[0]["path"].endswith("band.png"), f"wrong match: {r1[0]['path']}"
     assert r1[0]["text_match_score"] is not None and r1[0]["text_match_score"] > 0
     assert r1[0]["image_similarity"] is None  # 没 query
-    print(f"1. text_query single token OK: {r1[0]['path']} score={r1[0]['text_match_score']}")
+    print(
+        f"1. text_query single token OK: {r1[0]['path']} score={r1[0]['text_match_score']}"
+    )
 
     # 场景 2: multi-token "band GaAs" → title 命中 2 token, 比单 token 分数高
     r2 = idx.search(text_query="band GaAs", top_k=3)
@@ -360,10 +403,15 @@ def _selfcheck() -> None:
     # title 含 "band"+"GaAs" → raw = 3.0 * 2/2 = 3.0; max = 3.0*2 = 6.0 → 0.5
     # caption 含 "Gamma" 不含 "band/GaAs" → 0; keywords 含 "band"+"GaAs" → 1.5*1.0 = 1.5
     # raw = 3.0 + 1.5 = 4.5; final = 4.5/6.0 = 0.75
-    assert abs(r2[0]["text_match_score"] - 0.75) < 1e-3, \
+    assert abs(r2[0]["text_match_score"] - 0.75) < 1e-3, (
         f"expected 0.75, got {r2[0]['text_match_score']}"
-    print(f"2. text_query multi-token OK: {r2[0]['path']} score={r2[0]['text_match_score']}")
+    )
+    print(
+        f"2. text_query multi-token OK: {r2[0]['path']} score={r2[0]['text_match_score']}"
+    )
 
+
+def _selfcheck_empty(idx: ImageIndex) -> None:
     # 场景 3: 空 query + 空 text_query → []
     r3 = idx.search(query=None, text_query=None)
     assert r3 == [], f"expected [], got {r3}"
@@ -373,8 +421,6 @@ def _selfcheck() -> None:
     r4 = idx.search(text_query="phonon", top_k=3)
     assert r4 == [], f"expected [], got {r4}"
     print("4. no match OK")
-
-    print("QW4 ALL CHECKS PASSED")
 
 
 if __name__ == "__main__":

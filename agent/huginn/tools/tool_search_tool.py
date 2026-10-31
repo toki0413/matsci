@@ -23,6 +23,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from huginn.core_types import ToolContext, ToolResult
+from huginn.tools._embed import lazy_embed_fn
 from huginn.tools.base import HuginnTool
 from huginn.utils.cache import TimedLRUCache
 
@@ -84,31 +85,6 @@ def _expand_query_tokens(query: str) -> list[str]:
     return tokens
 
 
-def _lazy_embed_fn() -> Callable[[list[str]], list[list[float]]] | None:
-    """复用 RAG 的 embedding 模型 (chroma DefaultEF ONNX), 未缓存则 None.
-
-    与 agentic_search_tool 同源: 语义打分是可选增强, embedding 模型没下载时
-    安静降级为关键词打分, 不阻塞工具发现.
-    """
-    try:
-        from huginn.rag.vector_store import _embedding_model_cached
-
-        if not _embedding_model_cached():
-            return None
-        from chromadb.utils.embedding_functions import DefaultEF
-
-        ef = DefaultEF()
-        _ = ef(["probe"])  # 触发加载, 失败会抛异常
-
-        def embed(texts: list[str]) -> list[list[float]]:
-            return ef(texts)
-
-        return embed
-    except Exception:
-        logger.debug("semantic embed unavailable, keyword scoring only", exc_info=True)
-        return None
-
-
 def _query_tokens(query: str) -> list[str]:
     """query 拆 token: 英文按词 (>=2 字), 中文按单字 + 连续多字词组."""
     q = (query or "").lower().strip()
@@ -144,7 +120,9 @@ def _tool_search_text(name: str, tool: HuginnTool) -> str:
     return " ".join(p for p in parts if p)
 
 
-def _tool_vector(name: str, tool: HuginnTool, embed: Callable | None) -> list[float] | None:
+def _tool_vector(
+    name: str, tool: HuginnTool, embed: Callable | None
+) -> list[float] | None:
     """工具的 embedding 向量, 带 TTL 缓存."""
     if embed is None:
         return None
@@ -174,6 +152,112 @@ def _keyword_score(query: str, name: str, tool: HuginnTool) -> float:
     )
 
 
+def _substring_candidates(self_name: str, q: str, tools):
+    """1) 子串精确匹配保底 (原行为)."""
+    candidates: list[tuple[str, HuginnTool]] = []
+    for name, tool in tools:
+        if name == self_name:
+            continue
+        desc = tool.description or ""
+        if q and q not in name.lower() and q not in desc.lower():
+            continue
+        candidates.append((name, tool))
+    return candidates
+
+
+def _synonym_candidates(self_name: str, query: str, q: str, candidates, tools):
+    """1.5) 中文同义词召回: 与子串匹配合并 (而非互斥), 否则任何工具命中原始
+    中文字符串就会让整段同义词召回被跳过, 漏掉真正的英文命名工具.
+    只用英文同义词 token (单字 token 噪音大, 会把含该字的无关工具全拉进来)."""
+    syn_tokens = _synonym_tokens(query)
+    if q and syn_tokens:
+        matched = {n for n, _ in candidates}
+        for name, tool in tools:
+            if name == self_name or name in matched:
+                continue
+            n_low = name.lower()
+            d_low = (tool.description or "").lower()
+            if any(t in n_low or t in d_low for t in syn_tokens):
+                candidates.append((name, tool))
+    return candidates
+
+
+def _query_embedding(q: str, semantic: bool):
+    """查询向量: 语义检索开启且模型可用时计算, 否则降级."""
+    embed = lazy_embed_fn() if semantic else None
+    query_vec: list[float] | None = None
+    if embed is not None:
+        try:
+            query_vec = embed([q])[0]
+        except Exception:
+            logger.debug("query embed failed", exc_info=True)
+            query_vec = None
+    return embed, query_vec
+
+
+def _semantic_candidates(self_name: str, embed, query_vec, tools, candidates):
+    """2) embedding 语义召回: 子串没命中但语义相近的工具."""
+    for name, tool in tools:
+        if name == self_name:
+            continue
+        vec = _tool_vector(name, tool, embed)
+        if vec is not None and _cosine(query_vec, vec) >= 0.2:
+            candidates.append((name, tool))
+    return candidates
+
+
+def _score_candidates(candidates, query: str, query_vec, embed):
+    """3) 混合排序: 关键词命中 + 语义相似度."""
+    scored: list[dict[str, Any]] = []
+    for name, tool in candidates:
+        kw = _keyword_score(query, name, tool)
+        sem = 0.0
+        if query_vec is not None:
+            vec = _tool_vector(name, tool, embed)
+            if vec is not None:
+                sem = _cosine(query_vec, vec)
+        # 语义分兜底: 子串已命中但没有语义分时给保底, 保持原文行为排前面
+        relevance = kw + sem * 3.0
+        scored.append((name, tool, relevance))
+    return scored
+
+
+def _browse_result(query, candidates, limit: int, cache_key, to_rows) -> ToolResult:
+    """空 query 的纯列表浏览结果."""
+    results = to_rows(candidates, limit)
+    result = ToolResult(
+        data={"query": query, "count": len(results), "tools": results},
+        success=True,
+    )
+    _RESULT_CACHE.set(cache_key, result)
+    return result
+
+
+def _ranked_result(query, scored, limit: int, cache_key, to_rows) -> ToolResult:
+    """排序截断后组装结果, 并附上 relevance 分."""
+    scored.sort(key=lambda t: (t[2], t[0]), reverse=True)
+
+    results = to_rows(
+        [(n, t) for n, t, _ in scored[:limit]],
+        limit,
+    )
+    # 附上实际 relevance 分
+    rel_map = {n: r for n, t, r in scored}
+    for row in results:
+        row["relevance"] = round(rel_map.get(row["name"], 0.0), 4)
+
+    result = ToolResult(
+        data={
+            "query": query,
+            "count": len(results),
+            "tools": results,
+        },
+        success=True,
+    )
+    _RESULT_CACHE.set(cache_key, result)
+    return result
+
+
 class ToolSearchInput(BaseModel):
     action: Literal["search", "invoke"] = Field(
         ..., description="search=搜索工具; invoke=代理调用指定工具"
@@ -191,7 +275,9 @@ class ToolSearchInput(BaseModel):
         description="invoke 时用: 传给目标工具的参数",
     )
     limit: int = Field(
-        default=10, ge=1, le=30,
+        default=10,
+        ge=1,
+        le=30,
         description="search 时最多返回几条结果",
     )
     semantic: bool = Field(
@@ -219,8 +305,12 @@ class ToolSearchTool(HuginnTool):
         if args.action == "search":
             return self._search(args.query or "", args.limit, args.semantic)
         if args.action == "invoke":
-            return await self._invoke(args.tool_name or "", args.tool_args or {}, context)
-        return ToolResult(data=None, success=False, error=f"unknown action: {args.action}")
+            return await self._invoke(
+                args.tool_name or "", args.tool_args or {}, context
+            )
+        return ToolResult(
+            data=None, success=False, error=f"unknown action: {args.action}"
+        )
 
     def _search(self, query: str, limit: int, semantic: bool = True) -> ToolResult:
         from huginn.tools.registry import ToolRegistry
@@ -232,91 +322,29 @@ class ToolSearchTool(HuginnTool):
             return cached
 
         q = query.lower().strip()
-        candidates: list[tuple[str, HuginnTool]] = []
+        tools = ToolRegistry._tools.items()
         # 1) 子串精确匹配保底 (原行为)
-        for name, tool in ToolRegistry._tools.items():
-            if name == self.name:
-                continue
-            desc = tool.description or ""
-            if q and q not in name.lower() and q not in desc.lower():
-                continue
-            candidates.append((name, tool))
+        candidates = _substring_candidates(self.name, q, tools)
 
-        # 1.5) 中文同义词召回: 与子串匹配合并 (而非互斥), 否则任何工具命中原始
-        # 中文字符串就会让整段同义词召回被跳过, 漏掉真正的英文命名工具.
-        # 只用英文同义词 token (单字 token 噪音大, 会把含该字的无关工具全拉进来).
-        syn_tokens = _synonym_tokens(query)
-        if q and syn_tokens:
-            matched = {n for n, _ in candidates}
-            for name, tool in ToolRegistry._tools.items():
-                if name == self.name or name in matched:
-                    continue
-                n_low = name.lower()
-                d_low = (tool.description or "").lower()
-                if any(t in n_low or t in d_low for t in syn_tokens):
-                    candidates.append((name, tool))
+        # 1.5) 中文同义词召回: 与子串匹配合并 (而非互斥)
+        candidates = _synonym_candidates(self.name, query, q, candidates, tools)
 
         # 空 query: 纯列表浏览, 跳过语义打分, 保持原"按注册顺序"语义
         if not q:
-            results = self._to_result_rows(candidates, limit)
-            result = ToolResult(
-                data={"query": query, "count": len(results), "tools": results},
-                success=True,
+            return _browse_result(
+                query, candidates, limit, cache_key, self._to_result_rows
             )
-            _RESULT_CACHE.set(cache_key, result)
-            return result
 
         # 2) embedding 语义召回: 子串没命中但语义相近的工具
-        embed = _lazy_embed_fn() if semantic else None
-        query_vec: list[float] | None = None
-        if embed is not None:
-            try:
-                query_vec = embed([q])[0]
-            except Exception:
-                logger.debug("query embed failed", exc_info=True)
-                query_vec = None
+        embed, query_vec = _query_embedding(q, semantic)
         if embed is not None and query_vec is not None and not candidates:
-            for name, tool in ToolRegistry._tools.items():
-                if name == self.name:
-                    continue
-                vec = _tool_vector(name, tool, embed)
-                if vec is not None and _cosine(query_vec, vec) >= 0.2:
-                    candidates.append((name, tool))
+            candidates = _semantic_candidates(
+                self.name, embed, query_vec, tools, candidates
+            )
 
         # 3) 混合排序: 关键词命中 + 语义相似度
-        scored: list[dict[str, Any]] = []
-        for name, tool in candidates:
-            kw = _keyword_score(query, name, tool)
-            sem = 0.0
-            if query_vec is not None:
-                vec = _tool_vector(name, tool, embed)
-                if vec is not None:
-                    sem = _cosine(query_vec, vec)
-            # 语义分兜底: 子串已命中但没有语义分时给保底, 保持原文行为排前面
-            relevance = kw + sem * 3.0
-            scored.append((name, tool, relevance))
-
-        scored.sort(key=lambda t: (t[2], t[0]), reverse=True)
-
-        results = self._to_result_rows(
-            [(n, t) for n, t, _ in scored[:limit]],
-            limit,
-        )
-        # 附上实际 relevance 分
-        rel_map = {n: r for n, t, r in scored}
-        for row in results:
-            row["relevance"] = round(rel_map.get(row["name"], 0.0), 4)
-
-        result = ToolResult(
-            data={
-                "query": query,
-                "count": len(results),
-                "tools": results,
-            },
-            success=True,
-        )
-        _RESULT_CACHE.set(cache_key, result)
-        return result
+        scored = _score_candidates(candidates, query, query_vec, embed)
+        return _ranked_result(query, scored, limit, cache_key, self._to_result_rows)
 
     @staticmethod
     def _to_result_rows(
@@ -333,14 +361,16 @@ class ToolSearchTool(HuginnTool):
                 for pname, pinfo in schema["properties"].items():
                     ptype = pinfo.get("type", "?")
                     params.append(f"{pname}:{ptype}")
-            rows.append({
-                "name": name,
-                "description": (tool.description or "")[:200],
-                "active": tool.active,
-                "params": params[:8],
-                "category": getattr(tool, "category", ""),
-                "relevance": relevance,
-            })
+            rows.append(
+                {
+                    "name": name,
+                    "description": (tool.description or "")[:200],
+                    "active": tool.active,
+                    "params": params[:8],
+                    "category": getattr(tool, "category", ""),
+                    "relevance": relevance,
+                }
+            )
         return rows
 
     async def _invoke(
@@ -351,7 +381,8 @@ class ToolSearchTool(HuginnTool):
         tool = ToolRegistry.get(tool_name)
         if tool is None:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"tool '{tool_name}' not found in registry",
             )
         try:

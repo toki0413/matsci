@@ -152,6 +152,56 @@ def write_sharded_jsonl(state: _ShardState, record: dict, iter_n: int | None) ->
         logger.debug("sharded jsonl write failed (iter=%s)", iter_n, exc_info=True)
 
 
+def _shard_paths(state: _ShardState) -> list[Path]:
+    """列出本次扫描要读的分片文件 (归档 .gz 在前, 当前分片在后)."""
+    paths: list[Path] = []
+    if state.task_id:
+        arch_dir = state.base_dir / "archive" / state.task_id
+        if arch_dir.exists():
+            paths.extend(sorted(arch_dir.glob(f"{state.filename_prefix}_*_*.jsonl.gz")))
+        if state.current_shard_path and state.current_shard_path.exists():
+            paths.append(state.current_shard_path)
+        return paths
+    single = state.default_path or (state.base_dir / f"{state.filename_prefix}.jsonl")
+    if single.exists():
+        paths.append(single)
+    return paths
+
+
+def _record_iteration(rec: dict) -> int | None:
+    """取记录的 iteration 字段并转 int, 缺失或非法返回 None."""
+    it = (rec.get("data") or {}).get("iteration")
+    if it is None:
+        it = rec.get("iteration")
+    if it is None:
+        return None
+    try:
+        return int(it)
+    except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
+        return None
+
+
+def _iter_records_in_range(p: Path, start_iter: int, end_iter: int) -> list[dict]:
+    """读一个分片文件, 返回 iteration 落在 [start_iter, end_iter] 的记录."""
+    out: list[dict] = []
+    opener = gzip.open if p.suffix == ".gz" else open
+    with opener(p, "rt", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                logger.debug("best-effort op failed", exc_info=True)
+                continue
+            it = _record_iteration(rec)
+            if it is not None and start_iter <= it <= end_iter:
+                out.append(rec)
+    return out
+
+
 def shard_iter_range(
     state: _ShardState,
     start_iter: int,
@@ -164,44 +214,9 @@ def shard_iter_range(
     无关, 不该出现在 iter_range 结果里.
     """
     records: list[dict] = []
-    paths: list[Path] = []
-    if state.task_id:
-        arch_dir = state.base_dir / "archive" / state.task_id
-        if arch_dir.exists():
-            paths.extend(sorted(arch_dir.glob(f"{state.filename_prefix}_*_*.jsonl.gz")))
-        if state.current_shard_path and state.current_shard_path.exists():
-            paths.append(state.current_shard_path)
-    else:
-        single = state.default_path or (state.base_dir / f"{state.filename_prefix}.jsonl")
-        if single.exists():
-            paths.append(single)
-
-    for p in paths:
+    for p in _shard_paths(state):
         try:
-            with (gzip.open(p, "rt", encoding="utf-8")
-                      if p.suffix == ".gz"
-                      else open(p, encoding="utf-8")) as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        rec = json.loads(line)
-                    except json.JSONDecodeError:
-                        logger.debug("best-effort op failed", exc_info=True)
-                        continue
-                    it = (rec.get("data") or {}).get("iteration")
-                    if it is None:
-                        it = rec.get("iteration")
-                    if it is None:
-                        continue
-                    try:
-                        it = int(it)
-                    except (TypeError, ValueError):
-                        logger.debug("best-effort op failed", exc_info=True)
-                        continue
-                    if start_iter <= it <= end_iter:
-                        records.append(rec)
+            records.extend(_iter_records_in_range(p, start_iter, end_iter))
         except Exception:
             logger.debug("shard scan failed for %s", p, exc_info=True)
             continue
@@ -638,13 +653,19 @@ def verify_audit_chain(path: Path | None = None) -> bool:
 #   4) shard_iter_range 跨分片读 50..150 → 101 条
 #   5) _BufferedAuditWriter 跨分片 hash chain 连续
 def _selfcheck() -> None:
-    import tempfile
-
-    from huginn.events.event_bus import AgentEvent
-
     print("Running audit_log sharding self-check...")
 
-    # ── Test 1: _ShardState + write_sharded_jsonl 直接验证 ───────
+    _selfcheck_shard_state()
+    _selfcheck_hash_chain()
+    _selfcheck_backward_compat()
+
+    print("\naudit_log sharding self-check passed.")
+
+
+def _selfcheck_shard_state() -> None:
+    """Test 1: _ShardState + write_sharded_jsonl 分片 / 归档 / 跨片读."""
+    import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         os.environ["HUGINN_TRACE_SHARD_INTERVAL"] = "100"
@@ -662,36 +683,19 @@ def _selfcheck() -> None:
 
             arch_dir = tmp_path / "archive" / "selfcheck_task"
             gz_files = sorted(arch_dir.glob("audit_*_*.jsonl.gz"))
-            assert len(gz_files) == 9, (
-                f"expected 9 archived shards (0..899), got {len(gz_files)}: "
-                f"{[p.name for p in gz_files]}"
-            )
-            # 当前分片应是 audit_900.jsonl
-            cur_path = tmp_path / "selfcheck_task" / "audit_900.jsonl"
-            assert cur_path.exists(), f"current shard missing: {cur_path}"
-            assert state.current_shard_start == 900, (
-                f"current_shard_start should be 900, got {state.current_shard_start}"
-            )
-            assert state.current_shard_path == cur_path
+            cur_path = _assert_shard_layout(tmp_path, state, gz_files)
 
             # 单文件 < 100MB (实际几十 KB, 兜底磁盘爆掉)
-            for p in gz_files + [cur_path]:
-                size = p.stat().st_size
-                assert size < 100 * 1024 * 1024, f"{p.name} too big: {size} bytes"
-
+            _assert_shard_sizes(gz_files + [cur_path])
             # 归档分片可读 + 行数对 (每分片 100 条)
-            with gzip.open(gz_files[0], "rt", encoding="utf-8") as f:
-                lines = [_l for _l in f if _l.strip()]
-            assert len(lines) == 100, (
-                f"first shard should have 100 lines, got {len(lines)}"
-            )
+            _assert_first_shard_readable(gz_files[0])
 
             # 跨分片读 iter 50..150 → 101 条 (跨 0_99 和 100_199 两个分片)
             records = shard_iter_range(state, 50, 150)
-            iters = sorted(r["iteration"] for r in records)
             assert len(records) == 101, (
                 f"expected 101 records (50..150 inclusive), got {len(records)}"
             )
+            iters = sorted(r["iteration"] for r in records)
             assert iters[0] == 50 and iters[-1] == 150
             print(
                 f"  [OK] _ShardState: 9 .gz + 1 .jsonl, iter_range 50..150 "
@@ -700,56 +704,55 @@ def _selfcheck() -> None:
         finally:
             os.environ.pop("HUGINN_TRACE_SHARD_INTERVAL", None)
 
-    # ── Test 2: _BufferedAuditWriter 跨分片 hash chain 连续 ──────
+
+def _assert_shard_layout(
+    tmp_path: Path, state: _ShardState, gz_files: list[Path]
+) -> Path:
+    """断言 9 个 .gz 归档 + 当前分片 audit_900.jsonl, 返回当前分片路径."""
+    assert len(gz_files) == 9, (
+        f"expected 9 archived shards (0..899), got {len(gz_files)}: "
+        f"{[p.name for p in gz_files]}"
+    )
+    cur_path = tmp_path / "selfcheck_task" / "audit_900.jsonl"
+    assert cur_path.exists(), f"current shard missing: {cur_path}"
+    assert state.current_shard_start == 900, (
+        f"current_shard_start should be 900, got {state.current_shard_start}"
+    )
+    assert state.current_shard_path == cur_path
+    return cur_path
+
+
+def _assert_shard_sizes(paths: list[Path]) -> None:
+    """单文件 < 100MB (实际几十 KB, 兜底磁盘爆掉)."""
+    for p in paths:
+        size = p.stat().st_size
+        assert size < 100 * 1024 * 1024, f"{p.name} too big: {size} bytes"
+
+
+def _assert_first_shard_readable(gz_path: Path) -> None:
+    """归档分片可读且行数正确 (每分片 100 条)."""
+    with gzip.open(gz_path, "rt", encoding="utf-8") as f:
+        lines = [_l for _l in f if _l.strip()]
+    assert len(lines) == 100, f"first shard should have 100 lines, got {len(lines)}"
+
+
+def _selfcheck_hash_chain() -> None:
+    """Test 2: _BufferedAuditWriter 跨分片 hash chain 连续."""
+    import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         os.environ["HUGINN_TRACE_SHARD_INTERVAL"] = "100"
         try:
-            audit_path = tmp_path / "audit.jsonl"
-            writer = _BufferedAuditWriter(audit_path)
-            writer.set_task_id("chain_task")
-            # 250 条 campaign.iteration 事件 → 跨 0/100/200 三个分片
-            for i in range(250):
-                writer.append(AgentEvent(
-                    type="campaign.iteration",
-                    timestamp=float(i),
-                    data={"iteration": i, "tool": "bash"},
-                    thread_id="t1",
-                    source="selfcheck",
-                ))
-            writer.flush()
-            writer.stop()
+            _write_chain_events(tmp_path / "audit.jsonl")
 
-            # 把所有分片 (archive + 当前) 拼回, 验证 hash chain
             arch_dir = tmp_path / "archive" / "chain_task"
-            all_records: list[dict] = []
-            for gz in sorted(arch_dir.glob("audit_*_*.jsonl.gz")):
-                with gzip.open(gz, "rt", encoding="utf-8") as f:
-                    for line in f:
-                        if line.strip():
-                            all_records.append(json.loads(line))
-            # 当前分片 audit_200.jsonl
             cur_path = tmp_path / "chain_task" / "audit_200.jsonl"
-            assert cur_path.exists(), f"current shard missing: {cur_path}"
-            with open(cur_path, encoding="utf-8") as f:
-                for line in f:
-                    if line.strip():
-                        all_records.append(json.loads(line))
-
+            all_records = _collect_shard_records(arch_dir, cur_path)
             assert len(all_records) == 250, (
                 f"expected 250 records across shards, got {len(all_records)}"
             )
-            prev = "0" * 64
-            for i, rec in enumerate(all_records):
-                assert rec["_prev_hash"] == prev, (
-                    f"chain broken at {i}: prev_hash mismatch "
-                    f"(expected {prev[:16]}, got {rec['_prev_hash'][:16]})"
-                )
-                recomputed = _compute_hash(rec, prev)
-                assert rec["_hash"] == recomputed, (
-                    f"chain broken at {i}: hash mismatch"
-                )
-                prev = rec["_hash"]
+            _assert_hash_chain(all_records)
             # 应当有 2 个 .gz (0_99, 100_199) + 1 个 .jsonl (200)
             assert len(list(arch_dir.glob("audit_*_*.jsonl.gz"))) == 2
             print(
@@ -759,7 +762,52 @@ def _selfcheck() -> None:
         finally:
             os.environ.pop("HUGINN_TRACE_SHARD_INTERVAL", None)
 
-    # ── Test 3: task_id 未设时退化为单文件 (兼容旧路径) ─────────
+
+def _write_chain_events(audit_path: Path) -> None:
+    """250 条 campaign.iteration 事件 → 跨 0/100/200 三个分片."""
+    writer = _BufferedAuditWriter(audit_path)
+    writer.set_task_id("chain_task")
+    for i in range(250):
+        writer.append(AgentEvent(
+            type="campaign.iteration",
+            timestamp=float(i),
+            data={"iteration": i, "tool": "bash"},
+            thread_id="t1",
+            source="selfcheck",
+        ))
+    writer.flush()
+    writer.stop()
+
+
+def _collect_shard_records(arch_dir: Path, cur_path: Path) -> list[dict]:
+    """把所有分片 (archive + 当前) 拼回."""
+    assert cur_path.exists(), f"current shard missing: {cur_path}"
+    records: list[dict] = []
+    for gz in sorted(arch_dir.glob("audit_*_*.jsonl.gz")):
+        with gzip.open(gz, "rt", encoding="utf-8") as f:
+            records.extend(json.loads(line) for line in f if line.strip())
+    with open(cur_path, encoding="utf-8") as f:
+        records.extend(json.loads(line) for line in f if line.strip())
+    return records
+
+
+def _assert_hash_chain(records: list[dict]) -> None:
+    """逐条重算 SHA-256, 校验 _prev_hash / _hash 串成连续链."""
+    prev = "0" * 64
+    for i, rec in enumerate(records):
+        assert rec["_prev_hash"] == prev, (
+            f"chain broken at {i}: prev_hash mismatch "
+            f"(expected {prev[:16]}, got {rec['_prev_hash'][:16]})"
+        )
+        recomputed = _compute_hash(rec, prev)
+        assert rec["_hash"] == recomputed, f"chain broken at {i}: hash mismatch"
+        prev = rec["_hash"]
+
+
+def _selfcheck_backward_compat() -> None:
+    """Test 3: task_id 未设时退化为单文件 (兼容旧路径)."""
+    import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         audit_path = tmp_path / "audit.jsonl"
@@ -781,8 +829,6 @@ def _selfcheck() -> None:
         # 没有 task_id 子目录 / archive
         assert not (tmp_path / "archive").exists(), "archive dir should not exist"
         print("  [OK] backward compat: task_id unset → single audit.jsonl")
-
-    print("\naudit_log sharding self-check passed.")
 
 
 if __name__ == "__main__":

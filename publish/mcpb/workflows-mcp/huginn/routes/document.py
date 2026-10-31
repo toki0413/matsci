@@ -72,6 +72,7 @@ def _try_ingest(record: dict[str, Any]) -> tuple[int, bool]:
     """
     try:
         from huginn.server_context import _server_context
+
         kb = getattr(_server_context, "kb", None)
     except Exception:
         logger.debug("best-effort op failed", exc_info=True)
@@ -91,28 +92,11 @@ def _try_ingest(record: dict[str, Any]) -> tuple[int, bool]:
         return 0, True
 
 
-@router.post("/parse")
-async def parse_document(file: UploadFile = File(...)) -> StreamingResponse:
-    """Upload a PDF, stream the DocGraph pipeline.
-
-    Responds with Server-Sent Events. Every stage yields ``{type: stage, pct,
-    message}``; the final event is ``{type: result, result}`` (or ``{type:
-    error, error}`` on failure).
-
-    The heavy M1-M6 + KB ingest runs in a *worker subprocess*
-    (huginn.perception.doc_parse_worker). A native crash in a C extension
-    (e.g. the VCRUNTIME140 access-violation we hit on real papers) then kills
-    only the worker instead of the whole backend.
-    """
-    content = await file.read()
-
+def _validate_pdf_upload(content: bytes) -> None:
     if len(content) > _MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=413,
-            detail=(
-                f"file too large ({len(content)} bytes, "
-                f"max {_MAX_UPLOAD_BYTES})"
-            ),
+            detail=(f"file too large ({len(content)} bytes, max {_MAX_UPLOAD_BYTES})"),
         )
     if not _is_pdf(content):
         raise HTTPException(
@@ -120,14 +104,11 @@ async def parse_document(file: UploadFile = File(...)) -> StreamingResponse:
             detail="only PDF files are accepted",
         )
 
-    tmp_pdf = Path(tempfile.gettempdir()) / f"doc_{uuid.uuid4().hex}.pdf"
-    out_json = Path(tempfile.gettempdir()) / f"doc_{uuid.uuid4().hex}.json"
-    tmp_pdf.write_bytes(content)
-    filename = file.filename or "uploaded.pdf"
-    # 把 KB 存储位置传给 worker, 让自动入库也在子进程里做 (连 embedding 一起隔离).
-    workspace = _get_workspace()
 
-    proc = await asyncio.create_subprocess_exec(
+async def _spawn_parse_worker(
+    tmp_pdf: Path, out_json: Path, filename: str, workspace: str
+):
+    return await asyncio.create_subprocess_exec(
         sys.executable,
         "-m",
         "huginn.perception.doc_parse_worker",
@@ -147,36 +128,66 @@ async def parse_document(file: UploadFile = File(...)) -> StreamingResponse:
         },
     )
 
-    async def event_stream():
-        assert proc.stdout is not None and proc.stderr is not None
-        try:
-            async for line in proc.stdout:
-                text = line.decode("utf-8", errors="replace").rstrip("\n")
-                if text.startswith("PROGRESS "):
-                    yield f"data: {text[len('PROGRESS '):]}\n\n"
 
-            rc = await proc.wait()
-            if rc != 0:
-                err = (await proc.stderr.read()).decode("utf-8", errors="replace")
-                detail = err.strip() or f"解析进程异常退出 (code {rc})"
-                yield f"data: {json.dumps({'type': 'error', 'error': detail})}\n\n"
-            else:
-                record = json.loads(out_json.read_text(encoding="utf-8"))
-                _document_store[record["document_id"]] = record
-                result = {
-                    "document_id": record["document_id"],
-                    "filename": record["filename"],
-                    "stats": record["stats"],
-                    "n_packages": len(record["packages"]),
-                    "packages": record["packages"],
-                    "auto_ingested": record.get("auto_ingested", 0),
-                }
-                yield f"data: {json.dumps({'type': 'result', 'result': result}, ensure_ascii=False)}\n\n"
-        finally:
-            tmp_pdf.unlink(missing_ok=True)
-            out_json.unlink(missing_ok=True)
+async def _parse_event_stream(proc, out_json: Path, tmp_pdf: Path):
+    assert proc.stdout is not None and proc.stderr is not None
+    try:
+        async for line in proc.stdout:
+            text = line.decode("utf-8", errors="replace").rstrip("\n")
+            if text.startswith("PROGRESS "):
+                yield f"data: {text[len('PROGRESS ') :]}\n\n"
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+        rc = await proc.wait()
+        if rc != 0:
+            err = (await proc.stderr.read()).decode("utf-8", errors="replace")
+            detail = err.strip() or f"解析进程异常退出 (code {rc})"
+            yield f"data: {json.dumps({'type': 'error', 'error': detail})}\n\n"
+        else:
+            record = json.loads(out_json.read_text(encoding="utf-8"))
+            _document_store[record["document_id"]] = record
+            result = {
+                "document_id": record["document_id"],
+                "filename": record["filename"],
+                "stats": record["stats"],
+                "n_packages": len(record["packages"]),
+                "packages": record["packages"],
+                "auto_ingested": record.get("auto_ingested", 0),
+            }
+            yield f"data: {json.dumps({'type': 'result', 'result': result}, ensure_ascii=False)}\n\n"
+    finally:
+        tmp_pdf.unlink(missing_ok=True)
+        out_json.unlink(missing_ok=True)
+
+
+@router.post("/parse")
+async def parse_document(file: UploadFile = File(...)) -> StreamingResponse:
+    """Upload a PDF, stream the DocGraph pipeline.
+
+    Responds with Server-Sent Events. Every stage yields ``{type: stage, pct,
+    message}``; the final event is ``{type: result, result}`` (or ``{type:
+    error, error}`` on failure).
+
+    The heavy M1-M6 + KB ingest runs in a *worker subprocess*
+    (huginn.perception.doc_parse_worker). A native crash in a C extension
+    (e.g. the VCRUNTIME140 access-violation we hit on real papers) then kills
+    only the worker instead of the whole backend.
+    """
+    content = await file.read()
+
+    _validate_pdf_upload(content)
+
+    tmp_pdf = Path(tempfile.gettempdir()) / f"doc_{uuid.uuid4().hex}.pdf"
+    out_json = Path(tempfile.gettempdir()) / f"doc_{uuid.uuid4().hex}.json"
+    tmp_pdf.write_bytes(content)
+    filename = file.filename or "uploaded.pdf"
+    # 把 KB 存储位置传给 worker, 让自动入库也在子进程里做 (连 embedding 一起隔离).
+    workspace = _get_workspace()
+
+    proc = await _spawn_parse_worker(tmp_pdf, out_json, filename, workspace)
+
+    return StreamingResponse(
+        _parse_event_stream(proc, out_json, tmp_pdf), media_type="text/event-stream"
+    )
 
 
 def _get_workspace() -> str:
@@ -280,14 +291,20 @@ def _selfcheck() -> None:
         # Case 1: no KB wired -> (0, False)
         sc._server_context = SimpleNamespace(kb=None)
         n, on = _try_ingest(record)
-        assert (n, on) == (0, False), f"no-KB branch: expected (0, False), got ({n}, {on})"
+        assert (n, on) == (0, False), (
+            f"no-KB branch: expected (0, False), got ({n}, {on})"
+        )
 
         # Case 2: KB wired, empty packages -> RAGBridge short-circuits to (0, True)
         class _DummyKB:
-            def add_document(self, *a, **kw): pass
+            def add_document(self, *a, **kw):
+                pass
+
         sc._server_context = SimpleNamespace(kb=_DummyKB())
         n, on = _try_ingest(record)
-        assert (n, on) == (0, True), f"empty-packages branch: expected (0, True), got ({n}, {on})"
+        assert (n, on) == (0, True), (
+            f"empty-packages branch: expected (0, True), got ({n}, {on})"
+        )
     finally:
         sc._server_context = orig
 

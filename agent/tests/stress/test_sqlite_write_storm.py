@@ -36,7 +36,8 @@ def _check_server() -> bool:
 
 # 直接 SQLite 测试不需要服务端,只有 HTTP 级测试需要
 _skip_no_server = pytest.mark.skipif(
-    not _check_server(), reason="Server not running on :8000",
+    not _check_server(),
+    reason="Server not running on :8000",
 )
 
 # ── 直接 SQLite 写入风暴 (不走 HTTP,更快) ─────────────
@@ -122,12 +123,51 @@ def test_anomaly_log_concurrent_writes(tmp_path):
     print(f"  AnomalyLog: 1500 writes, {len(errors)} errors, 0 locked")
 
 
+def _rw_writer(log, tid: int, barrier, errors, write_counts) -> None:
+    from huginn.research_log import RecordType
+
+    barrier.wait()
+    count = 0
+    for i in range(200):
+        try:
+            log.add(RecordType.PROOF_ATTEMPT, f"proof-{tid}-{i}", f"proof {tid}-{i}")
+            count += 1
+        except Exception as e:
+            errors.append(f"W t{tid} i{i}: {e}")
+    write_counts.append(count)
+
+
+def _rw_reader(log, rid: int, barrier, errors, read_counts) -> None:
+    from huginn.research_log import RecordType
+
+    barrier.wait()
+    count = 0
+    for i in range(200):
+        try:
+            count += len(log.list_by_type(RecordType.CONJECTURE))
+        except Exception as e:
+            errors.append(f"R t{rid} i{i}: {e}")
+    read_counts.append(count)
+
+
+def _assert_mixed_rw(errors, read_counts, write_counts) -> None:
+    locked = [e for e in errors if "locked" in e.lower()]
+    assert len(locked) == 0, f"{len(locked)} 'database is locked' errors"
+    # 5 个 writer 应该各写 200 条
+    assert sum(write_counts) >= 900, f"Expected ~1000 writes, got {sum(write_counts)}"
+    # 5 个 reader 应该各读到数据
+    assert all(c >= 100 for c in read_counts), f"Readers should see data: {read_counts}"
+    print(
+        f"  Mixed RW: {sum(write_counts)} writes, {sum(read_counts)} reads, "
+        f"{len(locked)} locked"
+    )
+
+
 def test_mixed_read_write_storm(tmp_path):
     """并发读写混合: 5 写 + 5 读, 验证读写不互斥."""
     from huginn.research_log import RecordType, ResearchLog
 
-    db_path = tmp_path / "storm_rw.sqlite"
-    log = ResearchLog(db_path=str(db_path))
+    log = ResearchLog(db_path=str(tmp_path / "storm_rw.sqlite"))
 
     # 先写一批基础数据
     for i in range(100):
@@ -138,44 +178,18 @@ def test_mixed_read_write_storm(tmp_path):
     write_counts: list[int] = []
     barrier = threading.Barrier(10)
 
-    def writer(tid: int):
-        barrier.wait()
-        count = 0
-        for i in range(200):
-            try:
-                log.add(RecordType.PROOF_ATTEMPT, f"proof-{tid}-{i}", f"proof {tid}-{i}")
-                count += 1
-            except Exception as e:
-                errors.append(f"W t{tid} i{i}: {e}")
-        write_counts.append(count)
-
-    def reader(rid: int):
-        barrier.wait()
-        count = 0
-        for i in range(200):
-            try:
-                records = log.list_by_type(RecordType.CONJECTURE)
-                count += len(records)
-            except Exception as e:
-                errors.append(f"R t{rid} i{i}: {e}")
-        read_counts.append(count)
-
     with ThreadPoolExecutor(max_workers=10) as pool:
-        futures = []
-        for t in range(5):
-            futures.append(pool.submit(writer, t))
-        for t in range(5):
-            futures.append(pool.submit(reader, t))
+        futures = [
+            pool.submit(_rw_writer, log, t, barrier, errors, write_counts)
+            for t in range(5)
+        ] + [
+            pool.submit(_rw_reader, log, t, barrier, errors, read_counts)
+            for t in range(5)
+        ]
         for f in as_completed(futures):
             f.result()
 
-    locked = [e for e in errors if "locked" in e.lower()]
-    assert len(locked) == 0, f"{len(locked)} 'database is locked' errors"
-    # 5 个 writer 应该各写 200 条
-    assert sum(write_counts) >= 900, f"Expected ~1000 writes, got {sum(write_counts)}"
-    # 5 个 reader 应该各读到数据
-    assert all(c >= 100 for c in read_counts), f"Readers should see data: {read_counts}"
-    print(f"  Mixed RW: {sum(write_counts)} writes, {sum(read_counts)} reads, {len(locked)} locked")
+    _assert_mixed_rw(errors, read_counts, write_counts)
 
 
 # ── HTTP 级 SQLite 压测 (走完整链路) ─────────────────
@@ -200,15 +214,21 @@ async def test_http_chat_concurrent_sqlite_storm():
 
     # 检查没有 500 错误 (SQLite locked 会触发 500)
     server_errors = [
-        r for r in results
+        r
+        for r in results
         if not isinstance(r, Exception)
         and hasattr(r, "status_code")
         and r.status_code == 500
     ]
-    assert len(server_errors) == 0, f"{len(server_errors)} 500 errors (likely SQLite locked)"
+    assert len(server_errors) == 0, (
+        f"{len(server_errors)} 500 errors (likely SQLite locked)"
+    )
     successes = [
-        r for r in results
-        if not isinstance(r, Exception) and hasattr(r, "status_code") and r.status_code == 200
+        r
+        for r in results
+        if not isinstance(r, Exception)
+        and hasattr(r, "status_code")
+        and r.status_code == 200
     ]
     assert len(successes) >= 15, f"Only {len(successes)}/20 succeeded"
     print(f"  HTTP SQLite storm: {len(successes)}/20 succeeded, 0 server errors")

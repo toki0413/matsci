@@ -35,7 +35,6 @@ from huginn.utils.common import now_iso
 logger = logging.getLogger(__name__)
 
 
-
 # ── dataclasses ──────────────────────────────────────────────────────────────
 
 
@@ -75,7 +74,7 @@ class WorkflowScript:
         for i, st in enumerate(raw_subtasks):
             if not isinstance(st, dict):
                 continue
-            sid = str(st.get("id", f"sub_{i+1}"))
+            sid = str(st.get("id", f"sub_{i + 1}"))
             tool_name = str(st.get("tool", st.get("tool_name", "")))
             if not tool_name:
                 continue
@@ -183,9 +182,7 @@ class WorkflowResult:
     def to_dict(self) -> dict[str, Any]:
         return {
             **self.summary(),
-            "subtasks": {
-                sid: r.to_dict() for sid, r in self.subtask_results.items()
-            },
+            "subtasks": {sid: r.to_dict() for sid, r in self.subtask_results.items()},
         }
 
 
@@ -207,7 +204,9 @@ def _serialize(obj: Any) -> Any:
             logger.debug("to dict failed", exc_info=True)
     if hasattr(obj, "__dict__"):
         try:
-            return {k: _serialize(v) for k, v in vars(obj).items() if not k.startswith("_")}
+            return {
+                k: _serialize(v) for k, v in vars(obj).items() if not k.startswith("_")
+            }
         except Exception:  # 防御: 序列化失败回落字符串
             logger.debug("serialize failed", exc_info=True)
     return str(obj)
@@ -233,20 +232,9 @@ class WorkflowOrchestrator:
         # ToolRegistry is a class-level singleton, but allow injection for tests
         self._registry = registry or ToolRegistry
 
-    async def run(
-        self,
-        script: WorkflowScript,
-        context: ToolContext | None = None,
-        *,
-        phase: str | None = None,
-    ) -> WorkflowResult:
-        """Execute all subtasks concurrently, return aggregated result.
-
-        context: ToolContext passed to each tool.call(). If None, a minimal
-        context is built from the script id.
-        phase: H5-b — 可选 phase 名, 用于 tool_whitelist 强制 (见
-        huginn/harness/tool_dispatch.py). None 表示不限制.
-        """
+    @staticmethod
+    def _init_result(script: WorkflowScript) -> WorkflowResult:
+        """建初始结果并预登记每个子任务为 pending."""
         result = WorkflowResult(
             id=script.id,
             objective=script.objective,
@@ -258,21 +246,10 @@ class WorkflowOrchestrator:
             result.subtask_results[st.id] = SubtaskResult(
                 id=st.id, tool_name=st.tool_name, status="pending"
             )
+        return result
 
-        if not script.subtasks:
-            result.status = "completed"
-            result.completed_at = now_iso()
-            return result
-
-        sem = asyncio.Semaphore(min(script.max_concurrent, self.max_concurrent))
-        ctx = context or ToolContext(
-            session_id=script.id, workspace=".", config=None
-        )
-
-        tasks = [
-            asyncio.create_task(self._run_subtask(st, result, sem, ctx, phase))
-            for st in script.subtasks
-        ]
+    async def _gather_tasks(self, tasks: list[Any], result: WorkflowResult) -> None:
+        """聚合所有子任务 (取消时标记 cancelled 并取消未完成者)."""
         try:
             await asyncio.gather(*tasks)
         except asyncio.CancelledError:
@@ -287,6 +264,36 @@ class WorkflowOrchestrator:
                 # all subtasks settled → mark completed (even if some failed)
                 result.status = "completed"
                 result.completed_at = now_iso()
+
+    async def run(
+        self,
+        script: WorkflowScript,
+        context: ToolContext | None = None,
+        *,
+        phase: str | None = None,
+    ) -> WorkflowResult:
+        """Execute all subtasks concurrently, return aggregated result.
+
+        context: ToolContext passed to each tool.call(). If None, a minimal
+        context is built from the script id.
+        phase: H5-b — 可选 phase 名, 用于 tool_whitelist 强制 (见
+        huginn/harness/tool_dispatch.py). None 表示不限制.
+        """
+        result = WorkflowOrchestrator._init_result(script)
+
+        if not script.subtasks:
+            result.status = "completed"
+            result.completed_at = now_iso()
+            return result
+
+        sem = asyncio.Semaphore(min(script.max_concurrent, self.max_concurrent))
+        ctx = context or ToolContext(session_id=script.id, workspace=".", config=None)
+
+        tasks = [
+            asyncio.create_task(self._run_subtask(st, result, sem, ctx, phase))
+            for st in script.subtasks
+        ]
+        await WorkflowOrchestrator._gather_tasks(self, tasks, result)
         return result
 
     async def _run_subtask(
@@ -307,6 +314,7 @@ class WorkflowOrchestrator:
             sr.started_at = now_iso()
             try:
                 from huginn.harness.tool_dispatch import dispatch_tool
+
                 tool_result = await dispatch_tool(
                     subtask.tool_name,
                     subtask.args,
@@ -423,7 +431,11 @@ class WorkflowRegistry:
             # recheck status under lock to prevent double-execution
             with self._lock:
                 result = self._results.get(workflow_id)
-                if result is not None and result.status in ("completed", "failed", "cancelled"):
+                if result is not None and result.status in (
+                    "completed",
+                    "failed",
+                    "cancelled",
+                ):
                     return result
             await self._run_and_update(workflow_id)
         return self._results.get(workflow_id)
@@ -439,7 +451,8 @@ class WorkflowRegistry:
     def list_active(self) -> list[str]:
         with self._lock:
             return [
-                wid for wid, result in self._results.items()
+                wid
+                for wid, result in self._results.items()
                 if result.status not in ("completed", "failed", "cancelled")
             ]
 
@@ -460,7 +473,8 @@ class WorkflowRegistry:
         """Remove completed/failed workflows. For test cleanup."""
         with self._lock:
             to_remove = [
-                wid for wid, result in self._results.items()
+                wid
+                for wid, result in self._results.items()
                 if result.status in ("completed", "failed", "cancelled")
             ]
             for wid in to_remove:

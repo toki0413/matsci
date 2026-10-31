@@ -27,6 +27,7 @@
   - gowers_norm U^k, k ≤ 4 (U^5 内存爆)
   - 升级路径: 接 MIP solver (Gurobi/CPLEX) 做大实例
 """
+
 from __future__ import annotations
 
 import logging
@@ -74,18 +75,8 @@ def _difference_set(a: list[int], modulo: int | None = None) -> dict[str, Any]:
     }
 
 
-def _ap_detection(
-    a: list[int], k: int, modulo: int | None = None
-) -> dict[str, Any]:
-    """检测集合 A 里长度 k 的算术 progression.
-
-    返回找到的所有 AP (最多 100 条). 算法: 枚举 (a, d), a∈A, d ≠ 0,
-    检查 a, a+d, a+2d, ..., a+(k-1)d 是否都在 A 里.
-
-    ponytail: O(|A|²) 暴力, 大集合走 FFT 卷积加速 (留后续).
-    """
-    if k < 2:
-        return {"error": "k 必须 >= 2"}
+def _collect_aps(a: list[int], k: int, modulo: int | None) -> list[list[int]]:
+    """枚举所有长度 k 的算术 progression (最多 100 条)."""
     a_set = set(a)
     n = len(a)
     aps: list[list[int]] = []
@@ -116,7 +107,11 @@ def _ap_detection(
                 break
         if len(aps) >= 100:
             break
-    # 去重 (按集合)
+    return aps
+
+
+def _dedupe_aps(aps: list[list[int]]) -> list[list[int]]:
+    """去重 (按集合)."""
     seen: set[tuple[int, ...]] = set()
     unique: list[list[int]] = []
     for ap in aps:
@@ -124,6 +119,20 @@ def _ap_detection(
         if key not in seen:
             seen.add(key)
             unique.append(ap)
+    return unique
+
+
+def _ap_detection(a: list[int], k: int, modulo: int | None = None) -> dict[str, Any]:
+    """检测集合 A 里长度 k 的算术 progression.
+
+    返回找到的所有 AP (最多 100 条). 算法: 枚举 (a, d), a∈A, d ≠ 0,
+    检查 a, a+d, a+2d, ..., a+(k-1)d 是否都在 A 里.
+
+    ponytail: O(|A|²) 暴力, 大集合走 FFT 卷积加速 (留后续).
+    """
+    if k < 2:
+        return {"error": "k 必须 >= 2"}
+    unique = _dedupe_aps(_collect_aps(a, k, modulo))
     return {
         "n_aps": len(unique),
         "aps": unique[:100],
@@ -132,9 +141,7 @@ def _ap_detection(
     }
 
 
-def _additive_energy(
-    a: list[int], b: list[int] | None = None
-) -> dict[str, Any]:
+def _additive_energy(a: list[int], b: list[int] | None = None) -> dict[str, Any]:
     """加性能量 E(A,B) = |{(a,a',b,b'): a+b = a'+b'}|.
 
     用 numpy 统计和的频次, O(|A|*|B|) 计算.
@@ -159,9 +166,7 @@ def _additive_energy(
     }
 
 
-def _gowers_norm(
-    f: list[float], k: int, modulo: int | None = None
-) -> dict[str, Any]:
+def _gowers_norm(f: list[float], k: int, modulo: int | None = None) -> dict[str, Any]:
     """Gowers U^k 范数.
 
     f: 函数值列表 (定义在 Z_N 上, N=len(f)). k=2 默认.
@@ -206,13 +211,11 @@ def _gowers_norm(
     u_k_complex = total / (n ** (k + 1))
     # U^k 范数 = |...|^{1/2^k}
     magnitude = abs(u_k_complex)
-    norm = magnitude ** (1.0 / (2 ** k))
+    norm = magnitude ** (1.0 / (2**k))
     return {"u_k": float(norm), "k": k, "n": n}
 
 
-def _schur_triple(
-    a: list[int], modulo: int | None = None
-) -> dict[str, Any]:
+def _schur_triple(a: list[int], modulo: int | None = None) -> dict[str, Any]:
     """Schur 三元组: x + y = z, x,y,z ∈ A.
 
     返回所有 (x, y, z) (x ≤ y 避免重复, 最多 100 条).
@@ -238,6 +241,45 @@ def _schur_triple(
     }
 
 
+def _build_ramsey_graph(
+    n_vertices: int,
+) -> tuple[list[tuple[int, int]], list[list[tuple[int, int]]]]:
+    """枚举 K_n 的边, 以及每个三角形的边三元组."""
+    from itertools import combinations
+
+    edges = list(combinations(range(n_vertices), 2))
+    # 三角形 (3-clique) 的所有边三元组
+    triangles = []
+    for tri in combinations(range(n_vertices), 3):
+        tri_edges = [
+            (min(tri[i], tri[j]), max(tri[i], tri[j]))
+            for i in range(3)
+            for j in range(i + 1, 3)
+        ]
+        triangles.append(tri_edges)
+    return edges, triangles
+
+
+def _has_avoiding_coloring(
+    edges: list[tuple[int, int]], triangles: list[list[tuple[int, int]]]
+) -> bool:
+    """枚举所有 2-染色, 找是否存在无单色三角形的染色."""
+    from itertools import product
+
+    n_edges = len(edges)
+    for coloring in product([0, 1], repeat=n_edges):
+        edge_color = dict(zip(edges, coloring))
+        has_mono_tri = False
+        for tri in triangles:
+            colors = [edge_color[e] for e in tri]
+            if colors[0] == colors[1] == colors[2]:
+                has_mono_tri = True
+                break
+        if not has_mono_tri:
+            return True
+    return False
+
+
 def _ramsey_check(k: int, target: int) -> dict[str, Any]:
     """小 Ramsey 数验证: R(k) >= target ?
 
@@ -253,36 +295,15 @@ def _ramsey_check(k: int, target: int) -> dict[str, Any]:
     if target > 7:
         return {"error": "target > 7 太大, 枚举不可行"}
 
-    from itertools import combinations, product
-
     n_vertices = target - 1
     if n_vertices < k:
         return {"holds": True, "note": f"K_{{n}}<K_{k}, 平凡成立"}
 
-    edges = list(combinations(range(n_vertices), 2))
+    edges, triangles = _build_ramsey_graph(n_vertices)
     n_edges = len(edges)
-    # 三角形 (3-clique) 的所有边三元组
-    triangles = []
-    for tri in combinations(range(n_vertices), 3):
-        tri_edges = [
-            (min(tri[i], tri[j]), max(tri[i], tri[j]))
-            for i in range(3) for j in range(i + 1, 3)
-        ]
-        triangles.append(tri_edges)
 
     # 枚举所有 2-染色 (0/1 per edge), 找是否存在无单色三角形的染色
-    found_avoiding = False
-    for coloring in product([0, 1], repeat=n_edges):
-        edge_color = dict(zip(edges, coloring))
-        has_mono_tri = False
-        for tri in triangles:
-            colors = [edge_color[e] for e in tri]
-            if colors[0] == colors[1] == colors[2]:
-                has_mono_tri = True
-                break
-        if not has_mono_tri:
-            found_avoiding = True
-            break
+    found_avoiding = _has_avoiding_coloring(edges, triangles)
 
     # R(k) >= target  ⟺  K_{target-1} 存在避免单色 K_k 的染色
     holds = found_avoiding
@@ -290,7 +311,7 @@ def _ramsey_check(k: int, target: int) -> dict[str, Any]:
         "holds": holds,
         "k": k,
         "target": target,
-        "n_colorings_checked": 2 ** n_edges,
+        "n_colorings_checked": 2**n_edges,
         "n_vertices_in_test": n_vertices,
         "note": (
             f"R({k}) >= {target}: "
@@ -303,14 +324,26 @@ def _ramsey_check(k: int, target: int) -> dict[str, Any]:
 
 class DiscreteAdditiveInput(BaseModel):
     action: Literal[
-        "sumset", "difference_set", "ap_detection", "gowers_norm",
-        "additive_energy", "schur_triple", "ramsey_check",
+        "sumset",
+        "difference_set",
+        "ap_detection",
+        "gowers_norm",
+        "additive_energy",
+        "schur_triple",
+        "ramsey_check",
     ] = Field(...)
     set_a: list[int] | None = Field(default=None)
     set_b: list[int] | None = Field(default=None)
-    function: list[float] | None = Field(default=None, description="gowers_norm 的函数值")
-    k: int | None = Field(default=None, description="ap_detection: AP 长度; gowers_norm: U^k; ramsey_check: R(k)")
-    target: int | None = Field(default=None, description="ramsey_check: R(k) >= target 验证")
+    function: list[float] | None = Field(
+        default=None, description="gowers_norm 的函数值"
+    )
+    k: int | None = Field(
+        default=None,
+        description="ap_detection: AP 长度; gowers_norm: U^k; ramsey_check: R(k)",
+    )
+    target: int | None = Field(
+        default=None, description="ramsey_check: R(k) >= target 验证"
+    )
     modulo: int | None = Field(default=None)
 
 
@@ -338,28 +371,44 @@ class DiscreteAdditiveTool(HuginnTool):
     async def validate_input(
         self, args: dict[str, Any], context: ToolContext | None = None
     ) -> ValidationResult:
-        args_obj = args if isinstance(args, DiscreteAdditiveInput) else DiscreteAdditiveInput(**args)
+        args_obj = (
+            args
+            if isinstance(args, DiscreteAdditiveInput)
+            else DiscreteAdditiveInput(**args)
+        )
         if args_obj.action == "ramsey_check":
             if not args_obj.k or not args_obj.target:
-                return ValidationResult(result=False, message="ramsey_check 需要 k 和 target")
+                return ValidationResult(
+                    result=False, message="ramsey_check 需要 k 和 target"
+                )
         else:
             if not args_obj.set_a:
-                return ValidationResult(result=False, message=f"{args_obj.action} 需要 set_a")
+                return ValidationResult(
+                    result=False, message=f"{args_obj.action} 需要 set_a"
+                )
             if len(args_obj.set_a) > _MAX_SET_SIZE:
-                return ValidationResult(result=False, message=f"|set_a| > {_MAX_SET_SIZE}")
+                return ValidationResult(
+                    result=False, message=f"|set_a| > {_MAX_SET_SIZE}"
+                )
         if args_obj.action == "gowers_norm":
             if not args_obj.function:
-                return ValidationResult(result=False, message="gowers_norm 需要 function")
+                return ValidationResult(
+                    result=False, message="gowers_norm 需要 function"
+                )
             if not args_obj.k or args_obj.k < 1 or args_obj.k > _MAX_GOWERS_K:
-                return ValidationResult(result=False, message=f"gowers_norm k 必须 1..{_MAX_GOWERS_K}")
+                return ValidationResult(
+                    result=False, message=f"gowers_norm k 必须 1..{_MAX_GOWERS_K}"
+                )
         if args_obj.action == "ap_detection" and (not args_obj.k or args_obj.k < 2):
             return ValidationResult(result=False, message="ap_detection 需要 k >= 2")
         return ValidationResult(result=True)
 
-    async def call(
-        self, args: dict[str, Any], context: ToolContext
-    ) -> ToolResult:
-        args_obj = args if isinstance(args, DiscreteAdditiveInput) else DiscreteAdditiveInput(**args)
+    async def call(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
+        args_obj = (
+            args
+            if isinstance(args, DiscreteAdditiveInput)
+            else DiscreteAdditiveInput(**args)
+        )
         try:
             a = args_obj.action
             if a == "sumset":
@@ -367,17 +416,23 @@ class DiscreteAdditiveTool(HuginnTool):
             elif a == "difference_set":
                 r = _difference_set(args_obj.set_a or [], args_obj.modulo)
             elif a == "ap_detection":
-                r = _ap_detection(args_obj.set_a or [], args_obj.k or 3, args_obj.modulo)
+                r = _ap_detection(
+                    args_obj.set_a or [], args_obj.k or 3, args_obj.modulo
+                )
             elif a == "additive_energy":
                 r = _additive_energy(args_obj.set_a or [], args_obj.set_b)
             elif a == "gowers_norm":
-                r = _gowers_norm(args_obj.function or [], args_obj.k or 2, args_obj.modulo)
+                r = _gowers_norm(
+                    args_obj.function or [], args_obj.k or 2, args_obj.modulo
+                )
             elif a == "schur_triple":
                 r = _schur_triple(args_obj.set_a or [], args_obj.modulo)
             elif a == "ramsey_check":
                 r = _ramsey_check(args_obj.k or 3, args_obj.target or 6)
             else:
-                return ToolResult(data=None, success=False, error=f"unknown action: {a}")
+                return ToolResult(
+                    data=None, success=False, error=f"unknown action: {a}"
+                )
             return ToolResult(data=r, success="error" not in r)
         except Exception as exc:
             logger.warning("discrete_additive failed: %s", exc, exc_info=True)
@@ -386,18 +441,21 @@ class DiscreteAdditiveTool(HuginnTool):
 
 # ── selfcheck ──────────────────────────────────────────────
 
-def _selfcheck() -> None:
-    """8 项 assert 验证加性组合工具核心行为."""
-    print("[discrete_additive] running self-check...")
 
+def _check_basics() -> None:
+    """1-5: sumset / difference_set / ap_detection / Behrend / gowers."""
     # 1. sumset {1,2} + {1,2} = {2,3,4}
     r = _sumset([1, 2], [1, 2])
-    assert r["result"] == [2, 3, 4], f"1. {{1,2}}+{{1,2}} 应 = [2,3,4], got {r['result']}"
+    assert r["result"] == [2, 3, 4], (
+        f"1. {{1,2}}+{{1,2}} 应 = [2,3,4], got {r['result']}"
+    )
 
     # 2. difference_set {1,2,4} - {1,2,4} 含 {0,±1,±2,±3}
     r = _difference_set([1, 2, 4])
     expected = {0, 1, -1, 2, -2, 3, -3}
-    assert expected.issubset(set(r["result"])), f"2. 应含 {{0,±1,±2,±3}}, got {r['result']}"
+    assert expected.issubset(set(r["result"])), (
+        f"2. 应含 {{0,±1,±2,±3}}, got {r['result']}"
+    )
     assert r["contains_zero"], "2. 应含 0"
 
     # 3. ap_detection {1,2,3,4,5} k=3 → 至少 1 条 3-AP
@@ -413,17 +471,22 @@ def _selfcheck() -> None:
     r = _gowers_norm([1.0, 1.0, 1.0, 1.0], k=2)
     assert abs(r["u_k"] - 1.0) < 1e-9, f"5. U^2(1) 应 = 1, got {r['u_k']}"
 
+
+def _check_advanced() -> None:
+    """6-8: additive_energy / schur_triple / ramsey_check."""
     # 6. additive_energy {1,2,3} with itself = 19 (标准定义)
     # spec 写 3, 但标准 E(A,A) = sum_s r(s)^2, 这里 r(2)=1, r(3)=2, r(4)=3, r(5)=2, r(6)=1 → 1+4+9+4+1 = 19
     r = _additive_energy([1, 2, 3])
-    assert r["energy"] == 19, f"6. E({{1,2,3}},{{1,2,3}}) 应 = 19 (标准), got {r['energy']}"
+    assert r["energy"] == 19, (
+        f"6. E({{1,2,3}},{{1,2,3}}) 应 = 19 (标准), got {r['energy']}"
+    )
 
     # 7. schur_triple {1,2,3,4,5} → 含 (1,2,3) / (1,3,4) / (1,4,5) / (2,3,5)
     r = _schur_triple([1, 2, 3, 4, 5])
     triples_set = {tuple(t) for t in r["triples"]}
     expected_triples = {(1, 2, 3), (1, 3, 4), (1, 4, 5), (2, 3, 5)}
     assert expected_triples.issubset(triples_set), (
-        f"7. 应含 {(1,2,3),(1,3,4),(1,4,5),(2,3,5)}, got {triples_set}"
+        f"7. 应含 {(1, 2, 3), (1, 3, 4), (1, 4, 5), (2, 3, 5)}, got {triples_set}"
     )
 
     # 8. ramsey_check R(3) >= 6 → True (K_6 必有单色三角形)
@@ -435,6 +498,12 @@ def _selfcheck() -> None:
     r = _ramsey_check(k=3, target=7)
     assert r["holds"] is False, f"8b. R(3) >= 7 应 False (K_6 全有单色三角形), got {r}"
 
+
+def _selfcheck() -> None:
+    """8 项 assert 验证加性组合工具核心行为."""
+    print("[discrete_additive] running self-check...")
+    _check_basics()
+    _check_advanced()
     print("[discrete_additive] self-check OK (8/8)")
 
 

@@ -15,6 +15,7 @@ N = depth × parallel × per_subagent, 算术基本定理 N = Π p_i^a_i 唯一�
 
 天花板: 假设 N 需全用. 实际 agent 可能 200 步就完成, 升级: 剩余预算重新分解.
 """
+
 from __future__ import annotations
 
 from itertools import product
@@ -49,38 +50,47 @@ def budget_configurations(
     out: list[dict[str, int]] = []
     # 三组分配 = 两个切分点, 用笛卡尔积枚举每个素数去哪组
     for assign in product((0, 1, 2), repeat=len(primes)):
-        d_parts, p_parts, n_parts = [], [], []
-        for prime, group in zip(primes, assign):
-            (d_parts if group == 0 else p_parts if group == 1 else n_parts).append(prime)
-        d = 1
-        for x in d_parts:
-            d *= x
-        p = 1
-        for x in p_parts:
-            p *= x
-        per = 1
-        for x in n_parts:
-            per *= x
-        key = (d, p, per)
+        key = _config_key_from_assignment(primes, assign)
         if key in seen:
             continue
         seen.add(key)
-        if d > max_depth:
-            continue
-        if p > max_parallel:
-            continue
-        if per < min_per:
+        d, p, per = key
+        if d > max_depth or p > max_parallel or per < min_per:
             continue
         out.append({"depth": d, "parallel": p, "per_subagent": per})
     # 排序: 优先每个参数都是单个素因子 (不合并), 然后 parallel 大, per 大.
     # 530 = 2×5×53 唯一分解 → (2,5,53) 三个素数各给一个参数, 合并=0 排第一.
     # spec 原则: depth 用小素数 / parallel 中素数 / per 大素数.
-    out.sort(key=lambda c: (
+    out.sort(key=_config_sort_key)
+    return out
+
+
+def _config_key_from_assignment(
+    primes: list[int], assign: tuple[int, ...]
+) -> tuple[int, int, int]:
+    """按 assign 把素因子分到 depth/parallel/per 三组, 返回三个乘积."""
+    d_parts, p_parts, n_parts = [], [], []
+    for prime, group in zip(primes, assign):
+        (d_parts if group == 0 else p_parts if group == 1 else n_parts).append(prime)
+    d = 1
+    for x in d_parts:
+        d *= x
+    p = 1
+    for x in p_parts:
+        p *= x
+    per = 1
+    for x in n_parts:
+        per *= x
+    return d, p, per
+
+
+def _config_sort_key(c: dict[str, int]) -> tuple[int, int, int]:
+    """合并次数升序, 再按 parallel / per_subagent 降序."""
+    return (
         sum(1 for v in c.values() if not isprime(v) and v != 1),  # 合并次数
         -c["parallel"],
         -c["per_subagent"],
-    ))
-    return out
+    )
 
 
 def recommend(n: int) -> dict[str, int]:

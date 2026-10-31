@@ -64,7 +64,6 @@ def _load_hard_checkpoint_config() -> set[tuple[str, str]]:
     return result
 
 
-
 GateStatus = Literal["pending", "approved", "blocked", "rejected"]
 
 
@@ -99,10 +98,10 @@ def _collect_source_classes(obj: Any, _depth: int = 0) -> list[str]:
 # 每个 source_class 的 (m_pass, m_fail, m_uncertainty) 先验.
 # ponytail: 取值基于经验, 未做大规模数据校准. 升级: 从历史任务拟合.
 _SOURCE_CLASS_MASSES: dict[str, tuple[float, float, float]] = {
-    "user_input":         (0.70, 0.05, 0.25),   # 用户指令高可信
-    "tool_output":        (0.60, 0.20, 0.20),   # 工具输出中等可信
-    "external_content":   (0.30, 0.40, 0.30),   # 外部内容可信度低 (可能被注入)
-    "agent_generated":    (0.50, 0.30, 0.20),   # agent 生成默认
+    "user_input": (0.70, 0.05, 0.25),  # 用户指令高可信
+    "tool_output": (0.60, 0.20, 0.20),  # 工具输出中等可信
+    "external_content": (0.30, 0.40, 0.30),  # 外部内容可信度低 (可能被注入)
+    "agent_generated": (0.50, 0.30, 0.20),  # agent 生成默认
 }
 
 
@@ -124,6 +123,7 @@ def _argus_confidence(evidence: dict[str, Any]) -> tuple[float, str]:
     combined = DempsterShaferCombiner.combine(masses)
     # 统计 dominant
     from collections import Counter
+
     counter = Counter(classes)
     dominant = counter.most_common(1)[0][0]
     return (combined[0], dominant)
@@ -159,6 +159,7 @@ class PhaseGate:
         try:
             import json
             import time
+
             record = {
                 "ts": time.time(),
                 "from_phase": self.from_phase,
@@ -199,6 +200,13 @@ _DEFAULT_EVIDENCE_REQUIREMENTS: dict[tuple[str, str], list[str]] = {
     ("learn", "report"): [],  # report 总是放行
 }
 
+# 确定性证据: 缺失即硬阻断 (不只是 advisory). 这些 key 的值由 harness 计算,
+# 不依赖模型自评; 缺失等价于"执行对象不存在", 放行只会让空任务流到下阶段
+# (ws28: 空 DESCRIPTION 用当前假设兜底下发 coder → 跨轮漂移).
+_HARD_EVIDENCE_KEYS: dict[tuple[str, str], frozenset[str]] = {
+    ("plan", "execute"): frozenset({"mode", "description"}),
+}
+
 
 class PhaseGateConfig:
     """每个阶段转移的硬性证据要求."""
@@ -212,9 +220,7 @@ class PhaseGateConfig:
     def required_for(self, from_phase: str, to_phase: str) -> list[str]:
         return self.requirements.get((from_phase, to_phase), [])
 
-    def add_requirement(
-        self, from_phase: str, to_phase: str, keys: list[str]
-    ) -> None:
+    def add_requirement(self, from_phase: str, to_phase: str, keys: list[str]) -> None:
         self.requirements[(from_phase, to_phase)] = keys
 
 
@@ -363,9 +369,7 @@ class MathEvidenceChecker:
         graph: Any | None = None,
         hypothesis_id_key: str = "hypothesis_id",
     ):
-        self.threshold = (
-            threshold if threshold is not None else self.DEFAULT_THRESHOLD
-        )
+        self.threshold = threshold if threshold is not None else self.DEFAULT_THRESHOLD
         self._graph = graph
         self._hyp_id_key = hypothesis_id_key
 
@@ -374,31 +378,61 @@ class MathEvidenceChecker:
         if isinstance(value, bool):
             return value
         if isinstance(value, dict):
-            for k in ("verified", "consistent", "all_passed", "hypothesis_covers_top", "passed"):
+            for k in (
+                "verified",
+                "consistent",
+                "all_passed",
+                "hypothesis_covers_top",
+                "passed",
+            ):
                 if k in value:
                     return bool(value[k])
         return None
 
-    def __call__(self, evidence: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
-        # v11: Hard-veto 短路 — 守恒律违反 / 量纲不一致直接 reject, 绕过 DS 合成.
-        # ponytail: 只对 verified == False 触发 (确定判负), verified == None / 缺失走原 DS.
-        # 不新建 SMT 组件, 只路由已有 BourbakiTool / symbolic_math_tool 输出.
-        # v12: constraint_check.violations 非空也走 hard-veto (强信号, 误判风险低).
+    def _veto_conservation(
+        self, evidence: dict[str, Any]
+    ) -> tuple[bool, str, dict[str, Any]] | None:
+        """守恒律 verified == False → hard-veto."""
         _conservation = evidence.get("conservation_law")
         if isinstance(_conservation, dict) and _conservation.get("verified") is False:
             return (
                 False,
                 "hard-veto: conservation law violated (BourbakiTool verified=False)",
-                {"hard_veto": "conservation_law", "sources": ["conservation_law"], "belief_pass": 0.0, "belief_fail": 1.0, "uncertainty": 0.0, "n_sources": 1},
+                {
+                    "hard_veto": "conservation_law",
+                    "sources": ["conservation_law"],
+                    "belief_pass": 0.0,
+                    "belief_fail": 1.0,
+                    "uncertainty": 0.0,
+                    "n_sources": 1,
+                },
             )
+        return None
+
+    def _veto_dimensional(
+        self, evidence: dict[str, Any]
+    ) -> tuple[bool, str, dict[str, Any]] | None:
+        """量纲不一致 → hard-veto."""
         _dimensional = evidence.get("dimensional_consistent")
         if _dimensional is False:
             return (
                 False,
                 "hard-veto: dimensional inconsistency (symbolic_math_tool)",
-                {"hard_veto": "dimensional_inconsistent", "sources": ["dimensional_consistent"], "belief_pass": 0.0, "belief_fail": 1.0, "uncertainty": 0.0, "n_sources": 1},
+                {
+                    "hard_veto": "dimensional_inconsistent",
+                    "sources": ["dimensional_consistent"],
+                    "belief_pass": 0.0,
+                    "belief_fail": 1.0,
+                    "uncertainty": 0.0,
+                    "n_sources": 1,
+                },
             )
-        # v12: constraint_check.violations 非空 → hard-veto
+        return None
+
+    def _veto_constraint(
+        self, evidence: dict[str, Any]
+    ) -> tuple[bool, str, dict[str, Any]] | None:
+        """v12: constraint_check.violations 非空 → hard-veto."""
         # ponytail: truthy 判定 (空 list / 空字符串 / None 都不触发), 复用已有 symbolic_regression_tool 输出.
         _constraint = evidence.get("constraint_check")
         if isinstance(_constraint, dict):
@@ -408,9 +442,37 @@ class MathEvidenceChecker:
                     False,
                     f"hard-veto: constraint violations ({len(_violations) if hasattr(_violations, '__len__') else '?'} 条): "
                     f"{str(_violations)[:120]}",
-                    {"hard_veto": "constraint_violations", "sources": ["constraint_check"], "belief_pass": 0.0, "belief_fail": 1.0, "uncertainty": 0.0, "n_sources": 1},
+                    {
+                        "hard_veto": "constraint_violations",
+                        "sources": ["constraint_check"],
+                        "belief_pass": 0.0,
+                        "belief_fail": 1.0,
+                        "uncertainty": 0.0,
+                        "n_sources": 1,
+                    },
                 )
+        return None
 
+    def _hard_veto(
+        self, evidence: dict[str, Any]
+    ) -> tuple[bool, str, dict[str, Any]] | None:
+        """v11: Hard-veto 短路 — 守恒律违反 / 量纲不一致 / 约束违反直接 reject.
+
+        ponytail: 只对 verified == False 触发 (确定判负), verified == None / 缺失走原 DS.
+        不新建 SMT 组件, 只路由已有 BourbakiTool / symbolic_math_tool 输出.
+        v12: constraint_check.violations 非空也走 hard-veto (强信号, 误判风险低).
+        """
+        veto = MathEvidenceChecker._veto_conservation(self, evidence)
+        if veto is None:
+            veto = MathEvidenceChecker._veto_dimensional(self, evidence)
+        if veto is None:
+            veto = MathEvidenceChecker._veto_constraint(self, evidence)
+        return veto
+
+    def _collect_masses(
+        self, evidence: dict[str, Any]
+    ) -> tuple[list[tuple[float, float, float]], list[str]]:
+        """收集各数学证据源的 mass 与名称 (含可选 dual_coverage)."""
         masses: list[tuple[float, float, float]] = []
         sources: list[str] = []
 
@@ -434,12 +496,43 @@ class MathEvidenceChecker:
                     if self._graph.needs_dual_coverage(hyp_id):
                         covered = self._graph.dual_covered(hyp_id)
                         masses.append(
-                            self._DUAL_COVERED_MASS if covered
+                            self._DUAL_COVERED_MASS
+                            if covered
                             else self._DUAL_NOT_COVERED_MASS
                         )
                         sources.append("dual_coverage")
                 except Exception:  # 防御: 双覆盖检查失败跳过
                     logger.debug("dual_coverage check failed", exc_info=True)
+        return masses, sources
+
+    def _feedback(
+        self,
+        passed: bool,
+        m_pass: float,
+        m_fail: float,
+        m_unc: float,
+        sources: list[str],
+    ) -> str:
+        """按 DS 合成结果生成 feedback 文案."""
+        if passed:
+            return (
+                f"Math evidence passed: belief_pass={m_pass:.3f} > {self.threshold}, "
+                f"sources={sources}"
+            )
+        return (
+            f"Math evidence insufficient: belief_pass={m_pass:.3f} <= {self.threshold}, "
+            f"belief_fail={m_fail:.3f}, uncertainty={m_unc:.3f}, sources={sources}. "
+            f"Run symbolic_math_tool (pde_classify/euler_lagrange/noether/diffgeo_metric) "
+            f"and symbolic_regression_tool (sobol_indices/constraint_check) to "
+            f"strengthen math evidence before re-attempting validate→learn."
+        )
+
+    def __call__(self, evidence: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
+        veto = MathEvidenceChecker._hard_veto(self, evidence)
+        if veto is not None:
+            return veto
+
+        masses, sources = MathEvidenceChecker._collect_masses(self, evidence)
 
         if not masses:
             # 无数学证据 — 不阻断, 让硬性证据检查决定
@@ -457,20 +550,9 @@ class MathEvidenceChecker:
             "threshold": self.threshold,
         }
 
-        if passed:
-            feedback = (
-                f"Math evidence passed: belief_pass={m_pass:.3f} > {self.threshold}, "
-                f"sources={sources}"
-            )
-        else:
-            feedback = (
-                f"Math evidence insufficient: belief_pass={m_pass:.3f} <= {self.threshold}, "
-                f"belief_fail={m_fail:.3f}, uncertainty={m_unc:.3f}, sources={sources}. "
-                f"Run symbolic_math_tool (pde_classify/euler_lagrange/noether/diffgeo_metric) "
-                f"and symbolic_regression_tool (sobol_indices/constraint_check) to "
-                f"strengthen math evidence before re-attempting validate→learn."
-            )
-
+        feedback = MathEvidenceChecker._feedback(
+            self, passed, m_pass, m_fail, m_unc, sources
+        )
         return (passed, feedback, details)
 
 
@@ -517,6 +599,145 @@ class PhaseGateHook:
             logger.debug("best-effort op failed", exc_info=True)
             return False
 
+    def _missing_gate(
+        self,
+        from_phase: str,
+        to_phase: str,
+        required: list[str],
+        missing: list[str],
+        evidence: dict[str, Any],
+    ) -> PhaseGate:
+        """缺证据时的门: checkpoint 硬阻断, 否则 advisory 放行."""
+        # 人工 checkpoint 仍硬阻断: 让 engine 走 hitl 流程, 用户必须 override
+        # 才能放行. 缺证据时不能 advisory 跳过 — checkpoint 就是 checkpoint.
+        if self._is_human_checkpoint(from_phase, to_phase):
+            feedback = (
+                f"阶段转移 {from_phase}→{to_phase} 被阻断: 缺少证据 {missing}. "
+                f"已有证据 keys: {list(evidence.keys())}. "
+                f"补齐后再推进, 或用 phase_tool override 强制放行."
+            )
+            return PhaseGate(
+                from_phase=from_phase,
+                to_phase=to_phase,
+                status="blocked",
+                required_evidence=required,
+                missing_evidence=missing,
+                feedback=feedback,
+            )
+        # 确定性证据缺失 → 硬阻断 (不再 advisory 放行). 这些 key 由 harness
+        # 计算, 模型无法通过"自评合格"绕过; 放行等于把空执行对象传给下游.
+        _hard = _HARD_EVIDENCE_KEYS.get((from_phase, to_phase), frozenset())
+        _hard_missing = sorted(_hard & set(missing))
+        if _hard_missing:
+            logger.warning(
+                "phase_gate hard block: %s→%s 缺确定性证据 %s",
+                from_phase, to_phase, _hard_missing,
+            )
+            return PhaseGate(
+                from_phase=from_phase,
+                to_phase=to_phase,
+                status="blocked",
+                required_evidence=required,
+                missing_evidence=missing,
+                feedback=(
+                    f"确定性门阻断 {from_phase}→{to_phase}: 缺 {_hard_missing}. "
+                    "必须重写本轮 plan 补齐后重试 (可用 phase_tool override 强制放行)."
+                ),
+            )
+        # advisory: 缺证据只 warning + feedback, 不阻断 transition.
+        # ponytail: ceiling 是 agent 可能忽略 warning 继续推进, 升级路径:
+        # PhaseGateState 累计同一 (from,to) advisory 反馈 N 次后强制回退到 blocked.
+        logger.warning(
+            "phase_gate advisory: %s→%s 缺证据 %s, 已放行 (非 checkpoint)",
+            from_phase,
+            to_phase,
+            missing,
+        )
+        return PhaseGate(
+            from_phase=from_phase,
+            to_phase=to_phase,
+            status="approved",
+            required_evidence=required,
+            missing_evidence=missing,
+            feedback=(
+                f"advisory: {from_phase}→{to_phase} 缺少证据 {missing}, "
+                f"已有 keys: {list(evidence.keys())}. "
+                f"未阻断, 下游应补齐后再推进."
+            ),
+        )
+
+    def _math_gate(
+        self,
+        from_phase: str,
+        to_phase: str,
+        required: list[str],
+        evidence: dict[str, Any],
+    ) -> PhaseGate | None:
+        """硬性证据齐全后的 math_checker (可选, 论文级 Dempster-Shafer 合成)."""
+        # 仅在 validate→learn 转移时触发 — 这是数学证据最有意义的检查点.
+        if not (
+            self._math_checker is not None
+            and from_phase == "validate"
+            and to_phase == "learn"
+        ):
+            return None
+        try:
+            math_passed, math_feedback, math_details = self._math_checker(evidence)
+            if not math_passed:
+                return PhaseGate(
+                    from_phase=from_phase,
+                    to_phase=to_phase,
+                    status="blocked",
+                    required_evidence=required,
+                    missing_evidence=[],
+                    feedback=f"Math evidence blocked: {math_feedback}",
+                    reviewer="math_checker",
+                )
+        except Exception:  # 防御: 数值检查器异常降级放行
+            # math_checker 挂了不阻断, 降级放行
+            logger.debug("best-effort op failed", exc_info=True)
+        return None
+
+    def _review_gate(
+        self,
+        from_phase: str,
+        to_phase: str,
+        evidence: dict[str, Any],
+        required: list[str],
+    ) -> PhaseGate | None:
+        """红队 reviewer → 蓝队防守校验 (任一拒绝即 rejected)."""
+        # 走 reviewer (可选). reviewer 挂了不阻断, 降级放行.
+        if self._reviewer_fn is not None:
+            gate = _reviewer_verdict(
+                self._reviewer_fn,
+                from_phase,
+                to_phase,
+                evidence,
+                required,
+                reject_prefix="Reviewer 拒绝",
+                reviewer_name="reviewer",
+                debug_msg="reviewer fn failed",
+            )
+            if gate is not None:
+                return gate
+
+        # 蓝队防守校验 (可选, 与红队对偶). 红队找反驳, 蓝队断言控制在位且有效.
+        # 独立于红队; 挂了不阻断 (降级放行).
+        if self._blue_reviewer_fn is not None:
+            gate = _reviewer_verdict(
+                self._blue_reviewer_fn,
+                from_phase,
+                to_phase,
+                evidence,
+                required,
+                reject_prefix="Blue-team 拒绝",
+                reviewer_name="blue_reviewer",
+                debug_msg="blue reviewer fn failed",
+            )
+            if gate is not None:
+                return gate
+        return None
+
     def evaluate(
         self,
         from_phase: str,
@@ -535,116 +756,19 @@ class PhaseGateHook:
         ]
 
         if missing:
-            # 人工 checkpoint 仍硬阻断: 让 engine 走 hitl 流程, 用户必须 override
-            # 才能放行. 缺证据时不能 advisory 跳过 — checkpoint 就是 checkpoint.
-            if self._is_human_checkpoint(from_phase, to_phase):
-                feedback = (
-                    f"阶段转移 {from_phase}→{to_phase} 被阻断: 缺少证据 {missing}. "
-                    f"已有证据 keys: {list(evidence.keys())}. "
-                    f"补齐后再推进, 或用 phase_tool override 强制放行."
-                )
-                return PhaseGate(
-                    from_phase=from_phase,
-                    to_phase=to_phase,
-                    status="blocked",
-                    required_evidence=required,
-                    missing_evidence=missing,
-                    feedback=feedback,
-                )
-            # advisory: 缺证据只 warning + feedback, 不阻断 transition.
-            # ponytail: ceiling 是 agent 可能忽略 warning 继续推进, 升级路径:
-            # PhaseGateState 累计同一 (from,to) advisory 反馈 N 次后强制回退到 blocked.
-            logger.warning(
-                "phase_gate advisory: %s→%s 缺证据 %s, 已放行 (非 checkpoint)",
-                from_phase,
-                to_phase,
-                missing,
-            )
-            return PhaseGate(
-                from_phase=from_phase,
-                to_phase=to_phase,
-                status="approved",
-                required_evidence=required,
-                missing_evidence=missing,
-                feedback=(
-                    f"advisory: {from_phase}→{to_phase} 缺少证据 {missing}, "
-                    f"已有 keys: {list(evidence.keys())}. "
-                    f"未阻断, 下游应补齐后再推进."
-                ),
+            return PhaseGateHook._missing_gate(
+                self, from_phase, to_phase, required, missing, evidence
             )
 
-        # 硬性证据齐全, 走 math_checker (可选, 论文级 Dempster-Shafer 合成).
-        # 仅在 validate→learn 转移时触发 — 这是数学证据最有意义的检查点.
-        if self._math_checker is not None and from_phase == "validate" and to_phase == "learn":
-            try:
-                math_passed, math_feedback, math_details = self._math_checker(evidence)
-                if not math_passed:
-                    return PhaseGate(
-                        from_phase=from_phase,
-                        to_phase=to_phase,
-                        status="blocked",
-                        required_evidence=required,
-                        missing_evidence=[],
-                        feedback=f"Math evidence blocked: {math_feedback}",
-                        reviewer="math_checker",
-                    )
-            except Exception:  # 防御: 数值检查器异常降级放行
-                # math_checker 挂了不阻断, 降级放行
-                logger.debug("best-effort op failed", exc_info=True)
-
-        # 物理 oracle 否决: simulator tool 把 PhysicsAuditor 结果填进 evidence
-        # ["physics_audit"] (dict 含 has_errors bool). 有 error 直接 rejected,
-        # 优先级高于 reviewer — 物理 plausibility 是 first-principles 不可妥协.
-        # ponytail: 仅检查 has_errors, 不解析 findings. 升级: 按 severity 加权 + DS 合成.
-        _pa = evidence.get("physics_audit")
-        if isinstance(_pa, dict) and _pa.get("has_errors"):
-            return PhaseGate(
-                from_phase=from_phase,
-                to_phase=to_phase,
-                status="rejected",
-                required_evidence=required,
-                missing_evidence=[],
-                feedback=(
-                    "Physics oracle rejected: tool output contains physical "
-                    "errors (AuditReport.has_errors=True). Fix the unphysical "
-                    "values (e.g. negative band gap, non-converged SCF, "
-                    "thermodynamic violation) before re-attempting the phase transition."
-                ),
-                reviewer="physics_oracle",
+        gate = PhaseGateHook._math_gate(self, from_phase, to_phase, required, evidence)
+        if gate is None:
+            gate = _physics_rejection(evidence, from_phase, to_phase, required)
+        if gate is None:
+            gate = PhaseGateHook._review_gate(
+                self, from_phase, to_phase, evidence, required
             )
-
-        # 走 reviewer (可选). reviewer 挂了不阻断, 降级放行.
-        if self._reviewer_fn is not None:
-            try:
-                approved, reason = self._reviewer_fn(from_phase, to_phase, evidence)
-                if not approved:
-                    return PhaseGate(
-                        from_phase=from_phase,
-                        to_phase=to_phase,
-                        status="rejected",
-                        required_evidence=required,
-                        feedback=f"Reviewer 拒绝: {reason}",
-                        reviewer="reviewer",
-                    )
-            except Exception:  # 防御: 评审器异常则跳过
-                logger.debug("reviewer fn failed", exc_info=True)
-
-        # 蓝队防守校验 (可选, 与红队对偶). 红队找反驳, 蓝队断言控制在位且有效.
-        # 独立于红队; 挂了不阻断 (降级放行).
-        if self._blue_reviewer_fn is not None:
-            try:
-                approved, reason = self._blue_reviewer_fn(from_phase, to_phase, evidence)
-                if not approved:
-                    return PhaseGate(
-                        from_phase=from_phase,
-                        to_phase=to_phase,
-                        status="rejected",
-                        required_evidence=required,
-                        feedback=f"Blue-team 拒绝: {reason}",
-                        reviewer="blue_reviewer",
-                    )
-            except Exception:  # 防御: 防守校验器异常则跳过
-                logger.debug("blue reviewer fn failed", exc_info=True)
+        if gate is not None:
+            return gate
 
         return PhaseGate(
             from_phase=from_phase,
@@ -654,6 +778,63 @@ class PhaseGateHook:
             feedback=_argus_feedback(evidence),
             reviewer="argus_provenance" if _has_external_source(evidence) else None,
         )
+
+
+def _physics_rejection(
+    evidence: dict[str, Any],
+    from_phase: str,
+    to_phase: str,
+    required: list[str],
+) -> PhaseGate | None:
+    """物理 oracle 否决: physics_audit.has_errors 时 rejected, 优先于 reviewer."""
+    # simulator tool 把 PhysicsAuditor 结果填进 evidence["physics_audit"]
+    # (dict 含 has_errors bool). 有 error 直接 rejected.
+    # ponytail: 仅检查 has_errors, 不解析 findings. 升级: 按 severity 加权 + DS 合成.
+    _pa = evidence.get("physics_audit")
+    if not (isinstance(_pa, dict) and _pa.get("has_errors")):
+        return None
+    return PhaseGate(
+        from_phase=from_phase,
+        to_phase=to_phase,
+        status="rejected",
+        required_evidence=required,
+        missing_evidence=[],
+        feedback=(
+            "Physics oracle rejected: tool output contains physical "
+            "errors (AuditReport.has_errors=True). Fix the unphysical "
+            "values (e.g. negative band gap, non-converged SCF, "
+            "thermodynamic violation) before re-attempting the phase transition."
+        ),
+        reviewer="physics_oracle",
+    )
+
+
+def _reviewer_verdict(
+    fn: ReviewerFn,
+    from_phase: str,
+    to_phase: str,
+    evidence: dict[str, Any],
+    required: list[str],
+    *,
+    reject_prefix: str,
+    reviewer_name: str,
+    debug_msg: str,
+) -> PhaseGate | None:
+    """调 reviewer_fn; 拒绝则返回 rejected 门, 异常降级放行 (None)."""
+    try:
+        approved, reason = fn(from_phase, to_phase, evidence)
+        if not approved:
+            return PhaseGate(
+                from_phase=from_phase,
+                to_phase=to_phase,
+                status="rejected",
+                required_evidence=required,
+                feedback=f"{reject_prefix}: {reason}",
+                reviewer=reviewer_name,
+            )
+    except Exception:  # 防御: 评审器异常则跳过
+        logger.debug(debug_msg, exc_info=True)
+    return None
 
 
 def _argus_feedback(evidence: dict[str, Any]) -> str:
@@ -705,7 +886,9 @@ class PhaseGateState:
         # 从 HUGINN_HUMAN_CHECKPOINT_PHASEES=plan:execute,validate:learn 加载
         self.human_checkpoint_phases: set[tuple[str, str]] = _load_checkpoint_config()
         # 硬性 checkpoint: 不可超时自动放行, 一直阻塞到用户显式 override
-        self.hard_checkpoint_phases: set[tuple[str, str]] = _load_hard_checkpoint_config()
+        self.hard_checkpoint_phases: set[tuple[str, str]] = (
+            _load_hard_checkpoint_config()
+        )
         self.pending_human_review: tuple[str, str] | None = None
 
     def reset(self) -> None:

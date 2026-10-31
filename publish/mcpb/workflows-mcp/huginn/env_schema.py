@@ -237,6 +237,7 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_LOCAL_ONLY": EnvSpec("int", "0", "tuning"),
     "HUGINN_LOCAL_VISION_TIMEOUT": EnvSpec("int", "20", "tuning"),
     "HUGINN_LOCAL_VISION_TTL": EnvSpec("float", "2.0", "tuning"),
+    "HUGINN_LOOP_FAILURES_MAX": EnvSpec("int", "200", "tuning"),
     "HUGINN_LOOP_LIGHT_ON_TRACK": EnvSpec("int", "1", "tuning"),
     "HUGINN_LOOP_ROLLBACK": EnvSpec("int", "1", "tuning"),
     "HUGINN_MAX_BRANCHES": EnvSpec("int", "5", "tuning"),
@@ -300,6 +301,7 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_RECALL_NOISE_FLOOR": EnvSpec("float", "0.35", "tuning"),
     "HUGINN_RENAME_DEBT_LIMIT": EnvSpec("int", "8", "tuning"),
     "HUGINN_REPEAT_EXEC_HARD_STREAK": EnvSpec("int", "2", "tuning"),
+    "HUGINN_REPRO_TIMEOUT_S": EnvSpec("float", "240", "tuning"),
     "HUGINN_RESTRICTED_PYTHON": EnvSpec("int", "1", "tuning"),
     "HUGINN_SELF_GOAL_SYNTHESIS": EnvSpec("int", "0", "tuning"),
     "HUGINN_SESSION_TTL_HOURS": EnvSpec("int", "24", "tuning"),
@@ -327,13 +329,15 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_WM_SUMMARIZE_EVERY_N": EnvSpec("int", "5", "tuning"),
     "HUGINN_WS_MAX_CONNECTIONS": EnvSpec("int", "50", "tuning"),
     "HUGINN_WS_MAX_MSGS_PER_SEC": EnvSpec("int", "20", "tuning"),
-    # ---- internal (91) ----------------------------------------------
+    # ---- internal (95) ----------------------------------------------
     "HUGINN_AGENTS": EnvSpec("str", "", "internal"),
     "HUGINN_AINVOKE_TIMEOUT": EnvSpec("str", "", "internal"),
     "HUGINN_ALLOW_LOCAL_BASH": EnvSpec("str", "", "internal"),
     "HUGINN_ALLOW_POWERSHELL": EnvSpec("str", "", "internal"),
+    "HUGINN_ALLOW_UNCONTRACTED": EnvSpec("bool", "false", "internal"),
     "HUGINN_ALLOW_UNRESTRICTED_READ": EnvSpec("str", "", "internal"),
     "HUGINN_APPROVAL_MODE": EnvSpec("str", "", "internal"),
+    "HUGINN_APPROVE_MODE": EnvSpec("str", "workspace", "internal"),
     "HUGINN_BENCHMARK_MODE_PROMPT": EnvSpec("str", "", "internal"),
     "HUGINN_BUDGET_MODE": EnvSpec("str", "cumulative", "internal"),
     "HUGINN_CI": EnvSpec("str", "", "internal"),
@@ -413,8 +417,12 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_THINKING": EnvSpec("str", "high", "internal"),
     "HUGINN_TOOL_TIMEOUT": EnvSpec("str", "", "internal"),
     "HUGINN_TORCH_DEVICE": EnvSpec("str", "cpu", "internal"),
+    # trace 默认开: 「KEEP 但零执行」必须持续可见, 而不是靠一次性体检.
+    # 需要静音时显式 HUGINN_TRACE=0; 采样只记调用计数, 不记参数, 开销可控.
+    "HUGINN_TRACE": EnvSpec("bool", "true", "internal"),
     "HUGINN_TRACE_SHARD_INTERVAL": EnvSpec("str", "", "internal"),
     "HUGINN_UNPAYWALL_EMAIL": EnvSpec("str", "", "internal"),
+    "HUGINN_UNSAFE_ENV": EnvSpec("bool", "false", "internal"),
     "HUGINN_USE_DOCKER": EnvSpec("str", "", "internal"),
     "HUGINN_USE_RUST_SANDBOX": EnvSpec("str", "", "internal"),
     "HUGINN_VAULT_ADDR": EnvSpec("str", "", "internal"),
@@ -453,9 +461,36 @@ SCHEMA: dict[str, EnvSpec] = {
 }
 
 
+# 部署/工具链外部变量 (非 HUGINN_ 前缀). 名字由外部工具约定, 不能改名, 但
+# **解析口径** (类型 / 权威默认值) 仍必须只有一处 —— 与 SCHEMA 共用 EnvSpec,
+# 由 env_access 同一套访问器读取. 典型来源: config.py 部署边界 + 各工具直连.
+#
+# 只登记"我们拥有解释权"的变量; PATH/HOME/HTTP_PROXY 及第三方 SDK 的 key
+# (OPENAI_API_KEY 等) 不在此列 —— 它们的语义属于外部环境, 不归本仓库声明.
+DEPLOY_SCHEMA: dict[str, EnvSpec] = {
+    # ---- 科学计算可执行文件 ----
+    "LAMMPS_EXECUTABLE": EnvSpec("str", "", "deployment"),
+    "VASP_EXECUTABLE": EnvSpec("str", "", "deployment"),
+    # ---- 材料数据库 key ----
+    "MP_API_KEY": EnvSpec("str", "", "deployment"),
+    "OQMD_API_KEY": EnvSpec("str", "", "deployment"),
+    # ---- HPC 连接 ----
+    "HPC_HOST": EnvSpec("str", "", "deployment"),
+    "HPC_KEY_PATH": EnvSpec("str", "", "deployment"),
+    "HPC_USERNAME": EnvSpec("str", "", "deployment"),
+    # ---- 外部服务 ----
+    "ABAQUS_MCP_SERVER_PATH": EnvSpec("str", "", "deployment"),
+    "OLLAMA_HOST": EnvSpec("str", "http://localhost:11434", "deployment"),
+}
+
+
 # 裸读站点棘轮基线 = 当前代码里字面量 HUGINN_* 读点总数.
 # 治理测试断言实际值 <= 此数, 即只减不增; 迁移读点到 env_access 后应下调此数.
-RAW_READ_BASELINE = 467
+RAW_READ_BASELINE = 464
+
+# 同模块重复读棘轮基线 = Σ(max(0, 同一模块读同一变量的次数 - 1)), 只算非规范读点.
+# 同一模块第二次读同一变量是在重复解析同一份配置, 应抽模块级常量或走 env_access.
+RAW_DUP_READ_BASELINE = 42
 
 
 # 已知默认值分散: 同一变量在代码多处字面量默认值不一致 (双真值来源).

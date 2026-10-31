@@ -38,8 +38,7 @@ class HighThroughputToolInput(BaseModel):
     parameter_space: dict[str, list[Any]] = Field(
         default_factory=dict,
         description=(
-            "For grid: {param: [values]}. "
-            "For random/lhs: {param: [min, max]}."
+            "For grid: {param: [values]}. For random/lhs: {param: [min, max]}."
         ),
     )
     base_input: dict[str, Any] = Field(
@@ -47,12 +46,95 @@ class HighThroughputToolInput(BaseModel):
         description="Base input merged with each parameter combination.",
     )
     n_samples: int = Field(default=20, description="Number of samples for random/lhs")
-    seed: int | None = Field(default=None, description="Random seed for reproducibility")
+    seed: int | None = Field(
+        default=None, description="Random seed for reproducibility"
+    )
     max_parallel: int = Field(default=1, description="Max concurrent tool calls")
     early_termination: str | None = Field(
         default=None,
         description="Optional safe_eval expression to stop early.",
     )
+
+
+def _build_space(
+    input_data: HighThroughputToolInput,
+) -> tuple[Any, ToolResult | None]:
+    """按 space_type 构造参数空间; 未知类型返回 (None, 错误)."""
+    if input_data.space_type == "grid":
+        return GridSpace(input_data.parameter_space), None
+    if input_data.space_type == "random":
+        ranges = {
+            k: (float(v[0]), float(v[1])) for k, v in input_data.parameter_space.items()
+        }
+        return (
+            RandomSpace(ranges, n_samples=input_data.n_samples, seed=input_data.seed),
+            None,
+        )
+    if input_data.space_type == "lhs":
+        ranges = {
+            k: (float(v[0]), float(v[1])) for k, v in input_data.parameter_space.items()
+        }
+        return (
+            LatinHypercubeSpace(
+                ranges, n_samples=input_data.n_samples, seed=input_data.seed
+            ),
+            None,
+        )
+    return None, ToolResult(
+        data=None,
+        success=False,
+        error=f"Unknown space_type: {input_data.space_type}",
+    )
+
+
+def _sweep_data(
+    input_data: HighThroughputToolInput,
+    sweep: Any,
+    jobs: list[Any],
+    aggregated: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "sweep_name": sweep.name,
+        "tool": input_data.tool_name,
+        "n_total": len(jobs),
+        "n_completed": len(sweep.completed_jobs),
+        "n_failed": len(sweep.failed_jobs),
+        "summary": aggregated.get("summary_stats", {}),
+        "best_results": aggregated.get("best_results", {}),
+        "jobs": [j.to_dict() for j in jobs],
+    }
+
+
+async def _execute_jobs(
+    tool: Any,
+    sweep: Any,
+    jobs: list[Any],
+    context: ToolContext | None,
+    max_parallel: int,
+) -> None:
+    """并发执行所有 job, 结果写回 sweep."""
+    semaphore = asyncio.Semaphore(max(1, max_parallel))
+
+    async def _run_job(job):
+        async with semaphore:
+            try:
+                payload = job.full_input
+                if hasattr(tool, "input_schema") and tool.input_schema is not None:
+                    payload = tool.input_schema(**payload).model_dump()
+                if inspect.iscoroutinefunction(tool.call):
+                    result = await tool.call(payload, context)
+                else:
+                    result = tool.call(payload, context)
+                sweep.update_job(
+                    job.job_id,
+                    "completed" if result.success else "failed",
+                    result=result.data if result.success else None,
+                    error=result.error if not result.success else None,
+                )
+            except Exception as exc:
+                sweep.update_job(job.job_id, "failed", error=str(exc))
+
+    await asyncio.gather(*[_run_job(job) for job in jobs])
 
 
 class HighThroughputTool(HuginnTool):
@@ -100,23 +182,9 @@ class HighThroughputTool(HuginnTool):
         input_data = HighThroughputToolInput(**args)
 
         try:
-            space: Any
-            if input_data.space_type == "grid":
-                space = GridSpace(input_data.parameter_space)
-            elif input_data.space_type == "random":
-                ranges = {
-                    k: (float(v[0]), float(v[1]))
-                    for k, v in input_data.parameter_space.items()
-                }
-                space = RandomSpace(ranges, n_samples=input_data.n_samples, seed=input_data.seed)
-            elif input_data.space_type == "lhs":
-                ranges = {
-                    k: (float(v[0]), float(v[1]))
-                    for k, v in input_data.parameter_space.items()
-                }
-                space = LatinHypercubeSpace(ranges, n_samples=input_data.n_samples, seed=input_data.seed)
-            else:
-                return ToolResult(data=None, success=False, error=f"Unknown space_type: {input_data.space_type}")
+            space, failure = _build_space(input_data)
+            if failure is not None:
+                return failure
 
             sweep = ParameterSweep(
                 name=f"ht_{input_data.tool_name}",
@@ -130,46 +198,22 @@ class HighThroughputTool(HuginnTool):
 
             tool = ToolRegistry.get(input_data.tool_name)
             if tool is None:
-                return ToolResult(data=None, success=False, error=f"Tool '{input_data.tool_name}' not found")
+                return ToolResult(
+                    data=None,
+                    success=False,
+                    error=f"Tool '{input_data.tool_name}' not found",
+                )
 
             # Execute jobs, respecting max_parallel
-            semaphore = asyncio.Semaphore(max(1, input_data.max_parallel))
-
-            async def _run_job(job):
-                async with semaphore:
-                    try:
-                        payload = job.full_input
-                        if hasattr(tool, "input_schema") and tool.input_schema is not None:
-                            payload = tool.input_schema(**payload).model_dump()
-                        if inspect.iscoroutinefunction(tool.call):
-                            result = await tool.call(payload, context)
-                        else:
-                            result = tool.call(payload, context)
-                        sweep.update_job(
-                            job.job_id,
-                            "completed" if result.success else "failed",
-                            result=result.data if result.success else None,
-                            error=result.error if not result.success else None,
-                        )
-                    except Exception as exc:
-                        sweep.update_job(job.job_id, "failed", error=str(exc))
-
-            await asyncio.gather(*[_run_job(job) for job in jobs])
+            await _execute_jobs(tool, sweep, jobs, context, input_data.max_parallel)
 
             aggregated = sweep.aggregate_results()
             return ToolResult(
-                data={
-                    "sweep_name": sweep.name,
-                    "tool": input_data.tool_name,
-                    "n_total": len(jobs),
-                    "n_completed": len(sweep.completed_jobs),
-                    "n_failed": len(sweep.failed_jobs),
-                    "summary": aggregated.get("summary_stats", {}),
-                    "best_results": aggregated.get("best_results", {}),
-                    "jobs": [j.to_dict() for j in jobs],
-                },
+                data=_sweep_data(input_data, sweep, jobs, aggregated),
                 success=True,
             )
 
         except Exception as exc:
-            return ToolResult(data=None, success=False, error=f"High-throughput sweep failed: {exc}")
+            return ToolResult(
+                data=None, success=False, error=f"High-throughput sweep failed: {exc}"
+            )

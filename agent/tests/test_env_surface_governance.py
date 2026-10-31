@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import re
+from collections import defaultdict
+from pathlib import Path
 
 from huginn import env_access as ea
 from huginn import env_schema as es
@@ -25,6 +27,16 @@ from huginn.feature_flags import FeatureFlags
 # 只对字面量默认值做漂移比对, 避免推断误差造成假阳性.
 _LITERAL = re.compile(r"^-?[\w.]*$")
 _CONST_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
+# huginn 包根, 供 DEPLOY_SCHEMA (非 HUGINN_*) 的局部扫描用.
+_HUGINN_ROOT = Path(__file__).resolve().parents[1] / "huginn"
+
+# 裸读 DEPLOY_SCHEMA 变量: ``os.environ.get("X")`` / ``os.environ["X"]`` / setdefault 等.
+_BARE_DEPLOY_READ = re.compile(
+    r"os\.environ(?:\.[A-Za-z_]+)?\s*[\(\[]\s*[\"']("
+    + "|".join(re.escape(n) for n in sorted(es.DEPLOY_SCHEMA))
+    + r")[\"']"
+)
 
 
 def _clean(raw: str) -> str:
@@ -62,6 +74,43 @@ def test_no_dead_schema_entries():
     assert not dead, (
         "以下 SCHEMA 声明在代码里已无引用 (死配置), 应删除声明与相关代码: "
         + ", ".join(dead)
+    )
+
+
+def _iter_sources():
+    """遍历 huginn/ 源码, 跳过声明表与读取端实现自身."""
+    for py in _HUGINN_ROOT.rglob("*.py"):
+        if "__pycache__" in str(py) or py.name in {"env_schema.py", "env_access.py"}:
+            continue
+        try:
+            yield py, py.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+
+def test_deploy_schema_has_no_dead_entries():
+    """不变量 1b: 每条 DEPLOY_SCHEMA 声明必须仍被代码引用 (拦截死声明)."""
+    referenced: set[str] = set()
+    for _py, text in _iter_sources():
+        referenced.update(n for n in es.DEPLOY_SCHEMA if n in text)
+    dead = sorted(set(es.DEPLOY_SCHEMA) - referenced)
+    assert not dead, (
+        "以下 DEPLOY_SCHEMA 声明在 huginn/ 里已无引用 (死配置), 应删除声明: "
+        + ", ".join(dead)
+    )
+
+
+def test_deploy_env_reads_go_through_env_access():
+    """不变量 4d: DEPLOY_SCHEMA 变量不得裸读, 一律经 env_access 读取."""
+    bad: list[str] = []
+    for py, text in _iter_sources():
+        for m in _BARE_DEPLOY_READ.finditer(text):
+            lineno = text[: m.start()].count("\n") + 1
+            loc = py.relative_to(_HUGINN_ROOT).as_posix()
+            bad.append(f"{loc}:{lineno} {m.group(1)}")
+    assert not bad, (
+        "以下部署变量仍被 os.environ 裸读, 请改用 huginn.env_access "
+        "(env_str / env_path): " + "; ".join(bad)
     )
 
 
@@ -155,6 +204,27 @@ def test_raw_read_sites_ratchet():
     )
 
 
+def test_same_module_duplicate_reads_ratchet():
+    """不变量 4c: 同一模块重复读同一 HUGINN_* 的多余读点只减不增 (棘轮).
+
+    计数口径 = Σ(max(0, 同一 (变量, 文件) 的裸读次数 - 1)). 同一模块第二次读同一
+    变量是在重复解析同一份配置 —— 应抽成模块级常量, 或统一走 env_access.
+    只算非规范读点 (canonical 已是目标态, 不计入).
+    """
+    groups: dict[tuple[str, str], int] = defaultdict(int)
+    for name, item in _inventory().items():
+        for r in item["reads"]:
+            if r.get("canonical"):
+                continue
+            groups[(name, r["file"])] += 1
+    redundant = sum(n - 1 for n in groups.values() if n > 1)
+    assert redundant <= es.RAW_DUP_READ_BASELINE, (
+        f"同模块重复裸读 {redundant} 处, 超过基线 {es.RAW_DUP_READ_BASELINE}. "
+        "请把重复解析收敛成模块级常量或 env_access; 已收敛则下调 "
+        "env_schema.RAW_DUP_READ_BASELINE."
+    )
+
+
 def test_env_access_enforces_declaration_and_types():
     """访问器自检: 未登记抛错; 声明变量的类型/默认值按 SCHEMA 生效."""
     import pytest
@@ -163,6 +233,6 @@ def test_env_access_enforces_declaration_and_types():
         ea.env_str("HUGINN_DEFINITELY_NOT_DECLARED_XYZ")
 
     # 每个已登记变量的默认值都能按其声明类型解析 (无坏声明).
-    for name, spec in es.SCHEMA.items():
+    for name, spec in {**es.SCHEMA, **es.DEPLOY_SCHEMA}.items():
         ea.parse_value(spec.type, spec.default) if spec.default != "" else None
         assert ea.is_declared(name)

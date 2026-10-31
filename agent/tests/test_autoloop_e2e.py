@@ -57,60 +57,106 @@ class _StubBenchRunner:
         return _StubBenchReport()
 
 
+def _respond_report(low: str) -> str | None:
+    """Response for the _report stage prompt."""
+    if "structured scientific research report" in low or "research paper" in low:
+        return (
+            "This loop tested whether the Ca/Si ratio affects C-S-H "
+            "water diffusion.  The coder stage updated the analysis "
+            "script to parameterize Ca/Si.  Validation confirmed the "
+            "approach but flagged a missing convergence check.  Next "
+            "iteration should add a system-size convergence study."
+        )
+    return None
+
+
+def _respond_hypothesis(low: str) -> str | None:
+    """Response for the _hypothesize stage prompt."""
+    if "candidate hypotheses" in low:
+        return (
+            "If the Ca/Si ratio in C-S-H increases, then the "
+            "interlayer spacing decreases, accelerating water "
+            "diffusion through the gel pores."
+        )
+    return None
+
+
+def _respond_plan(low: str) -> str | None:
+    """Response for the _plan stage prompt."""
+    if "choose one mode" in low:
+        return (
+            "MODE: coder\n"
+            "DESCRIPTION: Parameterize the Ca/Si ratio in the "
+            "diffusion analysis script and add a convergence check."
+        )
+    return None
+
+
+def _respond_reviewer(low: str) -> str | None:
+    """Response for the validate reviewer critique prompt."""
+    if "critical peer reviewer" in low or "point out" in low:
+        return (
+            "The coder output lacks a convergence check on system "
+            "size.  The result is not benchmarked against literature "
+            "values.  Next step: add a convergence study before "
+            "trusting the diffusion coefficient."
+        )
+    return None
+
+
+def _respond_refine(prompt: str, low: str) -> str | None:
+    """Response for the refine_failed prompt."""
+    if "修正假设" in prompt or "refined hypothesis" in low:
+        return (
+            "If the Ca/Si ratio exceeds 1.2, the C-S-H interlayer "
+            "spacing decreases non-linearly and water diffusion "
+            "follows a percolation-threshold model rather than a "
+            "simple linear trend."
+        )
+    return None
+
+
+def _route_stage_prompt(prompt: str) -> str | None:
+    """Route a stage prompt to its response shape; None when unrecognised."""
+    low = prompt.lower()
+
+    # _report → "structured scientific research report"
+    # Checked before _hypothesize because the report prompt embeds
+    # the hypothesis text (which contains "candidate hypotheses").
+    response = _respond_report(low)
+    if response is not None:
+        return response
+
+    # _hypothesize → "Generate 3 divergent candidate hypotheses"
+    response = _respond_hypothesis(low)
+    if response is not None:
+        return response
+
+    # _plan → "Choose ONE mode"
+    response = _respond_plan(low)
+    if response is not None:
+        return response
+
+    # _validate reviewer critique → "As a critical peer reviewer"
+    response = _respond_reviewer(low)
+    if response is not None:
+        return response
+
+    # refine_failed → "修正假设" in the HumanMessage
+    return _respond_refine(prompt, low)
+
+
 def _make_stage_llm():
     """Build a callable FakeLLM that routes by prompt content.
 
     Each pipeline stage embeds distinctive keywords in its HumanMessage, so
     we can return the right response shape without any AsyncMock.
     """
+
     def respond(prompt: str) -> str:
-        low = prompt.lower()
-
-        # _report → "structured scientific research report"
-        # Checked before _hypothesize because the report prompt embeds
-        # the hypothesis text (which contains "candidate hypotheses").
-        if "structured scientific research report" in low or "research paper" in low:
-            return (
-                "This loop tested whether the Ca/Si ratio affects C-S-H "
-                "water diffusion.  The coder stage updated the analysis "
-                "script to parameterize Ca/Si.  Validation confirmed the "
-                "approach but flagged a missing convergence check.  Next "
-                "iteration should add a system-size convergence study."
-            )
-
-        # _hypothesize → "Generate 3 divergent candidate hypotheses"
-        if "candidate hypotheses" in low:
-            return (
-                "If the Ca/Si ratio in C-S-H increases, then the "
-                "interlayer spacing decreases, accelerating water "
-                "diffusion through the gel pores."
-            )
-
-        # _plan → "Choose ONE mode"
-        if "choose one mode" in low:
-            return (
-                "MODE: coder\n"
-                "DESCRIPTION: Parameterize the Ca/Si ratio in the "
-                "diffusion analysis script and add a convergence check."
-            )
-
-        # _validate reviewer critique → "As a critical peer reviewer"
-        if "critical peer reviewer" in low or "point out" in low:
-            return (
-                "The coder output lacks a convergence check on system "
-                "size.  The result is not benchmarked against literature "
-                "values.  Next step: add a convergence study before "
-                "trusting the diffusion coefficient."
-            )
-
-        # refine_failed → "修正假设" in the HumanMessage
-        if "修正假设" in prompt or "refined hypothesis" in low:
-            return (
-                "If the Ca/Si ratio exceeds 1.2, the C-S-H interlayer "
-                "spacing decreases non-linearly and water diffusion "
-                "follows a percolation-threshold model rather than a "
-                "simple linear trend."
-            )
+        response = _route_stage_prompt(prompt)
+        if response is not None:
+            return response
 
         # RedTeamReviewer LLM prompt or anything unexpected — return
         # an empty JSON array so _parse_llm_findings yields no findings.
@@ -135,9 +181,7 @@ def _stub_heavy_calls(monkeypatch, fake_llm):
     ProjectKnowledgeGraph → MagicMock (not used in the run loop)
     on_turn_start    → no-op (speculator scenario matching)
     """
-    monkeypatch.setattr(
-        "huginn.autoloop.engine.get_model", lambda settings: fake_llm
-    )
+    monkeypatch.setattr("huginn.autoloop.engine.get_model", lambda settings: fake_llm)
     monkeypatch.setattr(
         "huginn.autoloop.engine.BenchmarkRunner", lambda: _StubBenchRunner()
     )
@@ -154,7 +198,9 @@ def _stub_heavy_calls(monkeypatch, fake_llm):
     )
     # ponytail: KB 第一次懒加载会 seed_knowledge_base 跑 ONNX 嵌入,
     # CI 首次冷启动 > 120s timeout. _build_kb_text 已处理 None, 直接跳过.
-    monkeypatch.setattr("huginn.autoloop.engine.AutoloopEngine._get_kb", lambda self: None)
+    monkeypatch.setattr(
+        "huginn.autoloop.engine.AutoloopEngine._get_kb", lambda self: None
+    )
     # KG 单例从 conjecture.get_kg 懒加载到 ~/.huginn, CI 上会真写文件污染 home.
     monkeypatch.setattr("huginn.autoloop.conjecture.get_kg", lambda *a, **kw: None)
     # _maybe_clarify("hypothesize_align") → ClarificationManager.ask(timeout=60)
@@ -215,24 +261,73 @@ def _make_engine(tmp_path, fake_llm, monkeypatch):
     return engine, memory
 
 
-# ── tests ────────────────────────────────────────────────────────────
+def _assert_phases_complete(result):
+    """All 7 phases (6 stages + report) must be completed."""
+    # v10: 6 stages of one iteration cycle + final report = 7 phases
+    names = [p.name for p in result.phases]
+    for expected in ("hypothesize", "plan", "execute", "validate", "learn", "report"):
+        assert expected in names, f"缺 {expected}, 实际 {names}"
+    assert len(names) >= 7, f"phase 数 < 7, 实际 {names}"
+
+    for phase in result.phases:
+        assert phase.status == "completed", (
+            f"phase '{phase.name}' status={phase.status} error={phase.error}"
+        )
 
 
-@pytest.mark.asyncio
-@pytest.mark.skipif(_skip_ci_run_cognitive, reason="run_cognitive hangs on CI asyncio.run")
-async def test_autoloop_full_cycle_with_fake_llm(tmp_path, monkeypatch):
-    """Drive the full 6-stage pipeline with a FakeLLM — no AsyncMock stubs.
+def _assert_llm_stage_outputs(result) -> str:
+    """LLM-driven stages produced real output; return the hypothesis text."""
+    hyp_phase = next(p for p in result.phases if p.name == "hypothesize")
+    assert hyp_phase.result, "hypothesize returned empty"
+    assert "Ca/Si" in hyp_phase.result or "diffusion" in hyp_phase.result.lower()
 
-    Verifies:
-      * engine.run_cognitive() completes without crashing
-      * all 7 phases (6 stages + report) have status "completed"
-      * LLM-driven stages produced real, non-empty output
-      * the markdown report file was written to disk
-      * FakeLLM.call_count > 0 (proves real LLM calls, not mocks)
-      * memory has session messages from _learn
-      * HypothesisGraph tracks the engine's hypothesis
-    """
-    fake_llm = _make_stage_llm()
+    plan_phase = next(p for p in result.phases if p.name == "plan")
+    assert isinstance(plan_phase.result, dict)
+    assert plan_phase.result["mode"] == "coder"
+    assert "Ca/Si" in plan_phase.result["description"]
+
+    # validate ran the real reviewer critique via FakeLLM
+    val_phase = next(p for p in result.phases if p.name == "validate")
+    assert isinstance(val_phase.result, dict)
+    assert "reviewer_critique" in val_phase.result or "tests_passed" in val_phase.result
+    return hyp_phase.result
+
+
+def _assert_report_file(result):
+    """The markdown report file was written to disk."""
+    assert result.report_path is not None
+    report_file = Path(result.report_path)
+    assert report_file.exists(), f"report not found at {report_file}"
+    report_text = report_file.read_text(encoding="utf-8")
+    assert "Huginn Autoloop Report" in report_text
+    assert "Optimize C-S-H defect kinetics" in report_text
+    # tutor narrative comes from the real FakeLLM call in _report
+    assert "Tutor" in report_text or "diffusion" in report_text.lower()
+
+
+def _assert_fake_llm_called(fake_llm):
+    """The FakeLLM must have been called for real, not mocked."""
+    # 4 calls minimum: hypothesize + plan + validate reviewer + report tutor
+    assert fake_llm.call_count >= 3, (
+        f"expected >= 3 real LLM calls, got {fake_llm.call_count}"
+    )
+
+
+def _assert_hypothesis_graph(hypothesis):
+    """HypothesisGraph tracks the engine's hypothesis."""
+    graph = HypothesisGraph()
+    h1 = graph.add_hypothesis(
+        statement=hypothesis,
+        rationale="Generated by AutoloopEngine iteration 1",
+        testable_prediction="Interlayer spacing decreases with Ca/Si",
+    )
+    assert len(graph.all_nodes()) == 1
+    assert len(graph.frontier()) == 1
+    assert graph.get(h1).status == "untested"
+
+
+async def _run_full_cycle(tmp_path, fake_llm, monkeypatch):
+    """Run the real 6-stage pipeline once; return (result, memory)."""
     engine, memory = _make_engine(tmp_path, fake_llm, monkeypatch)
 
     # Drop a passing test so _validate's pytest subprocess has something
@@ -251,88 +346,11 @@ async def test_autoloop_full_cycle_with_fake_llm(tmp_path, monkeypatch):
         )
     finally:
         _restore_gate(gate_state)
-
-    # ── completion ───────────────────────────────────────────────
-    assert isinstance(result, AutoloopResult)
-    assert result.run_id.startswith("loop_")
-    assert result.objective == "Optimize C-S-H defect kinetics"
-
-    # v10: 6 stages of one iteration cycle + final report = 7 phases
-    names = [p.name for p in result.phases]
-    for expected in ("hypothesize", "plan", "execute", "validate", "learn", "report"):
-        assert expected in names, f"缺 {expected}, 实际 {names}"
-    assert len(names) >= 7, f"phase 数 < 7, 实际 {names}"
-
-    for phase in result.phases:
-        assert phase.status == "completed", (
-            f"phase '{phase.name}' status={phase.status} error={phase.error}"
-        )
-
-    # ── LLM-driven stages produced real output ───────────────────
-    hyp_phase = next(p for p in result.phases if p.name == "hypothesize")
-    assert hyp_phase.result, "hypothesize returned empty"
-    assert "Ca/Si" in hyp_phase.result or "diffusion" in hyp_phase.result.lower()
-
-    plan_phase = next(p for p in result.phases if p.name == "plan")
-    assert isinstance(plan_phase.result, dict)
-    assert plan_phase.result["mode"] == "coder"
-    assert "Ca/Si" in plan_phase.result["description"]
-
-    # validate ran the real reviewer critique via FakeLLM
-    val_phase = next(p for p in result.phases if p.name == "validate")
-    assert isinstance(val_phase.result, dict)
-    assert "reviewer_critique" in val_phase.result or "tests_passed" in val_phase.result
-
-    # ── report file written ─────────────────────────────────────
-    assert result.report_path is not None
-    report_file = Path(result.report_path)
-    assert report_file.exists(), f"report not found at {report_file}"
-    report_text = report_file.read_text(encoding="utf-8")
-    assert "Huginn Autoloop Report" in report_text
-    assert "Optimize C-S-H defect kinetics" in report_text
-    # tutor narrative comes from the real FakeLLM call in _report
-    assert "Tutor" in report_text or "diffusion" in report_text.lower()
-
-    # ── FakeLLM was actually called (not mocked) ─────────────────
-    # 4 calls minimum: hypothesize + plan + validate reviewer + report tutor
-    assert fake_llm.call_count >= 3, (
-        f"expected >= 3 real LLM calls, got {fake_llm.call_count}"
-    )
-
-    # ── memory has entries from _learn ──────────────────────────
-    assert len(memory.session.messages) > 0, "no session messages from _learn"
-
-    # ── HypothesisGraph tracks the engine's hypothesis ───────────
-    graph = HypothesisGraph()
-    h1 = graph.add_hypothesis(
-        statement=hyp_phase.result,
-        rationale="Generated by AutoloopEngine iteration 1",
-        testable_prediction="Interlayer spacing decreases with Ca/Si",
-    )
-    assert len(graph.all_nodes()) == 1
-    assert len(graph.frontier()) == 1
-    assert graph.get(h1).status == "untested"
+    return result, memory
 
 
-@pytest.mark.asyncio
-@pytest.mark.skipif(_skip_ci_run_cognitive, reason="run_cognitive hangs on CI asyncio.run")
-async def test_autoloop_hypothesis_evolution(tmp_path, monkeypatch):
-    """Verify refine_failed produces a parent→child hypothesis relationship.
-
-    Runs one real engine iteration to get a FakeLLM-generated hypothesis,
-    then simulates refutation and refinement through the real
-    HypothesisGraph.refine_failed flow (which itself calls the FakeLLM
-    via RedTeamReviewer + _llm_refine).
-
-    Verifies:
-      * the refined hypothesis differs from the original
-      * child.parent_id points to the parent node
-      * parent status is "superseded", child status is "untested"
-      * a derive edge connects parent → child
-      * children() helper returns the refined node
-      * FakeLLM was called during refinement (real LLM, not template)
-    """
-    fake_llm = _make_stage_llm()
+async def _run_refine_cycle(tmp_path, fake_llm, monkeypatch):
+    """Run one real engine iteration and return its hypothesis text."""
     engine, _ = _make_engine(tmp_path, fake_llm, monkeypatch)
 
     (tmp_path / "test_smoke.py").write_text(
@@ -354,10 +372,11 @@ async def test_autoloop_hypothesis_evolution(tmp_path, monkeypatch):
     hyp_phase = next(p for p in result.phases if p.name == "hypothesize")
     original = hyp_phase.result
     assert original, "engine did not produce a hypothesis"
+    return original
 
-    calls_before_refine = fake_llm.call_count
 
-    # ── simulate refutation + refinement ─────────────────────────
+def _refute_and_refine(fake_llm, original):
+    """Simulate refutation then refinement through the real graph flow."""
     graph = HypothesisGraph()
     h1 = graph.add_hypothesis(
         statement=original,
@@ -375,8 +394,11 @@ async def test_autoloop_hypothesis_evolution(tmp_path, monkeypatch):
 
     # refine_failed calls RedTeamReviewer (FakeLLM) + _llm_refine (FakeLLM)
     h2 = graph.refine_failed(h1, evidence=refute_evidence, model=fake_llm)
+    return graph, h1, h2
 
-    # ── parent → child relationship ──────────────────────────────
+
+def _assert_refine_relationship(graph, h1, h2, original):
+    """The refined child must point back to the superseded parent."""
     parent = graph.get(h1)
     child = graph.get(h2)
 
@@ -384,17 +406,25 @@ async def test_autoloop_hypothesis_evolution(tmp_path, monkeypatch):
     assert parent.status == "superseded", "original should be superseded"
     assert child.status == "untested", "refined hypothesis should be ready"
     assert child.statement != original, "refined hypothesis must differ"
-    assert "percolation" in child.statement.lower() or "non-linear" in child.statement.lower(), (
-        "refined statement should address the refutation"
-    )
+    assert (
+        "percolation" in child.statement.lower()
+        or "non-linear" in child.statement.lower()
+    ), "refined statement should address the refutation"
 
+
+def _assert_derive_edge(graph, h1, h2):
+    """Exactly one derive edge connects parent → child."""
     # derive edge from parent to child
     derive_edges = [
-        e for e in graph.edges()
+        e
+        for e in graph.edges()
         if e.from_id == h1 and e.to_id == h2 and e.edge_type == "derive"
     ]
     assert len(derive_edges) == 1, "expected one derive edge parent→child"
 
+
+def _assert_derivation_chain(graph, h1, h2):
+    """children() returns the refined node; derivation_chain walks root→child."""
     # children() helper returns the refined node
     kids = graph.children(h1)
     assert len(kids) == 1
@@ -406,14 +436,100 @@ async def test_autoloop_hypothesis_evolution(tmp_path, monkeypatch):
     assert chain[0].id == h1
     assert chain[1].id == h2
 
+
+def _assert_graph_shape(graph):
+    """The graph has 2 nodes and holds both derive and refute edges."""
+    # The graph now has 2 nodes and at least 2 edges (derive + refute)
+    assert len(graph.all_nodes()) == 2
+    edge_types = {e.edge_type for e in graph.edges()}
+    assert "derive" in edge_types
+    assert "refute" in edge_types
+
+
+# ── tests ────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    _skip_ci_run_cognitive, reason="run_cognitive hangs on CI asyncio.run"
+)
+async def test_autoloop_full_cycle_with_fake_llm(tmp_path, monkeypatch):
+    """Drive the full 6-stage pipeline with a FakeLLM — no AsyncMock stubs.
+
+    Verifies:
+      * engine.run_cognitive() completes without crashing
+      * all 7 phases (6 stages + report) have status "completed"
+      * LLM-driven stages produced real, non-empty output
+      * the markdown report file was written to disk
+      * FakeLLM.call_count > 0 (proves real LLM calls, not mocks)
+      * memory has session messages from _learn
+      * HypothesisGraph tracks the engine's hypothesis
+    """
+    fake_llm = _make_stage_llm()
+    result, memory = await _run_full_cycle(tmp_path, fake_llm, monkeypatch)
+
+    # ── completion ───────────────────────────────────────────────
+    assert isinstance(result, AutoloopResult)
+    assert result.run_id.startswith("loop_")
+    assert result.objective == "Optimize C-S-H defect kinetics"
+
+    _assert_phases_complete(result)
+
+    # ── LLM-driven stages produced real output ───────────────────
+    hypothesis = _assert_llm_stage_outputs(result)
+
+    # ── report file written ─────────────────────────────────────
+    _assert_report_file(result)
+
+    # ── FakeLLM was actually called (not mocked) ─────────────────
+    _assert_fake_llm_called(fake_llm)
+
+    # ── memory has entries from _learn ──────────────────────────
+    assert len(memory.session.messages) > 0, "no session messages from _learn"
+
+    # ── HypothesisGraph tracks the engine's hypothesis ───────────
+    _assert_hypothesis_graph(hypothesis)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    _skip_ci_run_cognitive, reason="run_cognitive hangs on CI asyncio.run"
+)
+async def test_autoloop_hypothesis_evolution(tmp_path, monkeypatch):
+    """Verify refine_failed produces a parent→child hypothesis relationship.
+
+    Runs one real engine iteration to get a FakeLLM-generated hypothesis,
+    then simulates refutation and refinement through the real
+    HypothesisGraph.refine_failed flow (which itself calls the FakeLLM
+    via RedTeamReviewer + _llm_refine).
+
+    Verifies:
+      * the refined hypothesis differs from the original
+      * child.parent_id points to the parent node
+      * parent status is "superseded", child status is "untested"
+      * a derive edge connects parent → child
+      * children() helper returns the refined node
+      * FakeLLM was called during refinement (real LLM, not template)
+    """
+    fake_llm = _make_stage_llm()
+    original = await _run_refine_cycle(tmp_path, fake_llm, monkeypatch)
+
+    calls_before_refine = fake_llm.call_count
+
+    # ── simulate refutation + refinement ─────────────────────────
+    graph, h1, h2 = _refute_and_refine(fake_llm, original)
+
+    # ── parent → child relationship ──────────────────────────────
+    _assert_refine_relationship(graph, h1, h2, original)
+
+    _assert_derive_edge(graph, h1, h2)
+
+    _assert_derivation_chain(graph, h1, h2)
+
     # FakeLLM was called during refine (RedTeamReviewer + _llm_refine)
     calls_after_refine = fake_llm.call_count
     assert calls_after_refine > calls_before_refine, (
         "refine_failed should have made real LLM calls"
     )
 
-    # The graph now has 2 nodes and at least 2 edges (derive + refute)
-    assert len(graph.all_nodes()) == 2
-    edge_types = {e.edge_type for e in graph.edges()}
-    assert "derive" in edge_types
-    assert "refute" in edge_types
+    _assert_graph_shape(graph)

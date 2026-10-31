@@ -1,4 +1,5 @@
 """缺陷检测 — 裂纹 / 气孔 / 夹杂, 基于 scipy.ndimage 形态学."""
+
 from __future__ import annotations
 
 import logging
@@ -15,13 +16,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def defect_detect(args: ImageAnalysisInput) -> ToolResult:
-    arr = load_gray(args.image_path)
-    defect_type = args.parameters.get("defect_type", "crack")
-    sensitivity = float(args.parameters.get("sensitivity", 0.5))
-    pixel_size = float(args.parameters.get("pixel_size_nm", 1.0))
-    min_defect_area = int(args.parameters.get("min_defect_area_px", 5))
-
+def _import_ndimage() -> tuple[dict[str, Any] | None, Exception | None]:
+    """导入 scipy.ndimage 算子; 缺失时返回 (None, 异常)."""
     try:
         from scipy.ndimage import (
             binary_closing,
@@ -33,54 +29,57 @@ def defect_detect(args: ImageAnalysisInput) -> ToolResult:
             label as nd_label,
         )
     except ImportError as exc:
-        return ToolResult(
-            data=None,
-            success=False,
-            error=f"缺陷检测需要 scipy.ndimage, 请安装 scipy ({exc})",
-        )
+        return None, exc
+    return {
+        "closing": binary_closing,
+        "opening": binary_opening,
+        "structure": generate_binary_structure,
+        "grey_opening": grey_opening,
+        "label": nd_label,
+    }, None
 
-    # sensitivity 越高, 阈值越宽松
-    sens = max(0.0, min(1.0, sensitivity))
-    structure = generate_binary_structure(2, 1)
 
+def _binarize(
+    arr: np.ndarray, defect_type: str, sens: float, structure: Any, ops: dict[str, Any]
+) -> tuple[np.ndarray | None, str | None]:
+    """按 defect_type 生成二值 mask; 未知类型返回 (None, None)."""
     if defect_type == "crack":
         # 裂纹: 用 grey top-hat 找长条暗结构
         se_size = max(3, int(20 * (1.0 - sens)))
-        bg = grey_opening(arr, size=se_size)
+        bg = ops["grey_opening"](arr, size=se_size)
         tophat_neg = bg - arr  # 暗残差
         thr_val = float(np.percentile(tophat_neg, 95 - 10 * sens))
         binary = tophat_neg > thr_val
-        binary = binary_opening(binary, structure=structure)
-        defect_label = "crack"
-    elif defect_type == "pore":
+        binary = ops["opening"](binary, structure=structure)
+        return binary, "crack"
+    if defect_type == "pore":
         # 气孔: 暗圆形 blob
         otsu_t = otsu_numpy(arr)
         thr_val = otsu_t - 10.0 * (1.0 - sens)
         binary = arr < thr_val
-        binary = binary_closing(binary, structure=structure, iterations=2)
-        binary = binary_opening(binary, structure=structure, iterations=1)
-        defect_label = "pore"
-    elif defect_type == "inclusion":
+        binary = ops["closing"](binary, structure=structure, iterations=2)
+        binary = ops["opening"](binary, structure=structure, iterations=1)
+        return binary, "pore"
+    if defect_type == "inclusion":
         # 夹杂: 亮的高衬度区
         otsu_t = otsu_numpy(arr)
         thr_val = otsu_t + 30.0 * (1.0 - sens)
         binary = arr > thr_val
-        binary = binary_closing(binary, structure=structure, iterations=2)
-        binary = binary_opening(binary, structure=structure, iterations=1)
-        defect_label = "inclusion"
-    else:
-        return ToolResult(
-            data=None,
-            success=False,
-            error=f"未知缺陷类型: {defect_type}, 支持 crack/pore/inclusion",
-        )
+        binary = ops["closing"](binary, structure=structure, iterations=2)
+        binary = ops["opening"](binary, structure=structure, iterations=1)
+        return binary, "inclusion"
+    return None, None
 
-    labeled, n_defects = nd_label(binary)
-    counts = np.bincount(labeled.ravel())
-    counts[0] = 0
-    areas_all = counts[counts > 0]
-    areas_f = areas_all[areas_all >= min_defect_area]
 
+def _collect_defects(
+    labeled: np.ndarray,
+    counts: np.ndarray,
+    n_defects: int,
+    min_defect_area: int,
+    pixel_size: float,
+    defect_type: str,
+) -> list[dict[str, Any]]:
+    """按连通域收集缺陷信息, 最多 100 条."""
     defects_info: list[dict[str, Any]] = []
     for i in range(1, n_defects + 1):
         a = int(counts[i])
@@ -90,7 +89,7 @@ def defect_detect(args: ImageAnalysisInput) -> ToolResult:
         info: dict[str, Any] = {
             "id": i,
             "area_px2": a,
-            "area_nm2": float(a * pixel_size ** 2),
+            "area_nm2": float(a * pixel_size**2),
             "centroid_px": [float(xs.mean()), float(ys.mean())],
             "bbox": [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())],
         }
@@ -101,7 +100,17 @@ def defect_detect(args: ImageAnalysisInput) -> ToolResult:
         defects_info.append(info)
         if len(defects_info) >= 100:
             break
+    return defects_info
 
+
+def _build_defect_data(
+    arr: np.ndarray,
+    defect_label: str,
+    sens: float,
+    defects_info: list[dict[str, Any]],
+    areas_f: np.ndarray,
+) -> dict[str, Any]:
+    """组装 summary + measurements."""
     if len(areas_f) > 0:
         summary = (
             f"缺陷检测 ({defect_label}): 检测到 {len(defects_info)} 个候选缺陷, "
@@ -110,7 +119,7 @@ def defect_detect(args: ImageAnalysisInput) -> ToolResult:
     else:
         summary = f"缺陷检测 ({defect_label}): 未检测到符合要求的缺陷"
 
-    data = {
+    return {
         "summary": summary,
         "measurements": {
             "image_shape": [int(arr.shape[0]), int(arr.shape[1])],
@@ -124,4 +133,43 @@ def defect_detect(args: ImageAnalysisInput) -> ToolResult:
             ),
         },
     }
+
+
+def defect_detect(args: ImageAnalysisInput) -> ToolResult:
+    arr = load_gray(args.image_path)
+    defect_type = args.parameters.get("defect_type", "crack")
+    sensitivity = float(args.parameters.get("sensitivity", 0.5))
+    pixel_size = float(args.parameters.get("pixel_size_nm", 1.0))
+    min_defect_area = int(args.parameters.get("min_defect_area_px", 5))
+
+    ops, import_err = _import_ndimage()
+    if ops is None:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"缺陷检测需要 scipy.ndimage, 请安装 scipy ({import_err})",
+        )
+
+    # sensitivity 越高, 阈值越宽松
+    sens = max(0.0, min(1.0, sensitivity))
+    structure = ops["structure"](2, 1)
+
+    binary, defect_label = _binarize(arr, defect_type, sens, structure, ops)
+    if defect_label is None:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"未知缺陷类型: {defect_type}, 支持 crack/pore/inclusion",
+        )
+
+    labeled, n_defects = ops["label"](binary)
+    counts = np.bincount(labeled.ravel())
+    counts[0] = 0
+    areas_all = counts[counts > 0]
+    areas_f = areas_all[areas_all >= min_defect_area]
+
+    defects_info = _collect_defects(
+        labeled, counts, n_defects, min_defect_area, pixel_size, defect_type
+    )
+    data = _build_defect_data(arr, defect_label, sens, defects_info, areas_f)
     return ToolResult(data=data)

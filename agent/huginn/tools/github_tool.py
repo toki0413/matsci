@@ -28,7 +28,6 @@ from huginn.tools.profile import ToolProfile
 logger = logging.getLogger(__name__)
 
 
-
 class GithubToolInput(BaseModel):
     action: Literal[
         "issue_get",
@@ -39,16 +38,30 @@ class GithubToolInput(BaseModel):
         "checks_view",
     ] = Field(...)
     working_dir: str | None = Field(default=None)
-    repo: str | None = Field(default=None, description="owner/repo. None = infer from git remote.")
+    repo: str | None = Field(
+        default=None, description="owner/repo. None = infer from git remote."
+    )
     # issue params
     issue_number: int | None = Field(default=None)
     # pr params
     title: str | None = Field(default=None, description="PR title (pr_create).")
-    body: str | None = Field(default=None, description="PR body (pr_create) or comment body (pr_comment).")
-    base: str | None = Field(default=None, description="Target branch for PR (pr_create). Defaults to repo default.")
-    head: str | None = Field(default=None, description="Source branch for PR (pr_create). Defaults to current.")
-    pr_number: int | None = Field(default=None, description="PR number (pr_view/pr_comment).")
-    state: Literal["open", "closed", "all"] = Field(default="open", description="Filter for issue_list.")
+    body: str | None = Field(
+        default=None, description="PR body (pr_create) or comment body (pr_comment)."
+    )
+    base: str | None = Field(
+        default=None,
+        description="Target branch for PR (pr_create). Defaults to repo default.",
+    )
+    head: str | None = Field(
+        default=None,
+        description="Source branch for PR (pr_create). Defaults to current.",
+    )
+    pr_number: int | None = Field(
+        default=None, description="PR number (pr_view/pr_comment)."
+    )
+    state: Literal["open", "closed", "all"] = Field(
+        default="open", description="Filter for issue_list."
+    )
     limit: int = Field(default=30, ge=1, le=100)
 
 
@@ -78,12 +91,110 @@ def _infer_repo(work_dir: Path) -> str | None:
     return None
 
 
+def _gh_missing_result() -> ToolResult:
+    """gh CLI 不可用时的降级结果."""
+    return ToolResult(
+        data=None,
+        success=False,
+        error=(
+            "gh CLI not found on PATH. Install from https://cli.github.com/ "
+            "or use git_tool for local-only operations."
+        ),
+    )
+
+
+async def _gh_permission_result(
+    context: ToolContext | None,
+    args: dict[str, Any],
+    input_data: GithubToolInput,
+    cmd: list[str],
+) -> ToolResult | None:
+    """写动作过权限; ASK 返回审批预览, DENY 返回拒绝, 通过返回 None."""
+    perm_config = (
+        context.config
+        if context is not None and isinstance(context.config, PermissionConfig)
+        else PermissionConfig()
+    )
+    checker = PermissionChecker(perm_config)
+    perm_result = await checker.check(
+        "github_tool",
+        is_destructive=True,
+        args=args,
+    )
+    if perm_result.mode == PermissionMode.ASK:
+        return ToolResult(
+            data={
+                "dry_run": True,
+                "needs_approval": True,
+                "action": input_data.action,
+                "command": " ".join(cmd),
+                "reason": perm_result.reason,
+                "message": f"GitHub {input_data.action} requires approval — no changes made.",
+            },
+            success=True,
+        )
+    if perm_result.mode == PermissionMode.DENY:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=perm_result.reason or f"GitHub {input_data.action} denied.",
+        )
+    return None
+
+
+def _gh_execute(
+    cmd: list[str], work_dir: Path, input_data: GithubToolInput
+) -> ToolResult:
+    """执行 gh 命令, 优先解析 JSON 输出."""
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(work_dir),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60.0,
+        )
+        success = result.returncode == 0
+        # 优先解析 JSON 输出
+        data: dict[str, Any] = {"action": input_data.action, "command": " ".join(cmd)}
+        if result.stdout.strip().startswith("{") or result.stdout.strip().startswith(
+            "["
+        ):
+            try:
+                data["result"] = json.loads(result.stdout)
+            except json.JSONDecodeError:
+                data["output"] = result.stdout.strip()
+        else:
+            data["output"] = result.stdout.strip()
+        data["returncode"] = result.returncode
+        data["message"] = (
+            f"GitHub {input_data.action} {'completed' if success else 'failed'}."
+        )
+        return ToolResult(
+            data=data,
+            success=success,
+            error=None
+            if success
+            else f"gh {input_data.action} failed (exit {result.returncode}): {result.stderr.strip()[:300]}",
+        )
+    except subprocess.TimeoutExpired:
+        return ToolResult(
+            data=None, success=False, error=f"gh {input_data.action} timed out."
+        )
+    except Exception as e:
+        return ToolResult(data=None, success=False, error=f"GitHub tool failed: {e}")
+
+
 class GithubTool(HuginnTool):
     """GitHub Issue/PR workflow via ``gh`` CLI."""
 
     name = "github_tool"
     category = "core"
-    description = "Interact with GitHub: read issues, create PRs, view checks. Requires gh CLI."
+    description = (
+        "Interact with GitHub: read issues, create PRs, view checks. Requires gh CLI."
+    )
     input_schema = GithubToolInput
     profile = ToolProfile(cost_tier="light")
 
@@ -98,19 +209,14 @@ class GithubTool(HuginnTool):
     ) -> ToolResult:
         input_data = GithubToolInput(**args)
         work_dir = (
-            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+            Path(input_data.working_dir)
+            if input_data.working_dir
+            else self.default_work_dir()
         )
 
         # ── 0. gh 可用性检查 ──
         if not _gh_available():
-            return ToolResult(
-                data=None,
-                success=False,
-                error=(
-                    "gh CLI not found on PATH. Install from https://cli.github.com/ "
-                    "or use git_tool for local-only operations."
-                ),
-            )
+            return _gh_missing_result()
 
         # ── 1. 推断 repo ──
         repo = input_data.repo or _infer_repo(work_dir)
@@ -132,101 +238,102 @@ class GithubTool(HuginnTool):
 
         # ── 3. 写动作过权限 ──
         if input_data.action in _WRITE_ACTIONS:
-            perm_config = (
-                context.config
-                if context is not None and isinstance(context.config, PermissionConfig)
-                else PermissionConfig()
-            )
-            checker = PermissionChecker(perm_config)
-            perm_result = await checker.check(
-                "github_tool",
-                is_destructive=True,
-                args=args,
-            )
-            if perm_result.mode == PermissionMode.ASK:
-                return ToolResult(
-                    data={
-                        "dry_run": True,
-                        "needs_approval": True,
-                        "action": input_data.action,
-                        "command": " ".join(cmd),
-                        "reason": perm_result.reason,
-                        "message": f"GitHub {input_data.action} requires approval — no changes made.",
-                    },
-                    success=True,
-                )
-            if perm_result.mode == PermissionMode.DENY:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=perm_result.reason or f"GitHub {input_data.action} denied.",
-                )
+            early = await _gh_permission_result(context, args, input_data, cmd)
+            if early is not None:
+                return early
 
         # ── 4. 执行 ──
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=str(work_dir),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=60.0,
-            )
-            success = result.returncode == 0
-            # 优先解析 JSON 输出
-            data: dict[str, Any] = {"action": input_data.action, "command": " ".join(cmd)}
-            if result.stdout.strip().startswith("{") or result.stdout.strip().startswith("["):
-                try:
-                    data["result"] = json.loads(result.stdout)
-                except json.JSONDecodeError:
-                    data["output"] = result.stdout.strip()
-            else:
-                data["output"] = result.stdout.strip()
-            data["returncode"] = result.returncode
-            data["message"] = f"GitHub {input_data.action} {'completed' if success else 'failed'}."
-            return ToolResult(
-                data=data,
-                success=success,
-                error=None if success else f"gh {input_data.action} failed (exit {result.returncode}): {result.stderr.strip()[:300]}",
-            )
-        except subprocess.TimeoutExpired:
-            return ToolResult(data=None, success=False, error=f"gh {input_data.action} timed out.")
-        except Exception as e:
-            return ToolResult(data=None, success=False, error=f"GitHub tool failed: {e}")
+        return _gh_execute(cmd, work_dir, input_data)
+
+
+def _cmd_issue_get(input_data: GithubToolInput, repo: str | None) -> list[str] | None:
+    if input_data.issue_number is None or repo is None:
+        return None
+    return [
+        "gh",
+        "issue",
+        "view",
+        str(input_data.issue_number),
+        "--repo",
+        repo,
+        "--json",
+        "number,title,body,state,labels",
+    ]
+
+
+def _cmd_issue_list(input_data: GithubToolInput, repo: str | None) -> list[str]:
+    cmd = [
+        "gh",
+        "issue",
+        "list",
+        "--state",
+        input_data.state,
+        "--limit",
+        str(input_data.limit),
+        "--json",
+        "number,title,state,labels",
+    ]
+    if repo:
+        cmd.extend(["--repo", repo])
+    return cmd
+
+
+def _cmd_pr_create(input_data: GithubToolInput, repo: str | None) -> list[str] | None:
+    if not input_data.title or repo is None:
+        return None
+    cmd = ["gh", "pr", "create", "--repo", repo, "--title", input_data.title]
+    if input_data.body:
+        cmd.extend(["--body", input_data.body])
+    if input_data.base:
+        cmd.extend(["--base", input_data.base])
+    if input_data.head:
+        cmd.extend(["--head", input_data.head])
+    return cmd
+
+
+def _cmd_pr_view(input_data: GithubToolInput, repo: str | None) -> list[str] | None:
+    if input_data.pr_number is None or repo is None:
+        return None
+    return [
+        "gh",
+        "pr",
+        "view",
+        str(input_data.pr_number),
+        "--repo",
+        repo,
+        "--json",
+        "number,title,state,url,mergeable,statusCheckRollup",
+    ]
+
+
+def _cmd_pr_comment(input_data: GithubToolInput, repo: str | None) -> list[str] | None:
+    if input_data.pr_number is None or not input_data.body or repo is None:
+        return None
+    return [
+        "gh",
+        "pr",
+        "comment",
+        str(input_data.pr_number),
+        "--repo",
+        repo,
+        "--body",
+        input_data.body,
+    ]
 
 
 def _build_gh_cmd(input_data: GithubToolInput, repo: str | None) -> list[str] | None:
     """Build the gh command. Returns None for bad input."""
     action = input_data.action
     if action == "issue_get":
-        if input_data.issue_number is None or repo is None:
-            return None
-        return ["gh", "issue", "view", str(input_data.issue_number), "--repo", repo, "--json", "number,title,body,state,labels"]
+        return _cmd_issue_get(input_data, repo)
     if action == "issue_list":
-        cmd = ["gh", "issue", "list", "--state", input_data.state, "--limit", str(input_data.limit), "--json", "number,title,state,labels"]
-        if repo:
-            cmd.extend(["--repo", repo])
-        return cmd
+        return _cmd_issue_list(input_data, repo)
     if action == "pr_create":
-        if not input_data.title or repo is None:
-            return None
-        cmd = ["gh", "pr", "create", "--repo", repo, "--title", input_data.title]
-        if input_data.body:
-            cmd.extend(["--body", input_data.body])
-        if input_data.base:
-            cmd.extend(["--base", input_data.base])
-        if input_data.head:
-            cmd.extend(["--head", input_data.head])
-        return cmd
+        return _cmd_pr_create(input_data, repo)
     if action == "pr_view":
-        if input_data.pr_number is None or repo is None:
-            return None
-        return ["gh", "pr", "view", str(input_data.pr_number), "--repo", repo, "--json", "number,title,state,url,mergeable,statusCheckRollup"]
+        return _cmd_pr_view(input_data, repo)
     if action == "pr_comment":
-        if input_data.pr_number is None or not input_data.body or repo is None:
-            return None
-        return ["gh", "pr", "comment", str(input_data.pr_number), "--repo", repo, "--body", input_data.body]
+        return _cmd_pr_comment(input_data, repo)
     if action == "checks_view":
         if input_data.pr_number is None or repo is None:
             return None

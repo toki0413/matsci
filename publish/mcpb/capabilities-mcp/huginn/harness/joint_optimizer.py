@@ -10,6 +10,7 @@ P8 限制: 不包含 model 维度.
 
 toggle: cfg.feature_flags.harness_joint_optimizer (默认 off).
 """
+
 from __future__ import annotations
 
 import json
@@ -28,7 +29,9 @@ from ._enabled import _harness_enabled
 logger = logging.getLogger(__name__)
 
 # 核心 block 不能被关掉 (避免 prompt 崩坏)
-_CORE_BLOCKS = frozenset({"body", "fail", "exec", "context", "hypothesis", "principles"})
+_CORE_BLOCKS = frozenset(
+    {"body", "fail", "exec", "context", "hypothesis", "principles"}
+)
 
 
 @dataclass
@@ -38,6 +41,7 @@ class JointBelief:
     用 UCB (Upper Confidence Bound) 选, 不是 Thompson sampling.
     UCB = posterior_mean + exploration * sqrt(ln(n_total+1) / (n_i+1)).
     """
+
     config_id: str  # block_subset_id + workflow_params_id 的组合 id
     phase: str
     problem_domain: str = ""  # 分格存档维度: 一个"问题域"一格, 防激进方案被饥饿
@@ -97,6 +101,7 @@ class JointBandit:
 
     ponytail: 不做笛卡尔积全搜索, UCB + 随机探索够用.
     """
+
     _instance: JointBandit | None = None
     _lock = threading.Lock()
 
@@ -153,6 +158,7 @@ class JointBandit:
         不会被单一 UCB 的"偏好已验证组合"饥饿.
         """
         import hashlib
+
         block_str = ",".join(sorted(block_subset))
         param_str = json.dumps(workflow_params, sort_keys=True, default=str)
         return hashlib.md5(
@@ -186,33 +192,54 @@ class JointBandit:
                 if p == phase and b.problem_domain == problem_domain
             )
             # 每个非核心 block: 看 "包含此 block" 的组合 UCB (限定在 domain 桶内)
-            scored: list[tuple[str, float]] = []
-            for name in non_core:
-                # 找包含此 block 的最佳 config
-                best_ucb = 0.0
-                for (p, _cid), b in self._beliefs.items():
-                    if p != phase:
-                        continue
-                    if b.problem_domain != problem_domain:
-                        continue
-                    # 简化: 用 config_id 的信念代理 block 信念
-                    u = b.ucb(n_total)
-                    if u > best_ucb:
-                        best_ucb = u
-                scored.append((name, best_ucb))
+            scored = JointBandit._score_non_core(
+                self, phase, non_core, problem_domain, n_total
+            )
             # UCB 高的入选, 低概率探索
-            # ponytail: 不做 softmax, 简单取 UCB > 0.5 的 + 随机探索 1 个
-            selected = [name for name, u in scored if u > 0.5]
-            if not selected:
-                # 冷启动: 全选
-                selected = list(non_core)
-            else:
-                # 加一个随机探索
-                import random
-                unselected = [n for n in non_core if n not in selected]
-                if unselected and random.random() < 0.3:
-                    selected.append(random.choice(unselected))
+            selected = JointBandit._select_by_ucb(self, scored, non_core)
         return core + selected
+
+    def _score_non_core(
+        self,
+        phase: str,
+        non_core: list[str],
+        problem_domain: str,
+        n_total: int,
+    ) -> list[tuple[str, float]]:
+        """每个非核心 block 取包含它的最佳组合 UCB (限定 domain 桶内)."""
+        scored: list[tuple[str, float]] = []
+        for name in non_core:
+            # 找包含此 block 的最佳 config
+            best_ucb = 0.0
+            for (p, _cid), b in self._beliefs.items():
+                if p != phase:
+                    continue
+                if b.problem_domain != problem_domain:
+                    continue
+                # 简化: 用 config_id 的信念代理 block 信念
+                u = b.ucb(n_total)
+                if u > best_ucb:
+                    best_ucb = u
+            scored.append((name, best_ucb))
+        return scored
+
+    def _select_by_ucb(
+        self, scored: list[tuple[str, float]], non_core: list[str]
+    ) -> list[str]:
+        """UCB > 0.5 入选; 全低时冷启动全选, 否则随机探索 1 个."""
+        # ponytail: 不做 softmax, 简单取 UCB > 0.5 的 + 随机探索 1 个
+        selected = [name for name, u in scored if u > 0.5]
+        if not selected:
+            # 冷启动: 全选
+            selected = list(non_core)
+        else:
+            # 加一个随机探索
+            import random
+
+            unselected = [n for n in non_core if n not in selected]
+            if unselected and random.random() < 0.3:
+                selected.append(random.choice(unselected))
+        return selected
 
     def select_workflow_params(
         self,
@@ -228,6 +255,7 @@ class JointBandit:
         # ponytail: 简化 — 对数值参数做 ±10% 扰动, 用 UCB 决定方向
         out: dict[str, Any] = {}
         import random
+
         for k, v in defaults.items():
             if isinstance(v, int | float) and not isinstance(v, bool):
                 # 数值参数: ±10% 扰动
@@ -317,12 +345,29 @@ def _selfcheck() -> None:
     os.environ["HUGINN_CACHE_DIR"] = tmp
     jo.JointBandit._instance = None
 
+    blocks = [("body", "b"), ("mem", "m"), ("fail", "f"), ("extra", "e")]
+    params = {"encut": 520, "kpoints": "2 2 2"}
+
+    _selfcheck_toggles(jo, blocks, params)
+    bs = _selfcheck_record_and_ucb(jo)
+
+    # 5. 持久化
+    jo.JointBandit._instance = None
+    b2 = jo.JointBandit.get_instance()
+    bs2 = b2.list_beliefs("hypothesize")
+    assert len(bs2) == len(bs), f"persistence lost: {len(bs2)} vs {len(bs)}"
+    print(f"5. persistence reload OK ({len(bs2)} beliefs)")
+
+    shutil.rmtree(tmp, ignore_errors=True)
+    print("\nH3 joint_optimizer selfcheck OK (5/5)")
+
+
+def _selfcheck_toggles(jo: Any, blocks: Any, params: Any) -> None:
+    """selfcheck 1-3: toggle off passthrough / toggle on subset / params 扰动."""
     # 1. toggle off: passthrough
     jo._harness_enabled = lambda key, default=False: False
-    blocks = [("body", "b"), ("mem", "m"), ("fail", "f"), ("extra", "e")]
     out = jo.select_block_subset_for_phase("hypothesize", blocks)
     assert out == blocks, f"toggle off should passthrough: {out}"
-    params = {"encut": 520, "kpoints": "2 2 2"}
     out_p = jo.select_workflow_params_for_stage("vasp", params)
     assert out_p == params, f"toggle off params should passthrough: {out_p}"
     print("1. toggle off passthrough OK")
@@ -347,7 +392,9 @@ def _selfcheck() -> None:
     assert out_p["kpoints"] == "2 2 2", f"kpoints should stay: {out_p['kpoints']}"
     print(f"3. workflow params perturbed: encut={out_p['encut']} OK")
 
-    # 4. record_joint_outcome + UCB
+
+def _selfcheck_record_and_ucb(jo: Any) -> Any:
+    """selfcheck 4: record_joint_outcome + UCB, 返回信念列表."""
     bandit = jo.JointBandit.get_instance()
     bandit.record_joint_outcome("hypothesize", ["body", "mem"], {"encut": 520}, True)
     bandit.record_joint_outcome("hypothesize", ["body", "mem"], {"encut": 520}, True)
@@ -356,18 +403,11 @@ def _selfcheck() -> None:
     assert len(bs) >= 2, f"should have >=2 beliefs: {len(bs)}"
     # UCB 冷启动: 未观察的组合 UCB = inf
     b_new = jo.JointBelief(config_id="new", phase="hypothesize")
-    assert b_new.ucb(10) == float("inf"), f"cold start UCB should be inf: {b_new.ucb(10)}"
+    assert b_new.ucb(10) == float("inf"), (
+        f"cold start UCB should be inf: {b_new.ucb(10)}"
+    )
     print(f"4. record + UCB: {len(bs)} beliefs, cold start UCB=inf OK")
-
-    # 5. 持久化
-    jo.JointBandit._instance = None
-    b2 = jo.JointBandit.get_instance()
-    bs2 = b2.list_beliefs("hypothesize")
-    assert len(bs2) == len(bs), f"persistence lost: {len(bs2)} vs {len(bs)}"
-    print(f"5. persistence reload OK ({len(bs2)} beliefs)")
-
-    shutil.rmtree(tmp, ignore_errors=True)
-    print("\nH3 joint_optimizer selfcheck OK (5/5)")
+    return bs
 
 
 if __name__ == "__main__":

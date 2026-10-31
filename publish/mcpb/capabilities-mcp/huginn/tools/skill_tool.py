@@ -183,6 +183,7 @@ def _get_llm_model(context: ToolContext) -> Any:
     cfg = getattr(context, "config", None)
     if cfg is None:
         from huginn.config import HuginnConfig
+
         cfg = HuginnConfig.from_env()
     registry = ModelRegistry.from_config(cfg)
     alias = registry.default_alias()
@@ -197,7 +198,10 @@ async def _llm_distill_trace(model: Any, trace: list[dict]) -> dict:
     trace_text = json.dumps(trace, ensure_ascii=False, default=str)[:12000]
     messages = [
         {"role": "system", "content": DISTILL_SYSTEM_PROMPT},
-        {"role": "user", "content": f"Conversation trace:\n{trace_text}\n\nReturn JSON now."},
+        {
+            "role": "user",
+            "content": f"Conversation trace:\n{trace_text}\n\nReturn JSON now.",
+        },
     ]
     try:
         resp = await model.ainvoke(messages)
@@ -236,13 +240,15 @@ def _heuristic_distill_trace(trace: list[dict]) -> dict:
                 continue
             seen.add(name)
             idx = len(steps)
-            steps.append({
-                "name": f"step_{idx}_{name}",
-                "tool": name,
-                "input_mapping": {},
-                "output_key": f"step_{idx}_out",
-                "on_failure": "skip",
-            })
+            steps.append(
+                {
+                    "name": f"step_{idx}_{name}",
+                    "tool": name,
+                    "input_mapping": {},
+                    "output_key": f"step_{idx}_out",
+                    "on_failure": "skip",
+                }
+            )
             required_tools.append(name)
     if not steps:
         return {}
@@ -278,29 +284,33 @@ def _build_skill_definition(spec: dict) -> SkillDefinition:
         tool = s.get("tool")
         if not tool:
             continue
-        steps.append(SkillStep(
-            name=s.get("name") or f"step_{i}",
-            tool=tool,
-            input_mapping=s.get("input_mapping") or {},
-            output_key=s.get("output_key") or f"step_{i}_out",
-            on_failure=s.get("on_failure") or "skip",
-        ))
+        steps.append(
+            SkillStep(
+                name=s.get("name") or f"step_{i}",
+                tool=tool,
+                input_mapping=s.get("input_mapping") or {},
+                output_key=s.get("output_key") or f"step_{i}_out",
+                on_failure=s.get("on_failure") or "skip",
+            )
+        )
     if not steps:
         raise ValueError("skill spec has no valid steps")
     params: list[SkillParameter] = []
-    for p in (spec.get("parameters") or []):
+    for p in spec.get("parameters") or []:
         if not isinstance(p, dict):
             continue
         pname = p.get("name")
         if not pname:
             continue
-        params.append(SkillParameter(
-            name=pname,
-            type=p.get("type") or "any",
-            description=p.get("description") or "",
-            required=bool(p.get("required", True)),
-            default=p.get("default"),
-        ))
+        params.append(
+            SkillParameter(
+                name=pname,
+                type=p.get("type") or "any",
+                description=p.get("description") or "",
+                required=bool(p.get("required", True)),
+                default=p.get("default"),
+            )
+        )
     return SkillDefinition(
         name=name,
         description=spec.get("description") or "",
@@ -344,7 +354,9 @@ class SkillTool(HuginnTool[SkillToolInput, SkillToolOutput]):
 
         msg = f"Unknown action: {args.action}"
         return ToolResult(
-            data=SkillToolOutput(success=False, action=args.action, error=msg).model_dump(),
+            data=SkillToolOutput(
+                success=False, action=args.action, error=msg
+            ).model_dump(),
             success=False,
             error=msg,
         )
@@ -391,22 +403,7 @@ class SkillTool(HuginnTool[SkillToolInput, SkillToolOutput]):
         # Build a context dict for the executor. Params are merged on top
         # of this inside DeclarativeSkillExecutor.execute, so user-supplied
         # values always win.
-        exec_context: dict[str, Any] = {}
-        if args.thread_id:
-            exec_context["thread_id"] = args.thread_id
-        if context.session_id:
-            exec_context["session_id"] = context.session_id
-        # RevertibleEffect: 把 workspace 注入上下文, 让技能 step 可用
-        # input_mapping 里的 $workspace 引用真实目录 (配合原子回滚快照).
-        if getattr(context, "workspace", None):
-            exec_context["workspace"] = context.workspace
-
-        # 调 skill 前先 recall 历史, 塞到 exec_context 给 executor 当 hint.
-        # ponytail: memory recall/remember 用 try/except 包失败静默;
-        # 升级路径是加 memory 可用性检查 + 降级策略
-        history_hint = self._recall_skill_history(args.skill_name)
-        if history_hint:
-            exec_context["_skill_history_hint"] = history_hint
+        exec_context = self._build_exec_context(args, context)
 
         # RevertibleEffect (Cordis 时间可组合性): 技能是多步组合, 整体失败时
         # 视为一个原子事务 — 回滚本次技能执行在 workspace 新建的文件副作用.
@@ -419,16 +416,33 @@ class SkillTool(HuginnTool[SkillToolInput, SkillToolOutput]):
         rev = RevertibleContext()
         before = (
             {p for p in snap_dir.iterdir() if p.is_file()}
-            if snap_dir.is_dir() else set()
+            if snap_dir.is_dir()
+            else set()
+        )
+        return await self._run_skill(
+            args, skill, exec_context, exec_ws, snap_dir, rev, before
         )
 
+    async def _run_skill(
+        self,
+        args: SkillToolInput,
+        skill: SkillDefinition,
+        exec_context: dict[str, Any],
+        exec_ws: str,
+        snap_dir: Path,
+        rev: Any,
+        before: set[Path],
+    ) -> ToolResult:
+        """执行技能, 失败时回滚新建文件并记录调用."""
         try:
             result = await self._executor.execute(
                 skill, args.parameters, exec_context, workspace=exec_ws
             )
         except Exception as exc:
             self._rollback_skill_new_files(rev, snap_dir, before)
-            self._record_skill_invocation(args.skill_name, success=False, error=str(exc))
+            self._record_skill_invocation(
+                args.skill_name, success=False, error=str(exc)
+            )
             out = SkillToolOutput(
                 success=False,
                 action="execute",
@@ -451,6 +465,40 @@ class SkillTool(HuginnTool[SkillToolInput, SkillToolOutput]):
         )
         return ToolResult(data=out.model_dump(), success=out.success)
 
+    def _build_exec_context(
+        self, args: SkillToolInput, context: ToolContext
+    ) -> dict[str, Any]:
+        """构造传给 executor 的上下文 (params 会在 executor 内覆盖)."""
+        exec_context: dict[str, Any] = {}
+        if args.thread_id:
+            exec_context["thread_id"] = args.thread_id
+        if context.session_id:
+            exec_context["session_id"] = context.session_id
+        # RevertibleEffect: 把 workspace 注入上下文, 让技能 step 可用
+        # input_mapping 里的 $workspace 引用真实目录 (配合原子回滚快照).
+        if getattr(context, "workspace", None):
+            exec_context["workspace"] = context.workspace
+
+        # 调 skill 前先 recall 历史, 塞到 exec_context 给 executor 当 hint.
+        # ponytail: memory recall/remember 用 try/except 包失败静默;
+        # 升级路径是加 memory 可用性检查 + 降级策略
+        history_hint = self._recall_skill_history(args.skill_name)
+        if history_hint:
+            exec_context["_skill_history_hint"] = history_hint
+        return exec_context
+
+    def _distill_failure(self, msg: str, record: bool) -> ToolResult:
+        """蒸馏失败统一返回 (可选记录失败调用)."""
+        if record:
+            self._record_skill_invocation("distill_workflow", success=False, error=msg)
+        return ToolResult(
+            data=SkillToolOutput(
+                success=False, action="distill_workflow", error=msg
+            ).model_dump(),
+            success=False,
+            error=msg,
+        )
+
     async def _distill_workflow(
         self, args: SkillToolInput, context: ToolContext
     ) -> ToolResult:
@@ -459,13 +507,7 @@ class SkillTool(HuginnTool[SkillToolInput, SkillToolOutput]):
         trace = args.conversation_trace or []
         if not trace:
             msg = "conversation_trace is required for distill_workflow"
-            return ToolResult(
-                data=SkillToolOutput(
-                    success=False, action="distill_workflow", error=msg
-                ).model_dump(),
-                success=False,
-                error=msg,
-            )
+            return self._distill_failure(msg, record=False)
 
         # 先试 LLM 蒸馏; 失败/空结果 fallback 到 heuristic
         spec: dict = {}
@@ -481,14 +523,7 @@ class SkillTool(HuginnTool[SkillToolInput, SkillToolOutput]):
 
         if not spec or not spec.get("steps"):
             msg = "failed to distill skill from trace (no reproducible steps)"
-            self._record_skill_invocation("distill_workflow", success=False, error=msg)
-            return ToolResult(
-                data=SkillToolOutput(
-                    success=False, action="distill_workflow", error=msg
-                ).model_dump(),
-                success=False,
-                error=msg,
-            )
+            return self._distill_failure(msg, record=True)
 
         # 用户指定的 skill_name 覆盖 LLM/heuristic 给的
         if args.skill_name:
@@ -498,28 +533,18 @@ class SkillTool(HuginnTool[SkillToolInput, SkillToolOutput]):
             skill = _build_skill_definition(spec)
         except (KeyError, TypeError, ValueError) as exc:
             msg = f"invalid skill spec from trace: {exc}"
-            self._record_skill_invocation("distill_workflow", success=False, error=msg)
-            return ToolResult(
-                data=SkillToolOutput(
-                    success=False, action="distill_workflow", error=msg
-                ).model_dump(),
-                success=False,
-                error=msg,
-            )
+            return self._distill_failure(msg, record=True)
 
         try:
             SkillRegistry.register(skill)
         except Exception as exc:
             msg = f"failed to register distilled skill: {exc}"
-            self._record_skill_invocation("distill_workflow", success=False, error=msg)
-            return ToolResult(
-                data=SkillToolOutput(
-                    success=False, action="distill_workflow", error=msg
-                ).model_dump(),
-                success=False,
-                error=msg,
-            )
+            return self._distill_failure(msg, record=True)
 
+        return self._distill_result(skill)
+
+    def _distill_result(self, skill: SkillDefinition) -> ToolResult:
+        """蒸馏成功: 记录调用并返回技能摘要."""
         self._record_skill_invocation(
             "distill_workflow", success=True, result={"name": skill.name}
         )
@@ -545,7 +570,8 @@ class SkillTool(HuginnTool[SkillToolInput, SkillToolOutput]):
         """
         after = (
             {p for p in snap_dir.iterdir() if p.is_file()}
-            if snap_dir.is_dir() else set()
+            if snap_dir.is_dir()
+            else set()
         )
         new_files = after - before
         if not new_files:
@@ -640,7 +666,7 @@ class SkillTool(HuginnTool[SkillToolInput, SkillToolOutput]):
 if __name__ == "__main__":
     # 自检: 不调真实 LLM/网络, 只验证蒸馏的纯逻辑路径.
     # 1. _strip_code_fences
-    assert _strip_code_fences("```json\n{\"a\":1}\n```") == '{"a":1}'
+    assert _strip_code_fences('```json\n{"a":1}\n```') == '{"a":1}'
     assert _strip_code_fences('{"a":1}') == '{"a":1}'
     assert _strip_code_fences("") == ""
 
@@ -651,13 +677,29 @@ if __name__ == "__main__":
         "category": "distilled",
         "parameters": [
             {"name": "x", "type": "int", "description": "in", "required": True},
-            {"name": "y", "type": "str", "description": "opt", "required": False, "default": "dft"},
+            {
+                "name": "y",
+                "type": "str",
+                "description": "opt",
+                "required": False,
+                "default": "dft",
+            },
         ],
         "steps": [
-            {"name": "s1", "tool": "relax_tool", "input_mapping": {"x": "$x"},
-             "output_key": "relaxed", "on_failure": "abort"},
-            {"name": "s2", "tool": "scf_tool", "input_mapping": {"struct": "$relaxed"},
-             "output_key": "scf_out", "on_failure": "skip"},
+            {
+                "name": "s1",
+                "tool": "relax_tool",
+                "input_mapping": {"x": "$x"},
+                "output_key": "relaxed",
+                "on_failure": "abort",
+            },
+            {
+                "name": "s2",
+                "tool": "scf_tool",
+                "input_mapping": {"struct": "$relaxed"},
+                "output_key": "scf_out",
+                "on_failure": "skip",
+            },
         ],
         "required_tools": ["relax_tool", "scf_tool"],
         "tags": ["distilled", "test"],
@@ -688,13 +730,21 @@ if __name__ == "__main__":
     # 5. _heuristic_distill_trace 从 trace 抽 tool_calls
     trace = [
         {"role": "user", "content": "Relax SiO2 structure and run SCF"},
-        {"role": "assistant", "content": "", "tool_calls": [
-            {"name": "relax_tool", "args": {"formula": "SiO2"}},
-            {"name": "scf_tool", "args": {}},
-        ]},
-        {"role": "assistant", "content": "", "tool_calls": [
-            {"name": "relax_tool", "args": {}},  # 重复, 应被去重
-        ]},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"name": "relax_tool", "args": {"formula": "SiO2"}},
+                {"name": "scf_tool", "args": {}},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"name": "relax_tool", "args": {}},  # 重复, 应被去重
+            ],
+        },
     ]
     out = _heuristic_distill_trace(trace)
     assert out["name"].startswith("distilled_")
@@ -707,4 +757,3 @@ if __name__ == "__main__":
     assert _heuristic_distill_trace([{"role": "user", "content": "hi"}]) == {}
 
     print("skill_tool self-check OK")
-

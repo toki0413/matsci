@@ -18,6 +18,7 @@ ponytail: 只做机械字符串/数值检查, 不调 LLM. 升级路径: 接领�
 (loss 范围 / L2RE 阈值 / C2ST 区间, 见 analysis_20260717/15:166).
 天花板: 只扫 outputs/*.json, 不扫 .csv/.txt/.log. 不懂语义.
 """
+
 from __future__ import annotations
 
 import json
@@ -30,7 +31,14 @@ logger = logging.getLogger(__name__)
 # 假执行嫌疑字段
 _LOSS_FIELDS = ("final_loss", "loss", "train_loss", "val_loss", "mse", "mae")
 _TIME_FIELDS = ("training_time", "train_time", "runtime", "elapsed")
-_PLACEHOLDER_MARKERS = ("placeholder", "Expected", "TODO", "dummy", "stub", "not_implemented")
+_PLACEHOLDER_MARKERS = (
+    "placeholder",
+    "Expected",
+    "TODO",
+    "dummy",
+    "stub",
+    "not_implemented",
+)
 
 # 单调下降区间最小长度 (loss 曲线至少连续 3 点下降)
 _MIN_MONOTONE_LEN = 3
@@ -124,23 +132,42 @@ def check_sanity(workspace: Path | str) -> dict[str, Any]:
     ws = Path(workspace)
     outputs_dir = ws / "submission" / "outputs"
     if not outputs_dir.exists():
-        return {
-            "passed": True,
-            "reason": "no outputs/ dir",
-            "fix_prompt": "",
-            "checks": {},
-        }
+        return _pass_result("no outputs/ dir", {})
 
     json_files = list(outputs_dir.glob("*.json"))
     if not json_files:
-        return {
-            "passed": True,
-            "reason": "no .json in outputs/",
-            "fix_prompt": "",
-            "checks": {},
-        }
+        return _pass_result("no .json in outputs/", {})
 
-    checks: dict[str, Any] = {}
+    all_losses, all_times, all_curves, placeholder_hits = _scan_output_files(json_files)
+    checks = _build_sanity_checks(all_losses, all_times, all_curves, placeholder_hits)
+
+    # 汇总
+    failed = [name for name, r in checks.items() if not r["passed"]]
+    if not failed:
+        return _pass_result("all checks passed", checks)
+
+    # [check_name] 前缀让 reason 可解析 (selfcheck / orchestrator 注入时都能 grep)
+    reason = _failure_reason(checks, failed)
+    return {
+        "passed": False,
+        "reason": reason,
+        "fix_prompt": _sanity_fix_prompt(reason),
+        "checks": checks,
+    }
+
+
+def _pass_result(reason: str, checks: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "passed": True,
+        "reason": reason,
+        "fix_prompt": "",
+        "checks": checks,
+    }
+
+
+def _scan_output_files(
+    json_files: list[Path],
+) -> tuple[list[float], list[float], list[list[float]], list[str]]:
     all_losses: list[float] = []
     all_times: list[float] = []
     all_curves: list[list[float]] = []
@@ -161,6 +188,17 @@ def check_sanity(workspace: Path | str) -> dict[str, Any]:
         all_losses.extend(_collect_loss_values(data))
         all_times.extend(_collect_time_values(data))
         all_curves.extend(_collect_loss_curves(data))
+
+    return all_losses, all_times, all_curves, placeholder_hits
+
+
+def _build_sanity_checks(
+    all_losses: list[float],
+    all_times: list[float],
+    all_curves: list[list[float]],
+    placeholder_hits: list[str],
+) -> dict[str, Any]:
+    checks: dict[str, Any] = {}
 
     # 1. float dedup
     checks["float_dedup"] = {
@@ -189,17 +227,10 @@ def check_sanity(workspace: Path | str) -> dict[str, Any]:
         "hits": placeholder_hits,
     }
 
-    # 汇总
-    failed = [name for name, r in checks.items() if not r["passed"]]
-    if not failed:
-        return {
-            "passed": True,
-            "reason": "all checks passed",
-            "fix_prompt": "",
-            "checks": checks,
-        }
+    return checks
 
-    # [check_name] 前缀让 reason 可解析 (selfcheck / orchestrator 注入时都能 grep)
+
+def _failure_reason(checks: dict[str, Any], failed: list[str]) -> str:
     reason_parts = []
     if "float_dedup" in failed:
         reason_parts.append(
@@ -218,8 +249,11 @@ def check_sanity(workspace: Path | str) -> dict[str, Any]:
             f"[placeholder_text] 文件含 placeholder/Expected/TODO 字样: {checks['placeholder_text']['hits']}"
         )
 
-    reason = "; ".join(reason_parts)
-    fix_prompt = (
+    return "; ".join(reason_parts)
+
+
+def _sanity_fix_prompt(reason: str) -> str:
+    return (
         "SANITY GATE FAIL: 检测到占位式执行嫌疑. " + reason + ".\n\n"
         "Do this NOW:\n"
         "1. 打开 outputs/*.json, 检查数值是否真实 (非重复/非占位)\n"
@@ -230,15 +264,87 @@ def check_sanity(workspace: Path | str) -> dict[str, Any]:
         "Do NOT claim completion until sanity gate passes."
     )
 
-    return {
-        "passed": False,
-        "reason": reason,
-        "fix_prompt": fix_prompt,
-        "checks": checks,
-    }
-
 
 # ── selfcheck ──────────────────────────────────────────────
+
+
+def _write_out(ws: Path, name: str, payload: dict[str, Any]) -> None:
+    (ws / "submission" / "outputs" / name).write_text(json.dumps(payload))
+
+
+def _selfcheck_no_outputs(ws: Path) -> None:
+    """1. 无 outputs/ → passed."""
+    r = check_sanity(ws)
+    assert r["passed"] is True, f"1. 无 outputs 应 passed, got {r}"
+
+
+def _selfcheck_empty_outputs(ws: Path) -> None:
+    """2. 空 outputs/ → passed."""
+    (ws / "submission" / "outputs").mkdir(parents=True)
+    r = check_sanity(ws)
+    assert r["passed"] is True, f"2. 空 outputs 应 passed, got {r}"
+
+
+def _selfcheck_float_dedup(ws: Path) -> None:
+    """3. float dedup: 两个相同 final_loss → fail."""
+    _write_out(ws, "r1.json", {"final_loss": 3.306041717529297, "training_time": 100.0})
+    _write_out(ws, "r2.json", {"final_loss": 3.306041717529297, "training_time": 200.0})
+    r = check_sanity(ws)
+    assert r["passed"] is False, f"3. float dedup 应 fail, got {r}"
+    assert "float_dedup" in r["reason"], (
+        f"3. reason 应含 float_dedup, got {r['reason']}"
+    )
+
+
+def _selfcheck_training_time(ws: Path) -> None:
+    """4. training_time < 1.0s → fail."""
+    _write_out(ws, "r1.json", {"final_loss": 0.1, "training_time": 0.117})
+    _write_out(ws, "r2.json", {"final_loss": 0.2, "training_time": 0.036})
+    r = check_sanity(ws)
+    assert r["passed"] is False, f"4. training_time 应 fail, got {r}"
+    assert "training_time" in r["reason"], (
+        f"4. reason 应含 training_time, got {r['reason']}"
+    )
+
+
+def _selfcheck_placeholder(ws: Path) -> None:
+    """5. placeholder text → fail."""
+    _write_out(
+        ws,
+        "r1.json",
+        {"final_loss": 0.1, "training_time": 100.0, "note": "placeholder result"},
+    )
+    _write_out(ws, "r2.json", {"final_loss": 0.2, "training_time": 200.0})
+    r = check_sanity(ws)
+    assert r["passed"] is False, f"5. placeholder 应 fail, got {r}"
+    assert "placeholder" in r["reason"], (
+        f"5. reason 应含 placeholder, got {r['reason']}"
+    )
+
+
+def _selfcheck_all_valid(ws: Path) -> None:
+    """6. 全部合法 → passed."""
+    _write_out(
+        ws,
+        "r1.json",
+        {
+            "final_loss": 0.5,
+            "training_time": 100.0,
+            "loss_curve": [1.0, 0.8, 0.6, 0.5],
+        },
+    )
+    _write_out(
+        ws,
+        "r2.json",
+        {
+            "final_loss": 0.3,
+            "training_time": 200.0,
+            "loss_curve": [1.0, 0.7, 0.5, 0.3],
+        },
+    )
+    r = check_sanity(ws)
+    assert r["passed"] is True, f"6. 合法应 passed, got {r}"
+
 
 def _selfcheck() -> None:
     """6 项 assert 验证 sanity_gate 核心行为."""
@@ -248,66 +354,12 @@ def _selfcheck() -> None:
 
     with tempfile.TemporaryDirectory() as tmp:
         ws = Path(tmp)
-
-        # 1. 无 outputs/ → passed
-        r = check_sanity(ws)
-        assert r["passed"] is True, f"1. 无 outputs 应 passed, got {r}"
-
-        # 2. 空 outputs/ → passed
-        (ws / "submission" / "outputs").mkdir(parents=True)
-        r = check_sanity(ws)
-        assert r["passed"] is True, f"2. 空 outputs 应 passed, got {r}"
-
-        # 3. float dedup: 两个相同 final_loss → fail
-        (ws / "submission" / "outputs" / "r1.json").write_text(
-            json.dumps({"final_loss": 3.306041717529297, "training_time": 100.0})
-        )
-        (ws / "submission" / "outputs" / "r2.json").write_text(
-            json.dumps({"final_loss": 3.306041717529297, "training_time": 200.0})
-        )
-        r = check_sanity(ws)
-        assert r["passed"] is False, f"3. float dedup 应 fail, got {r}"
-        assert "float_dedup" in r["reason"], f"3. reason 应含 float_dedup, got {r['reason']}"
-
-        # 4. training_time < 1.0s → fail
-        (ws / "submission" / "outputs" / "r1.json").write_text(
-            json.dumps({"final_loss": 0.1, "training_time": 0.117})
-        )
-        (ws / "submission" / "outputs" / "r2.json").write_text(
-            json.dumps({"final_loss": 0.2, "training_time": 0.036})
-        )
-        r = check_sanity(ws)
-        assert r["passed"] is False, f"4. training_time 应 fail, got {r}"
-        assert "training_time" in r["reason"], f"4. reason 应含 training_time, got {r['reason']}"
-
-        # 5. placeholder text → fail
-        (ws / "submission" / "outputs" / "r1.json").write_text(
-            json.dumps({"final_loss": 0.1, "training_time": 100.0, "note": "placeholder result"})
-        )
-        (ws / "submission" / "outputs" / "r2.json").write_text(
-            json.dumps({"final_loss": 0.2, "training_time": 200.0})
-        )
-        r = check_sanity(ws)
-        assert r["passed"] is False, f"5. placeholder 应 fail, got {r}"
-        assert "placeholder" in r["reason"], f"5. reason 应含 placeholder, got {r['reason']}"
-
-        # 6. 全部合法 → passed
-        (ws / "submission" / "outputs" / "r1.json").write_text(
-            json.dumps({
-                "final_loss": 0.5,
-                "training_time": 100.0,
-                "loss_curve": [1.0, 0.8, 0.6, 0.5],
-            })
-        )
-        (ws / "submission" / "outputs" / "r2.json").write_text(
-            json.dumps({
-                "final_loss": 0.3,
-                "training_time": 200.0,
-                "loss_curve": [1.0, 0.7, 0.5, 0.3],
-            })
-        )
-        r = check_sanity(ws)
-        assert r["passed"] is True, f"6. 合法应 passed, got {r}"
+        _selfcheck_no_outputs(ws)
+        _selfcheck_empty_outputs(ws)
+        _selfcheck_float_dedup(ws)
+        _selfcheck_training_time(ws)
+        _selfcheck_placeholder(ws)
+        _selfcheck_all_valid(ws)
 
     print("[sanity_gate] self-check OK (6/6)")
 

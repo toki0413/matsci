@@ -24,3 +24,16 @@
 - [x] M-R1: Recursive (Meta-)Improver — 改进器自身的 improver_prompt/阈值成为可改进对象，复用 SignificanceGate / OODHoldout / AdoptionGate 做验收，仅 GREEN 才全局换用改进器配置（默认关）
 
 契约与环境见 `docs/staging/specs/2026-09-13-recursive-improver.md`。
+
+---
+
+## 独立轨道：结构完整性修复（反转默认）
+
+目标：把验收从「事后读产物 + 运行时解析散文」搬到「数据流内绑定」；把安全默认从「允许」反转为「拒绝」；把文档从「生成物」变成「被测试断言」；把度量从「设计覆盖」换成「执行覆盖」。四轨独立、可分别验收。
+
+- [ ] M-INT1: 契约进数据流（`contract.json` + sha 绑定，删除散文解析）
+- [ ] M-INT2: 默认拒绝（local bash / 审批 / 子进程 env 三条基线）
+- [ ] M-INT3: 文档断言（generated / manual / 无标记即失败）
+- [ ] M-INT4: 执行覆盖（`HUGINN_TRACE=1` → trace.json 对照 census）
+
+契约见 `docs/staging/specs/2026-10-31-structural-integrity-repairs.md`，计划见 `docs/staging/plans/2026-10-31-structural-integrity-repairs.md`。

@@ -84,6 +84,140 @@ _MESSAGE_HANDLERS: dict[str, Any] = {
 _WS_HEARTBEAT_INTERVAL = 30.0
 
 
+def _ws_build_ctx(websocket: WebSocket, identity: Any) -> WSCtx:
+    """Build the per-connection state bundle + approval callback."""
+    pending_approvals: dict[str, asyncio.Future[bool]] = {}
+    session_auto_approve: dict[str, bool] = {"enabled": True}
+    last_user_context: dict = {}
+    pending_approval_contexts: dict[str, dict] = {}
+    ws_approval = _make_ws_approval_callback(
+        websocket,
+        session_auto_approve=session_auto_approve,
+        pending_approvals=pending_approvals,
+        last_user_context=last_user_context,
+        pending_approval_contexts=pending_approval_contexts,
+    )
+    return WSCtx(
+        ws_approval=ws_approval,
+        session_auto_approve=session_auto_approve,
+        last_user_context=last_user_context,
+        pending_approvals=pending_approvals,
+        pending_approval_contexts=pending_approval_contexts,
+        pending_plan_contexts={},
+        user_id=identity,
+    )
+
+
+def _ws_start_task(coro: Any) -> asyncio.Task:
+    """Start a background task and track it for shutdown."""
+    task = asyncio.create_task(coro)
+    _pending_tasks.add(task)
+    task.add_done_callback(_pending_tasks.discard)
+    return task
+
+
+async def _ws_heartbeat_loop(
+    websocket: WebSocket, last_recv: dict[str, float]
+) -> None:
+    while True:
+        await asyncio.sleep(_WS_HEARTBEAT_INTERVAL)
+        now = asyncio.get_running_loop().time()
+        if now - last_recv["t"] <= _WS_HEARTBEAT_INTERVAL:
+            continue
+        try:
+            await websocket.send_json({"type": "ping", "ts": now})
+        except Exception as hb_exc:
+            logger.debug("heartbeat send failed: %s", hb_exc)
+            return
+
+
+async def _ws_forward_pet_events(websocket: WebSocket) -> None:
+    from huginn.pet import get_pet_bus
+
+    bus = get_pet_bus()
+    q, unsub = await bus.queue()
+    try:
+        while True:
+            event = await q.get()
+            st = bus.state
+            await websocket.send_json({
+                "type": "pet_update",
+                "mood": st.mood.value,
+                "message": event.message,
+                "xp": st.experience,
+                "level": st.level,
+                "hunger": st.hunger,
+                "happiness": st.happiness,
+                "active_tasks": st.active_tasks,
+            })
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.debug("pet event forward error", exc_info=True)
+    finally:
+        unsub()
+
+
+def _ws_parse_envelope(message: str) -> tuple[WSMessage | None, str | None]:
+    """Parse raw JSON into a validated WSMessage; return (msg, error)."""
+    try:
+        data = json.loads(message)
+    except json.JSONDecodeError:
+        return None, "Malformed JSON, expected a valid JSON object."
+    try:
+        return WSMessage(**data), None
+    except ValidationError as exc:
+        return None, f"Invalid message: {exc.errors()}"
+
+
+async def _ws_dispatch(websocket: WebSocket, msg: WSMessage, ctx: WSCtx) -> None:
+    """Look up the handler for ``msg.type`` and run it, reporting errors."""
+    handler = _MESSAGE_HANDLERS.get(msg.type)
+    if handler is None:
+        await _send_error(websocket, f"Unknown message type: {msg.type}")
+        return
+    try:
+        await handler(websocket, msg, ctx)
+    except Exception as dispatch_exc:
+        logger.error("dispatch error: %s", dispatch_exc, exc_info=True)
+        await _send_error(websocket, f"Handler error: {dispatch_exc}")
+
+
+async def _ws_receive_loop(
+    websocket: WebSocket, ctx: WSCtx, last_recv: dict[str, float]
+) -> None:
+    from huginn.middleware.ws_governance import WSMessageRateLimiter
+
+    rate_limiter = WSMessageRateLimiter()
+    while True:
+        message = await websocket.receive_text()
+        if not rate_limiter.check():
+            await _send_error(websocket, "Too many messages, slow down.")
+            continue
+        last_recv["t"] = asyncio.get_running_loop().time()
+
+        # Handle client-side pong
+        try:
+            if json.loads(message).get("type") == "pong":
+                continue
+        except (json.JSONDecodeError, TypeError):
+            logger.debug("best-effort op failed", exc_info=True)
+
+        msg, error = _ws_parse_envelope(message)
+        if error is not None:
+            await _send_error(websocket, error)
+            continue
+        await _ws_dispatch(websocket, msg, ctx)
+
+
+async def _ws_cancel_tasks(*tasks: asyncio.Task | None) -> None:
+    for task in tasks:
+        if task and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+
 @router.websocket("/ws/agent")
 async def agent_websocket(websocket: WebSocket):
     """WebSocket endpoint for real-time Agent chat.
@@ -91,154 +225,24 @@ async def agent_websocket(websocket: WebSocket):
     Authenticates, sets up heartbeat + pet event forwarding, then dispatches
     incoming messages to handler functions in ws_helpers.py.
     """
-    from huginn.middleware.ws_governance import (
-        WSMessageRateLimiter,
-        get_tracker,
-        ws_auth_and_track,
-    )
+    from huginn.middleware.ws_governance import get_tracker, ws_auth_and_track
 
     identity = await ws_auth_and_track(websocket)
     if identity is None:
         return
 
     # 握手已由 ws_auth_and_track 统一完成 (含 first-message auth 与断开保护).
-
-    # Per-connection state
-    _pending_approvals: dict[str, asyncio.Future[bool]] = {}
-    session_auto_approve: dict[str, bool] = {"enabled": True}
-    _last_user_context: dict = {}
-    _pending_approval_contexts: dict[str, dict] = {}
-    _ws_approval = _make_ws_approval_callback(
-        websocket,
-        session_auto_approve=session_auto_approve,
-        pending_approvals=_pending_approvals,
-        last_user_context=_last_user_context,
-        pending_approval_contexts=_pending_approval_contexts,
-    )
-    _pending_plan_contexts: dict[str, dict] = {}
-
-    # ── Heartbeat ────────────────────────────────────────────────
+    ctx = _ws_build_ctx(websocket, identity)
     last_recv: dict[str, float] = {"t": asyncio.get_running_loop().time()}
-    heartbeat_task: asyncio.Task | None = None
+    heartbeat_task = _ws_start_task(_ws_heartbeat_loop(websocket, last_recv))
+    pet_task = _ws_start_task(_ws_forward_pet_events(websocket))
 
-    async def _heartbeat():
-        while True:
-            await asyncio.sleep(_WS_HEARTBEAT_INTERVAL)
-            now = asyncio.get_running_loop().time()
-            idle = now - last_recv["t"]
-            if idle > _WS_HEARTBEAT_INTERVAL:
-                try:
-                    await websocket.send_json({"type": "ping", "ts": now})
-                except Exception as hb_exc:
-                    logger.debug("heartbeat send failed: %s", hb_exc)
-                    return
-
-    heartbeat_task = asyncio.create_task(_heartbeat())
-    _pending_tasks.add(heartbeat_task)
-    heartbeat_task.add_done_callback(_pending_tasks.discard)
-
-    # ── Pet event forwarding ──────────────────────────────────────
-    async def _forward_pet_events():
-        from huginn.pet import get_pet_bus
-
-        bus = get_pet_bus()
-        q, unsub = await bus.queue()
-        try:
-            while True:
-                event = await q.get()
-                st = bus.state
-                await websocket.send_json({
-                    "type": "pet_update",
-                    "mood": st.mood.value,
-                    "message": event.message,
-                    "xp": st.experience,
-                    "level": st.level,
-                    "hunger": st.hunger,
-                    "happiness": st.happiness,
-                    "active_tasks": st.active_tasks,
-                })
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.debug("pet event forward error", exc_info=True)
-        finally:
-            unsub()
-
-    pet_task = asyncio.create_task(_forward_pet_events())
-    _pending_tasks.add(pet_task)
-    pet_task.add_done_callback(_pending_tasks.discard)
-
-    rate_limiter = WSMessageRateLimiter()
     try:
-        while True:
-            message = await websocket.receive_text()
-            if not rate_limiter.check():
-                await _send_error(websocket, "Too many messages, slow down.")
-                continue
-            last_recv["t"] = asyncio.get_running_loop().time()
-
-            # Handle client-side pong
-            try:
-                data = json.loads(message)
-                if data.get("type") == "pong":
-                    continue
-            except (json.JSONDecodeError, TypeError):
-                logger.debug("best-effort op failed", exc_info=True)
-
-            try:
-                data = json.loads(message)
-            except json.JSONDecodeError:
-                await _send_error(
-                    websocket, "Malformed JSON, expected a valid JSON object."
-                )
-                continue
-
-            # Validate envelope
-            try:
-                msg = WSMessage(**data)
-            except ValidationError as exc:
-                await _send_error(websocket, f"Invalid message: {exc.errors()}")
-                continue
-
-            msg_type = msg.type
-
-            # Look up handler from the registry (one-line per message type)
-            # instead of a long if/elif chain. Every handler receives the
-            # same (websocket, msg, ctx) signature.
-            handler = _MESSAGE_HANDLERS.get(msg_type)
-            if handler is None:
-                await _send_error(
-                    websocket, f"Unknown message type: {msg_type}"
-                )
-                continue
-
-            ctx = WSCtx(
-                ws_approval=_ws_approval,
-                session_auto_approve=session_auto_approve,
-                last_user_context=_last_user_context,
-                pending_approvals=_pending_approvals,
-                pending_approval_contexts=_pending_approval_contexts,
-                pending_plan_contexts=_pending_plan_contexts,
-                user_id=identity,
-            )
-
-            # Wrap handlers so errors always reach the client instead of
-            # silently killing the connection and hanging on receive_json.
-            try:
-                await handler(websocket, msg, ctx)
-
-            except Exception as dispatch_exc:
-                logger.error("dispatch error: %s", dispatch_exc, exc_info=True)
-                await _send_error(websocket, f"Handler error: {dispatch_exc}")
-
+        await _ws_receive_loop(websocket, ctx, last_recv)
     except WebSocketDisconnect:
         logger.debug("best-effort op failed", exc_info=True)
     except Exception as e:
         logger.error("WebSocket error: %s", e, exc_info=True)
     finally:
-        for _t in (heartbeat_task, pet_task):
-            if _t and not _t.done():
-                _t.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await _t
+        await _ws_cancel_tasks(heartbeat_task, pet_task)
         get_tracker().release(identity)

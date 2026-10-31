@@ -85,11 +85,17 @@ def _print_step(
 @click.command()
 @click.argument("trajectory_file")
 @click.option(
-    "--step", "-s", "target_step", type=int, default=None,
+    "--step",
+    "-s",
+    "target_step",
+    type=int,
+    default=None,
     help="跳到指定步骤 (只详细显示该步)",
 )
 @click.option(
-    "--verbose", "-v", is_flag=True,
+    "--verbose",
+    "-v",
+    is_flag=True,
     help="显示完整参数和结果 (默认截断到 200 字符)",
 )
 @click.pass_obj
@@ -119,9 +125,8 @@ def replay(
         return
 
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as e:
-        console.print(f"[red]JSON 解析失败: {e}[/red]")
+        data = _load_replay_json(path, console)
+    except json.JSONDecodeError:
         return
 
     tool_calls = data.get("tool_calls", []) or []
@@ -131,20 +136,11 @@ def replay(
 
     total = len(tool_calls)
 
-    # 文件头: 时间戳 + 路径 + 总步数, 让用户一眼看到在回放哪个轨迹
-    ts = data.get("timestamp", "")
-    console.print(f"[bold]轨迹回放[/bold]  {ts}")
-    console.print(f"[dim]{path}[/dim]")
-    console.print(f"[bold]共 {total} 步[/bold]")
+    _print_replay_header(console, path, data, total)
 
     # --step N: 只详细打印第 N 步, 配合进度条看上下文位置
     if target_step is not None:
-        if target_step < 1 or target_step > total:
-            console.print(
-                f"[red]步骤 {target_step} 超出范围 (1-{total})[/red]"
-            )
-            return
-        _print_step(console, target_step, total, tool_calls[target_step - 1], verbose)
+        _replay_target_step(console, tool_calls, total, target_step, verbose)
         return
 
     # 默认: 从第 1 步到末尾全量回放
@@ -152,6 +148,41 @@ def replay(
         _print_step(console, i, total, call, verbose)
 
     # 末尾附 summary, 让用户看到总 span 数和分类统计
+    _print_replay_summary(console, data)
+
+
+def _print_replay_summary(console: Console, data: dict[str, Any]) -> None:
     summary = data.get("summary", {}) or {}
     total_spans = summary.get("total_spans", 0)
     console.print(f"\n[bold]Summary[/bold]  total_spans={total_spans}")
+
+
+def _load_replay_json(path: Path, console: Console) -> dict[str, Any]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        console.print(f"[red]JSON 解析失败: {e}[/red]")
+        raise
+
+
+def _print_replay_header(
+    console: Console, path: Path, data: dict[str, Any], total: int
+) -> None:
+    # 文件头: 时间戳 + 路径 + 总步数, 让用户一眼看到在回放哪个轨迹
+    ts = data.get("timestamp", "")
+    console.print(f"[bold]轨迹回放[/bold]  {ts}")
+    console.print(f"[dim]{path}[/dim]")
+    console.print(f"[bold]共 {total} 步[/bold]")
+
+
+def _replay_target_step(
+    console: Console,
+    tool_calls: list[dict[str, Any]],
+    total: int,
+    target_step: int,
+    verbose: bool,
+) -> None:
+    if target_step < 1 or target_step > total:
+        console.print(f"[red]步骤 {target_step} 超出范围 (1-{total})[/red]")
+        return
+    _print_step(console, target_step, total, tool_calls[target_step - 1], verbose)
