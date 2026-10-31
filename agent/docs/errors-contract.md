@@ -7,8 +7,8 @@
 
 | 类别 | 语义 | 产出点 |
 |---|---|---|
-| NONE | 正常或模型可见的业务失败 | core_types.py:99, tools/bash_tool.py:197 |
-| TIMEOUT | 沙箱/命令超时 | tools/adapter.py:1155, tools/bash_tool.py:199 |
+| NONE | 正常或模型可见的业务失败 | core_types.py:118, tools/bash_tool.py:197 |
+| TIMEOUT | 沙箱/命令超时 | tools/adapter.py:1243, tools/bash_tool.py:199 |
 | DENIED | 沙箱策略拒绝 (SandboxError / result.blocked) | tools/bash_tool.py:201, tools/bash_tool.py:363, tools/code_tool.py:255 |
 | SIGNAL | 被信号终止 |  |
 | TRANSIENT | 瞬时错误, 可安全重试 |  |

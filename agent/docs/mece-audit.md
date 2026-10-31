@@ -83,7 +83,7 @@
 
 ## 词汇面: 值域词表雷达 (系统枚举 + 自动聚类)
 
-系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 300 站点, 按值域 Jaccard 重叠自动聚成 268 簇 (其中闭集簇 180). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
+系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 301 站点, 按值域 Jaccard 重叠自动聚成 269 簇 (其中闭集簇 181). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
 
 ### 同名跨模块定义 (mutually exclusive)
 
@@ -205,7 +205,7 @@
   - `huginn/config.py:60` ContainerRuntimeLiteral
   - `huginn/security/container_executor.py:180` _VALID_RUNTIMES 缺 `none`
 - 簇 huginn/core_types.py::class BudgetDecision (并集 4 词):
-  - `huginn/core_types.py:46` class BudgetDecision 缺 `ask`
+  - `huginn/core_types.py:63` class BudgetDecision 缺 `ask`
   - `huginn/security/policy_engine.py:46` _VALID_ACTIONS 缺 `warn`
 - 簇 huginn/events/audit_log.py::_SECRET_KEYS (并集 12 词):
   - `huginn/events/audit_log.py:248` _SECRET_KEYS 缺 `authorization`, `cookie`
@@ -244,8 +244,8 @@
 | `_EXPENSIVE_TOOLS` | `huginn/hooks/clarify_questions_hook.py:62` | 15 | 4 | keywords | `internal-only` | 0 | 0 | 0 |
 | `_EXPENSIVE_TOOLS` | `huginn/hooks/research_safety_hook.py:18` | 8 | 8 | registry | `internal-only` | 0 | 0 | 0 |
 | `PRIMITIVES` | `huginn/modes/pi.py:22` | 8 | 8 | registry | `internal-only` | 0 | 0 | 0 |
-| `READ_ONLY_TOOLS` | `huginn/permissions.py:44` | 3 | 3 | registry | `internal-only` | 0 | 0 | 0 |
-| `WRITE_EXEC_TOOLS` | `huginn/permissions.py:55` | 8 | 8 | registry | `internal-only` | 0 | 0 | 0 |
+| `READ_ONLY_TOOLS` | `huginn/permissions.py:52` | 3 | 3 | registry | `internal-only` | 0 | 0 | 0 |
+| `WRITE_EXEC_TOOLS` | `huginn/permissions.py:63` | 8 | 8 | registry | `internal-only` | 0 | 0 | 0 |
 | `_CORE_TOOLS` | `huginn/phases.py:109` | 15 | 15 | registry | `internal-only` | 0 | 0 | 0 |
 | `_KNOWN_TOOLS` | `huginn/provenance/pipeline.py:105` | 39 | 38 | registry | `internal-only` | 0 | 0 | 1 |
 | `_EXPENSIVE_TOOLS` | `huginn/research_budget.py:24` | 8 | 8 | registry | `internal-only` | 0 | 0 | 0 |
@@ -254,9 +254,9 @@
 | `_BLOCKED_TOOLS` | `huginn/security/code_act_sandbox.py:29` | 2 | 2 | registry | `wired` | 1 | 0 | 0 |
 | `_EDIT_TOOLS` | `huginn/server_core.py:98` | 2 | 2 | registry | `wired` | 1 | 0 | 0 |
 | `_SNAPSHOT_TOOLS` | `huginn/snapshot/integration.py:26` | 26 | 26 | registry | `internal-only` | 0 | 0 | 0 |
-| `_HASHLINE_TOOLS` | `huginn/tools/adapter.py:765` | 5 | 5 | registry | `internal-only` | 0 | 0 | 0 |
-| `_CODING_TOOLS` | `huginn/tools/adapter.py:1364` | 3 | 3 | registry | `internal-only` | 0 | 0 | 0 |
-| `_REVIEWING_TOOLS` | `huginn/tools/adapter.py:1371` | 5 | 5 | registry | `internal-only` | 0 | 0 | 0 |
+| `_HASHLINE_TOOLS` | `huginn/tools/adapter.py:770` | 5 | 5 | registry | `internal-only` | 0 | 0 | 0 |
+| `_CODING_TOOLS` | `huginn/tools/adapter.py:1396` | 3 | 3 | registry | `internal-only` | 0 | 0 | 0 |
+| `_REVIEWING_TOOLS` | `huginn/tools/adapter.py:1403` | 5 | 5 | registry | `internal-only` | 0 | 0 | 0 |
 | `GATED_TOOLS` | `huginn/tools/design/design_plan_tool.py:45` | 12 | 12 | registry | `wired` | 1 | 0 | 0 |
 | `_HIGH_VALUE_MCP_TOOLS` | `huginn/tools/mcp_adapter.py:27` | 6 | 0 | external | `internal-only` | 0 | 0 | 0 |
 | `PREFETCH_SAFE_TOOLS` | `huginn/tools/tool_cache.py:38` | 3 | 3 | registry | `wired` | 1 | 0 | 0 |

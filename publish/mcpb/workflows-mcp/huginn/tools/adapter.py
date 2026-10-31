@@ -30,13 +30,18 @@ from pydantic import BaseModel, ValidationError
 from huginn.constraints import ConstraintAdapter
 from huginn.constraints.boundaries import BoundaryEvolution, BoundaryState
 from huginn.core_types import (
+    AuthorizationStrength,
     ErrorKind,
     PermissionMode,
     ToolContext,
     ToolResult,
 )
 from huginn.feature_flags import FeatureFlags
-from huginn.permissions import PermissionConfig
+from huginn.permissions import (
+    PermissionConfig,
+    observe_mode_enabled,
+    record_authorization,
+)
 from huginn.pet import PetMood, get_pet_bus
 from huginn.privacy import redact_secrets
 from huginn.security.audit import AuditLogger
@@ -1031,6 +1036,13 @@ class _AdaptRuntime:
         if self.approval_callback is not None:
             if self.approval_callback(name, reason):
                 self._grant_standing_rule(session_id, name, args)
+                record_authorization(
+                    name,
+                    AuthorizationStrength.EXPLICIT,
+                    session_id,
+                    reason="human approved",
+                    arg_keys=list(args) if isinstance(args, dict) else None,
+                )
                 return True, None
             return False, f"User denied: {reason}"
 
@@ -1071,6 +1083,26 @@ class _AdaptRuntime:
             return decision
 
         if self.permission_config.auto_approve_all or mode == PermissionMode.AUTO:
+            # observe 档只拦「策略推断替代人类批准」的那一类: auto_approve_all
+            # 把本应 ASK 的写/执行工具直接放行. 工具显式声明 AUTO 的不拦 ——
+            # 那是设计上的无需确认, 不是推断出来的授权 (与 dsh 的 inferred 语义对齐).
+            if (
+                self.permission_config.auto_approve_all
+                and self.permission_config.get_mode(name, ignore_auto=True)
+                != PermissionMode.AUTO
+                and observe_mode_enabled()
+            ):
+                record_authorization(
+                    name,
+                    AuthorizationStrength.INFERRED,
+                    session_id,
+                    reason="observe: would-approve, not executed",
+                    arg_keys=list(args) if isinstance(args, dict) else None,
+                )
+                return False, (
+                    f"observe mode: '{name}' would be auto-approved but is not "
+                    "executed; set HUGINN_APPROVE_MODE=workspace|all to grant"
+                )
             return True, None
 
         if mode == PermissionMode.DENY:

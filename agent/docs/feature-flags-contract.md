@@ -52,7 +52,7 @@
 | `privacy_local_only` | False | 隐私级别: local_only (完全本地) | — | privacy_guard.py:81, runtime/jev/_enabled.py:45 |
 | `privacy_off` | True | 隐私级别: off (不脱敏, 默认. 仅由 set_level 维护互斥, 外部设置无效) | — | — |
 | `privacy_redact` | False | 隐私级别: redact (脱敏后发云端) | — | privacy_guard.py:83, runtime/jev/_enabled.py:47 |
-| `privacy_redact_secrets` | True | 检测到密钥时脱敏 (HUGINN_PRIVACY_REDACT_SECRETS) | HUGINN_PRIVACY_REDACT_SECRETS | agent_config.py:181, tools/adapter.py:1309 |
+| `privacy_redact_secrets` | True | 检测到密钥时脱敏 (HUGINN_PRIVACY_REDACT_SECRETS) | HUGINN_PRIVACY_REDACT_SECRETS | agent_config.py:181, tools/adapter.py:1341 |
 | `prompt_cache_control` | True | prompt-cache control 注入 (HUGINN_PROMPT_CACHE_CONTROL) | HUGINN_PROMPT_CACHE_CONTROL | agent_config.py:108 |
 | `provenance` | True | 计算 provenance 快照 | — | provenance/_legacy.py:240, tools/base.py:376 |
 | `sandbox_net_isolation` | True | P1 沙箱内核级网络隔离 (Landlock ABI>=4, 默认开; 不支持则降级) | — | security/sandbox.py:61 |

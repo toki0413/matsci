@@ -83,6 +83,37 @@ milestone: M-INT1（A轨）、M-INT2（B轨）、M-INT3（C轨）、M-INT4（D�
   acceptance: offline 跑 2 轮 → trace.json 含 engine/autoloop，pet 不在
   spec: `#d-执行覆盖度量`
 
+## E. dsh 标准移植 (先修后移)
+
+移植对象: `deepseek-ai/dsh-superagent-prototype`。原则是「按它的标准重做」，不是复制代码:
+- 授权强度与 mode 正交 (explicit / inferred / ignore);
+- 新策略先 observe (影子记录, 不执行), 观察期后再放权;
+- 登记表与代码树**双向**断言, 裁决封闭集合, 保留必须带证据。
+
+- [x] T14: 契约文档与字段 golden 修复
+  goal: 三份契约文档与 http_field golden 与代码重新对齐, 逐行评审 diff
+  files: `docs/plugins-contract.md`、`docs/events-contract.md`、`docs/errors-contract.md`、`tests/golden/field_audit/http_field.json`
+  acceptance: `pytest tests/test_config_contracts.py tests/test_contract_audit.py -q` → 140 passed; diff 仅为行号位移, 无语义变化
+
+- [x] T15: 授权强度 + observe 影子档
+  goal: `PermissionResult.strength` 三档 (IGNORE/INFERRED/EXPLICIT); `HUGINN_APPROVE_MODE` 新增 `observe`, 只拦 `auto_approve_all` 把 ASK 工具推断放行的那一类; 决策日志只记参数键名, 不记值
+  files: `huginn/core_types.py`、`huginn/permissions.py`、`huginn/tools/adapter.py`、`tests/test_approval_strength.py`
+  acceptance: 授权/安全探针 28 passed; 默认 `workspace` 行为与 `autoloop_auto_approve` 不变
+  spec: dsh `002-authorization` / `003-execution` (外部参考)
+
+- [x] T16: 模块普查双向门
+  goal: 登记表 ↔ 代码树双向相等 (漏登记与幽灵行都失败); 裁决必须属 KEEP/MOVE/SUSPECT/DELETE/ENTRY 且带理由; KEEP/MOVE 必须引用证据
+  files: `research/huginn_module_census.csv`、`tests/test_module_census.py`
+  acceptance: 4 passed; 首跑即抓出 `task_contract`/`trace` 漏登记, 已补齐两行
+  spec: dsh `tests/docs.spec.ts` (外部参考)
+
+- [x] T17: 模型面字符预算 (observe 阶段)
+  goal: 移植 dsh `model-surface.spec.ts` 的度量原则 —— 模型能看到的 prompt 段与工具定义逐条收集, 检查空描述/占位标记, `KNOWN_FAILURES` 双向核对; 预算先 observe 只测不判
+  files: `tests/test_model_surface.py`
+  acceptance: 2 passed; 实测 main prompt 9765 / s7 11491 / autoloop 7236 字符, 工具定义 217685 字符 (125 个可见工具); `BUDGET` 为空, 不产生硬红
+  next: 观察期结束后在 `BUDGET` 填入实测上限 (只减不增); 可选工具依赖装齐后需重测, 因其会进入可见面
+  spec: dsh `tests/model-surface.spec.ts` (外部参考)
+
 ## 收口
 
 - [ ] T13: 全量回归与治理重生成
@@ -90,4 +121,4 @@ milestone: M-INT1（A轨）、M-INT2（B轨）、M-INT3（C轨）、M-INT4（D�
   files: `docs/mece-audit.md`、镜像产物
   acceptance: `pytest tests/ -o addopts="" -q` 全绿；contract_audit 与 mirror_drift 通过
   spec: `#测试总口径`
-  status: 未闭合。已修两类阻断（pytest 9 与 pytest-benchmark 不兼容 → 锁 `pytest<9`；chromadb ONNX 启动期联网下载把 TestClient 卡死 → 未缓存即降级 + 有界探测）。剩余硬限制是内存：cgroup 4GB 无 swap，单进程 19%、70 文件分块 83% 均被 OOM 杀（EXIT=137；CI 专门加 swap）。需 swap 或继续细分块跑完后再勾。
+  status: 未闭合。已修五类阻断: pytest 9 与 pytest-benchmark 不兼容 (锁 `pytest<9`; 收口时发现新建 venv 又装到 9.2.0, 已回锁 8.4.2 并补 pytest-cov)、chromadb ONNX 启动期联网下载把 TestClient 卡死 (未缓存即降级 + 有界探测)、4 份契约文档与 http_field golden 漂移 (重生成, diff 仅行号位移)、`mece-audit.md` 漂移 (重生成; 枚举站点 300→301 为新增 `AuthorizationStrength` 的预期语义增量)。收口实测: 契约/授权/普查/安全/结构守护/镜像 275 passed, 文档断言 + trace + 任务契约 38 passed。剩余硬限制是内存: cgroup 4GB 无 swap, 单进程 19%、70 文件分块 83% 均被 OOM 杀 (EXIT=137; CI 专门加 swap)。需 swap 或继续细分块跑完后再勾。

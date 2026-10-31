@@ -13,13 +13,21 @@ or ask before writing to data/.
 from __future__ import annotations
 
 import fnmatch
+import logging
 import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from huginn.core_types import PermissionMode, PermissionResult, RiskLevel
+from huginn.core_types import (
+    AuthorizationStrength,
+    PermissionMode,
+    PermissionResult,
+    RiskLevel,
+)
 from huginn.env_access import env_bool, env_is_set, env_str
+
+logger = logging.getLogger(__name__)
 
 # 危险命令模式 — 统一使用 command_filter 的 _BLOCKED_PATTERNS 作为 single source of truth.
 # permissions.py 补充 git 相关模式 (command_filter 不覆盖 git).
@@ -108,9 +116,12 @@ def sidecar_auto_approve() -> bool:
 
 
 def approval_mode() -> str:
-    """审批档位: ``deny`` | ``workspace`` | ``all`` (默认 ``workspace``).
+    """审批档位: ``deny`` | ``observe`` | ``workspace`` | ``all`` (默认 ``workspace``).
 
     - ``deny``: 不自动放行任何写/执行 (需人工审批);
+    - ``observe``: 影子档 — 写/执行工具的策略推断放行**只记录不执行**
+      (对应 dsh 的 ``observe`` accept mode: 先观察 would-approve 一段时间,
+      确认无误后再切 ``workspace``/``all`` 放权); 只读工具不受影响;
     - ``workspace``: 自动放行, 但工作区外的写被拒 (默认);
     - ``all``: 完全放行 (必须显式 ``HUGINN_APPROVE_MODE=all``).
 
@@ -122,12 +133,43 @@ def approval_mode() -> str:
     # 必须用 env_is_set 区分「显式设置」与「回落默认」.
     if env_is_set("HUGINN_APPROVE_MODE"):
         raw = env_str("HUGINN_APPROVE_MODE").strip().lower()
-        if raw in ("deny", "workspace", "all"):
+        if raw in ("deny", "observe", "workspace", "all"):
             return raw
         return "workspace"
     if env_is_set("HUGINN_AUTOLOOP_AUTO_APPROVE"):
         return "all" if env_bool("HUGINN_AUTOLOOP_AUTO_APPROVE") else "deny"
     return "workspace"
+
+
+def observe_mode_enabled() -> bool:
+    """影子审批档: 写/执行工具的策略推断放行**只记录不执行**.
+
+    对应 dsh 的 ``observe`` accept mode —— 新策略先跑影子观察, 确认 would-approve
+    的集合正确后, 才切 ``workspace``/``all`` 真正放权. 只读工具不受影响.
+    """
+    return approval_mode() == "observe"
+
+
+def record_authorization(
+    tool_name: str,
+    strength: AuthorizationStrength,
+    session_id: str = "default",
+    *,
+    reason: str | None = None,
+    arg_keys: list[str] | None = None,
+) -> None:
+    """结构化记录一次授权决策 (dsh 的 evidence 原则: 决策必须可追溯).
+
+    只记录参数**键名**, 绝不记录值 —— 参数值可能含路径 / 令牌 / 数据内容.
+    """
+    logger.info(
+        "permission.decision tool=%s strength=%s session=%s reason=%s arg_keys=%s",
+        tool_name,
+        strength.value,
+        session_id,
+        reason or "-",
+        ",".join(sorted(arg_keys or ())) or "-",
+    )
 
 
 def autoloop_auto_approve() -> bool:
@@ -247,7 +289,14 @@ class PermissionConfig:
     # workspace 档: 非空时, 写/执行工具的目标路径必须落在此根内, 否则 DENY.
     workspace_root: Path | None = None
 
-    def get_mode(self, tool_name: str) -> PermissionMode:
+    def get_mode(
+        self, tool_name: str, *, ignore_auto: bool = False
+    ) -> PermissionMode:
+        """工具当前生效模式.
+
+        ``ignore_auto=True`` 时忽略 ``auto_approve_all`` 的覆盖, 返回"原本会
+        要求什么" —— 供 observe 影子档判断某次放行是否属于"推断替代人类批准".
+        """
         # 先按 rules / 通配规则算出"原始"模式
         if tool_name in self.rules:
             mode = self.rules[tool_name]
@@ -265,7 +314,7 @@ class PermissionConfig:
                 return PermissionMode.DENY
             return PermissionMode.ASK
 
-        if self.auto_approve_all:
+        if self.auto_approve_all and not ignore_auto:
             return PermissionMode.AUTO
         return mode
 
@@ -474,6 +523,7 @@ class PermissionChecker:
             reason=reason,
             risk_level=RiskLevel.CRITICAL,
             matched_rules=matched,
+            strength=AuthorizationStrength.IGNORE,
         )
 
     def _path_result(
@@ -489,6 +539,7 @@ class PermissionChecker:
                 reason="Path blocked by path-level rule",
                 risk_level=RiskLevel.CRITICAL,
                 matched_rules=["path:deny"],
+                strength=AuthorizationStrength.IGNORE,
             )
         if path_mode == PermissionMode.ASK:
             return PermissionResult(
@@ -496,6 +547,7 @@ class PermissionChecker:
                 reason="Path requires approval by path-level rule",
                 risk_level=RiskLevel.MEDIUM,
                 matched_rules=["path:ask"],
+                strength=AuthorizationStrength.IGNORE,
             )
         # AUTO — fall through (path 命中但放行)
         matched.append("path:auto")
@@ -520,6 +572,7 @@ class PermissionChecker:
                 reason="Path could not be resolved inside the workspace",
                 risk_level=RiskLevel.CRITICAL,
                 matched_rules=["workspace:deny"],
+                strength=AuthorizationStrength.IGNORE,
             )
         if target == base or base in target.parents:
             return None
@@ -528,6 +581,7 @@ class PermissionChecker:
             reason="Path is outside the workspace (HUGINN_APPROVE_MODE=workspace)",
             risk_level=RiskLevel.CRITICAL,
             matched_rules=["workspace:deny"],
+            strength=AuthorizationStrength.IGNORE,
         )
 
     def _apply_cost_and_trust(
@@ -582,6 +636,7 @@ class PermissionChecker:
                 risk_level=RiskLevel.CRITICAL,
                 cost_hours=cost_hours,
                 matched_rules=matched,
+                strength=AuthorizationStrength.IGNORE,
             )
 
         if mode == PermissionMode.AUTO:
@@ -590,6 +645,7 @@ class PermissionChecker:
                 risk_level=risk,
                 cost_hours=cost_hours,
                 matched_rules=matched,
+                strength=AuthorizationStrength.INFERRED,
             )
 
         # ASK mode — build a reason string
@@ -609,6 +665,7 @@ class PermissionChecker:
             risk_level=risk,
             cost_hours=cost_hours,
             matched_rules=matched,
+            strength=AuthorizationStrength.IGNORE,
         )
 
     @staticmethod
