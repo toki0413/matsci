@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from huginn.security.child_env import sanitize_child_env
 from huginn.security.sandbox import (
     SandboxConfig,
     SandboxExecutor,
@@ -265,7 +266,9 @@ class ContainerExecutor:
         if runtime_exe is None:
             return _runtime_missing_result(self.runtime, cmd)
 
-        container_cmd = self._build_command(runtime_exe, cmd, valid_cwd, env=env or {})
+        container_cmd = self._build_command(
+            runtime_exe, cmd, valid_cwd, env=sanitize_child_env(env or {})
+        )
 
         return _run_container(
             container_cmd,

@@ -2037,40 +2037,50 @@ class CognitiveRunner(EngineFacade):
         run_id = f"loop_{uuid.uuid4().hex[:8]}"
         self._run_start_time = time.time()
         self._objective = objective
-        # 确定性验收锚点: 交付物清单只从 objective 解析, agent 不能改写.
+        # 确定性验收锚点: 交付物/键名/行 schema 只从 workspace 根目录的
+        # contract.json 读取, agent 不能改写. objective 散文不再被正则解析 ——
+        # 同一份契约字节给出同一判定, 与题面措辞无关.
         from huginn.autoloop.deliverables import (
+            Contract,
+            StaticConstraints,
             fixed_protocol_hypothesis,
-            parse_contract,
-            parse_manifest,
-            parse_static_constraints,
+            views_from_task_contract,
         )
+        from huginn.task_contract import CONTRACT_FILENAME, load_contract
 
         # 结构性缺陷 I: objective 自带固定假设清单 (H1..Hn + "不允许改口径") 时,
         # 执行对象就是它. 仍走 hypothesize/pivot 会让引擎另立合成假设, 再拿它去
         # plan_check 对齐 → 已落盘的交付物被搁置 (ws35 实测 iter 10).
         self._objective_fixed_hypothesis = fixed_protocol_hypothesis(objective)
-        self._deliverable_manifest = parse_manifest(objective)
-        # 同一锚点覆盖**内容契约** (必需键名 / JSONL 行 schema): 只验文件存在
-        # 会让"自造一套键名/假设"的交付物判绿 (ws35 实测).
-        self._deliverable_contract = parse_contract(objective, self._deliverable_manifest)
-        # 静态约束 (禁用依赖 / 固定种子 / 指定数据文件) 同属 objective 锚点:
-        # ws35 实测 coder 用 pandas + cleaned 变体数据, 交付物"在"但口径全错.
-        self._static_constraints = parse_static_constraints(
-            objective, self.workspace, self._deliverable_manifest
-        )
+        self._task_contract = None
+        self._deliverable_manifest = []
+        self._deliverable_contract = Contract()
+        self._static_constraints = StaticConstraints()
+        contract_path = Path(self.workspace) / CONTRACT_FILENAME
+        if contract_path.is_file():
+            self._task_contract = load_contract(contract_path)
+            (
+                self._deliverable_manifest,
+                self._deliverable_contract,
+                self._static_constraints,
+            ) = views_from_task_contract(self._task_contract)
+            logger.warning(
+                "交付物契约 (contract.json sha256=%s): files=%s json_keys=%s line_specs=%s",
+                self._task_contract.sha256[:12],
+                [d.path for d in self._deliverable_manifest],
+                {k: list(v) for k, v in self._deliverable_contract.json_keys.items()},
+                {
+                    k: (v.min_lines, list(v.fields))
+                    for k, v in self._deliverable_contract.line_specs.items()
+                },
+            )
+        else:
+            logger.warning(
+                "未找到 %s: 交付物门不适用 (objective 散文不再被解析成验收条件)",
+                contract_path,
+            )
         self._repro_cache = None
         self._last_plan_failure = None
-        if self._deliverable_manifest:
-            logger.warning(
-                "交付物清单 (objective 确定性解析, agent 不可改写): %s",
-                [d.path for d in self._deliverable_manifest],
-            )
-        if self._deliverable_contract:
-            logger.warning(
-                "交付物内容契约 (objective 确定性解析): json_keys=%s line_specs=%s",
-                {k: list(v) for k, v in self._deliverable_contract.json_keys.items()},
-                {k: (v.min_lines, list(v.fields)) for k, v in self._deliverable_contract.line_specs.items()},
-            )
         # 工作区收敛: 工具/沙箱的缺省 work_dir 由 cwd 改为本 run 的 workspace.
         # engine.workspace 是权威值 (构造时已解析 env), 每个 run 显式覆盖 —— 不
         # 用 setdefault: 同进程连跑多个 run 时会被上一轮的 workspace 钉住.
@@ -2604,10 +2614,10 @@ Physical time series collected this run:
         if not manifest:
             return {"passed": True, "declared": [], "checked": 0}
         from huginn.autoloop.deliverables import (
+            StaticConstraints,
             check_manifest,
             check_reproducible,
             check_static_constraints,
-            parse_static_constraints,
             repro_signature,
         )
 
@@ -2618,9 +2628,7 @@ Physical time series collected this run:
             return gate
         constraints = getattr(self, "_static_constraints", None)
         if constraints is None:
-            constraints = parse_static_constraints(
-                str(getattr(self, "_objective", "") or ""), self.workspace, manifest
-            )
+            constraints = StaticConstraints()
             self._static_constraints = constraints
         violations = check_static_constraints(self.workspace, manifest, constraints)
         if violations:

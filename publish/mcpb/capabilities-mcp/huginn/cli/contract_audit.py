@@ -8883,6 +8883,10 @@ def _rmm_issues(snap: dict) -> list[str]:
 
 def render_mece_markdown(snap: dict) -> str:
     lines: list[str] = []
+    lines.append(
+        "<!-- generated: python -m huginn.cli.contract_audit --out docs/mece-audit.md -->"
+    )
+    lines.append("")
     lines.extend(_rmm_header())
     lines.extend(_rmm_faces(snap))
     lines.extend(_rmm_issues(snap))

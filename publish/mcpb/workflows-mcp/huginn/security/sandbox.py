@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from huginn.security.child_env import sanitize_child_env
 from huginn.utils.common import hash_text
 from huginn.utils.process import (
     kill_process_group,
@@ -728,6 +729,8 @@ class SandboxExecutor:
         cfg, valid_cwd, timeout = self._sb_validate_and_clamp(cmd, cwd, timeout, config)
         if cfg.dry_run:
             return _sb_dry_run_result(cmd)
+        # 密钥类变量 (API_KEY/TOKEN/...) 不进入子进程环境.
+        env = sanitize_child_env(env)
         # Drop scheduler-only hints so they do not reach subprocess.run.
         run_kwargs = {k: v for k, v in kwargs.items() if k not in self._REMOTE_KWARGS}
         self._sb_inject_confinement(cmd, cfg, valid_cwd, run_kwargs)

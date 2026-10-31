@@ -59,6 +59,8 @@ os.environ["HUGINN_RATE_LIMIT_ENABLED"] = "0"
 os.environ.setdefault("HUGINN_RATE_LIMIT_TOKENS_PER_TURN", "500000")
 # 允许本地沙箱执行 code_tool/bash_tool — RCB subprocess 没有 docker, 用本地 python
 os.environ["HUGINN_ALLOW_LOCAL_BASH"] = "1"
+# RCB 评测机通常无 Landlock: 显式接受降级执行 (仅限评测环境).
+os.environ.setdefault("HUGINN_UNSAFE_ENV", "1")
 # HUGINN_CACHE_DIR 可能被设成空串, 导致 LongTermMemory 用相对路径 memory.db,
 # 在 RCB workspace cwd 下 sqlite WAL 创建失败. 强制用绝对路径.
 if not os.environ.get("HUGINN_CACHE_DIR"):

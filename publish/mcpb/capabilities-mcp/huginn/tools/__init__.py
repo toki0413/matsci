@@ -199,6 +199,8 @@ def _resolve_config(config: Any | None = None):
     resolved = config if config is not None else HuginnConfig.from_env()
     if getattr(resolved, "allow_local_bash", False):
         os.environ.setdefault("HUGINN_ALLOW_LOCAL_BASH", "1")
+        # 配置显式选择本地执行 → 同时声明接受无 Landlock 的降级.
+        os.environ.setdefault("HUGINN_UNSAFE_ENV", "1")
     _bourbaki_path = os.environ.get("HUGINN_BOURBAKI_PATH", "")
     if _bourbaki_path and _bourbaki_path not in sys.path:
         sys.path.insert(0, _bourbaki_path)

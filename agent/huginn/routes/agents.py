@@ -114,6 +114,8 @@ async def _cw_invoke(
     # 真正生产环境应该走容器执行, 那时再显式配 HUGINN_CONTAINER_RUNTIME
     if os.environ.get("HUGINN_DEV_MODE", "").lower() in ("1", "true", "yes"):
         os.environ.setdefault("HUGINN_ALLOW_LOCAL_BASH", "1")
+        # dev 桌面端可能无 Landlock; 显式接受降级, 生产仍需容器.
+        os.environ.setdefault("HUGINN_UNSAFE_ENV", "1")
 
     factory = get_agent_factory()
     agent = factory.create(

@@ -23,7 +23,9 @@ collect_ignore_glob = [
 ]
 
 # Tests run on the local machine without a container runtime by default.
+# CI kernels may lack Landlock, so explicitly accept the degraded local sandbox.
 os.environ.setdefault("HUGINN_ALLOW_LOCAL_BASH", "1")
+os.environ.setdefault("HUGINN_UNSAFE_ENV", "1")
 os.environ.setdefault("HUGINN_ALLOW_UNRESTRICTED_READ", "1")
 os.environ.setdefault("HUGINN_PROMPT_CACHE_CONTROL", "0")
 # Enable dev mode so tests can hit API endpoints without a configured API key.

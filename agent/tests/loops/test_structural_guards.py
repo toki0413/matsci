@@ -2,7 +2,7 @@
 
 覆盖四条结构性修复:
 a) plan DESCRIPTION 为空 → 重写一次 → fail-fast (不再用当前假设兜底)
-b) objective 交付物清单确定性解析 + 验收 (agent 不可改写)
+b) 交付物清单/键名/行 schema 来自 contract.json (机器契约, agent 不可改写)
 c) plan→execute 缺确定性证据 → 硬阻断 (原 advisory 放行)
 d) 同因连续两次结构性失败 → 熔断
 另加:
@@ -17,41 +17,48 @@ import asyncio
 import json
 from pathlib import Path
 
+
+def _contract_json(tmp_path: Path, **over: object) -> Path:
+    """写一份 ws35 风格的合法 contract.json, 返回路径."""
+    doc: dict = {
+        "schema": "huginn.task-contract/v1",
+        "required_files": ["analysis.py", "results.json", "loop_log.jsonl", "report.md"],
+        "required_keys": [
+            {"key": "q1_delta_ea", "type": "number"},
+            {"key": "q1_ci_low", "type": "number"},
+            {"key": "q1_ci_high", "type": "number"},
+            {"key": "hypotheses", "type": "object"},
+        ],
+        "hypotheses": {"labels": ["P1", "P2", "P3", "P4", "P5"], "prediction_only": ["P5"]},
+        "loop_log": {
+            "path": "loop_log.jsonl",
+            "lines": 50,
+            "fields": ["loop_id", "status", "delta_ea", "ci_low", "ci_high", "loso_rmse"],
+        },
+        "static": {"forbidden_imports": ["pandas", "matplotlib"], "seed": 20261029},
+    }
+    doc.update(over)
+    p = tmp_path / "contract.json"
+    p.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    return p
+
+
+def _contract_views(tmp_path: Path, **over: object):
+    from huginn.autoloop.deliverables import views_from_task_contract
+    from huginn.task_contract import load_contract
+
+    return views_from_task_contract(load_contract(_contract_json(tmp_path, **over)))
+
+
 # ===== Task 1: deliverables 模块 =====
 
 
-def test_parse_manifest_from_explicit_section():
-    from huginn.autoloop.deliverables import parse_manifest
-
-    obj = "【研究任务】做实验\n【交付物】results.json, report.md, fig1.png"
-    m = parse_manifest(obj)
-    assert [d.path for d in m] == ["results.json", "report.md", "fig1.png"]
-
-
-def test_parse_manifest_ignores_source_paths():
-    from huginn.autoloop.deliverables import parse_manifest
-
-    obj = "修改 agent/huginn/foo.py 并产出 out/report.md"
-    m = parse_manifest(obj)
-    assert [d.path for d in m] == ["out/report.md"]
-
-
-def test_parse_manifest_ignores_absolute_paths():
-    """绝对路径是引用材料, 不是交付物.
-
-    ws31 实测: "/workspace/.../design_solid_h2.md" 的匹配跳过前导 "/" 从
-    "workspace" 开始, 被当成 workspace 下的相对路径 → 必然判 missing,
-    把一次真实跑通的 run 判成 success=False.
-    """
-    from huginn.autoloop.deliverables import parse_manifest
-
-    obj = (
-        "背景材料：/workspace/research/design_solid_h2.md\n\n"
-        "交付物（全部写到当前 workspace 目录下）：\n"
-        "- results.json：数值汇总\n- report.md：报告\n- loop_log.jsonl：台账\n"
+def test_manifest_comes_from_contract_not_objective_prose(tmp_path):
+    """清单只认 contract.json: objective 散文里的文件名不再被解析."""
+    manifest, _contract, _static = _contract_views(
+        tmp_path, required_files=["results.json", "report.md"]
     )
-    m = parse_manifest(obj)
-    assert [d.path for d in m] == ["results.json", "report.md", "loop_log.jsonl"]
+    assert [d.path for d in manifest] == ["results.json", "report.md"]
 
 
 def test_stop_gate_rejects_stop_when_deliverables_missing():
@@ -261,45 +268,12 @@ def test_check_manifest_directory_at_declared_path_is_red(tmp_path):
     assert report["missing"] == ["results.json"]
 
 
-def test_parse_manifest_keeps_script_declared_in_section():
-    """显式交付物段里的 .py 是验收物: ws35/ws34 的 analysis.py 曾被正则丢掉, 只查 3 个文件."""
-    from huginn.autoloop.deliverables import parse_manifest
-
-    obj = (
-        "【研究任务】做元分析\n\n【交付物】\n- analysis.py：可重复运行，seed=20261029\n"
-        "- results.json：全部数值\n- loop_log.jsonl：50 行\n- report.md：六节\n"
-    )
-    paths = [d.path for d in parse_manifest(obj)]
-    assert paths == ["analysis.py", "results.json", "loop_log.jsonl", "report.md"]
+# ===== Task 1b: 内容契约 (必需键名 / JSONL 行 schema) =====
 
 
-def test_parse_manifest_ignores_prose_script_without_section():
-    """无交付物段时, 散文里的示例命令 `["python3","run.py"]` 不是交付物.
-
-    否则 run.py 永久判 missing, 把成功跑判成失败 (ws31 同源误判).
-    """
-    from huginn.autoloop.deliverables import parse_manifest
-
-    obj = '用 bash_tool 执行数组 ["python3","run.py"]，产出 data/out.csv'
-    paths = [d.path for d in parse_manifest(obj)]
-    assert paths == ["data/out.csv"]
-
-
-# ===== Task 1b: objective 内容契约 (必需键名 / JSONL 行 schema) =====
-
-_CONTRACT_OBJ = (
-    "【研究任务】做元分析\n\n"
-    "交付物：\n- analysis.py：可重复运行\n- results.json：键名至少包含 q1_delta_ea、q1_ci_low、"
-    "q1_ci_high、hypotheses。\n- loop_log.jsonl：50 行，每行一个 JSON 对象，至少含："
-    "loop_id、status、delta_ea、ci_low、ci_high、loso_rmse。\n- report.md：六节\n"
-)
-
-
-def test_parse_contract_extracts_json_keys_and_line_schema():
-    """objective 里"键名至少包含 …"是验收条件, 必须变成机器可查的契约."""
-    from huginn.autoloop.deliverables import parse_contract, parse_manifest
-
-    c = parse_contract(_CONTRACT_OBJ, parse_manifest(_CONTRACT_OBJ))
+def test_contract_projects_json_keys_and_line_schema(tmp_path):
+    """contract.json 的 required_keys / loop_log 变成机器可查的契约."""
+    _manifest, c, _static = _contract_views(tmp_path)
     assert list(c.json_keys["results.json"]) == [
         "q1_delta_ea", "q1_ci_low", "q1_ci_high", "hypotheses",
     ]
@@ -307,13 +281,20 @@ def test_parse_contract_extracts_json_keys_and_line_schema():
     assert list(c.line_specs["loop_log.jsonl"].fields) == [
         "loop_id", "status", "delta_ea", "ci_low", "ci_high", "loso_rmse",
     ]
+    assert c.key_specs[0].type == "number"
 
 
-def test_parse_contract_is_empty_when_objective_states_no_keys():
-    """没有键名/行 schema 声明 → 空契约 (不适用), 不能凭空生成要求."""
-    from huginn.autoloop.deliverables import parse_contract
-
-    assert not parse_contract("写一个 report.md 说明结果.")
+def test_empty_contract_means_gate_not_applicable(tmp_path):
+    """契约里没有要求 → 空契约 (不适用), 不能凭空生成验收条件."""
+    _manifest, c, _static = _contract_views(
+        tmp_path,
+        required_files=[],
+        required_keys=[],
+        hypotheses=None,
+        loop_log=None,
+        static=None,
+    )
+    assert not c
 
 
 def test_check_manifest_contract_rejects_self_invented_keys(tmp_path):
@@ -386,13 +367,13 @@ def test_check_manifest_contract_passes_on_conforming_deliverables(tmp_path):
 
 def test_contract_hint_names_the_same_checks_as_the_gate(tmp_path):
     """给模型的契约提示必须与引擎实际判据一致 (提示里写的键 = 门里查的键)."""
-    from huginn.autoloop.deliverables import (
-        Contract, parse_contract, parse_manifest, render_contract_hint,
-    )
+    from huginn.autoloop.deliverables import Contract, render_contract_hint
 
-    hint = render_contract_hint(parse_manifest(_CONTRACT_OBJ), parse_contract(_CONTRACT_OBJ))
+    manifest, contract, _static = _contract_views(tmp_path)
+    hint = render_contract_hint(manifest, contract)
     assert "q1_delta_ea" in hint and "hypotheses" in hint
     assert "loop_log.jsonl 至少 50 行" in hint and "loso_rmse" in hint
+    assert contract.contract_sha256 in hint, "提示里必须给出要绑定的契约指纹"
     assert render_contract_hint([], Contract()) == ""
 
 
@@ -1139,44 +1120,24 @@ def test_coder_task_carries_acceptance_gap():
 
 # ===== K: 产物"在"但数值是编的 (无可复现性 / 违反硬性技术条款) =====
 
-_WS35_LIKE_OBJ = (
-    "方法要求（硬性）：\n"
-    "- 只用 numpy 与 scipy（venv 里没有 pandas、matplotlib）。读 CSV 用标准库 csv。\n"
-    "- 数据（只读，禁止修改）：data/ea_dataset.csv\n"
-    "- 固定随机种子（seed=20261029）。\n"
-)
-
-
-def test_static_constraints_parsed_from_objective(tmp_path):
-    from huginn.autoloop.deliverables import parse_static_constraints
-
-    (tmp_path / "data").mkdir()
-    (tmp_path / "data" / "ea_dataset.csv").write_text("x\n", encoding="utf-8")
-    c = parse_static_constraints(_WS35_LIKE_OBJ, tmp_path)
+def test_static_constraints_come_from_contract(tmp_path):
+    """静态条款来自 contract.json 的 static 段, 不再从 objective 散文抽取."""
+    _manifest, _contract, c = _contract_views(tmp_path)
     assert "pandas" in c.forbidden_imports and "matplotlib" in c.forbidden_imports
     assert c.required_literals == ("20261029",)
-    assert "ea_dataset.csv" in c.required_inputs
 
 
-def test_static_constraints_flag_pandas_and_wrong_data_file(tmp_path):
-    from huginn.autoloop.deliverables import (
-        Deliverable,
-        check_static_constraints,
-        parse_static_constraints,
-    )
+def test_static_constraints_flag_pandas_and_missing_seed(tmp_path):
+    from huginn.autoloop.deliverables import Deliverable, check_static_constraints
 
-    (tmp_path / "data").mkdir()
-    (tmp_path / "data" / "ea_dataset.csv").write_text("x\n", encoding="utf-8")
-    (tmp_path / "data" / "cleaned_ea_dataset.csv").write_text("x\n", encoding="utf-8")
     (tmp_path / "analysis.py").write_text(
-        "import pandas as pd\n# seed 123\n# 读 cleaned_ea_dataset.csv\n", encoding="utf-8"
+        "import pandas as pd\n# seed 123\n", encoding="utf-8"
     )
-    c = parse_static_constraints(_WS35_LIKE_OBJ, tmp_path)
+    _manifest, _contract, c = _contract_views(tmp_path)
     bad = check_static_constraints(tmp_path, [Deliverable("analysis.py")], c)
     joined = " | ".join(bad)
     assert "pandas" in joined, "禁用依赖没被静态门拦住"
     assert "20261029" in joined, "固定种子缺失没被拦住"
-    assert "ea_dataset.csv" in joined, "指定数据文件缺失没被拦住"
 
 
 def test_reproducible_rejects_handwritten_results(tmp_path):
@@ -1221,16 +1182,10 @@ def test_reproducible_accepts_script_generated_outputs(tmp_path):
 
 
 def test_contract_requires_hypotheses_object(tmp_path):
-    """objective 写 "hypotheses 对象(P1–P5)" 时, list / 缺失子键都判红."""
-    from huginn.autoloop.deliverables import (
-        Contract,
-        Deliverable,
-        check_contract,
-        parse_contract,
-    )
+    """contract.json 声明 hypotheses 标签时, list / 缺失子键都判红."""
+    from huginn.autoloop.deliverables import check_contract
 
-    obj = "键名至少包含 q1_delta_ea, hypotheses；外加 hypotheses 对象（P1–P5 各自 supported / refuted）。"
-    contract = parse_contract(obj, [Deliverable("results.json")])
+    _manifest, contract, _static = _contract_views(tmp_path)
     assert contract.hypothesis_range == ("P1", "P2", "P3", "P4", "P5")
 
     (tmp_path / "results.json").write_text(
@@ -1243,6 +1198,9 @@ def test_contract_requires_hypotheses_object(tmp_path):
         json.dumps(
             {
                 "q1_delta_ea": 1.0,
+                "q1_ci_low": 0.1,
+                "q1_ci_high": 1.9,
+                "contract_sha256": contract.contract_sha256,
                 "hypotheses": {"P1": "supported", "P2": "supported",
                                "P3": "supported", "P4": "refuted", "P5": "supported"},
             }
@@ -1285,27 +1243,18 @@ def test_reproducible_exempts_authored_markdown(tmp_path):
 
 
 def test_contract_prediction_only_hypothesis_may_be_prediction(tmp_path):
-    """没有推翻条件的 H 项 (纯预测) 允许 prediction/pending, 其余项仍只认 supported/refuted."""
-    from huginn.autoloop.deliverables import (
-        Deliverable,
-        check_contract,
-        parse_contract,
-    )
+    """契约标为 prediction_only 的项允许 prediction/pending, 其余项仍只认 supported/refuted."""
+    from huginn.autoloop.deliverables import check_contract
 
-    obj = (
-        "键名至少包含 q1_delta_ea, hypotheses；外加 hypotheses 对象（P1–P5 各自 supported / refuted）。\n"
-        "H1（效应量）：预测 P1：合并值 ≥ 25。\n  推翻条件：点估计 < 25。\n"
-        "H2（方差）：预测 P2：η² < 0.20。\n  推翻条件：η² ≥ 0.20。\n"
-        "H3（方法）：预测 P3：方法差 < 中位数。\n  推翻条件：方法差 ≥ 中位数。\n"
-        "H4（泛化）：预测 P4：RMSE < 30。\n  推翻条件：RMSE ≥ 30。\n"
-        "H5（外推预测，必须可证伪）：给空白格一个点预测与 95% 预测区间。\n"
-    )
-    contract = parse_contract(obj, [Deliverable("results.json")])
+    _manifest, contract, _static = _contract_views(tmp_path)
     assert contract.prediction_only == frozenset({"P5"}), contract.prediction_only
 
     (tmp_path / "results.json").write_text(
         json.dumps({
             "q1_delta_ea": 51.59,
+            "q1_ci_low": 40.65,
+            "q1_ci_high": 63.40,
+            "contract_sha256": contract.contract_sha256,
             "hypotheses": {"P1": "supported", "P2": "supported", "P3": "supported",
                            "P4": "refuted", "P5": "prediction_only"},
         }),
@@ -1317,6 +1266,9 @@ def test_contract_prediction_only_hypothesis_may_be_prediction(tmp_path):
     (tmp_path / "results.json").write_text(
         json.dumps({
             "q1_delta_ea": 51.59,
+            "q1_ci_low": 40.65,
+            "q1_ci_high": 63.40,
+            "contract_sha256": contract.contract_sha256,
             "hypotheses": {"P1": "supported", "P2": "pending", "P3": "supported",
                            "P4": "refuted", "P5": "prediction_only"},
         }),
@@ -1326,47 +1278,57 @@ def test_contract_prediction_only_hypothesis_may_be_prediction(tmp_path):
     assert bad["bad_hypotheses"], "有推翻条件的 P2 用 pending 蒙混过关"
 
 
-def test_contract_parses_any_objective_wording(tmp_path):
-    """契约从题面读, 不绑某一题的写法: 英文题面 + H 标签 + 英文逐行声明都要认."""
-    from huginn.autoloop.deliverables import (
-        Deliverable,
-        check_contract,
-        parse_contract,
-    )
-
-    obj = (
-        "results.json required keys: ea_kj_per_mol, r_exponent, t50_s\n"
-        "loop_log.jsonl: each line must contain loop_id, status, t50_s\n"
-        "Hypotheses H1-H5 must each be marked supported or refuted.\n"
-        "H1: ea below 100 kJ/mol.\nRefuted if ea >= 100.\n"
-        "H2: scaling exponent below 1.5.\nRefuted if p >= 1.5.\n"
-        "H3: bootstrap mean stable.\nRefuted if drift > 5%.\n"
-        "H4: residual below the baseline.\nRefuted if rmse >= baseline.\n"
-        "H5: a falsifiable prediction at T=650 K with a 95% interval.\n"
-    )
-    contract = parse_contract(
-        obj, [Deliverable("results.json"), Deliverable("loop_log.jsonl")]
+def test_contract_projects_h_labels_and_prediction_only(tmp_path):
+    """同一份机器契约换成 H 标签写法, 投影结果一致 —— 与题面措辞无关."""
+    _manifest, contract, _static = _contract_views(
+        tmp_path,
+        hypotheses={"labels": ["H1", "H2", "H3", "H4", "H5"],
+                    "prediction_only": ["H5"]},
+        required_keys=[
+            {"key": "ea_kj_per_mol", "type": "number"},
+            {"key": "r_exponent", "type": "number"},
+            {"key": "t50_s", "type": "number"},
+            {"key": "hypotheses", "type": "object"},
+        ],
+        loop_log={"path": "loop_log.jsonl", "lines": 50,
+                  "fields": ["loop_id", "status", "t50_s"]},
     )
     assert contract.hypothesis_range == ("H1", "H2", "H3", "H4", "H5")
     assert contract.prediction_only == frozenset({"H5"}), contract.prediction_only
     assert contract.line_specs["loop_log.jsonl"].fields[:2] == ("loop_id", "status")
-    assert "ea_kj_per_mol" in contract.json_keys["results.json"]
+    assert [s.key for s in contract.key_specs if s.file == "results.json"][:3] == [
+        "ea_kj_per_mol", "r_exponent", "t50_s",
+    ]
+
+
+def test_results_must_bind_contract_sha256(tmp_path):
+    """results.json 必须写入契约字节指纹; 缺失或改动一位 → FAIL."""
+    from huginn.autoloop.deliverables import check_contract
+
+    _manifest, contract, _static = _contract_views(tmp_path)
+    payload = {
+        "q1_delta_ea": 51.59,
+        "q1_ci_low": 40.65,
+        "q1_ci_high": 63.40,
+        "hypotheses": {"P1": "supported", "P2": "supported", "P3": "supported",
+                       "P4": "refuted", "P5": "prediction_only"},
+    }
+    (tmp_path / "results.json").write_text(json.dumps(payload), encoding="utf-8")
+    unbound = check_contract(tmp_path, contract)
+    assert not unbound["passed"] and unbound["bad_binding"], unbound
 
     (tmp_path / "results.json").write_text(
-        json.dumps({
-            "ea_kj_per_mol": 109.9, "r_exponent": 1.0, "t50_s": 494.0,
-            "hypotheses": {"H1": "supported", "H2": "supported", "H3": "supported",
-                           "H4": "refuted", "H5": "pending"},
-        }),
-        encoding="utf-8",
+        json.dumps({**payload, "contract_sha256": "deadbeef"}), encoding="utf-8"
     )
-    (tmp_path / "loop_log.jsonl").write_text(
-        "".join(json.dumps({"loop_id": i, "status": "ok", "t50_s": 494.0}) + "\n"
-                for i in range(1, 51)),
+    wrong = check_contract(tmp_path, contract)
+    assert not wrong["passed"] and wrong["bad_binding"], wrong
+
+    (tmp_path / "results.json").write_text(
+        json.dumps({**payload, "contract_sha256": contract.contract_sha256}),
         encoding="utf-8",
     )
     ok = check_contract(tmp_path, contract)
-    assert ok["passed"], f"英文题面下的合规交付被判红: {ok}"
+    assert ok["passed"], ok
 
 
 # ===== L: provider 硬失败被规则兜底伪装成正常动作 =====
@@ -1560,10 +1522,11 @@ _DEFECT_LEDGER: tuple[dict, ...] = (
         "repeat_count": 4,
         "fix_scope": "structural",
         "probes": (
-            "test_parse_manifest_from_explicit_section",
-            "test_parse_manifest_keeps_script_declared_in_section",
-            "test_parse_manifest_ignores_prose_script_without_section",
-            "test_parse_contract_extracts_json_keys_and_line_schema",
+            "test_manifest_comes_from_contract_not_objective_prose",
+            "test_contract_projects_json_keys_and_line_schema",
+            "test_empty_contract_means_gate_not_applicable",
+            "test_contract_projects_h_labels_and_prediction_only",
+            "test_results_must_bind_contract_sha256",
             "test_check_manifest_contract_rejects_self_invented_keys",
             "test_check_manifest_contract_rejects_short_or_malformed_loop_log",
             "test_contract_hint_names_the_same_checks_as_the_gate",
@@ -1669,8 +1632,8 @@ _DEFECT_LEDGER: tuple[dict, ...] = (
         "repeat_count": 3,
         "fix_scope": "structural",
         "probes": (
-            "test_static_constraints_parsed_from_objective",
-            "test_static_constraints_flag_pandas_and_wrong_data_file",
+            "test_static_constraints_come_from_contract",
+            "test_static_constraints_flag_pandas_and_missing_seed",
             "test_reproducible_rejects_handwritten_results",
             "test_reproducible_accepts_script_generated_outputs",
             "test_contract_requires_hypotheses_object",

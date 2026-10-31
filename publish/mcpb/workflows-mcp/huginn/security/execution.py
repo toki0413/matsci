@@ -10,6 +10,7 @@ import os
 import shutil
 from typing import Any
 
+from huginn.env_access import env_bool, env_str
 from huginn.security.container_executor import (
     ContainerExecutor,
     ContainerSecurityConfig,
@@ -17,9 +18,30 @@ from huginn.security.container_executor import (
 from huginn.security.sandbox import SandboxConfig, SandboxError, SandboxExecutor
 
 
+def landlock_available() -> bool:
+    """Return True if this kernel exposes Landlock (ABI >= 1)."""
+    try:
+        from huginn.security.landlock import probe_abi
+
+        return probe_abi() > 0
+    except Exception:
+        return False
+
+
+def unsafe_env_enabled() -> bool:
+    """``HUGINN_UNSAFE_ENV=1`` — 运维显式接受无 Landlock 的降级执行."""
+    return env_bool("HUGINN_UNSAFE_ENV")
+
+
 def allow_local_bash() -> bool:
-    """Return True if the operator explicitly enabled local bash fallback."""
-    return os.environ.get("HUGINN_ALLOW_LOCAL_BASH") == "1"
+    """Return True only if local bash was explicitly enabled AND confined.
+
+    ``HUGINN_ALLOW_LOCAL_BASH=1`` 只是第一步; 还要么本机 Landlock 可用, 要么
+    运维显式设了 ``HUGINN_UNSAFE_ENV=1`` 接受降级风险. 二者都没有 → 拒绝.
+    """
+    if env_str("HUGINN_ALLOW_LOCAL_BASH") != "1":
+        return False
+    return landlock_available() or unsafe_env_enabled()
 
 
 def container_runtime_config() -> tuple[str, str | None]:
@@ -69,7 +91,8 @@ def get_executor(
     raise SandboxError(
         "No execution backend available. "
         "Set HUGINN_CONTAINER_RUNTIME + HUGINN_CONTAINER_IMAGE for container isolation, "
-        "or set HUGINN_ALLOW_LOCAL_BASH=1 to accept the local sandbox risk."
+        "or set HUGINN_ALLOW_LOCAL_BASH=1 with Landlock support "
+        "(HUGINN_UNSAFE_ENV=1 explicitly accepts the degraded local sandbox)."
     )
 
 

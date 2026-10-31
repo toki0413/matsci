@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from huginn.core_types import PermissionMode, PermissionResult, RiskLevel
-from huginn.env_access import env_bool, env_is_set
+from huginn.env_access import env_bool, env_is_set, env_str
 
 # 危险命令模式 — 统一使用 command_filter 的 _BLOCKED_PATTERNS 作为 single source of truth.
 # permissions.py 补充 git 相关模式 (command_filter 不覆盖 git).
@@ -107,14 +107,31 @@ def sidecar_auto_approve() -> bool:
     return env_bool("HUGINN_DEV_MODE")
 
 
-def autoloop_auto_approve() -> bool:
-    """autoloop 是**无人值守**自主循环, 默认放行内部 coder 的写/执行工具.
+def approval_mode() -> str:
+    """审批档位: ``deny`` | ``workspace`` | ``all`` (默认 ``workspace``).
 
-    默认 True 是有意为之 (否则无 approval_callback 时 coder 形同死码), 但不再是
-    硬编码: ``HUGINN_AUTOLOOP_AUTO_APPROVE=0/false`` 可显式收紧. 危险命令模式
-    (``rm -rf /`` 等) 仍由 adapter 先于该放行判定拦下, 不受此开关影响.
+    - ``deny``: 不自动放行任何写/执行 (需人工审批);
+    - ``workspace``: 自动放行, 但工作区外的写被拒 (默认);
+    - ``all``: 完全放行 (必须显式 ``HUGINN_APPROVE_MODE=all``).
+
+    兼容旧开关: 显式设置 ``HUGINN_AUTOLOOP_AUTO_APPROVE`` 时映射为
+    ``all``/``deny`` (旧行为是 bool, 无法表达工作区档).
     """
-    return env_bool("HUGINN_AUTOLOOP_AUTO_APPROVE")
+    raw = env_str("HUGINN_APPROVE_MODE").strip().lower()
+    if raw in ("deny", "workspace", "all"):
+        return raw
+    if env_is_set("HUGINN_AUTOLOOP_AUTO_APPROVE"):
+        return "all" if env_bool("HUGINN_AUTOLOOP_AUTO_APPROVE") else "deny"
+    return "workspace"
+
+
+def autoloop_auto_approve() -> bool:
+    """autoloop 是否自动放行写/执行工具.
+
+    默认 ``workspace`` 档: 自动放行, 但 ``PermissionConfig.workspace_root`` 会
+    拒绝工作区外的写; ``all`` 才完全放行. ``deny`` 则回到 ASK.
+    """
+    return approval_mode() in ("workspace", "all")
 
 
 # Default permission rules for material science tools
@@ -222,6 +239,8 @@ class PermissionConfig:
     # 信任自适应: 开启后按 trust score 浮动 medium 风险 (trust 高放行 / 低强制 ASK).
     # 默认 False 保持向后兼容.
     trust_adaptive: bool = False
+    # workspace 档: 非空时, 写/执行工具的目标路径必须落在此根内, 否则 DENY.
+    workspace_root: Path | None = None
 
     def get_mode(self, tool_name: str) -> PermissionMode:
         # 先按 rules / 通配规则算出"原始"模式
@@ -412,6 +431,11 @@ class PermissionChecker:
         if path_result is not None:
             return path_result
 
+        # 阶段2b: workspace 档边界 — 工作区外的写/执行一律 DENY.
+        workspace_result = self._workspace_result(args, tool_name)
+        if workspace_result is not None:
+            return workspace_result
+
         # 阶段3: 工具基础规则 → mode + 风险推断
         mode = self.config.get_mode(tool_name)
         risk = _infer_risk(mode)
@@ -471,6 +495,35 @@ class PermissionChecker:
         # AUTO — fall through (path 命中但放行)
         matched.append("path:auto")
         return None
+
+    def _workspace_result(
+        self, args: dict | None, tool_name: str
+    ) -> PermissionResult | None:
+        """阶段2b: workspace 档边界检查 — 工作区外写/执行 DENY."""
+        root = self.config.workspace_root
+        if root is None or tool_name not in WRITE_EXEC_TOOLS or not args:
+            return None
+        path_str = args.get("file_path") or args.get("path")
+        if not path_str:
+            return None
+        try:
+            target = Path(str(path_str)).resolve()
+            base = Path(root).resolve()
+        except OSError:
+            return PermissionResult(
+                mode=PermissionMode.DENY,
+                reason="Path could not be resolved inside the workspace",
+                risk_level=RiskLevel.CRITICAL,
+                matched_rules=["workspace:deny"],
+            )
+        if target == base or base in target.parents:
+            return None
+        return PermissionResult(
+            mode=PermissionMode.DENY,
+            reason="Path is outside the workspace (HUGINN_APPROVE_MODE=workspace)",
+            risk_level=RiskLevel.CRITICAL,
+            matched_rules=["workspace:deny"],
+        )
 
     def _apply_cost_and_trust(
         self,

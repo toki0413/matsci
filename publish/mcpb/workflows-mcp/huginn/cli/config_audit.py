@@ -164,6 +164,10 @@ def _fmt_locs(entries: list[dict], limit: int = 3) -> str:
 def render_markdown(inventory: dict[str, dict]) -> str:
     """渲染人读的契约文档 (markdown)."""
     lines: list[str] = []
+    lines.append(
+        "<!-- generated: python -m huginn.cli.config_audit --out docs/env-contract.md -->"
+    )
+    lines.append("")
     lines.append("# 环境变量契约 (HUGINN_*)")
     lines.append("")
     lines.append(
@@ -950,6 +954,10 @@ def build_flags_contract(root: Path | None = None) -> list[dict]:
 
 def render_flags_markdown(rows: list[dict]) -> str:
     lines: list[str] = []
+    lines.append(
+        "<!-- generated: python -m huginn.cli.config_audit --flags --out docs/feature-flags-contract.md -->"
+    )
+    lines.append("")
     lines.append("# 功能开关契约 (FeatureFlags)")
     lines.append("")
     lines.append(

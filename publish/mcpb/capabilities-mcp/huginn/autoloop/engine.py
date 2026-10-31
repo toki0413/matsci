@@ -53,7 +53,7 @@ from huginn.interaction.progress import ProgressTracker
 from huginn.kg.builder import ProjectKnowledgeGraph
 from huginn.llm import get_model
 from huginn.memory.manager import MemoryManager
-from huginn.permissions import PermissionConfig, autoloop_auto_approve
+from huginn.permissions import PermissionConfig, approval_mode, autoloop_auto_approve
 from huginn.tools.report_tool import ReportTool
 from huginn.utils.runtime import HUGINN_DIR_NAME
 from huginn.workflows.engine import WorkflowEngine
@@ -442,7 +442,10 @@ class AutoloopEngine:
         # adapter 里**先于**该放行判定被拦, 不受此开关影响.
         self.coder = CoderRunner(
             permission_config=PermissionConfig(
-                auto_approve_all=autoloop_auto_approve()
+                auto_approve_all=autoloop_auto_approve(),
+                workspace_root=(
+                    self.workspace if approval_mode() == "workspace" else None
+                ),
             )
         )
 

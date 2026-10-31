@@ -1,7 +1,8 @@
 """确定性交付物清单 + 验收门.
 
-清单只从 objective 文本解析, agent **不能改写** —— 这是独立于模型的可判定锚点:
-执行对象 (objective + 声明交付物) 与验收标准都不再由模型自己生成.
+清单/键名/行 schema 只从 ``contract.json`` (schema ``huginn.task-contract/v1``)
+读取, agent **不能改写**; objective 散文不再被正则解析 —— 同一份契约字节给出
+同一判定, 与题面措辞无关.
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from huginn.task_contract import RequiredKey, TaskContract, check_required_keys
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -31,28 +34,15 @@ __all__ = [
     "check_static_constraints",
     "fixed_protocol_hypothesis",
     "objective_block_for",
-    "parse_contract",
-    "parse_manifest",
-    "parse_static_constraints",
     "render_acceptance_gap",
     "render_contract_hint",
     "render_objective_block",
+    "views_from_task_contract",
 ]
 
-_ARTIFACT_RE = re.compile(
-    r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.(?:md|json|jsonl|csv|tsv|txt|png|jpg|jpeg|pdf|xlsx|parquet|npz|npy|py)\b"
-)
-_SECTION_MARKERS = (
-    "【交付物】",
-    "交付物：",
-    "交付物:",
-    "必须交付",
-    "产出文件",
-    "deliverables:",
-    "deliverables：",
-)
-_SOURCE_PREFIXES = ("agent/", "src/", "huginn/", "tests/")
 _MIN_BYTES = 32
+#: 契约指纹绑定的交付物 (spec: 交付物 results.json 必须写入 contract_sha256).
+_BINDING_FILE = "results.json"
 
 
 @dataclass(frozen=True)
@@ -61,55 +51,43 @@ class Deliverable:
     min_bytes: int = _MIN_BYTES
 
 
-def _section_text(objective: str) -> str:
-    """取「交付物」段文本; 无该段返回空串 (调用方退回全文扫描)."""
-    low = objective.lower()
-    for marker in _SECTION_MARKERS:
-        idx = low.find(marker.lower())
-        if idx < 0:
-            continue
-        tail = objective[idx + len(marker):]
-        stop = len(tail)
-        for sep in ("\n\n", "【", "\n#"):
-            j = tail.find(sep)
-            if 0 <= j < stop:
-                stop = j
-        return tail[:stop]
-    return ""
+def views_from_task_contract(
+    task_contract: TaskContract,
+) -> tuple[list[Deliverable], Contract, StaticConstraints]:
+    """``contract.json`` → 交付物清单 + 内容契约 + 静态约束 (纯投影, 不跑正则).
 
-
-def parse_manifest(objective: str) -> list[Deliverable]:
-    """objective → 去重后的交付物清单 (无声明时返回 []，表示不适用).
-
-    `.py` 只在**显式交付物段**里才算验收物: 散文里的 `["python3","run.py"]` 是执行
-    示例, 若当交付物会永久判 missing (ws31 实测的同类误判)。
+    三个视图都由同一份已校验契约派生, 门与 prompt 提示共用, 不存在"提示一套、
+    检查另一套"的漂移.
     """
-    if not isinstance(objective, str) or not objective.strip():
-        return []
-    section = _section_text(objective)
-    text = section or objective
-    seen: set[str] = set()
-    out: list[Deliverable] = []
-    # 用 finditer 而不是 findall: 需要知道匹配起点, 才能判定它前面是不是 "/".
-    # 绝对路径 "/workspace/.../design.md" 的匹配会**跳过前导斜杠**从 "workspace"
-    # 开始, findall 拿不到那个 "/", startswith("/") 守卫永远不生效 → 绝对路径被
-    # 当成 workspace 下的相对路径去验收, 必然判 missing (ws31 实测).
-    for m in _ARTIFACT_RE.finditer(text):
-        raw = m.group(0)
-        if m.start() > 0 and text[m.start() - 1] == "/":
-            continue  # 绝对路径: 引用材料不是交付物
-        if not section and raw.endswith(".py"):
-            continue  # 无交付物段时, 散文里的脚本名只是执行示例
-        path = raw.strip().strip("'\"`，,。；;：:")
-        if not path or path.startswith(("/", "..", "./")):
-            continue
-        if any(path.startswith(p) for p in _SOURCE_PREFIXES):
-            continue
-        if path in seen:
-            continue
-        seen.add(path)
-        out.append(Deliverable(path))
-    return out
+    manifest = [Deliverable(p) for p in task_contract.required_files]
+
+    json_keys: dict[str, tuple[str, ...]] = {}
+    for spec in task_contract.required_keys:
+        merged = tuple(dict.fromkeys(json_keys.get(spec.file, ()) + (spec.key,)))
+        json_keys[spec.file] = merged
+
+    line_specs: dict[str, LineSpec] = {}
+    if task_contract.loop_log is not None:
+        ll = task_contract.loop_log
+        line_specs[ll.path] = LineSpec(min_lines=ll.lines, fields=ll.fields)
+
+    hyp = task_contract.hypotheses
+    contract = Contract(
+        json_keys=json_keys,
+        line_specs=line_specs,
+        hypothesis_range=hyp.labels if hyp else (),
+        prediction_only=hyp.prediction_only if hyp else frozenset(),
+        key_specs=task_contract.required_keys,
+        contract_sha256=task_contract.sha256,
+    )
+
+    static = task_contract.static
+    constraints = StaticConstraints(
+        forbidden_imports=static.forbidden_imports if static else (),
+        required_literals=(str(static.seed),) if static and static.seed is not None else (),
+        required_inputs=(),
+    )
+    return manifest, contract, constraints
 
 
 _PROTOCOL_FIX_RE = re.compile(
@@ -178,8 +156,8 @@ def render_acceptance_gap(gate: dict[str, Any]) -> str:
         cparts = [
             f"{k}=[{', '.join(str(x) for x in (contract.get(k) or [])[:_cap])}]"
             for k in (
-                "missing_keys", "short_lines", "bad_lines", "missing_fields",
-                "bad_hypotheses",
+                "missing_keys", "bad_types", "short_lines", "bad_lines", "missing_fields",
+                "bad_hypotheses", "bad_binding",
             )
             if contract.get(k)
         ]
@@ -228,21 +206,13 @@ def acceptance_block_for(host: Any, header: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 静态约束: objective 写死的"禁用依赖 / 固定种子 / 指定数据文件"
+# 静态约束: 契约写死的"禁用依赖 / 固定种子" (源码静态判定, 不靠模型自述)
 # ---------------------------------------------------------------------------
-
-#: 只认常见的科研栈 —— 在否定句里出现才算禁用, 不做泛化的自然语言推断.
-_FORBIDDEN_MODULES = ("pandas", "matplotlib", "seaborn", "sklearn", "statsmodels", "torch")
-_NEGATION_RE = re.compile(
-    r"没有|不含|不装|未安装|禁止使用|禁止用|不得使用|不要使用|别用|不用|venv 里没有", re.I
-)
-_SEED_RE = re.compile(r"seed\s*[=:：]\s*([0-9]{4,})", re.I)
-_INPUT_PATH_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.(?:csv|tsv|json|xlsx)\b")
 
 
 @dataclass(frozen=True)
 class StaticConstraints:
-    """objective 里的硬性技术条款 — 由脚本源码静态判定, 不靠模型自述."""
+    """契约里的硬性技术条款 — 由脚本源码静态判定, 不靠模型自述."""
 
     forbidden_imports: tuple[str, ...] = ()
     required_literals: tuple[str, ...] = ()
@@ -252,48 +222,6 @@ class StaticConstraints:
         return bool(
             self.forbidden_imports or self.required_literals or self.required_inputs
         )
-
-
-def parse_static_constraints(
-    objective: str,
-    workspace: Any = None,
-    declared: "list[Deliverable] | None" = None,
-) -> StaticConstraints:
-    """objective → 静态约束 (只抽取, 不猜测).
-
-    抽取口径:
-    - 禁用依赖: 某个已知科研栈出现在**否定句**里 ("venv 里没有 pandas、matplotlib");
-    - 固定种子: ``seed=<数字>``;
-    - 指定输入: objective 里点名且**在工作区真实存在**的数据文件 (取 basename),
-      防止 agent 换成数据目录下的其它变体文件 (ws35 实测: 用了 cleaned 版本 → 数值全错).
-      ``declared`` (交付物清单) 里的文件是**产物**, 不是输入 —— 必须排除, 否则
-      "写 results.json" 会被当成"必须引用 results.json"这条无意义的要求.
-    """
-    if not isinstance(objective, str) or not objective.strip():
-        return StaticConstraints()
-    sentences = re.split(r"[。\n]", objective)
-    forbidden: list[str] = []
-    for mod in _FORBIDDEN_MODULES:
-        for sent in sentences:
-            if mod in sent.lower() and _NEGATION_RE.search(sent):
-                forbidden.append(mod)
-                break
-    seeds = tuple(dict.fromkeys(_SEED_RE.findall(objective)))
-    outputs = {d.path.rsplit("/", 1)[-1] for d in (declared or [])}
-    inputs: list[str] = []
-    if workspace is not None:
-        root = Path(workspace)
-        for m in _INPUT_PATH_RE.finditer(objective):
-            rel = m.group(0)
-            if (root / rel).is_file():
-                base = rel.rsplit("/", 1)[-1]
-                if base not in inputs and base not in outputs:
-                    inputs.append(base)
-    return StaticConstraints(
-        forbidden_imports=tuple(forbidden),
-        required_literals=seeds,
-        required_inputs=tuple(inputs),
-    )
 
 
 def check_static_constraints(
@@ -487,243 +415,23 @@ class Contract:
     #: objective 声明 "hypotheses 对象（P1–P5 各自 supported/refuted）" 时的必需子键.
     #: 结构性的: 交付物写成 list 或自造键名会被确定性判红, 不再靠人眼对账.
     hypothesis_range: tuple[str, ...] = ()
-    #: 没有"推翻条件"的假设项 (objective 里只给了可证伪预测, 尚无实测可判):
+    #: 没有"推翻条件"的假设项 (契约里只给了可证伪预测, 尚无实测可判):
     #: 这些键允许 prediction/pending 类取值, 其余键仍只认 supported/refuted.
     prediction_only: frozenset[str] = frozenset()
+    #: 键的类型约束 (来自 contract.json 的 required_keys; 空 = 只查存在性).
+    key_specs: tuple[RequiredKey, ...] = ()
+    #: contract.json 原始字节的 sha256; 非空时 results.json 必须绑定同一指纹.
+    contract_sha256: str = ""
 
     def __bool__(self) -> bool:
         return bool(self.json_keys or self.line_specs or self.hypothesis_range)
 
 
-_KEY_MARKERS = (
-    "键名至少包含",
-    "键名必须包含",
-    "键名包含",
-    "至少包含以下键",
-    "必须包含以下键",
-    "required keys",
-    "must include the keys",
-)
-#: jsonl 逐行字段的声明口径 (中英皆可, 题面无关).
-_JSONL_FIELD_MARKER_RE = re.compile(
-    r"至少含[：:，,]?"
-    r"|每行[^\n。]{0,16}?(?:含|包含|必须有)"
-    r"|each line[^\n。]{0,24}?(?:contain|include)s?",
-    re.I,
-)
-_FILE_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.jsonl?\b")
-_IDENT_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{2,}")
-_KEY_STOP = frozenset(
-    {"json", "jsonl", "csv", "md", "tsv", "txt", "true", "false", "supported", "refuted", "keys", "key"}
-)
-_MAX_MIN_LINES = 10_000
-
-
-def _sentence_tail(text: str, pos: int) -> str:
-    """pos 之后到句末 (。或换行) 的片段."""
-    tail = text[pos:]
-    stops = [i for i in (tail.find("。"), tail.find("\n")) if i >= 0]
-    return tail[: min(stops)] if stops else tail
-
-
-def _nearest_file_before(text: str, pos: int, suffix: str) -> str | None:
-    """pos 之前最近一次出现的、以 suffix 结尾的文件名 (取 basename)."""
-    found = None
-    for m in _FILE_RE.finditer(text[:pos]):
-        raw = m.group(0)
-        if raw.endswith(suffix):
-            found = raw.rsplit("/", 1)[-1]
-    return found
-
-
-def _idents(tail: str, stop: frozenset[str]) -> list[str]:
-    """逗号/顿号分隔的片段里各取首个标识符 (去重保序)."""
-    out: list[str] = []
-    for seg in re.split(r"[、，,;；]", tail):
-        m = _IDENT_RE.search(seg)
-        if not m:
-            continue
-        tok = m.group(0)
-        if tok.lower() in stop or tok in out:
-            continue
-        out.append(tok)
-    return out
-
-
-def parse_contract(objective: str, manifest: list[Deliverable] | None = None) -> Contract:
-    """objective → 内容契约 (无声明时返回空契约, 表示不适用)."""
-    if not isinstance(objective, str) or not objective.strip():
-        return Contract()
-    text = objective
-    declared = [d.path for d in (manifest or [])]
-
-    json_keys: dict[str, tuple[str, ...]] = {}
-    for marker in _KEY_MARKERS:
-        idx = text.find(marker)
-        while idx >= 0:
-            path = _nearest_file_before(text, idx, ".json")
-            if path is None:
-                path = next((p for p in declared if p.endswith(".json")), None)
-            toks = _idents(_sentence_tail(text, idx + len(marker)).lstrip("：:，, "), _KEY_STOP)
-            if path and toks:
-                merged = tuple(dict.fromkeys(json_keys.get(path, ()) + tuple(toks)))
-                json_keys[path] = merged
-            idx = text.find(marker, idx + len(marker))
-
-    line_specs: dict[str, LineSpec] = {}
-    for m in re.finditer(_JSONL_FIELD_MARKER_RE, text):
-        path = _nearest_file_before(text, m.start(), ".jsonl")
-        if path is None:
-            continue
-        fields = _idents(_sentence_tail(text, m.end()).lstrip("：:，, "), _KEY_STOP)
-        if fields:
-            prev = line_specs.get(path, LineSpec())
-            line_specs[path] = LineSpec(
-                min_lines=prev.min_lines, fields=tuple(dict.fromkeys(prev.fields + tuple(fields)))
-            )
-
-    for path in dict.fromkeys(declared + list(line_specs)):
-        if not path.endswith(".jsonl"):
-            continue
-        base = path.rsplit("/", 1)[-1]
-        if base not in text:
-            continue
-        for sent in re.split(r"[。\n]", text):
-            if base not in sent:
-                continue
-            # "N 行" 在中文题面里既可能指台账行数, 也可能指"对 N 行数据"做重采样;
-            # 优先取带下限词的那处, 并跳过"对/把/共 … 行数据"这种输入侧计数.
-            picked = None
-            for mm in re.finditer(r"(\d+)\s*行", sent):
-                pre = sent[max(0, mm.start() - 6):mm.start()]
-                if re.search(r"[对把共]|数据", pre):
-                    continue
-                if re.search(r"少于|至少|不少于|不足", pre):
-                    picked = mm
-                    break
-                if picked is None:
-                    picked = mm
-            if picked is None:
-                continue
-            n = int(picked.group(1))
-            if 0 < n <= _MAX_MIN_LINES:
-                prev = line_specs.get(path, LineSpec())
-                line_specs[path] = LineSpec(min_lines=n, fields=prev.fields)
-                break
-
-    hyp_range = _parse_hypothesis_range(text, declared)
-    return Contract(
-        json_keys=json_keys,
-        line_specs=line_specs,
-        hypothesis_range=hyp_range,
-        prediction_only=_parse_prediction_only(text, hyp_range) if hyp_range else frozenset(),
-    )
-
-
-_ITEM_HEAD_RE = re.compile(r"^\s*(?:[-*#]+\s*)?([A-Z])(\d{1,2})\s*(?:[（(：:]|\s)", re.M)
-_REFUTE_RULE_RE = re.compile(
-    r"推翻条件|推翻判据|推翻标准|refuted?\s+(?:if|when|by)"
-    r"|falsification\s+(?:criterion|condition)",
-    re.I,
-)
 #: 纯预测项允许的状态写法 (尚无实测可判, 只能登记预测).
 _PREDICTION_STATUSES = frozenset({
     "prediction", "prediction_only", "prediction-only", "predictive",
     "pending", "untested", "not_testable", "预测", "待检验", "待验证",
 })
-
-
-def _parse_prediction_only(text: str, keys: tuple[str, ...]) -> frozenset[str]:
-    """逐项里**没有推翻条件**的 → 该项只能给预测, 不能给 supported/refuted.
-
-    ws35 实测: objective 把 H1–H4 写成 "预测 Pn… / 推翻条件…", 而 H5 是可证伪的
-    外推预测 (没有推翻条件可当场判). 契约却要求 P1–P5 全部 supported/refuted ——
-    agent 只能给尚未可测的 P5 贴假标签, 或被判 success=False.
-
-    不绑具体题面: 标签前缀取自 ``keys`` (P/Q/H 皆可); 项标题若是同前缀就按编号对齐,
-    否则按出现顺序一一对齐; 少于 3 项或数量对不上时不猜 (返回空 = 维持严格口径).
-    """
-    if not keys:
-        return frozenset()
-    marks = list(_ITEM_HEAD_RE.finditer(text))
-    if len(marks) < 3:
-        return frozenset()
-    pm = re.match(r"[A-Za-z]+", keys[0])
-    prefix = pm.group(0) if pm else ""
-    same = [m for m in marks if m.group(1) == prefix]
-    if len(same) >= 3:
-        pairs = [(f"{prefix}{int(m.group(2))}", m) for m in same]
-        span = same
-    elif len(marks) == len(keys):
-        pairs = list(zip(keys, marks))
-        span = marks
-    else:
-        return frozenset()
-    out = []
-    for i, (key, _m) in enumerate(pairs):
-        end = span[i + 1].start() if i + 1 < len(span) else len(text)
-        if not _REFUTE_RULE_RE.search(text[span[i].start():end]):
-            out.append(key)
-    return frozenset(k for k in out if k in set(keys))
-
-
-_HYP_CONTEXT_RE = re.compile(r"hypothes|假设", re.I)
-_VERDICT_WORD_RE = re.compile(r"supported|refuted|被支持|被推翻", re.I)
-_LABEL_RANGE_RE = re.compile(
-    r"([A-Za-z])(\d{1,2})\s*(?:[–—~-]|至|到|\.\.)\s*([A-Za-z]?)(\d{1,2})"
-)
-
-
-def _parse_hypothesis_range(text: str, declared: list[str]) -> tuple[str, ...]:
-    """objective 提到 "hypotheses/假设 (P1–P5 或 H1–H5 …)" → 必需子键 (P1..Pn).
-
-    标签前缀从题面读, 不假定一定是 P; 也接受顿号/逗号枚举 "P1、P2、P3".
-    """
-    if not _HYP_CONTEXT_RE.search(text):
-        return ()
-    if not any(p.endswith(".json") for p in declared):
-        return ()
-    blank = re.split(r"[。\n]", text)
-    # 分档取标签集: 先认提到 hypotheses 这个**字段名**的句子 (契约判的就是它的子键),
-    # 再退到中文"假设"的叙述句 —— 否则题面开头"H1–H5 固定假设"这类前言会被误当契约.
-    tiers = (
-        (re.compile(r"hypothes", re.I), True),
-        (re.compile(r"hypothes", re.I), False),
-        (_HYP_CONTEXT_RE, True),
-        (_HYP_CONTEXT_RE, False),
-    )
-    for ctx, need_verdict in tiers:
-        for sent in blank:
-            if not ctx.search(sent):
-                continue
-            if need_verdict and not _VERDICT_WORD_RE.search(sent):
-                continue
-            anchor = re.search(r"hypothes", sent, re.I)
-            m = _prefer_near(sent, anchor)
-            if m is None:
-                labels = re.findall(r"\b([A-Z])(\d{1,2})\b", sent)
-                if len(labels) >= 2 and len({p for p, _ in labels}) == 1:
-                    nums = [int(n) for _, n in labels]
-                    if nums == list(range(nums[0], nums[0] + len(nums))):
-                        return tuple(f"{labels[0][0]}{i}" for i in range(nums[0], nums[-1] + 1))
-                continue
-            p1, p2 = m.group(1).upper(), (m.group(3) or m.group(1)).upper()
-            a, b = int(m.group(2)), int(m.group(4))
-            if p1 == p2 and 0 < a <= b <= 20:
-                return tuple(f"{p1}{i}" for i in range(a, b + 1))
-    return ()
-
-
-def _prefer_near(sentence: str, anchor: re.Match | None) -> re.Match | None:
-    """句内若有 "hypotheses" 锚点, 取锚点后 60 字符内的标签区间, 否则取第一个."""
-    cands = list(_LABEL_RANGE_RE.finditer(sentence))
-    if not cands:
-        return None
-    if anchor is not None:
-        for m in cands:
-            if 0 <= m.start() - anchor.start() <= 60:
-                return m
-    return cands[0]
 
 
 def check_contract(workspace: Any, contract: Contract) -> dict[str, Any]:
@@ -733,10 +441,12 @@ def check_contract(workspace: Any, contract: Contract) -> dict[str, Any]:
     """
     root = Path(workspace)
     missing_keys: list[str] = []
+    bad_types: list[str] = []
     short_lines: list[str] = []
     bad_lines: list[str] = []
     missing_fields: list[str] = []
     bad_hypotheses: list[str] = []
+    bad_binding: list[str] = []
 
     for path, want in contract.json_keys.items():
         p = root / path
@@ -754,6 +464,9 @@ def check_contract(workspace: Any, contract: Contract) -> dict[str, Any]:
         for k in want:
             if k not in flat:
                 missing_keys.append(f"{path}:{k}")
+        specs = tuple(s for s in contract.key_specs if s.file == path)
+        if specs:
+            bad_types.extend(check_required_keys(flat, specs))
 
     for path, spec in contract.line_specs.items():
         p = root / path
@@ -816,15 +529,31 @@ def check_contract(workspace: Any, contract: Contract) -> dict[str, Any]:
                                 f"{path}:hypotheses.{k} 缺失或不是 supported/refuted"
                             )
 
+    if contract.contract_sha256:
+        binding = root / _BINDING_FILE
+        if binding.is_file():
+            payload = _load_json(binding)
+            got = ""
+            if isinstance(payload, dict):
+                got = str(payload.get("contract_sha256") or "").strip()
+            if got != contract.contract_sha256:
+                bad_binding.append(
+                    f"{_BINDING_FILE}:contract_sha256 缺失或不等于契约字节指纹 "
+                    f"{contract.contract_sha256[:12]}"
+                )
+
     return {
         "passed": not (
-            missing_keys or short_lines or bad_lines or missing_fields or bad_hypotheses
+            missing_keys or bad_types or short_lines or bad_lines
+            or missing_fields or bad_hypotheses or bad_binding
         ),
         "missing_keys": missing_keys,
+        "bad_types": bad_types,
         "short_lines": short_lines,
         "bad_lines": bad_lines,
         "missing_fields": missing_fields,
         "bad_hypotheses": bad_hypotheses,
+        "bad_binding": bad_binding,
     }
 
 
@@ -850,6 +579,11 @@ def _contract_lines(contract: Contract, manifest: list[Deliverable] | None = Non
         parts.append(
             f"hypotheses 必须是对象且含 {'/'.join(contract.hypothesis_range)}, "
             f"每个取值只能是 {allowed}"
+        )
+    if contract.contract_sha256:
+        parts.append(
+            f"{_BINDING_FILE} 必须写入 contract_sha256: {contract.contract_sha256}"
+            " (contract.json 字节指纹, 不一致即判失败)"
         )
     return parts
 

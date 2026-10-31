@@ -1,0 +1,20 @@
+{
+  "schema": "huginn.task-contract/v1",
+  "required_files": ["results.json", "loop_log.jsonl"],
+  "required_keys": [
+    {"key": "q1_delta_ea", "type": "number"},
+    {"key": "q1_ci_low", "type": "number"},
+    {"key": "q1_ci_high", "type": "number"},
+    {"key": "hypotheses", "type": "object"}
+  ],
+  "hypotheses": {
+    "labels": ["P1", "P2", "P3", "P4", "P5"],
+    "prediction_only": ["P5"]
+  },
+  "loop_log": {
+    "path": "loop_log.jsonl",
+    "lines": 50,
+    "fields": ["loop_id", "status", "delta_ea", "ci_low", "ci_high", "loso_rmse"]
+  },
+  "static": null
+}
