@@ -696,30 +696,69 @@ class PermissionChecker:
 
 
 class StandingRulesStore:
-    """(tool, target) 维度常驻授权. 线程安全."""
+    """(tool, target) 维度常驻授权, 按策略版本作用域. 线程安全.
+
+    dsh 原则: 策略必须版本化 —— 批准只在授予它时的版本内有效.
+    ``bump_policy_version()`` 递增版本并作废旧规则 (策略变更 / checkpoint
+    resume 时调用), 旧批准不会因为状态恢复而重新获得效力.
+    """
 
     def __init__(self) -> None:
         import threading
 
         self._lock = threading.Lock()
-        # session_id → {(tool_name, target_pattern)}
-        self._rules: dict[str, set[tuple[str, str]]] = {}
+        self._version = 1
+        # session_id → {(tool_name, target_pattern, policy_version)}
+        self._rules: dict[str, set[tuple[str, str, int]]] = {}
+
+    @property
+    def policy_version(self) -> int:
+        with self._lock:
+            return self._version
 
     def grant(self, session_id: str, tool_name: str, target_pattern: str = "*") -> None:
-        """记录一条 standing rule. target_pattern 支持 fnmatch."""
+        """记录一条 standing rule, 绑定当前策略版本. target_pattern 支持 fnmatch."""
         with self._lock:
-            self._rules.setdefault(session_id, set()).add((tool_name, target_pattern))
+            self._rules.setdefault(session_id, set()).add(
+                (tool_name, target_pattern, self._version)
+            )
 
     def is_granted(self, session_id: str, tool_name: str, target: str = "*") -> bool:
-        """检查是否命中 standing rule. target 做 fnmatch 匹配."""
+        """检查是否命中**当前版本**的 standing rule. target 做 fnmatch 匹配."""
+        # 持锁判定, 保证与 bump_policy_version 互斥 — 避免并发 bump 后仍返回旧批准.
         with self._lock:
-            rules = self._rules.get(session_id, set())
-        for r_tool, r_pattern in rules:
-            if r_tool != tool_name:
-                continue
-            if r_pattern == "*" or fnmatch.fnmatch(target, r_pattern):
-                return True
+            for r_tool, r_pattern, r_version in self._rules.get(session_id, set()):
+                if r_version != self._version:
+                    continue
+                if r_tool != tool_name:
+                    continue
+                if r_pattern == "*" or fnmatch.fnmatch(target, r_pattern):
+                    return True
         return False
+
+    def bump_policy_version(self, reason: str = "") -> int:
+        """递增策略版本并作废旧版本批准, 返回新版本号.
+
+        resume / 策略变更后旧批准必须失效 (dsh: 恢复不等于再授权).
+        """
+        with self._lock:
+            self._version += 1
+            version = self._version
+            dropped = 0
+            for sid in list(self._rules):
+                kept = {r for r in self._rules[sid] if r[2] == version}
+                dropped += len(self._rules[sid]) - len(kept)
+                if kept:
+                    self._rules[sid] = kept
+                else:
+                    del self._rules[sid]
+        logger.info(
+            "permission.policy_version version=%d reason=%s invalidated=%d",
+            version,
+            reason or "-",
+            dropped,
+        )
+        return version
 
     def reset(self, session_id: str | None = None) -> None:
         """清空. 传 session_id 只清该 session."""
@@ -730,17 +769,17 @@ class StandingRulesStore:
                 self._rules.pop(session_id, None)
 
     def list_rules(self, session_id: str | None = None) -> list[dict]:
-        """列出 standing rules (可观测性用)."""
+        """列出 standing rules (可观测性用, 含所属策略版本)."""
         with self._lock:
             if session_id is None:
                 return [
-                    {"session_id": sid, "tool": t, "target": p}
+                    {"session_id": sid, "tool": t, "target": p, "policy_version": v}
                     for sid, rules in self._rules.items()
-                    for t, p in rules
+                    for t, p, v in rules
                 ]
             return [
-                {"session_id": session_id, "tool": t, "target": p}
-                for t, p in self._rules.get(session_id, set())
+                {"session_id": session_id, "tool": t, "target": p, "policy_version": v}
+                for t, p, v in self._rules.get(session_id, set())
             ]
 
 

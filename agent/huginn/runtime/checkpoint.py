@@ -160,7 +160,19 @@ def resume_from_checkpoint(
         _perm = getattr(agent, "_permission_config", None)
         if _perm is not None:
             _perm.auto_approve_all = checkpoint.auto_approve
+    # dsh: resume 前再验证 —— 恢复旧状态不等于重新授权. 任何 resume 都使
+    # 旧 standing rule 失效, 避免崩溃前的批准在恢复后获得新效力.
+    _invalidate_standing_rules(
+        reason=f"resume:{checkpoint.task_id}#step_{checkpoint.step_id}"
+    )
     return checkpoint.step_id + 1
+
+
+def _invalidate_standing_rules(reason: str) -> None:
+    """递增 standing rule 策略版本, 作废旧批准. 无 store 时静默 (进程重启本就会清空)."""
+    from huginn.permissions import get_standing_rules_store
+
+    get_standing_rules_store().bump_policy_version(reason=reason)
 
 
 def resume_engine_from_checkpoint(

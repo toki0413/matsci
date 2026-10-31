@@ -24,11 +24,15 @@ from huginn.core_types import AuthorizationStrength, PermissionMode, ToolResult
 from huginn.permissions import (
     PermissionChecker,
     PermissionConfig,
+    StandingRulesStore,
     approval_mode,
     autoloop_auto_approve,
+    get_standing_rules_store,
     observe_mode_enabled,
     record_authorization,
+    reset_standing_rules_store,
 )
+from huginn.runtime.checkpoint import GENESIS_HASH, Checkpoint, resume_from_checkpoint
 from huginn.tools.adapter import ToolAdapter
 from huginn.tools.base import HuginnTool, ToolProfile
 
@@ -166,3 +170,65 @@ def test_record_authorization_logs_keys_never_values(caplog):
     assert "command" in msg and "cwd" in msg
     # 只记键名: 不出现任何值 / 路径分隔符.
     assert "/" not in msg
+
+
+# ── 5. 策略版本化: 旧批准不因 resume 重新生效 ───────────────────
+
+
+def test_grant_is_scoped_to_current_policy_version():
+    store = StandingRulesStore()
+    store.grant("s1", "file_write_tool", "/tmp/*")
+    assert store.is_granted("s1", "file_write_tool", "/tmp/a.txt")
+
+    v1 = store.bump_policy_version(reason="policy change")
+    assert v1 == 2
+    # 旧版本批准立即失效, 且被清理 (不留幽灵行)
+    assert not store.is_granted("s1", "file_write_tool", "/tmp/a.txt")
+    assert store.list_rules("s1") == []
+
+    # 新版本下的新批准才生效
+    store.grant("s1", "file_write_tool", "/tmp/*")
+    assert store.is_granted("s1", "file_write_tool", "/tmp/a.txt")
+    assert all(r["policy_version"] == v1 for r in store.list_rules("s1"))
+
+
+def _cp(task_id: str, step_id: int, *, auto_approve: bool | None) -> Checkpoint:
+    return Checkpoint(
+        task_id=task_id,
+        step_id=step_id,
+        phase="execute",
+        context_digest="x",
+        memory_cursor=None,
+        target_chain_progress={},
+        prospective_queue=[],
+        audit_hash_head=GENESIS_HASH,
+        saved_at=0.0,
+        auto_approve=auto_approve,
+    )
+
+
+def test_resume_invalidates_prior_standing_rules(tmp_path, caplog):
+    """resume 前再验证: checkpoint 恢复不能让崩溃前的批准继续生效."""
+    reset_standing_rules_store()
+    store = get_standing_rules_store()
+    store.grant("s1", "file_write_tool", "/tmp/*")
+    assert store.is_granted("s1", "file_write_tool", "/tmp/a.txt")
+    before = store.policy_version
+
+    caplog.set_level(logging.INFO, logger="huginn.permissions")
+    nxt = resume_from_checkpoint(
+        _cp("task-1", 7, auto_approve=True), tmp_path, agent=None
+    )
+
+    assert nxt == 8
+    assert store.policy_version == before + 1
+    assert not store.is_granted("s1", "file_write_tool", "/tmp/a.txt")
+    events = [
+        r.getMessage()
+        for r in caplog.records
+        if r.getMessage().startswith("permission.policy_version")
+    ]
+    assert events, "版本递增必须留可追溯记录"
+    assert "reason=resume:task-1#step_7" in events[-1]
+    assert "invalidated=1" in events[-1]
+    reset_standing_rules_store()

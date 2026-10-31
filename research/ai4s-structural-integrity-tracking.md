@@ -143,6 +143,7 @@ DeepMind 的 GNoME 预测了约 220 万种新材料 [cite:8]；二级来源称�
 | KB 启动探测 | 已修复 | chromadb ONNX 首次调用联网下载且持内部锁，把 TestClient 启动卡死（全量 10 分钟仅 1%、2 次超时）；改为「未缓存 `onnx/model.onnx` 即不探测」+ 有界 join，3 项回归 | 保留有界探测门 |
 | 契约文档 / 字段 golden / mece | 已修复 | 分块回归发现 4 份契约文档（env/events/errors/feature-flags）与 `http_field.json` 漂移；收口时 `test_mece_audit_doc_not_drifted` 又抓到 `mece-audit.md` 漂移。前两类 diff 仅为源文件行号位移；mece 除外预期语义增量（枚举站点 300→301、簇 268→269），来源是新增 `AuthorizationStrength`；配置契约 140 passed | 每次改 `huginn/` 后重生成 |
 | dsh 原则移植 | 已落地 | 授权强度三档（IGNORE/INFERRED/EXPLICIT）与 mode 正交；`HUGINN_APPROVE_MODE=observe` 影子档只拦 `auto_approve_all` 的推断放行；模块普查双向门首跑即抓出 `task_contract`/`trace` 漏登记 | 授权/安全探针 28 passed；普查门 4 passed |
+| 规则版本化 + resume 再验证 | 已落地 | standing rule 绑定策略版本，`bump_policy_version()` 递增即作废旧批准并清理；checkpoint resume 恢复 `auto_approve` 后强制递增版本，崩溃前的批准不因恢复获得新效力（fail-closed，留 `permission.policy_version` 追溯记录） | 授权强度/常驻规则/凭证恢复 43 passed；镜像已同步，漂移 2 passed |
 | 模型面字符预算（observe） | 已落地 | 移植 dsh `model-surface` 度量：真实 prompt 段渲染 + 真实 `ToolRegistry` 工具定义（与 LLM 收到的字节一致），空描述/占位标记硬判，`KNOWN_FAILURES` 双向核对。实测 main 9765 / s7 11491 / autoloop 7236 字符，工具定义 217685 字符（125 个可见工具）；预算未冻结，只测不判 | 2 passed；观察期后填 `BUDGET`（只减不增）；可选依赖装齐后重测 |
 | 全量回归（T13） | 受限 | 收口集（契约/授权/普查/安全/结构守护/镜像）275 passed，文档断言+trace+任务契约 38 passed；环境层新发现 pytest 9.2.0 被默认装入（与锁 `pytest<9` 不符），已回锁 8.4.2 并补 pytest-cov。剩余硬限制仍是内存：cgroup 4GB 无 swap，单进程 19%、70 文件分块 83% 被 OOM 杀（EXIT=137；CI 专门加 swap） | 需 swap/更大内存或继续分块 |
 | ws35 真跑（50 轮） | 阻塞 | 书生凭证 401，无法产生真实 `results.json` | 凭证恢复后重跑 |

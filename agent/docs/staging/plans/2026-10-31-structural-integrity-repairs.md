@@ -114,6 +114,12 @@ milestone: M-INT1（A轨）、M-INT2（B轨）、M-INT3（C轨）、M-INT4（D�
   next: 观察期结束后在 `BUDGET` 填入实测上限 (只减不增); 可选工具依赖装齐后需重测, 因其会进入可见面
   spec: dsh `tests/model-surface.spec.ts` (外部参考)
 
+- [x] T18: 规则版本化 + resume 前再验证
+  goal: standing rule 绑定策略版本, `bump_policy_version()` 递增即作废旧批准并清理; checkpoint resume 恢复状态后先递增策略版本, 旧批准不得因恢复而获得新效力 (fail-closed)
+  files: `huginn/permissions.py`、`huginn/runtime/checkpoint.py`、`tests/test_approval_strength.py`
+  acceptance: 授权强度/常驻规则/凭证恢复 43 passed; 镜像漂移 2 passed; `is_granted` 只认当前版本
+  spec: dsh `002-authorization` (外部参考)
+
 ## 收口
 
 - [ ] T13: 全量回归与治理重生成
