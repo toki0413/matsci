@@ -117,9 +117,14 @@ def approval_mode() -> str:
     兼容旧开关: 显式设置 ``HUGINN_AUTOLOOP_AUTO_APPROVE`` 时映射为
     ``all``/``deny`` (旧行为是 bool, 无法表达工作区档).
     """
-    raw = env_str("HUGINN_APPROVE_MODE").strip().lower()
-    if raw in ("deny", "workspace", "all"):
-        return raw
+    # 注意: HUGINN_APPROVE_MODE 在 env_schema 里声明了默认值 "workspace",
+    # 若直接用 env_str 取值, 未设置时也会拿到 "workspace", 旧开关映射永远走不到.
+    # 必须用 env_is_set 区分「显式设置」与「回落默认」.
+    if env_is_set("HUGINN_APPROVE_MODE"):
+        raw = env_str("HUGINN_APPROVE_MODE").strip().lower()
+        if raw in ("deny", "workspace", "all"):
+            return raw
+        return "workspace"
     if env_is_set("HUGINN_AUTOLOOP_AUTO_APPROVE"):
         return "all" if env_bool("HUGINN_AUTOLOOP_AUTO_APPROVE") else "deny"
     return "workspace"
