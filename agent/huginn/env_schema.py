@@ -417,7 +417,9 @@ SCHEMA: dict[str, EnvSpec] = {
     "HUGINN_THINKING": EnvSpec("str", "high", "internal"),
     "HUGINN_TOOL_TIMEOUT": EnvSpec("str", "", "internal"),
     "HUGINN_TORCH_DEVICE": EnvSpec("str", "cpu", "internal"),
-    "HUGINN_TRACE": EnvSpec("bool", "false", "internal"),
+    # trace 默认开: 「KEEP 但零执行」必须持续可见, 而不是靠一次性体检.
+    # 需要静音时显式 HUGINN_TRACE=0; 采样只记调用计数, 不记参数, 开销可控.
+    "HUGINN_TRACE": EnvSpec("bool", "true", "internal"),
     "HUGINN_TRACE_SHARD_INTERVAL": EnvSpec("str", "", "internal"),
     "HUGINN_UNPAYWALL_EMAIL": EnvSpec("str", "", "internal"),
     "HUGINN_UNSAFE_ENV": EnvSpec("bool", "false", "internal"),

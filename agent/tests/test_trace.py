@@ -1,6 +1,6 @@
 """执行覆盖采样守护 (结构完整性修复 D 轨 T11–T12).
 
-- ``HUGINN_TRACE=1`` 才采样, 默认关;
+- 默认采样 (``HUGINN_TRACE`` 默认 true), ``HUGINN_TRACE=0`` 显式关闭;
 - 采样按顶层模块计数, 只算 ``huginn/`` 内的帧;
 - 落 ``trace.json``, 并能对照 census 列出「KEEP 但零执行」;
 - driver 结束时写 trace, 且不虚报未执行模块.
@@ -27,8 +27,10 @@ from huginn.trace import (
 )
 
 
-def test_trace_disabled_by_default(monkeypatch):
+def test_trace_is_on_by_default_and_can_be_disabled(monkeypatch):
     monkeypatch.delenv("HUGINN_TRACE", raising=False)
+    assert trace_enabled() is True
+    monkeypatch.setenv("HUGINN_TRACE", "0")
     assert trace_enabled() is False
     monkeypatch.setenv("HUGINN_TRACE", "1")
     assert trace_enabled() is True

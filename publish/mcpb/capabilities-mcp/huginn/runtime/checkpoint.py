@@ -40,12 +40,12 @@ class Checkpoint:
     prospective_queue: list[str]  # pending intention_ids
     audit_hash_head: str  # audit.jsonl chain head at save time
     saved_at: float  # epoch seconds
-    # P15: EngineState 的 8 位 hash, resume 时跟重算的 digest 比对, 防 drift.
-    # None 表示该 checkpoint 没绑 engine_state (老格式 / 持久化未启用), 跳过校验.
+    # EngineState 的 8 位 hash, resume 时跟重算的 digest 比对, 防 drift.
+    # None 表示该 checkpoint 没绑 engine_state (旧格式 / 持久化未启用), 跳过校验.
     engine_state_digest: str | None = None
-    # P2-6: 统一 trace_id, save 时从 TraceContext 读.
+    # 统一 trace_id, save 时从 TraceContext 读.
     trace_id: str = ""
-    # P4 NonAuthoritativeProvenance: 保存时的 auto_approve 状态, resume 时恢复.
+    # 保存时的 auto_approve 状态, resume 时恢复.
     # None = 旧格式 checkpoint (无此字段), resume 时用新进程 config 默认值不覆盖.
     auto_approve: bool | None = None
 
@@ -278,7 +278,7 @@ def _get_audit_hash_head(workspace: Path) -> str:
     return last
 
 
-# P1-4: Durable resume — detect unanswered trailing tool_calls from checkpointer.
+# Durable resume — detect unanswered trailing tool_calls from checkpointer.
 # Portions derived from OpenWorker (https://github.com/andrewyng/openworker)
 # MIT License, Copyright (c) 2024 Andrew Ng
 # Source: coworker/engine.py:268-292 `_unanswered_trailing_tool_calls`
@@ -466,7 +466,7 @@ if __name__ == "__main__":
         with contextlib.suppress(FileNotFoundError):
             audit_path.unlink()
 
-        # 7. P15: engine_state_digest 字段 — 默认 None, 显式赋值后 round-trip 保留
+        # 7. engine_state_digest 字段 — 默认 None, 显式赋值后 round-trip 保留
         from huginn.runtime.engine_state import EngineState, engine_state_digest
 
         cp_digest = save_checkpoint(
@@ -488,7 +488,7 @@ if __name__ == "__main__":
         assert loaded_no_digest.engine_state_digest is None
         # 显式赋值后 round-trip 保留
         cp_digest.engine_state_digest = "abcd1234"
-        # 重写文件 (模拟 P15 save trigger 把 digest 写进去)
+        # 重写文件 (模拟 save trigger 把 digest 写进去)
         atomic_write_json(
             _checkpoint_path(ws, "t3", 1),
             asdict(cp_digest),
@@ -605,7 +605,7 @@ if __name__ == "__main__":
         finally:
             _eng_mod.AutoloopEngine = _orig_AE
 
-        # 10. P1-4: unanswered_trailing_tool_calls 检测逻辑
+        # 10. unanswered_trailing_tool_calls 检测逻辑
         # 复用 OpenWorker engine.py:268-292 的契约, 适配 langgraph message 类型.
         # 用 fake checkpointer (get 返回 channel_values.messages) 验证 5 个场景.
         from langchain_core.messages import AIMessage, HumanMessage, ToolMessage

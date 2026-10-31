@@ -244,8 +244,8 @@
 | `_EXPENSIVE_TOOLS` | `huginn/hooks/clarify_questions_hook.py:62` | 15 | 4 | keywords | `internal-only` | 0 | 0 | 0 |
 | `_EXPENSIVE_TOOLS` | `huginn/hooks/research_safety_hook.py:18` | 8 | 8 | registry | `internal-only` | 0 | 0 | 0 |
 | `PRIMITIVES` | `huginn/modes/pi.py:22` | 8 | 8 | registry | `internal-only` | 0 | 0 | 0 |
-| `READ_ONLY_TOOLS` | `huginn/permissions.py:52` | 3 | 3 | registry | `internal-only` | 0 | 0 | 0 |
-| `WRITE_EXEC_TOOLS` | `huginn/permissions.py:63` | 8 | 8 | registry | `internal-only` | 0 | 0 | 0 |
+| `READ_ONLY_TOOLS` | `huginn/permissions.py:50` | 3 | 3 | registry | `internal-only` | 0 | 0 | 0 |
+| `WRITE_EXEC_TOOLS` | `huginn/permissions.py:61` | 8 | 8 | registry | `internal-only` | 0 | 0 | 0 |
 | `_CORE_TOOLS` | `huginn/phases.py:109` | 15 | 15 | registry | `internal-only` | 0 | 0 | 0 |
 | `_KNOWN_TOOLS` | `huginn/provenance/pipeline.py:105` | 39 | 38 | registry | `internal-only` | 0 | 0 | 1 |
 | `_EXPENSIVE_TOOLS` | `huginn/research_budget.py:24` | 8 | 8 | registry | `internal-only` | 0 | 0 | 0 |

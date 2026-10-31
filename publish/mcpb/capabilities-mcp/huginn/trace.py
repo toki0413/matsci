@@ -1,8 +1,8 @@
-"""执行覆盖度量: ``HUGINN_TRACE=1`` 时按模块采样调用, 落 ``trace.json``.
+"""执行覆盖度量: 默认按模块采样调用并落 ``trace.json``, ``HUGINN_TRACE=0`` 关闭.
 
-设计动机 (spec D): 「设计覆盖率」不等于「执行覆盖率」. 静态 census 标 97 个
-KEEP 模块, 但一次真实运行到底跑了哪些模块、哪些 KEEP 模块零执行, 只有实际
-采样才能回答 —— 不产生 trace 时不得声称已度量.
+「设计覆盖率」不等于「执行覆盖率」. 静态 census 标出 KEEP 模块, 但一次真实
+运行到底跑了哪些、哪些 KEEP 模块零执行, 只有实际采样才能回答 —— 不产生
+trace 时不得声称已度量.
 
 实现: ``sys.setprofile`` 只在 ``call`` 事件上按**文件**计数 (不记录参数, 开销
 可控), 再把文件归属到 ``huginn/`` 下的顶层模块 (与 census 的 ``module`` 列对齐).
@@ -24,8 +24,8 @@ HUGINN_ROOT = Path(__file__).resolve().parent
 
 
 def trace_enabled() -> bool:
-    """开关: ``HUGINN_TRACE=1`` 时采样."""
-    return env_bool("HUGINN_TRACE")
+    """开关: 默认开; ``HUGINN_TRACE=0`` 显式关闭 (与 env_schema 的 true 一致)."""
+    return env_bool("HUGINN_TRACE", True)
 
 
 def module_of(filename: str, root: Path = HUGINN_ROOT) -> str | None:

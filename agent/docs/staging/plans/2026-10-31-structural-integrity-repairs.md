@@ -120,6 +120,18 @@ milestone: M-INT1（A轨）、M-INT2（B轨）、M-INT3（C轨）、M-INT4（D�
   acceptance: 授权强度/常驻规则/凭证恢复 43 passed; 镜像漂移 2 passed; `is_granted` 只认当前版本
   spec: dsh `002-authorization` (外部参考)
 
+- [x] T19: 注释卫生门
+  goal: 注释只解释 why/约束, 禁止 changelog 式叙述与任务号考古; tokenize 只扫 COMMENT (字符串不误伤), `comment-ok` 显式豁免; 存量基线只减不增
+  files: `tests/test_comment_hygiene.py`、`huginn/permissions.py`、`huginn/runtime/checkpoint.py`
+  acceptance: 2 passed; 存量 151 处 / 62 文件; 本次清理授权与检查点文件, 新增违规即红
+  spec: dsh `docs.spec` (外部参考)
+
+- [x] T20: 静默异常全树门 + trace 默认化
+  goal: AST 统计 `huginn/` 全树「真正静默」except (≤2 条简单语句且无 raise/warning 日志/print), 基线只减不增; `HUGINN_TRACE` 默认 true (`=0` 关闭), 让「KEEP 但零执行」持续可见
+  files: `tests/test_silent_exceptions.py`、`huginn/env_schema.py`、`huginn/trace.py`、`tests/test_trace.py`
+  acceptance: 静默门 2 passed (基线 427 处 / 224 文件); trace 4 passed; env 契约重生成 `HUGINN_TRACE=True`; 镜像 0 漂移
+  spec: dsh `003-execution` (外部参考)
+
 ## 收口
 
 - [ ] T13: 全量回归与治理重生成

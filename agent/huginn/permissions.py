@@ -29,9 +29,8 @@ from huginn.env_access import env_bool, env_is_set, env_str
 
 logger = logging.getLogger(__name__)
 
-# 危险命令模式 — 统一使用 command_filter 的 _BLOCKED_PATTERNS 作为 single source of truth.
-# permissions.py 补充 git 相关模式 (command_filter 不覆盖 git).
-# ponytail: 以前两处各维护一份重复且不一致的列表, 现在合并.
+# 危险命令模式 — 唯一来源是 command_filter 的 _BLOCKED_PATTERNS.
+# permissions.py 只补充 command_filter 不覆盖的 git 模式, 不另维护一份重复列表.
 try:
     from huginn.security.command_filter import _BLOCKED_PATTERNS as _CF_PATTERNS
 except ImportError:
@@ -46,9 +45,8 @@ DANGEROUS_PATTERNS: list[str] = list(_CF_PATTERNS) + [
 
 # Read-only tool names — SSE chat 路径用来区分“可 auto_approve”和“需 ASK”.
 # ponytail: frozenset 常量, O(1) 查找, 不引新依赖.
-# 必须用**注册名** (`file_read_tool`/`grep`/`glob`) —— 早期写成 `read_file`/`ls`/
-# `cat`/`search` 这类短名, 与注册表对不上, `set_mode()` 永不命中, 只读工具在
-# sidecar 路径实际仍走 ASK (MECE 审计记的"允许表死项").
+# 名单必须用**注册名** (`file_read_tool`/`grep`/`glob`): 用 `read_file`/`ls` 这类
+# 短名与注册表对不上, `set_mode()` 不会命中, 只读工具在 sidecar 路径仍会走 ASK.
 READ_ONLY_TOOLS: frozenset[str] = frozenset(
     {
         "file_read_tool",
@@ -102,10 +100,10 @@ def sidecar_auto_approve() -> bool:
     """非交互 sidecar API 的 auto-approve 策略 (显式配置项, 非硬编码).
 
     sidecar (``/agents/{id}/chat`` / KB 报告) 没有审批回调, ASK 模式的写/执行
-    工具会被直接拒. 旧实现无条件把 ``agent._permission_config.auto_approve_all``
-    置 True —— 任何 API 调用者都能让 agent 静默落盘/执行, 是 demo 阶段的写法.
+    工具会被直接拒. 不得在该路径无条件把 ``auto_approve_all`` 置 True ——
+    任何 API 调用者都能让 agent 静默落盘/执行.
 
-    新策略:
+    策略:
     - ``HUGINN_AUTO_APPROVE`` 显式设置时以它为准 (1/true/yes);
     - 未设置时**仅在 dev 模式** (``HUGINN_DEV_MODE``) 放行 —— 即 loopback 绑定的
       本地单用户桌面端; 生产多用户 server 默认不放行, 需运维显式开启.
@@ -125,8 +123,8 @@ def approval_mode() -> str:
     - ``workspace``: 自动放行, 但工作区外的写被拒 (默认);
     - ``all``: 完全放行 (必须显式 ``HUGINN_APPROVE_MODE=all``).
 
-    兼容旧开关: 显式设置 ``HUGINN_AUTOLOOP_AUTO_APPROVE`` 时映射为
-    ``all``/``deny`` (旧行为是 bool, 无法表达工作区档).
+    兼容开关: ``HUGINN_AUTOLOOP_AUTO_APPROVE`` 是布尔语义, 只能映射到
+    ``all``/``deny``, 无法表达工作区档; 显式设置时优先于默认档.
     """
     # 注意: HUGINN_APPROVE_MODE 在 env_schema 里声明了默认值 "workspace",
     # 若直接用 env_str 取值, 未设置时也会拿到 "workspace", 旧开关映射永远走不到.
@@ -280,7 +278,7 @@ class PermissionConfig:
     # Sandbox 模式: 强制注入 _DEFAULT_SANDBOX_PATH_RULES 硬底线 (跟 path_rules 取并集).
     # 非 sandbox 入口不设, path_rules 仍默认空, 行为不变.
     sandbox_mode: bool = False
-    # ── 细粒度新增 (M5) ──
+    # ── 细粒度权限面 ──
     # 成本预算 (CPU 小时): 超过该预算的工具自动升 ASK. None=不限制 (默认).
     cost_budget_hours: float | None = None
     # 信任自适应: 开启后按 trust score 浮动 medium 风险 (trust 高放行 / 低强制 ASK).
@@ -322,7 +320,7 @@ class PermissionConfig:
         self.rules[tool_name] = mode
 
 
-# ── 细粒度推断与信任存储 (M5) ─────────────────────────────────────
+# ── 细粒度推断与信任存储 ─────────────────────────────────────────
 # 与 code_act_loop.py 的 risk/trust 算法对齐, 但在此独立实现轻量版,
 # 避免 tool_call 路径因导入 code_act_loop (依赖 ToolRegistry 全量注册) 引入重依赖.
 # trust 是 session 维度, 进程内共享; 升级路径: 持久化到 config/store.
@@ -464,7 +462,7 @@ class PermissionChecker:
         args: dict | None = None,
         session_id: str = "default",
     ) -> PermissionResult:
-        """多阶段细粒度判定 (M5).
+        """多阶段细粒度判定.
 
         判定维度依次叠加, 每命中一个维度记入 matched_rules 供可观测:
           1. 危险命令 (最高优先级, 即使 auto_approve_all 也拦)
@@ -677,7 +675,7 @@ class PermissionChecker:
         return float(cpu) if cpu else None
 
 
-# ── P4-2: Standing Rules — (tool, target) 维度常驻授权 ──────────
+# ── Standing Rules — (tool, target) 维度常驻授权 ──────────────────
 #
 # OpenWorker 的 Standing Rules 按 tool→target 授权, e.g. "允许 file_write_tool
 # 写 /tmp/*". approve_always 后记录, 下次同 tool+target 自动放行, 不再调
