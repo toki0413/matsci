@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # Spec: externalThinking → deep_think 外部草稿纸工具
 
 > 状态：**已实现并落地**（由 `staging/specs/2026-08-13-external-thinking.md` 提升）。

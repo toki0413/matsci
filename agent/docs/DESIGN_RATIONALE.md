@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # Huginn 设计论据（Design Rationale）
 
 > 目的：回答两个"为什么"——**我们到底怎么设计的、为什么这么设计**。

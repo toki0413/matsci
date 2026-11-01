@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # Mode/Phase 契约 (prompt 面)
 
 自动生成: `python -m huginn.cli.config_audit --modes --out docs/modes-contract.md`.

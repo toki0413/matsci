@@ -82,6 +82,10 @@ FULL_SUITE_ONLY = frozenset(
         "tests/test_arch_rag_memory_seam.py",
         "tests/test_arch_seam_integrity.py",
         "tests/test_arch_tools_direction.py",
+        # 契约面登记门 (surface 段名 / catalog handle / 包导出面): weightless,
+        # 全量套件兜底. 三者分别锁住「未登记即静默漂移」的三个面.
+        "tests/test_arch_catalog_handles.py",
+        "tests/test_arch_package_exports.py",
         # 治理元门 (契约漂移 / MECE 审计 / 环境面棘轮 / ponytail 债清单 / 镜像漂移):
         # 均为重型治理自检, 跑全量套件兜底; 显式声明后不再判为孤儿门.
         "tests/test_config_contracts.py",
@@ -2708,7 +2712,10 @@ def _ga_gaps_section(reg: dict) -> list[str]:
 
 def render_markdown(reg: dict) -> str:
     """确定性渲染 (固定列序 + 门按测试路径字典序)."""
-    lines: list[str] = []
+    lines: list[str] = [
+        "<!-- generated: python -m huginn.cli.governance_audit --out docs/governance-state.md -->",
+        "",
+    ]
     lines.extend(_ga_header())
     lines.extend(_ga_workflows_section(reg))
     lines.extend(_ga_workflow_triggers_section(reg))

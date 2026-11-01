@@ -58,7 +58,7 @@
 | `sandbox_net_isolation` | True | P1 沙箱内核级网络隔离 (Landlock ABI>=4, 默认开; 不支持则降级) | — | security/sandbox.py:61 |
 | `speculator` | True | 投机执行 (意图预测+工具预热) | — | agents/speculator.py:463 |
 | `system_health_auto_fix` | False | 监控异常后自动熔断工具 (默认关) | — | diagnostics/system_health.py:552 |
-| `system_health_monitor` | True | 系统资源监控 (CPU/内存/磁盘) | — | diagnostics/system_health.py:554, routes/config.py:995, tools/__init__.py:535 |
+| `system_health_monitor` | True | 系统资源监控 (CPU/内存/磁盘) | — | diagnostics/system_health.py:554, routes/config.py:995, tools/__init__.py:536 |
 | `task_tool_router` | True | task keyword → tool category 动态路由 (默认开, 无命中给 core 子集) | HUGINN_TASK_TOOL_ROUTER | agent/core.py:921, agent/streaming.py:1860 |
 | `telemetry` | True | 遥测采集 (HUGINN_TELEMETRY_ENABLED) | HUGINN_TELEMETRY_ENABLED | agent_config.py:197 |
 | `three_cabin` | False | 三舱模型 (HUGINN_USE_THREE_CABIN) | HUGINN_USE_THREE_CABIN | autoloop/cognitive_loop.py:3596 |

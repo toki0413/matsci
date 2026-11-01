@@ -1,9 +1,11 @@
 """文档断言守护 (结构完整性修复 C 轨 T9–T10).
 
-四个目标文档必须:
+交付文档面 = ``docs/*.md`` 全部顶层文档:
   - 首行带 ``<!-- generated: <cmd> -->`` 或 ``<!-- manual: true -->``;
   - 文档里出现的 ``HUGINN_*`` 全部存在于 ``huginn.env_schema.SCHEMA``;
   - generated 文档的落盘内容与重跑生成命令的输出字节一致.
+
+过程性文档 (``docs/staging/**`` / ``docs/research-notes/**``) 不在契约面.
 """
 
 from __future__ import annotations
@@ -23,6 +25,17 @@ _TARGETS = [_REPO / name for name in da.TARGET_DOCS]
 
 def test_all_target_docs_have_marker():
     assert da.check_markers(_TARGETS) == []
+
+
+def test_target_docs_are_discovered_from_top_level_glob():
+    """交付面自动发现: 新增 ``docs/*.md`` 无需手工登记即被纳入. """
+    discovered = {f"docs/{p.name}" for p in (_REPO / "docs").glob("*.md")}
+    assert set(da.TARGET_DOCS) == discovered
+
+
+def test_process_docs_are_outside_contract_surface():
+    """过程性文档 (staging / research-notes) 不参与交付契约断言. """
+    assert not [d for d in da.TARGET_DOCS if "staging" in d or "research-notes" in d]
 
 
 def test_generated_docs_declare_their_command():

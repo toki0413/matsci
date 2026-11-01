@@ -128,6 +128,82 @@ def test_main_path_composes_surface_without_string_concat() -> None:
     )
 
 
+# ── Surface 段名台账 (改名/删除即红) ─────────────────────────────────────
+
+def _surface_section_literals(tree: ast.Module) -> list[tuple[str, str]]:
+    """收集 `SurfaceSection("<name>", "<source>", ...)` 的常量字面量."""
+    out: list[tuple[str, str]] = []
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "SurfaceSection"
+        ):
+            continue
+        if len(node.args) < 2:
+            continue
+        name, source = node.args[0], node.args[1]
+        if isinstance(name, ast.Constant) and isinstance(name.value, str) \
+                and isinstance(source, ast.Constant) and isinstance(source.value, str):
+            out.append((name.value, source.value))
+    return out
+
+
+def test_every_literal_surface_section_is_registered() -> None:
+    """段名/来源必须登记在 SURFACE_SPECS; 改名或新增未登记 → 红."""
+    from huginn.agent.context import SURFACE_SPECS
+
+    literals = _surface_section_literals(ast.parse(_CONTEXT.read_text(encoding="utf-8")))
+    fixed = [(n, s) for n, s in literals if s != "prompt_segments"]
+    for name, source in fixed:
+        assert name in SURFACE_SPECS, (
+            f"段 {name!r} 未在 context.SURFACE_SPECS 登记 —— 改名/新增段必须显式登记"
+        )
+        declared = SURFACE_SPECS[name][0]
+        assert declared == source, (
+            f"段 {name!r} 来源漂移: 源码 {source!r} vs 台账 {declared!r}"
+        )
+    produced = {n for n, _ in fixed}
+    stale = set(SURFACE_SPECS) - produced
+    assert not stale, f"台账有而源里已无生产点: {sorted(stale)} —— 段被删? 同步 SURFACE_SPECS."
+
+
+def test_required_surface_sections_are_unconditional() -> None:
+    """标 required 的段必须在 compose_main_surface 的基础段列表里无条件登记."""
+    from huginn.agent.context import SURFACE_SPECS
+
+    required = {n for n, (_src, req) in SURFACE_SPECS.items() if req}
+    tree = ast.parse(_CONTEXT.read_text(encoding="utf-8"))
+    fn = _module_function(tree, "compose_main_surface")
+    unconditional: set[str] = set()
+    for node in ast.walk(fn):
+        if isinstance(node, ast.AnnAssign):
+            target, value = node.target, node.value
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target, value = node.targets[0], node.value
+        else:
+            continue
+        if (
+            not isinstance(target, ast.Name)
+            or target.id != "sections"
+            or not isinstance(value, ast.List)
+        ):
+            continue
+        for elt in value.elts:
+            if (
+                isinstance(elt, ast.Call)
+                and isinstance(elt.func, ast.Name)
+                and elt.func.id == "SurfaceSection"
+                and elt.args
+                and isinstance(elt.args[0], ast.Constant)
+            ):
+                unconditional.add(elt.args[0].value)
+    missing = sorted(required - unconditional)
+    assert not missing, (
+        f"required 段未在基础段列表无条件登记: {missing} —— 被移进条件分支 = 悄悄不发送"
+    )
+
+
 # ── 披露双向核对 ──────────────────────────────────────────────────────────
 
 def test_disclosure_table_covers_all_catalog_kinds() -> None:

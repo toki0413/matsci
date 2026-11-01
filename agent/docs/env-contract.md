@@ -13,7 +13,7 @@
 | `HUGINN_AINVOKE_TIMEOUT` | str(_thinking_scale_timeout( | agent/streaming.py:213 | — | external |
 | `HUGINN_ALERT_WEBHOOK_URL` | '' | diagnostics/system_health.py:422 | — | external |
 | `HUGINN_ALIGNMENT_SURPRISE_TRIGGER` | 0 | autoloop/engine_reflect.py:4118 | — | external |
-| `HUGINN_ALLOW_LOCAL_BASH` | '' | config.py:863, security/execution.py:42 | routes/agents.py:116, tools/__init__.py:201, cli/rcb_runner.py:61 | code-set |
+| `HUGINN_ALLOW_LOCAL_BASH` | '' | config.py:863, security/execution.py:42 | routes/agents.py:116, tools/__init__.py:202, cli/rcb_runner.py:61 | code-set |
 | `HUGINN_ALLOW_POWERSHELL` | '' | security/sandbox.py:41 | — | external |
 | `HUGINN_ALLOW_UNCONTRACTED` | False | run_cognitive_driver.py:35 | — | external |
 | `HUGINN_ALLOW_UNRESTRICTED_READ` | '' | routes/fs.py:60, tools/file_read_tool.py:100, tools/sci/xrd_sim_tool.py:395 | — | external |
@@ -37,7 +37,7 @@
 | `HUGINN_BING_API_KEY` | '' | tools/web_search_tool.py:425, tools/web_search_tool.py:513 | — | external |
 | `HUGINN_BING_ENDPOINT` | https://api.bing.microsoft.com/v7.0/search | tools/web_search_tool.py:517 | — | external |
 | `HUGINN_BLIND_RECONSTRUCTION` | 0 | autoloop/engine_reflect.py:1560 | — | external |
-| `HUGINN_BOURBAKI_PATH` | '' | tools/__init__.py:204 | — | external |
+| `HUGINN_BOURBAKI_PATH` | '' | tools/__init__.py:205 | — | external |
 | `HUGINN_BRANCH_INCUBATOR_DEPTH` | 2 | autoloop/hypothesis_loop.py:124 | — | external |
 | `HUGINN_BRANCH_SLICE_MIN_S` | '' | metacog/branch_incubator.py:157 | — | external |
 | `HUGINN_BRANCH_VALUE_PRM` | 1 | autoloop/hypothesis_loop.py:102 | — | external |
@@ -310,7 +310,7 @@
 | `HUGINN_TRAJECTORY_PATTERN` | 0 | autoloop/cognitive_loop.py:2710 | — | external |
 | `HUGINN_TRANSCRIPT_DIR` | '' | events/transcript.py:94 | — | external |
 | `HUGINN_UNPAYWALL_EMAIL` | user@example.com | tools/literature/pdf_fetch.py:381, tools/literature/search_sources.py:648 | — | external |
-| `HUGINN_UNSAFE_ENV` | '' | security/execution.py:33 | cli/rcb_runner.py:63, routes/agents.py:118, tools/__init__.py:203 | code-set |
+| `HUGINN_UNSAFE_ENV` | '' | security/execution.py:33 | cli/rcb_runner.py:63, routes/agents.py:118, tools/__init__.py:204 | code-set |
 | `HUGINN_USE_ATOMWORLD` | 0 | bench/atomworld_bench.py:54, bench/atomworld_bench.py:156, security/code_act_sandbox.py:126 | bench/atomworld_bench.py:159, bench/atomworld_bench.py:167, bench/atomworld_bench.py:179, +1 处, security/code_act_sandbox.py:231, security/code_act_sandbox.py:245 | code-set |
 | `HUGINN_USE_COGNITIVE_MAP` | 0 | bench/mini_rotation_baseline.py:645, security/code_act_sandbox.py:133 | cli/rcb_runner.py:342, security/code_act_sandbox.py:247 | code-set |
 | `HUGINN_USE_COMPLETION_GATE` | 0 | autoloop/cognitive_loop.py:3131 | — | external |

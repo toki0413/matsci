@@ -1,3 +1,5 @@
+<!-- generated: python -m huginn.cli.config_audit --routes --out docs/routes-contract.md -->
+
 # 模型路由契约 (ModelRouter)
 
 自动生成: `python -m huginn.cli.config_audit --routes --out docs/routes-contract.md`.

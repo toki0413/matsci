@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # ROADMAP — AutoloopEngine 方法族去 mixin化
 
 目标：把 `AutoloopEngine` 的多继承 mixin 方法族逐步拆成独立协作对象（组合 + 薄委托），消除 god-class。由小到大、状态写最少者优先，每个阶段独立验证（引擎测试 + arch 门禁）后再进下一个。

@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # 技术债登记：`ponytail:` 临时捷径清单
 
 > 状态：**active**。本文件是代码库内所有 `ponytail:` 标记的**显式登记面**，

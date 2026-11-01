@@ -14,6 +14,9 @@
 门禁: ``agent/tests/test_publish_mirror_drift.py`` 以 only-shrink 预算调用
 :func:`drift_report`, 保证漂移**只减不增**. 收敛后请下调其中的预算常量.
 
+内容白名单: :data:`BUNDLE_MANIFEST` 登记每个 bundle 允许的**顶层**条目;
+:func:`manifest_violations` 报出未登记的新增条目 (防镜像悄悄带进额外文件).
+
 注意: 覆盖镜像是**发布动作** (bundle 版本号 / 发布内容), 需发布者确认, 故 ``--write``
 不默认执行.
 """
@@ -32,6 +35,20 @@ SRC = REPO_ROOT / "agent" / "huginn"
 BUNDLES = ("capabilities-mcp", "workflows-mcp")
 _SKIP_DIRS = {"__pycache__"}
 _SKIP_SUFFIX = {".pyc", ".pyo"}
+
+#: 每个 bundle 允许出现的**顶层**目录/文件 (内容白名单). 新增顶层条目未登记,
+#: ``manifest_violations`` 即报出 —— 防止打包镜像悄悄带进额外文件.
+BUNDLE_MANIFEST: dict[str, tuple[str, ...]] = {
+    "capabilities-mcp": ("huginn", "manifest.json", "mcp_entry.py", "pyproject.toml"),
+    "workflows-mcp": ("huginn", "manifest.json", "mcp_entry.py", "pyproject.toml"),
+}
+
+
+def manifest_violations(bundle: str, root: Path | None = None) -> list[str]:
+    """``publish/mcpb/<bundle>`` 顶层里不在 ``BUNDLE_MANIFEST`` 的条目 (字典序)."""
+    base = root or REPO_ROOT / "publish" / "mcpb" / bundle
+    allowed = set(BUNDLE_MANIFEST[bundle])
+    return sorted(p.name for p in base.iterdir() if p.name not in allowed)
 
 
 def _hash_tree(root: Path) -> dict[str, str]:

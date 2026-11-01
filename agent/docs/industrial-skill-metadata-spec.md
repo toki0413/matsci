@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # 工业 Skill 元数据规范（Industrial Skill Metadata Spec）
 
 > 状态：active

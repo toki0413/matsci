@@ -1,3 +1,5 @@
+<!-- generated: python -m huginn.cli.config_audit --events --out docs/events-contract.md -->
+
 # 事件契约 (插件事件面)
 
 自动生成: `python -m huginn.cli.config_audit --events --out docs/events-contract.md`.
@@ -7,7 +9,7 @@
 
 | 事件 | 分组 | 派发点 |
 |---|---|---|
-| ON_HUGINN_LOADED | 生命周期 | lifespan.py:939 |
+| ON_HUGINN_LOADED | 生命周期 | lifespan.py:942 |
 | ON_PLUGIN_LOADED | 生命周期 | plugins/loader.py:198, plugins/loader.py:245 |
 | ON_PLUGIN_UNLOADED | 生命周期 | plugins/loader.py:292 |
 | ON_PLUGIN_ERROR | 生命周期 | plugins/loader.py:274, plugins/loader.py:449 |

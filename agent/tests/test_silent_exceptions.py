@@ -20,9 +20,21 @@ HUGINN_ROOT = Path(__file__).resolve().parents[1] / "huginn"
 _LOUD_LOG_METHODS = frozenset({"warning", "warn", "error", "exception", "critical", "fatal"})
 _SIMPLE_CONST_STMTS = (ast.Pass, ast.Continue, ast.Break)
 
-# 存量基线 (只减不增). 当前实测 427 处 / 224 文件.
-_BASELINE = 427
-_FILE_BASELINE = 224
+# 存量基线 (按文件, 只减不增). 单一事实来源是同目录的 JSON 快照:
+# 全局总数此前是一个标量 —— A 模块从 5 涨到 50、B 模块从 50 降到 5, 总数不变就绿,
+# 棘轮被"跨模块腾挪"绕开. 现在每个文件各自持有上限, 单点冒头即红.
+_BASELINE_PATH = Path(__file__).with_name("silent_exceptions_baseline.json")
+
+
+def _baseline() -> dict[str, int]:
+    import json
+
+    return json.loads(_BASELINE_PATH.read_text(encoding="utf-8"))
+
+
+_BY_FILE = _baseline()
+_BASELINE = sum(_BY_FILE.values())
+_FILE_BASELINE = len(_BY_FILE)
 
 
 def _has_visibility(stmt: ast.stmt) -> bool:
@@ -86,6 +98,23 @@ def test_no_new_truly_silent_handlers():
     assert len(files) <= _FILE_BASELINE, (
         f"含静默 except 的文件 {len(files)} 个, 超过基线 {_FILE_BASELINE}: "
         f"{sorted(files)[:5]}"
+    )
+
+
+def test_per_file_silent_handlers_only_shrink():
+    """单文件棘轮: 某文件静默异常数不得超过该文件基线 (防跨模块腾挪)."""
+    from collections import Counter
+
+    live = Counter(path for path, _ in scan_truly_silent())
+    over = {
+        path: (count, _BY_FILE.get(path, 0))
+        for path, count in live.items()
+        if count > _BY_FILE.get(path, 0)
+    }
+    assert not over, (
+        f"以下文件的静默 except 超出各自基线 (实测, 上限): {over} —— "
+        "跨模块腾挪不算收敛; 只降不增, 确需新增须在 "
+        f"{_BASELINE_PATH.name} 显式抬高该文件上限 (可见决策)."
     )
 
 

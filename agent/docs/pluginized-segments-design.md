@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # Everything is a Plugin — 段插件化设计
 
 > 状态: prompt 段 + tool result 压缩 + compaction + 记忆整理策略均已用形态 B 落地

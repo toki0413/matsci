@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # Spec: Self-Harness 报告（对齐 Qoder/Better Harness 五维 + 组织层任务实录）
 
 > 状态: **M1 + M2 已落地**（`huginn/research/harness.py` 提供 `HarnessReport` +

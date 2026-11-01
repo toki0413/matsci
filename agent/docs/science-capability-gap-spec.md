@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # 科学发现能力对标缺口 — 补缺 Spec
 
 > Status: ACTIVE (as-built, 见 §7)

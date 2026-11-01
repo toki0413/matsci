@@ -1,3 +1,5 @@
+<!-- generated: python -m huginn.cli.config_audit --plugins --out docs/plugins-contract.md -->
+
 # 插件契约 (Everything is a Plugin)
 
 自动生成: `python -m huginn.cli.config_audit --plugins --out docs/plugins-contract.md`.

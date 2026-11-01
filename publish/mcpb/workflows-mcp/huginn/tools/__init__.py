@@ -21,6 +21,7 @@ __all__ = [
     "register_optional_tools",
     "register_capability_tools",
     "validate_tool_specs",
+    "probe_tool_dependencies",
 ]
 
 

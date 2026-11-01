@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # 能力可运行性面 (Capability Runtime Surface) — Design
 
 > Status: APPROVED

@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # How to Read Huginn — 新人上手导览
 
 > 给第一次接触本仓库的人。先读这篇，再到 [DESIGN_RATIONALE.md](DESIGN_RATIONALE.md) 补"为什么"。

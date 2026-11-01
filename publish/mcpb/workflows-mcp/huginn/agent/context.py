@@ -13,6 +13,26 @@ from huginn.utils.prompt_cache import PromptCacheBuilder
 
 logger = logging.getLogger(__name__)
 
+# 主路径段台账: 段名 -> (来源, 是否必现).
+# 段名/来源原先只是 compose_main_surface 里的裸字面量 —— 改名或整段删除没有任何
+# 门会红, 段级可溯源形同虚设. 登记后 `tests/test_model_surface_contract.py`
+# 双向核对: 源码里有而台账无 = 未登记; 台账有而源码无 = 段被删.
+# 必现段 (required=True) 必须在基础段列表里无条件登记, 被移进条件分支即红.
+# `prompt_segments` 来源的段名由 prompt_segments._SEGMENT_SPECS 管, 此处不复制.
+SURFACE_SPECS: dict[str, tuple[str, bool]] = {
+    "base": ("context.mode_prompt", True),
+    "taste": ("personalization", True),
+    "backends": ("runtime.backends", True),
+    "capability": ("capabilities.runtime_probe", True),
+    "principles": ("memory.stable_principles", True),
+    # 依 workspace / 模式 / CSM 出现, 缺席不算丢内容.
+    "environment": ("context.system", False),
+    "project_context": ("context.project", False),
+    "project_memory": ("context.project_memory", False),
+    "phase": ("phases", False),
+    "csm": ("prompt_builder", False),
+}
+
 
 def _tool_belief_bonus(name: str) -> float:
     """SkillEvolutionLayer 信念加成: 高置信度工具小幅提分."""

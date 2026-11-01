@@ -196,7 +196,7 @@
 ### 簇内分歧 (同簇成员值域不等)
 
 - 簇 huginn/agent/context.py::_EXPENSIVE_TOOL_NAMES (并集 8 词):
-  - `huginn/agent/context.py:283` _EXPENSIVE_TOOL_NAMES 缺 `gaussian_tool`, `gromacs_tool`, `orca_tool`, `qe_tool`
+  - `huginn/agent/context.py:303` _EXPENSIVE_TOOL_NAMES 缺 `gaussian_tool`, `gromacs_tool`, `orca_tool`, `qe_tool`
   - `huginn/hooks/research_safety_hook.py:18` _EXPENSIVE_TOOLS
   - `huginn/research_budget.py:24` _EXPENSIVE_TOOLS
 - 簇 huginn/config.py::ThinkingIntensity (并集 6 词):
@@ -235,8 +235,8 @@
 
 | 允许表 | 位置 | 条目 | 命中注册名 | 命名空间 | 状态 | 外部消费 | 死项 | 别名 |
 |---|---|---|---|---|---|---|---|---|
-| `_EXPENSIVE_TOOL_NAMES` | `huginn/agent/context.py:283` | 4 | 4 | registry | `internal-only` | 0 | 0 | 0 |
-| `_ALWAYS_ON_TOOLS` | `huginn/agent/context.py:293` | 5 | 5 | registry | `internal-only` | 0 | 0 | 0 |
+| `_EXPENSIVE_TOOL_NAMES` | `huginn/agent/context.py:303` | 4 | 4 | registry | `internal-only` | 0 | 0 | 0 |
+| `_ALWAYS_ON_TOOLS` | `huginn/agent/context.py:313` | 5 | 5 | registry | `internal-only` | 0 | 0 | 0 |
 | `_READONLY_PHASE_TOOLS` | `huginn/autoloop/engine_act.py:128` | 7 | 7 | registry | `internal-only` | 0 | 0 | 0 |
 | `_DFT_MD_TOOLS` | `huginn/execution/compute_router.py:15` | 8 | 4 | registry | `internal-only` | 0 | 0 | 4 |
 | `_QC_TOOLS` | `huginn/execution/compute_router.py:29` | 4 | 2 | registry | `internal-only` | 0 | 0 | 2 |

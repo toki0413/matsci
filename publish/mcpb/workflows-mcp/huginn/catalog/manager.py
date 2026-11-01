@@ -27,6 +27,23 @@ from huginn.catalog.models import (
 
 logger = logging.getLogger(__name__)
 
+# kind -> 采集该 kind 所需的外部 handle 键 (None = 无需 handle, 从全局注册表读).
+# 这张表是 `discover_handles` / `_kind_collectors` / `discover_all` 三者之间的契约:
+# 新增 kind 必须显式声明它依赖哪个 handle, 门禁 (tests/test_arch_catalog_handles.py)
+# 断言三者的键集双向闭合 —— 否则又会回到「忘了传 handle → 该 kind 结构上永不出现」.
+KIND_HANDLE_SPECS: dict[str, str | None] = {
+    "mcp": "mcp_manager",
+    "model": "model_registry",
+    "plugin": "plugins_dir",
+    "tool": None,
+    "skill": None,
+    "prompt": None,
+    "workflow": None,
+}
+
+# discover_all 接受的 handle 键全集.
+_HANDLE_KEYS = frozenset(v for v in KIND_HANDLE_SPECS.values() if v)
+
 
 def discover_handles(ctx: Any) -> dict[str, Any]:
     """从 ServerContext 派生 discover_all 的 handles (MCP / 模型 / 插件目录).
@@ -240,6 +257,13 @@ class CatalogManager:
         set_enabled 标记的"用户禁用"不会在 rediscover 时被冲掉.
         """
         raw: dict[str, CatalogEntry] = {}
+        unknown = sorted(set(handles) - _HANDLE_KEYS)
+        if unknown:
+            # 误传参此前被静默忽略 = 「传错了也不算错」; 显式拒绝让接入方早暴露.
+            raise TypeError(
+                f"unknown catalog handle(s): {unknown}; "
+                f"accepted: {sorted(_HANDLE_KEYS)}"
+            )
         for _kind, entries in _kind_collectors(handles).items():
             for e in entries:
                 prev = raw.get(e.id)

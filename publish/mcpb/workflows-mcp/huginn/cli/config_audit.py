@@ -397,7 +397,10 @@ def _fmt_section(
 
 
 def render_plugins_markdown(contract: dict[str, list[dict]]) -> str:
-    lines: list[str] = []
+    lines: list[str] = [
+        "<!-- generated: python -m huginn.cli.config_audit --plugins --out docs/plugins-contract.md -->",
+        "",
+    ]
     lines.append("# 插件契约 (Everything is a Plugin)")
     lines.append("")
     lines.append(
@@ -508,7 +511,10 @@ def build_tools_contract() -> list[dict]:
 
 
 def render_tools_markdown(rows: list[dict]) -> str:
-    lines: list[str] = []
+    lines: list[str] = [
+        "<!-- generated: python -m huginn.cli.config_audit --tools --out docs/tools-contract.md -->",
+        "",
+    ]
     lines.append("# 工具契约 (ToolRegistry)")
     lines.append("")
     lines.append(
@@ -613,7 +619,10 @@ def build_events_contract(root: Path | None = None) -> dict:
 
 
 def render_events_markdown(contract: dict) -> str:
-    lines: list[str] = []
+    lines: list[str] = [
+        "<!-- generated: python -m huginn.cli.config_audit --events --out docs/events-contract.md -->",
+        "",
+    ]
     lines.append("# 事件契约 (插件事件面)")
     lines.append("")
     lines.append(
@@ -661,7 +670,10 @@ def build_routes_contract() -> dict:
 
 
 def render_routes_markdown(contract: dict) -> str:
-    lines: list[str] = []
+    lines: list[str] = [
+        "<!-- generated: python -m huginn.cli.config_audit --routes --out docs/routes-contract.md -->",
+        "",
+    ]
     lines.append("# 模型路由契约 (ModelRouter)")
     lines.append("")
     lines.append(

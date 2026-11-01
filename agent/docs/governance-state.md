@@ -1,3 +1,5 @@
+<!-- generated: python -m huginn.cli.governance_audit --out docs/governance-state.md -->
+
 # 低熵治理台账 (governance state)
 
 自动生成: `python -m huginn.cli.governance_audit --out docs/governance-state.md`.
@@ -31,6 +33,7 @@
 | `tests/security/pentest_api_security.py` | 否 | `fast-fail-guard` | Run API security PoC tests |
 | `tests/security/pentest_archive_safety.py` | 否 | `fast-fail-guard` | Run archive security PoC tests |
 | `tests/stress/test_http_stress.py` | 否 | `fast-fail-guard` | Run pytest stress tests (fallback) |
+| `tests/test_arch_catalog_handles.py` | 是 | `full-suite-only` | — |
 | `tests/test_arch_cleanliness.py` | 是 | `full-suite-only` | — |
 | `tests/test_arch_config_migration.py` | 是 | `fast-fail-guard` | Config migration guard |
 | `tests/test_arch_credential_gateway.py` | 是 | `fast-fail-guard` | Credential gateway guard |
@@ -42,6 +45,7 @@
 | `tests/test_arch_mp_key_flow.py` | 是 | `fast-fail-guard` | MP API key flow guard |
 | `tests/test_arch_no_hardcoded_paths.py` | 是 | `fast-fail-guard` | No-hardcoded-machine-paths guard |
 | `tests/test_arch_no_import_cycles.py` | 是 | `full-suite-only` | — |
+| `tests/test_arch_package_exports.py` | 是 | `full-suite-only` | — |
 | `tests/test_arch_plugin_governance.py` | 是 | `fast-fail-guard` | Plugin admission guard |
 | `tests/test_arch_rag_memory_seam.py` | 是 | `full-suite-only` | — |
 | `tests/test_arch_seam_integrity.py` | 是 | `full-suite-only` | — |
@@ -168,7 +172,7 @@ prompt 段的**声明面** (`prompt_segments._SEGMENT_SPECS`: 段名 -> 必须�
 | 插件准入清单 | `tests/test_arch_plugin_governance.py` | 引用 | 2 项 | — | — | Plugin admission guard |
 | 硬编码路径白名单 | `tests/test_arch_no_hardcoded_paths.py` | 引用 | 7 项 | — | — | No-hardcoded-machine-paths guard |
 | MCP 接线白名单 | `tests/test_arch_mcp_governance.py` | 引用 | 7 项 | — | — | MCP single-gateway guard |
-| arch 门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 17 | 17 | 0 | Governance gate registry guard |
+| arch 门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 17 | 19 | 2 | Governance gate registry guard |
 | CLI 门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 2 | 2 | 0 | Governance gate registry guard |
 | 本地门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 5 | 5 | 0 | Governance gate registry guard |
 | 工程门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 21 | 21 | 0 | Governance gate registry guard |

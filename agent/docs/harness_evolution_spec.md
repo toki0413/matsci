@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # Agentic Engineering 升级 Spec — 拆剩余 hardcode 骨架 + harness 可演化
 
 > 状态：active（部分完成，规划中）— H0-H4 均已落地（H1 prompt_patch 已落地、H2 workflow search 已落地、H3 joint_optimizer 已落地、H4 phase/BUILTIN_SPECS 已落地）；H5（unified LLM client / unified tool dispatch）为规划中候选项。
@@ -287,7 +289,7 @@ $$v^* = \arg\max_v \left[ \frac{\alpha_v}{\alpha_v + \beta_v} + c \sqrt{\frac{\l
 **改动量**: ~300-400 行新文件 (2 个) + 3-4 处 engine.py 接入. **spec 原 ~220 行 + 1 接入严重低估** (主要因为: 没有现成 bandit selector +30 行, ToolBelief key schema 不匹配需新建 WorkflowBelief +80 行, 没有现成 variant 生成器 +80-120 行).
 
 **安全边界**:
-- bandit 只在 `HUGINN_WORKFLOW_EVOLUTION=1` 时开 (默认 off, 跟极限模式一致) — **toggle 走 cfg 文件路径不走 env** (config.py 的 `get_config` 自动 reload, env 改了不生效需重启进程)
+- bandit 只在配置项 `workflow_evolution` 开启时启用 (默认 off, 跟极限模式一致) — **toggle 走 cfg 文件路径不走 env** (config.py 的 `get_config` 自动 reload, env 改了不生效需重启进程)
 - variant 跑失败 (timeout / exception) 记 $\beta += 1$, 不污染主循环
 - novelty 用**参数级 Jaccard diff** (~15 行), **不用 `_compute_semantic_overlap`** (P6: BoW TF-IDF cosine 对参数级 diff 不敏感, encut 520 vs 540 cosine≈1.0)
 - fitness 收集时机: r_phys 在 `_validate` 才算出, `_execute_dynamic_workflow` 返回 dict **没有 r_phys 字段**, bandit 更新点必须在 `_validate` 的 `results["r_phys"]` 或 `results["grader_reward"]` 算出之后
@@ -347,7 +349,7 @@ $$\text{PhaseSpec} = \{\text{name}, \text{prompt\_template}, \text{tool\_whiteli
 **安全边界**:
 - phase spec patch 只能改 `prompt_template / tool_whitelist / postcondition`, 不能改 `name` 和 `fallback` (保证回退路径)
 - **tool_whitelist 是 advisory 不强制** (P9 修正): phase 方法体内 9+ 处直接 `tool.call()` 不改, 只在 subagent dispatch 路径强制 (已有 `agent.tool_filter` 机制). 避免改 9 处 call site. 升级路径: 加 unified `dispatch_tool(name, args, ctx)` 入口
-- action_extension 注册需过白名单 (允许的动作类型: `branch / parallel / retry`), 不允许任意 Python 代码执行 (除非用户显式开 `HUGINN_ALLOW_CODE_GEN=1`)
+- action_extension 注册需过白名单 (允许的动作类型: `branch / parallel / retry`), 不允许任意 Python 代码执行 (除非用户显式开启代码生成开关)
 - PhaseRegistry baseline 是当前 hardcode 的镜像, 任何 patch 失败回退到 baseline
 - PhaseRegistry 载入时做拓扑排序检查, 检测到 phase 调用关系成环回退到 baseline
 - **P1 限制**: 只在 autoloop 路径做, rcb_runner 不动 (它没接 CognitiveLoop)
@@ -386,7 +388,7 @@ $$\text{PhaseSpec} = \{\text{name}, \text{prompt\_template}, \text{tool\_whiteli
 
 - 默认隐藏在 "Advanced Settings" 折叠区 (跟极限模式一致)
 - 开启 H3/H4 时弹确认: "Joint optimization / Phase evolution 会增加 LLM 调用和 rollout 次数, 确认开启?"
-- H4 的 `HUGINN_ALLOW_CODE_GEN` 开启时二次确认: "允许 agent 生成任意 Python 代码, 风险极高, 确认?"
+- H4 的代码生成开关开启时二次确认: "允许 agent 生成任意 Python 代码, 风险极高, 确认?"
 - 开启后状态栏显示 `EVOLVE` 标记
 - 关闭时已生成的 patch/variant 保留, 不清除 (跟 PMK pattern 一致)
 

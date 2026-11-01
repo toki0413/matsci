@@ -1,9 +1,9 @@
 """文档断言: 首行标记 + 生成字节比对 + env 键交叉检查.
 
-`docs/*.md` 的治理缺口是「文档写了但没人验证」. 本脚本给四个目标文档建立
-可执行断言 (spec C):
+`docs/*.md` 的治理缺口是「文档写了但没人验证」. 本脚本给**全部**顶层交付文档建立
+可执行断言:
 
-1. 首行必须是三类标记之一:
+1. 首行必须是两类标记之一:
    - ``<!-- generated: <cmd> -->`` — 生成物, 测试重跑 ``<cmd>`` 并做字节比对;
    - ``<!-- manual: true -->``    — 人工维护, 只做 env 键交叉检查;
    - 无标记 → FAIL (要么补标记, 要么删文件).
@@ -11,9 +11,11 @@
    登记 (拦截"文档承诺了不存在的配置键").
 3. ``manual`` 文档同样过 env 键交叉检查.
 
+过程性文档 (``docs/staging/**`` / ``docs/research-notes/**``) 不在交付契约面, 不扫.
+
 用法::
 
-    python scripts/doc_assertions.py            # 断言四个目标文档
+    python scripts/doc_assertions.py            # 断言 docs/*.md
     python scripts/doc_assertions.py --regen    # 额外重跑 generated 命令并比对字节
 """
 
@@ -31,14 +33,16 @@ GENERATED_RE = re.compile(r"^<!-- generated: (?P<cmd>.+) -->$")
 MANUAL_RE = re.compile(r"^<!-- manual: true -->$")
 ENV_KEY_RE = re.compile(r"\bHUGINN_[A-Z0-9_]+")
 
+# 文档里的 `HUGINN_*` 不一定都是环境变量: 也可能是同名代码常量
+# (如 ``huginn/prompts.py`` 的 ``HUGINN_SYSTEM_PROMPT``). 这些不属于配置面,
+# 不参与 SCHEMA 交叉检查; 新增豁免须显式登记 (可见决策).
+NON_ENV_SYMBOLS = frozenset({"HUGINN_SYSTEM_PROMPT"})
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-#: 本批次覆盖的目标文档 (其余按批次扩展).
-TARGET_DOCS: tuple[str, ...] = (
-    "docs/env-contract.md",
-    "docs/feature-flags-contract.md",
-    "docs/mece-audit.md",
-    "docs/INDEX.md",
+#: 交付文档面 = docs/ 顶层全部 *.md (自动发现, 新增文档无需手工登记).
+TARGET_DOCS: tuple[str, ...] = tuple(
+    str(p.relative_to(REPO_ROOT)) for p in sorted((REPO_ROOT / "docs").glob("*.md"))
 )
 
 
@@ -67,8 +71,12 @@ def check_markers(docs: list[Path]) -> list[str]:
 
 
 def env_keys(text: str) -> set[str]:
-    """提取文档里的 ``HUGINN_*`` 键名 (排除 ``HUGINN_`` / 占位符尾部)."""
-    return {k for k in ENV_KEY_RE.findall(text) if not k.endswith("_")}
+    """提取文档里的 ``HUGINN_*`` 键名 (排除占位符尾部与同名代码常量)."""
+    return {
+        k
+        for k in ENV_KEY_RE.findall(text)
+        if not k.endswith("_") and k not in NON_ENV_SYMBOLS
+    }
 
 
 def check_env_keys(docs: list[Path], schema: dict[str, object] | None = None) -> list[str]:
