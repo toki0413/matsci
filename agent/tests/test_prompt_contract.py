@@ -29,45 +29,14 @@ from __future__ import annotations
 import ast
 import importlib.util
 import pathlib
-import sys
-import types
 
 import pytest
 
+from ._import_shim import ensure_namespace_pkg
+
 _AGENT = pathlib.Path(__file__).resolve().parents[1]
 
-
-def _ensure_namespace_pkg(name: str, path: pathlib.Path) -> None:
-    """把 `name` 装成命名空间包 (只给 `__path__`), 绕过其重依赖 `__init__`.
-
-    已加载的真实包不覆盖 (全量套件里其它测试可能已 import 真实包 —— 那正是我们想要的).
-    替身带 PEP 562 `__getattr__`: 一旦有人访问替身没有的属性 (如 `HuginnAgent`),
-    就当场升级为真实包, 避免同进程后续 import 拿到假包 (unknown location).
-    """
-    existing = sys.modules.get(name)
-    if existing is not None and getattr(existing, "__path__", None):
-        return
-    pkg = types.ModuleType(name)
-    pkg.__path__ = [str(path)]
-
-    def _upgrade(attr: str):
-        if sys.modules.get(name) is pkg:
-            del sys.modules[name]
-        real = importlib.import_module(name)
-        try:
-            return getattr(real, attr)
-        except AttributeError:
-            sub = importlib.import_module(f"{name}.{attr}")
-            setattr(real, attr, sub)
-            return sub
-
-    pkg.__getattr__ = _upgrade
-    sys.modules[name] = pkg
-
-
-_ensure_namespace_pkg("huginn", _AGENT / "huginn")
-_ensure_namespace_pkg("huginn.plugins", _AGENT / "huginn" / "plugins")
-_ensure_namespace_pkg("huginn.agent", _AGENT / "huginn" / "agent")
+ensure_namespace_pkg("huginn", _AGENT / "huginn", ("plugins", "agent"))
 
 # 导入 prompt_builder 时其模块尾的 `_register_builtin_segments()` 已注册 14 个内置段.
 import huginn.agent.prompt_builder as pb  # noqa: E402
@@ -370,8 +339,8 @@ def test_safety_spec_source_synchronized():
 def test_main_path_source_uses_declaration_renderer():
     """源级守卫 (G-1): 主路径入口须调用按声明渲染, 不得回退到只渲染 thinking 的硬编码."""
     src = (_AGENT / "huginn" / "agent" / "context.py").read_text(encoding="utf-8")
-    assert "render_prompt_segments_for_path(" in src, (
-        "context.py 不再使用 render_prompt_segments_for_path —— 主路径段注入被改回硬编码?"
+    assert "render_prompt_segments_for_path" in src, (
+        "context.py 不再使用按声明渲染的入口 —— 主路径段注入被改回硬编码?"
     )
     assert 'render_prompt_segment("thinking"' not in src, (
         "context.py 回退到只渲染 thinking 的硬编码 (孤儿段回归)."

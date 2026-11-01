@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,6 +24,28 @@ from huginn.catalog.models import (
     CatalogEntry,
     make_entry_id,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def discover_handles(ctx: Any) -> dict[str, Any]:
+    """从 ServerContext 派生 discover_all 的 handles (MCP / 模型 / 插件目录).
+
+    只做**读取**: 缺哪项就给 None, 对应 kind 如实缺席, 不伪造条目. 集中在此是为了让
+    census / lifespan / REST 路由共用同一份"从上下文取哪些 handle"的知识, 避免各处
+    手写一半 handles 导致 discover_all 覆盖式采集时把其它 kind 冲掉.
+    """
+    handles: dict[str, Any] = {"mcp_manager": getattr(ctx, "mcp_manager", None)}
+    factory = getattr(ctx, "agent_factory", None)
+    handles["model_registry"] = getattr(factory, "model_registry", None)
+    try:
+        from huginn.plugins.loader import DEFAULT_PLUGINS_DIR
+
+        handles["plugins_dir"] = DEFAULT_PLUGINS_DIR
+    except Exception:  # 非致命: 插件目录不可解析时该 kind 缺席
+        logger.debug("plugins_dir unavailable for catalog discovery", exc_info=True)
+        handles["plugins_dir"] = None
+    return handles
 
 
 def _collect_tools() -> list[CatalogEntry]:

@@ -10,6 +10,9 @@ Catalog 在函数内懒 import: 本模块导入时不拉起注册表重栈, 门�
 from __future__ import annotations
 
 import logging
+import sys
+from collections.abc import Iterable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -51,20 +54,53 @@ def disclosure_reason(kind: str) -> str:
     return raw.split(":", 1)[1].strip() if ":" in raw else ""
 
 
-def census_text() -> str:
+def _discover_entries() -> list[Any]:
+    """取本进程可见的 Catalog 条目.
+
+    优先级: 复用 `server_context` 里**已初始化**的共享 Catalog 视图 (它由 lifespan
+    带 mcp_manager/model_registry/plugins_dir 采集过, 因而是 mcp/model/plugin 三类
+    唯一可见的来源); 视图为空时才用它补采一次. 没有共享上下文时不创建上下文
+    (那会拉起整套服务装配), 退化为本地一次性采集 —— 缺 handle 的 kind 如实缺席,
+    不伪造条目.
+    """
+    module = sys.modules.get("huginn.server_context")
+    ctx = getattr(module, "_server_context", None) if module is not None else None
+    if ctx is not None:
+        catalog = getattr(ctx, "catalog", None)
+        if catalog is not None:
+            entries = catalog.list()
+            if entries:
+                return entries
+            from huginn.catalog.manager import discover_handles
+
+            return catalog.discover_all(**discover_handles(ctx))
+
+    from huginn.catalog.manager import CatalogManager
+
+    return CatalogManager().discover_all()
+
+
+def census_text(entries: Iterable[Any] | None = None) -> str:
     """生成 `## MECHANISMS` 段.
+
+    `entries` 省略时从本进程 Catalog 取 (见 _discover_entries); 传入时是纯投影,
+    便于门禁以合成条目离线判定披露规则.
 
     永不返回空串: 「没有可披露的能力」本身也是必须告知模型的事实, 返回空段会让
     「声明该段生效」与「实际渲染为空」对不上, 把披露退化成静默.
     """
-    try:
-        from huginn.catalog.manager import CatalogManager
+    if entries is None:
+        try:
+            entries = _discover_entries()
+        except Exception:  # 非致命: Catalog 不可用时如实告知, prompt 构建不崩
+            logger.debug("mechanism census unavailable", exc_info=True)
+            return "## MECHANISMS\nCapability catalog unavailable this run."
 
-        entries = CatalogManager().discover_all()
-    except Exception:  # 非致命: Catalog 不可用时如实告知, prompt 构建不崩
-        logger.debug("mechanism census unavailable", exc_info=True)
-        return "## MECHANISMS\nCapability catalog unavailable this run."
+    return _render_census(entries)
 
+
+def _render_census(entries: Iterable[Any]) -> str:
+    """把 Catalog 条目投影成文本 (纯函数, 无 I/O)."""
     lines: list[str] = []
     for kind in sorted({e.kind for e in entries}):
         try:
@@ -77,7 +113,11 @@ def census_text() -> str:
             continue
         if level == "always":
             shown = ", ".join(enabled[:_MAX_NAMES])
-            more = "" if len(enabled) <= _MAX_NAMES else f" (+{len(enabled) - _MAX_NAMES})"
+            more = (
+                ""
+                if len(enabled) <= _MAX_NAMES
+                else f" (+{len(enabled) - _MAX_NAMES} more; use `tool_search` to look one up)"
+            )
             lines.append(f"- {kind} ({len(enabled)}): {shown}{more}")
         else:
             hint = _ON_DEMAND_HINT.get(kind, "discoverable on demand")

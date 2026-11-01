@@ -25,26 +25,55 @@ logger = logging.getLogger(__name__)
 # 段签名: 输入三元 (mode/phase/metacog) + runtime persona, 返回该段文本 (空串 = 跳过).
 PromptSegmentFn = Callable[[str, str, str, str | None], str]
 
-# 内置段优先级 (升序 = 拼接顺序). 与设计文档 §3.2 约定一致:
+# 内置段**单一规格表**: 段名 -> (priority, applies_to).
+# priority 升序 = 拼接顺序. 与设计文档 §3.2 约定一致:
 #   0-99 框架保留基础段 (persona/mode/phase/metacog/tools)
 #   100-199 框架保留动态段 (thinking)
 #   safety 固定最后.
-_PRIORITY = {
-    "persona": 10,
+#
+# applies_to 是该段**必须**在哪些生产路径生效 (取值 ∈ {"main","s7","autoloop"}):
+#   main     = agent 主会话路径 (context._effective_system_prompt)
+#   s7       = s7 自修改态 (build_prompt 组装**全部**段 → 每个段都必须含 s7)
+#   autoloop = 自主循环路径 (assemble_plugin_prompt_segments 只取**插件段**)
+# 门禁 (tests/test_prompt_contract.py) 断言: 每个 registered 段都有声明, 且各路径的
+# **生效集合**与声明一致. 未声明 = 孤儿段 (红), 不得静默失效.
+#
+# 优先级与生效面写在**同一条记录**里, 避免两张表各自漂移; 值只含 int / 字符串 tuple,
+# 以便 weightless 门禁用 ast 直接解析字面量 (不 import 重栈).
+_SEGMENT_SPECS: dict[str, tuple[int, tuple[str, ...]]] = {
+    "persona": (10, ("s7",)),
     # §3/§4/§7 拆出的三节: 紧跟 persona 正文之后 (原为内联), 早于 mode/phase.
-    "core_principles": 11,
-    "behavioral_discipline": 12,
-    "response_format": 13,
-    "mode": 20,
-    "phase": 30,
-    "metacog": 40,
-    "mechanisms": 45,  # 机制普查: 紧接 metacog 之后, 先于 tools/writing
-    "tools": 50,
-    "multimodal": 55,  # 多模态引导: 紧挨 tools, 先于 writing
-    "writing": 60,  # 写作引导: 夹在 tools 与 thinking 之间
-    "multi_agent_protocol": 65,  # 多智能体协作协议: 紧邻写作段之后、thinking 之前
-    "thinking": 100,
-    "safety": 200,
+    # 已从 persona 串剥离, 故三条路径都必须由段供给 ——
+    #   main     = 主会话 (render_prompt_segments_for_path) 需要;
+    #   s7       = build_prompt 全量组装需要;
+    #   autoloop = 自主循环直接拼 persona 串, 靠 assemble_plugin_prompt_segments 补齐.
+    "core_principles": (11, ("main", "s7", "autoloop")),
+    "behavioral_discipline": (12, ("main", "s7", "autoloop")),
+    "response_format": (13, ("main", "s7", "autoloop")),
+    "mode": (20, ("s7",)),
+    "phase": (30, ("s7",)),
+    "metacog": (40, ("s7",)),
+    # 机制普查 (Catalog 投影): 三条路径都必须让模型知道有哪些可用机制,
+    # 否则自主循环与主会话都在「看不见 ≠ 不存在」上失明.
+    "mechanisms": (45, ("main", "s7", "autoloop")),
+    "tools": (50, ("s7",)),
+    "multimodal": (55, ("main", "s7")),
+    "writing": (60, ("main", "s7")),
+    # 多智能体协作协议: 主路径(编排 orchestrator/team/swarm 的会话)与 s7 全量组装都需要;
+    # 与 persona/writing 同属框架骨架段, 不进 autoloop 插件消费面.
+    "multi_agent_protocol": (65, ("main", "s7")),
+    "thinking": (100, ("main", "s7")),
+    # safety: 主路径的安全规范由 huginn/prompts.py §8 承载, 这里只声明 s7;
+    # 两份重复文本由 test_prompt_contract 的**同步门**守住 (不得各自漂移, 对齐 MATH_DEPTH 范式).
+    "safety": (200, ("s7",)),
+}
+
+# 派生视图 (既有消费者仍读这两个名字): 都从 _SEGMENT_SPECS 生成, 不另存一份字面量.
+_PRIORITY: dict[str, int] = {
+    name: priority for name, (priority, _paths) in _SEGMENT_SPECS.items()
+}
+_APPLIES_TO: dict[str, tuple[str, ...]] = {
+    name: paths for name, (_priority, paths) in _SEGMENT_SPECS.items()
 }
 
 # 框架骨架段名 (由 agent.build_prompt 注册). 它们不属于插件贡献: 非 build_prompt
@@ -57,43 +86,6 @@ _FRAMEWORK_SEGMENTS = frozenset({
     "persona", "mode", "phase", "metacog", "tools",
     "multimodal", "writing", "multi_agent_protocol", "thinking", "safety",
 })
-
-# 段生效面声明 (声明面**单一事实来源**): 段名 -> 该段**必须**在哪些生产路径生效.
-# 取值 ∈ {"main","s7","autoloop"}:
-#   main     = agent 主会话路径 (context._effective_system_prompt)
-#   s7       = s7 自修改态 (build_prompt 组装**全部**段 → 每个段都必须含 s7)
-#   autoloop = 自主循环路径 (assemble_plugin_prompt_segments 只取**插件段**)
-# 门禁 (tests/test_prompt_contract.py) 断言: 每个 registered 段都有声明, 且各路径的
-# **生效集合**与声明一致. 未声明 = 孤儿段 (红), 不得静默失效.
-# 用**字面量 tuple** (非 frozenset 调用) 以便 weightless 门禁用 ast 直接解析.
-_APPLIES_TO: dict[str, tuple[str, ...]] = {
-    "persona": ("s7",),
-    # §3/§4/§7 拆出的三节: 已从 persona 串剥离, 故三条路径都必须由段供给 ——
-    #   main     = 主会话 (render_prompt_segments_for_path) 需要;
-    #   s7       = build_prompt 全量组装需要;
-    #   autoloop = 自主循环直接拼 persona 串, 靠 assemble_plugin_prompt_segments 补齐.
-    "core_principles": ("main", "s7", "autoloop"),
-    "behavioral_discipline": ("main", "s7", "autoloop"),
-    "response_format": ("main", "s7", "autoloop"),
-    "mode": ("s7",),
-    "phase": ("s7",),
-    "metacog": ("s7",),
-    # 机制普查 (Catalog 投影): 三条路径都必须让模型知道有哪些可用机制,
-    # 否则自主循环与主会话都在「看不见 ≠ 不存在」上失明.
-    "mechanisms": ("main", "s7", "autoloop"),
-    "tools": ("s7",),
-    # 以下三段此前只在 s7 生效, 主路径静默缺席 (反防御写作 / 多模态引导 / 外部思考):
-    # 声明进 main 后由 render_prompt_segments_for_path("main") 真正注入.
-    "multimodal": ("main", "s7"),
-    "writing": ("main", "s7"),
-    # 多智能体协作协议: 主路径(编排 orchestrator/team/swarm 的会话)与 s7 全量组装都需要;
-    # 与 persona/writing 同属框架骨架段, 不进 autoloop 插件消费面.
-    "multi_agent_protocol": ("main", "s7"),
-    "thinking": ("main", "s7"),
-    # safety: 主路径的安全规范由 huginn/prompts.py §8 承载, 这里只声明 s7;
-    # 两份重复文本由 test_prompt_contract 的**同步门**守住 (不得各自漂移, 对齐 MATH_DEPTH 范式).
-    "safety": ("s7",),
-}
 
 _APPLICABLE_PATHS = frozenset({"main", "s7", "autoloop"})
 
@@ -151,6 +143,34 @@ def unregister_prompt_segment(name: str) -> int:
     return _registry.unregister(name)
 
 
+def _collect(
+    include: Callable[[str], bool],
+) -> list[tuple[str, PromptSegmentFn]]:
+    """按 include 过滤后的段, 去重并按 priority 升序排序.
+
+    去重: name -> (priority, 升序 idx, fn); 保留 priority 更高者, 同 priority 保留
+    更晚注册者. 返回顺序即拼接顺序.
+    """
+    best: dict[str, tuple[int, int, PromptSegmentFn]] = {}
+    for idx, (name, priority, fn) in enumerate(_registry.ordered()):
+        if not include(name):
+            continue
+        prev = best.get(name)
+        if prev is None or priority > prev[0] or (priority == prev[0] and idx > prev[1]):
+            best[name] = (priority, idx, fn)
+    ordered = sorted(best.items(), key=lambda kv: (kv[1][0], kv[1][1]))
+    return [(name, spec[2]) for name, spec in ordered]
+
+
+def _render(name: str, fn: PromptSegmentFn, args: tuple[str, str, str, str | None]) -> str:
+    """渲染单个段; 异常被隔离 (跳过该段), 组装永不因插件抛异常."""
+    try:
+        return fn(*args) or ""
+    except Exception:
+        logger.warning("prompt segment %s failed, skipped", name, exc_info=True)
+        return ""
+
+
 def _assemble(
     mode: str,
     phase: str,
@@ -161,27 +181,14 @@ def _assemble(
     """段组装的单一实现: 去重 + 按 priority 升序渲染 + 拼接非空结果.
 
     include(name) 为 False 的段名被跳过 (供"只取插件段""只取某路径生效段"的
-    调用方过滤). 去重: name -> (priority, 升序 idx, fn). 升序列表内同 priority
-    保持注册顺序, 故 idx 越大 = 越晚注册. 保留 priority 更高者, 同 priority
-    保留更晚注册者. 单个段异常被隔离 (跳过该段), 组装永不因插件抛异常.
+    调用方过滤).
     """
-    best: dict[str, tuple[int, int, PromptSegmentFn]] = {}
-    for idx, (name, priority, fn) in enumerate(_registry.ordered()):
-        if not include(name):
-            continue
-        prev = best.get(name)
-        if prev is None or priority > prev[0] or (priority == prev[0] and idx > prev[1]):
-            best[name] = (priority, idx, fn)
-
-    parts: list[str] = []
-    for name, _priority, fn in sorted(best.values()):
-        try:
-            text = fn(mode, phase, metacog_state, system_prompt)
-        except Exception:
-            logger.warning("prompt segment %s failed, skipped", name, exc_info=True)
-            continue
-        if text:
-            parts.append(text)
+    args = (mode, phase, metacog_state, system_prompt)
+    parts = [
+        text
+        for name, fn in _collect(include)
+        if (text := _render(name, fn, args))
+    ]
     return "\n\n".join(parts)
 
 
@@ -226,19 +233,44 @@ def render_prompt_segments_for_path(
     """按**生效声明**渲染在给定生产路径上应生效的段 (供 agent 主路径消费).
 
     与 assemble_prompt_segments 的区别: 后者渲染**全部**段 (s7 全量组装); 本函数
-    只渲染 `_APPLIES_TO` / `applies_to` 声明里含 `path` 的段 (含对 path 有声明的
+    只渲染 `_SEGMENT_SPECS` / `applies_to` 声明里含 `path` 的段 (含对 path 有声明的
     第三方插件段). 修掉"主路径只渲染 thinking"的硬编码漏项 —— writing / multimodal
     / 插件段不再在主路径静默缺席 (孤儿段就此消除). 未知 path 抛 ValueError
-    (调用方写错即崩, 不静默).
+    (调用方写错即崩, 不静默). 返回逐段渲染结果的字符串拼接视图 (见
+    render_prompt_segments_for_path_sections).
+    """
+    return "\n\n".join(
+        text
+        for _name, text in render_prompt_segments_for_path_sections(
+            path, mode, phase, metacog_state, system_prompt
+        )
+    )
+
+
+def render_prompt_segments_for_path_sections(
+    path: str,
+    mode: str,
+    phase: str,
+    metacog_state: str,
+    system_prompt: str | None = None,
+) -> list[tuple[str, str]]:
+    """按生效声明逐段渲染, 返回 (段名, 文本) 的有序列表 (空段略过).
+
+    与 render_prompt_segments_for_path 同源同序, 故两者渲染字节一致; 供主路径把
+    每个段登记成独立 SurfaceSection, 让门能定位「哪一段没生效」而不是只看到一大段
+    "segments". 未知 path 抛 ValueError (调用方写错即崩, 不静默).
     """
     if path not in _APPLICABLE_PATHS:
         raise ValueError(
             f"unknown prompt path: {path!r}; expected one of {sorted(_APPLICABLE_PATHS)}"
         )
-    return _assemble(
-        mode, phase, metacog_state, system_prompt,
-        lambda name: path in _applicability_of(name),
-    )
+    args = (mode, phase, metacog_state, system_prompt)
+    out: list[tuple[str, str]] = []
+    for name, fn in _collect(lambda n: path in _applicability_of(n)):
+        text = _render(name, fn, args)
+        if text:
+            out.append((name, text))
+    return out
 
 
 def render_prompt_segment(
@@ -287,6 +319,7 @@ __all__ = [
     "registered_prompt_segments",
     "render_prompt_segment",
     "render_prompt_segments_for_path",
+    "render_prompt_segments_for_path_sections",
     "segment_applicability",
     "unregister_prompt_segment",
 ]

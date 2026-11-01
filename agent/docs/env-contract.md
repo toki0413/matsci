@@ -76,7 +76,7 @@
 | `HUGINN_CONTEXT_MAX_MESSAGES` | 60 | agent/core.py:606 | — | external |
 | `HUGINN_CORE_API_KEY` | '' | tools/literature/search_sources.py:881 | — | external |
 | `HUGINN_CORE_SUPPORT_PROTOCOL` | 1 | tools/bash_tool.py:213, tools/code_tool.py:132 | — | external |
-| `HUGINN_CORS_ORIGINS` | '' | lifespan.py:1030 | — | external |
+| `HUGINN_CORS_ORIGINS` | '' | lifespan.py:1033 | — | external |
 | `HUGINN_CPU_HOUR_BUDGET` | '' | scheduling/scheduler.py:113 | — | external |
 | `HUGINN_CREDENTIAL_DB` | '' | security/credential_store.py:526 | — | external |
 | `HUGINN_CREDENTIAL_KEY_FILE` | '' | security/credential_store.py:98 | — | external |
@@ -300,8 +300,8 @@
 | `HUGINN_TELEMETRY_ENABLED` | true | config.py:905 | — | external |
 | `HUGINN_TELEMETRY_PATH` | '' | autoloop/phase_gate.py:156 | — | external |
 | `HUGINN_THINKING` | high | agent/streaming.py:142, agent/streaming.py:155, cli/causal_runner.py:364, +2 处 | cli/causal_runner.py:221, cli/rcb_runner.py:348 | code-set |
-| `HUGINN_THREAD_POOL_SIZE` | 64 | lifespan.py:681 | — | external |
-| `HUGINN_TOOLUNIVERSE_ENABLED` | 0 | lifespan.py:226 | — | external |
+| `HUGINN_THREAD_POOL_SIZE` | 64 | lifespan.py:684 | — | external |
+| `HUGINN_TOOLUNIVERSE_ENABLED` | 0 | lifespan.py:229 | — | external |
 | `HUGINN_TOOL_COMPRESSION_MAX_TOKENS` | 8000 | agent_config.py:135, config.py:910, tools/adapter.py:906 | — | external |
 | `HUGINN_TOOL_TIMEOUT` | '' | tools/timeouts.py:113 | — | external |
 | `HUGINN_TORCH_DEVICE` | cpu | cli/rcb_runner.py:285, tools/sci/__init__.py:27 | — | external |

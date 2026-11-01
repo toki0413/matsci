@@ -126,11 +126,14 @@ async def _init_mcp_tools():
     except Exception as e:
         logger.info(f"[MCP] Warning: Could not initialize MCP tools: {e}")
 
-    # ── Catalog: 采集一次 (骨架期), 让统一清单带上已连接的 MCP server ──
+    # ── Catalog: 采集一次 (骨架期), 让统一清单带上已连接的 MCP server / 模型 / 插件目录 ──
     try:
-        _cat = getattr(get_context(), "catalog", None)
+        _ctx = get_context()
+        _cat = getattr(_ctx, "catalog", None)
         if _cat is not None:
-            _cat.discover_all(mcp_manager=get_context().mcp_manager)
+            from huginn.catalog.manager import discover_handles
+
+            _cat.discover_all(**discover_handles(_ctx))
     except Exception as e:
         logger.warning(f"[Catalog] discover after MCP init failed: {e}")
 

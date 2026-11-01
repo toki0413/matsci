@@ -80,29 +80,38 @@ def _esp_base_prompt(ctx: Any) -> str:
     )
 
 
-def _esp_prompt_segments(ctx: Any) -> str:
+def _esp_prompt_sections(ctx: Any) -> list[SurfaceSection]:
     """按**段生效声明**渲染应生效段 (writing / multimodal / thinking + 插件段).
 
-    声明面单一来源在 prompt_segments._APPLIES_TO; 门禁
+    每段各自登记成 SurfaceSection: 主路径此前把 14 个具名段压成一个 "segments",
+    段名在发送前丢失, 门无法定位「哪一段没生效」. 渲染顺序/文本与拼接视图完全一致
+    (render_prompt_segments_for_path 就是本函数的拼接视图).
+
+    声明面单一来源在 prompt_segments._SEGMENT_SPECS; 门禁
     tests/test_prompt_contract.py 断言「声明 != 渲染」即红.
     fail-open: 注册表/插件异常都不让系统提示构建崩.
     """
     try:
         # 内置段在 prompt_builder import 时注册 (persona/mode/.../thinking).
         import huginn.agent.prompt_builder as _pb  # noqa: F401
-        from huginn.plugins.prompt_segments import render_prompt_segments_for_path
+        from huginn.plugins.prompt_segments import (
+            render_prompt_segments_for_path_sections,
+        )
 
-        declared = render_prompt_segments_for_path(
+        declared = render_prompt_segments_for_path_sections(
             "main",
             getattr(ctx, "_mode", "chat"),
             "execute",
             "s0_blank",
             ctx.system_prompt,
         )
-        return declared or ""
+        return [
+            SurfaceSection(name, "prompt_segments", text)
+            for name, text in declared
+        ]
     except Exception:  # 非致命: 段注入失败则跳过
         logger.debug("prompt segment injection skipped", exc_info=True)
-        return ""
+        return []
 
 
 def _esp_workspace_context(ctx: Any) -> list[SurfaceSection]:
@@ -243,7 +252,7 @@ def compose_main_surface(ctx: Any) -> Surface:
     """
     sections: list[SurfaceSection] = [
         SurfaceSection("base", "context.mode_prompt", _esp_base_prompt(ctx)),
-        SurfaceSection("segments", "prompt_segments", _esp_prompt_segments(ctx)),
+        *_esp_prompt_sections(ctx),
         *_esp_workspace_context(ctx),
         SurfaceSection("taste", "personalization", _esp_taste(ctx)),
         SurfaceSection("backends", "runtime.backends", _esp_missing_backends(ctx)),

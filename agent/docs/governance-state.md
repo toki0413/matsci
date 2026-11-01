@@ -135,7 +135,7 @@
 
 ## prompt 段生效面 (prompt segments)
 
-prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 -> 必须生效的生产路径 {main,s7,autoloop}) 与**生效面** (各生产路径实际渲染点) 的登记 (源: `governance_audit.PROMPT_SPECS` 期望段名 + 按文件路径 ast 读源文件 `_APPLIES_TO`). 逐段的生效路径**不在此复制** (无镜像漂移); 「声明 == 渲染」由 `tests/test_prompt_contract.py` 硬判定. 此处只显形**清单漂移** (清单有、源里无 = 段被删; 源里有、清单无 = 新增未登记) 与逐段声明路径. 段数下限棘轮 `prompt_segment_floor` 兜底.
+prompt 段的**声明面** (`prompt_segments._SEGMENT_SPECS`: 段名 -> 必须生效的生产路径 {main,s7,autoloop}) 与**生效面** (各生产路径实际渲染点) 的登记 (源: `governance_audit.PROMPT_SPECS` 期望段名 + 按文件路径 ast 读源文件 `_SEGMENT_SPECS`). 逐段的生效路径**不在此复制** (无镜像漂移); 「声明 == 渲染」由 `tests/test_prompt_contract.py` 硬判定. 此处只显形**清单漂移** (清单有、源里无 = 段被删; 源里有、清单无 = 新增未登记) 与逐段声明路径. 段数下限棘轮 `prompt_segment_floor` 兜底.
 
 | 段 | 声明生效路径 |
 |---|---|

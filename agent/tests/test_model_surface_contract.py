@@ -15,7 +15,12 @@ import pathlib
 
 import pytest
 
-from huginn.agent.mechanism_census import KIND_DISCLOSURE, census_text, disclosure_level, disclosure_reason
+from huginn.agent.mechanism_census import (
+    KIND_DISCLOSURE,
+    census_text,
+    disclosure_level,
+    disclosure_reason,
+)
 from huginn.agent.model_surface import Surface, SurfaceSection, compose
 
 _AGENT_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -138,13 +143,62 @@ def test_hidden_kinds_must_state_a_reason() -> None:
             assert disclosure_reason(kind), f"hidden kind {kind!r} 必须写理由"
 
 
+def _synthetic_entries(pairs: list[tuple[str, str]]) -> list[object]:
+    from huginn.catalog.models import CatalogEntry
+
+    return [
+        CatalogEntry(id=f"{kind}:{name}", kind=kind, name=name, origin="builtin")
+        for kind, name in pairs
+    ]
+
+
+_ALL_KINDS_SAMPLE = [
+    ("skill", "alpha"),
+    ("workflow", "wf-beta"),
+    ("plugin", "plug-gamma"),
+    ("tool", "t"),
+    ("mcp", "srv"),
+    ("model", "m"),
+    ("prompt", "p"),
+]
+
+
+def test_census_projects_every_kind_by_disclosure_level() -> None:
+    """合成条目覆盖全部 kind: 三档披露按声明落地, 不再依赖真 Catalog 的偶发内容.
+
+    这条门直接锁住 Critical 的形态: mcp/model/plugin 曾经结构上不可能出现.
+    """
+    from huginn.catalog.models import KINDS
+
+    entries = _synthetic_entries(_ALL_KINDS_SAMPLE)
+    text = census_text(entries)
+    assert text.strip(), "census_text 返回空串 —— 披露退化成静默"
+    for kind in KINDS:
+        level = disclosure_level(kind)
+        if level == "hidden":
+            assert f"- {kind} (" not in text, f"hidden 级 kind {kind!r} 不应出现在普查段"
+            continue
+        assert f"- {kind} (" in text, f"{level} 级 kind {kind!r} 未出现在普查段"
+    # always 级列名; on_demand 级只给数量与取用入口 (看不见 ≠ 不存在).
+    for name in ("alpha", "wf-beta", "plug-gamma"):
+        assert name in text, f"always 级条目 {name!r} 未列名"
+    assert "tool_search" in text, "on_demand 级缺取用入口说明"
+
+
+def test_census_truncation_points_to_entry_point() -> None:
+    """截断时必须给取用入口, 否则模型只看到「+N」却不知去哪找."""
+    entries = _synthetic_entries([("skill", f"s{i:02d}") for i in range(25)])
+    text = census_text(entries)
+    assert " (+5 more; use `tool_search` to look one up)" in text
+
+
 def test_always_kinds_are_named_in_census_text() -> None:
-    text = census_text()
-    if not text:
-        pytest.skip("Catalog 不可用或无条目, 该段缺席 (fail-open)")
+    """真 Catalog: always 级条目名必须落到文本; census 永不返回空串 (无死 skip)."""
     from huginn.catalog.manager import CatalogManager
 
     entries = CatalogManager().discover_all()
+    text = census_text(entries)
+    assert text.strip(), "census_text 返回空串 —— 「声明该段生效」与实际渲染对不上"
     for kind in KIND_DISCLOSURE:
         if disclosure_level(kind) != "always":
             continue

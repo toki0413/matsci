@@ -36,7 +36,7 @@
     锚点并逐条判在否.
 11. **prompt 段面静默萎缩** —— 输出规范的执行单元是 prompt 段; 段注册了却不在任何生产路径
     生效 (孤儿段), 或段清单被删/改名而无人登记, 都让输出面无声萎缩, 而门存在性判据全绿.
-    现由 `PROMPT_SPECS` 登记期望段名清单 + 按文件路径 ast 读源文件 `_APPLIES_TO` (段名 ->
+    现由 `PROMPT_SPECS` 登记期望段名清单 + 按文件路径 ast 读源文件 `_SEGMENT_SPECS` (段名 ->
     必须生效的生产路径) 逐段判在否; 「声明 == 渲染」由 `tests/test_prompt_contract.py` 硬判,
     段数下限棘轮 `prompt_segment_floor` 兜底.
 
@@ -48,7 +48,7 @@
 两类 python guard step (pytest 与 `python -m huginn.<module>`) + 非 pytest 工程门 +
 `.pre-commit-config.yaml` 本地门 + 各工作流触发器 + 命名子系统的能力锚点
 (`CAPABILITY_SPECS`: 开关默认值 / 承载模块 / 不变量测试) + prompt 段的生效面声明
-(`PROMPT_SPECS` 清单 + 源文件 `_APPLIES_TO`: 段名 -> 必须生效的生产路径), 并把散落的
+(`PROMPT_SPECS` 清单 + 源文件 `_SEGMENT_SPECS`: 段名 -> 必须生效的生产路径), 并把散落的
 棘轮预算/基线收成单一台账, 渲染成 `docs/governance-state.md`.
 
 设计 (对齐 config_audit / contract_audit):
@@ -124,11 +124,11 @@ WORKFLOW_TRIGGER_SPECS: dict[str, tuple[str, ...]] = {
 }
 
 # ── prompt 段生效面登记 (weightless: 只登记段名, 不 import prompt_segments 重栈) ──
-# prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 → 必须生效的生产路径
+# prompt 段的**声明面** (`prompt_segments._SEGMENT_SPECS`: 段名 → 必须生效的生产路径
 # {main,s7,autoloop}) 与**生效面** (各路径实际渲染点) 的一致性, 由
 # `tests/test_prompt_contract.py` 硬判定. 这里登记**期望段名清单**作可见决策表: 段被删
 # (清单有、源里无) 或新增未登记 (源里有、清单无) → 台账缺口可见, 段名下限棘轮兜底.
-# 逐段的生效路径**不在此复制** —— 台账按文件路径 ast 读源文件 `_APPLIES_TO`, 无镜像漂移.
+# 逐段的生效路径**不在此复制** —— 台账按文件路径 ast 读源文件 `_SEGMENT_SPECS`, 无镜像漂移.
 PROMPT_SPECS: tuple[str, ...] = (
     "persona",
     # §3/§4/§7 从 persona 串剥离成的独立段 (单一事实来源 huginn.prompts.PROMPT_SECTIONS).
@@ -147,7 +147,7 @@ PROMPT_SPECS: tuple[str, ...] = (
     "safety",
 )
 
-# prompt 段声明面源文件 (相对 agent/): ast 解析其 `_APPLIES_TO` 字面量 (不 import 重栈).
+# prompt 段声明面源文件 (相对 agent/): ast 解析其 `_SEGMENT_SPECS` 字面量 (不 import 重栈).
 _PROMPT_SEGMENTS_MODULE = "huginn/plugins/prompt_segments.py"
 
 _ARCH_GLOB = "test_arch_*.py"
@@ -1163,12 +1163,13 @@ def _collect_engineer_gates(workflows: dict[str, str]) -> list[dict]:
     return out
 
 
-# ── prompt 段生效面 (声明面清单 vs 源文件 `_APPLIES_TO`) ──
+# ── prompt 段生效面 (声明面清单 vs 源文件 `_SEGMENT_SPECS`) ──
 def _read_prompt_applies_to(agent_root: Path) -> dict[str, tuple[str, ...]]:
-    """ast 读 prompt_segments 的 `_APPLIES_TO` 字面量 (weightless, 不 import 重栈).
+    """ast 读 prompt_segments 的 `_SEGMENT_SPECS` 字面量 (weightless, 不 import 重栈).
 
-    这是 prompt 段**声明面**的单一事实来源 (段名 -> 必须生效的生产路径). 读源文件而非
-    import, 以免门禁拉 langchain/pydantic 等重栈, 也无镜像漂移.
+    单一规格表: 段名 -> (priority, 生效路径); 这里只取生效路径一列. 这是 prompt 段
+    **声明面**的单一事实来源 (段名 -> 必须生效的生产路径). 读源文件而非 import,
+    以免门禁拉 langchain/pydantic 等重栈, 也无镜像漂移.
     """
     path = agent_root / _PROMPT_SEGMENTS_MODULE
     if not path.is_file():
@@ -1189,7 +1190,7 @@ def _read_prompt_applies_to(agent_root: Path) -> dict[str, tuple[str, ...]]:
             and isinstance(node.targets[0], ast.Name)
         ):
             target, value = node.targets[0].id, node.value
-        if target != "_APPLIES_TO" or value is None:
+        if target != "_SEGMENT_SPECS" or value is None:
             continue
         try:
             data = ast.literal_eval(value)
@@ -1197,12 +1198,17 @@ def _read_prompt_applies_to(agent_root: Path) -> dict[str, tuple[str, ...]]:
             return {}
         if not isinstance(data, dict):
             return {}
-        return {str(k): tuple(v) for k, v in data.items()}
+        out: dict[str, tuple[str, ...]] = {}
+        for key, spec in data.items():
+            if not isinstance(spec, (tuple, list)) or len(spec) < 2:
+                return {}
+            out[str(key)] = tuple(spec[1])
+        return out
     return {}
 
 
 def _collect_prompt_segments(agent_root: Path) -> dict:
-    """prompt 段生效面: 台账声明清单 (PROMPT_SPECS) vs 源文件 `_APPLIES_TO` 对齐.
+    """prompt 段生效面: 台账声明清单 (PROMPT_SPECS) vs 源文件 `_SEGMENT_SPECS` 对齐.
 
     **清单漂移**单列: 清单有、源里无 (段被删) / 源里有、清单无 (新增未登记); 逐段的
     生效路径**不在此复制**, 直接 ast 读源文件, 无镜像漂移. 「声明 == 渲染」由
@@ -2297,7 +2303,7 @@ def audit(
     snapshot["capabilities"] = capabilities
     snapshot["capability_gaps"] = _audit_capability_gaps(capabilities)
 
-    # prompt 段生效面 (声明清单 vs 源文件 `_APPLIES_TO`): 段是输出规范的执行单元, 一个段
+    # prompt 段生效面 (声明清单 vs 源文件 `_SEGMENT_SPECS`): 段是输出规范的执行单元, 一个段
     # 静默消失即规范萎缩. 门存在性/能力锚点判据都看不见 prompt 面.
     snapshot["prompt_segments"] = _collect_prompt_segments(agent_root)
 
@@ -2512,9 +2518,9 @@ def _ga_prompt_segments_section(reg: dict) -> list[str]:
     lines.append("## prompt 段生效面 (prompt segments)")
     lines.append("")
     lines.append(
-        "prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 -> 必须生效的生产路径 "
+        "prompt 段的**声明面** (`prompt_segments._SEGMENT_SPECS`: 段名 -> 必须生效的生产路径 "
         "{main,s7,autoloop}) 与**生效面** (各生产路径实际渲染点) 的登记 (源: "
-        "`governance_audit.PROMPT_SPECS` 期望段名 + 按文件路径 ast 读源文件 `_APPLIES_TO`). "
+        "`governance_audit.PROMPT_SPECS` 期望段名 + 按文件路径 ast 读源文件 `_SEGMENT_SPECS`). "
         "逐段的生效路径**不在此复制** (无镜像漂移); 「声明 == 渲染」由 "
         "`tests/test_prompt_contract.py` 硬判定. 此处只显形**清单漂移** "
         "(清单有、源里无 = 段被删; 源里有、清单无 = 新增未登记) 与逐段声明路径. "

@@ -18,50 +18,25 @@ dsh 把"模型能看到的全部文本"当成一份契约: 系统 prompt、工�
 
 from __future__ import annotations
 
-import importlib
 import json
 import pathlib
 import re
-import sys
-import types
 
 import pytest
 
+from ._import_shim import ensure_namespace_pkg
+
 _AGENT = pathlib.Path(__file__).resolve().parents[1]
 
-
-# 与 test_prompt_contract 同款: 只给 __path__, 绕过 huginn.agent 的重依赖 __init__.
-# 替身带 PEP 562 `__getattr__`: 访问替身没有的属性时当场升级为真实包, 不留假包污染.
-def _ensure_namespace_pkg(name: str, path: pathlib.PurePath) -> None:
-    existing = sys.modules.get(name)
-    if existing is not None and getattr(existing, "__path__", None):
-        return
-    pkg = types.ModuleType(name)
-    pkg.__path__ = [str(path)]
-
-    def _upgrade(attr: str):
-        if sys.modules.get(name) is pkg:
-            del sys.modules[name]
-        real = importlib.import_module(name)
-        try:
-            return getattr(real, attr)
-        except AttributeError:
-            sub = importlib.import_module(f"{name}.{attr}")
-            setattr(real, attr, sub)
-            return sub
-
-    pkg.__getattr__ = _upgrade
-    sys.modules[name] = pkg
-
-
-_ensure_namespace_pkg("huginn", _AGENT / "huginn")
-_ensure_namespace_pkg("huginn.agent", _AGENT / "huginn" / "agent")
+# 与 test_prompt_contract 同款 (单一实现在 _import_shim): 只给 __path__, 绕过
+# huginn/agent 与 huginn/plugins 的重依赖 __init__.
+ensure_namespace_pkg("huginn", _AGENT / "huginn", ("plugins", "agent"))
 
 # import 时注册 13 个内置段 (与生产同一入口).
 import huginn.agent.prompt_builder as _pb  # noqa: E402,F401
 import huginn.plugins.prompt_segments as _ps  # noqa: E402
 
-# 生产调用形状 (见 context._esp_prompt_segments / prompt_builder / autoloop.engine_act).
+# 生产调用形状 (见 context._esp_prompt_sections / prompt_builder / autoloop.engine_act).
 _PROMPT_CALLS: dict[str, tuple[object, ...]] = {
     "main": ("main", "chat", "execute", "s0_blank", None),
     "s7": ("research", "validate", "s7_self_modify", None),

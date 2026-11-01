@@ -336,7 +336,7 @@
    "declared": [],
    "endpoint": "/catalog/{entry_id}",
    "kind": "body-dict",
-   "line": 43,
+   "line": 42,
    "method": "PATCH",
    "model": "",
    "read": [],
