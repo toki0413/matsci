@@ -6,6 +6,7 @@ import logging
 import os
 from typing import Any
 
+from huginn.agent.model_surface import Surface, SurfaceSection, compose
 from huginn.context_manager import get_system_context, get_user_context
 from huginn.project_memory import load_agents_md
 from huginn.utils.prompt_cache import PromptCacheBuilder
@@ -40,6 +41,17 @@ def _capability_note() -> str:
         return capability_note()
     except Exception:  # 非致命: 能力盘点不可用时回落不注入
         logger.debug("capability runtime note unavailable", exc_info=True)
+        return ""
+
+
+def _esp_mechanisms() -> str:
+    """机制普查段 (Sources: catalog). 失败返回空串 → 该段缺席, 构建不崩."""
+    try:
+        from huginn.agent.mechanism_census import census_text
+
+        return census_text()
+    except Exception:  # 非致命: 普查不可用则该段缺席
+        logger.debug("mechanism census unavailable", exc_info=True)
         return ""
 
 
@@ -79,60 +91,66 @@ def _esp_base_prompt(ctx: Any) -> str:
     )
 
 
-def _esp_prompt_segments(ctx: Any, base: str) -> str:
+def _esp_prompt_segments(ctx: Any) -> str:
     """按**段生效声明**渲染应生效段 (writing / multimodal / thinking + 插件段).
 
-    旧实现只硬编码渲染 "thinking", 导致反防御写作、多模态引导、插件段
-    (如 asd_ste100) 在主路径静默缺席 —— 与 s7 路径段集合不一致的"孤儿段".
     声明面单一来源在 prompt_segments._APPLIES_TO; 门禁
-    tests/test_prompt_contract.py 断言 "声明 != 渲染" 即红.
+    tests/test_prompt_contract.py 断言「声明 != 渲染」即红.
     fail-open: 注册表/插件异常都不让系统提示构建崩.
     """
     try:
-        # 确保内置段已注册 (persona/mode/.../thinking 注册在 prompt_builder import 时).
+        # 内置段在 prompt_builder import 时注册 (persona/mode/.../thinking).
         import huginn.agent.prompt_builder as _pb  # noqa: F401
         from huginn.plugins.prompt_segments import render_prompt_segments_for_path
 
-        _declared = render_prompt_segments_for_path(
+        declared = render_prompt_segments_for_path(
             "main",
             getattr(ctx, "_mode", "chat"),
             "execute",
             "s0_blank",
             ctx.system_prompt,
         )
-        if _declared:
-            base += "\n\n" + _declared
+        return declared or ""
     except Exception:  # 非致命: 段注入失败则跳过
         logger.debug("prompt segment injection skipped", exc_info=True)
-    return base
+        return ""
 
 
-def _esp_workspace_context(ctx: Any, base: str) -> str:
-    """注入 session 级系统上下文 + 项目上下文 (.huginn.md / AGENTS.md)."""
-    # Inject cached system context (date + git status) and project
-    # context (.huginn.md / AGENTS.md). Computed once per session
-    # to avoid repeated git calls.
+def _esp_workspace_context(ctx: Any) -> list[SurfaceSection]:
+    """session 级系统上下文 + 项目上下文 (.huginn.md / AGENTS.md).
+
+    每块各自成段 (environment / project_context / project_memory), 便于门定位
+    「哪一块没生效」; 上下文按 session 缓存, 避免每次构建重复读 git.
+    """
+    out: list[SurfaceSection] = []
     workspace = ctx.workspace or os.getcwd()
     try:
         sys_ctx = get_system_context(str(workspace))
         if sys_ctx:
             ctx_lines = [f"{k}: {v}" for k, v in sys_ctx.items()]
-            base = f"{base}\n\n# Environment\n" + "\n".join(ctx_lines)
+            out.append(SurfaceSection(
+                "environment", "context.system", "# Environment\n" + "\n".join(ctx_lines)
+            ))
         user_ctx = get_user_context(str(workspace))
         if user_ctx:
-            base = f"{base}\n\n# Project Context\n" + "\n".join(
-                f"{k}: {v}" for k, v in user_ctx.items()
-            )
+            out.append(SurfaceSection(
+                "project_context",
+                "context.project",
+                "# Project Context\n"
+                + "\n".join(f"{k}: {v}" for k, v in user_ctx.items()),
+            ))
         agents_md = load_agents_md(str(workspace))
         if agents_md:
-            base = f"{base}\n\n# Project Memory\n{agents_md}"
+            out.append(SurfaceSection(
+                "project_memory", "context.project_memory", f"# Project Memory\n{agents_md}"
+            ))
     except Exception:  # 非致命: 项目上下文注入失败则跳过
         logger.debug("context injection skipped", exc_info=True)
-    return base
+    return out
 
 
-def _esp_taste(ctx: Any, base: str) -> str:
-    """注入 user taste profile (session 级缓存, 只在首次调时读 JSON)."""
+def _esp_taste(ctx: Any) -> str:
+    """user taste profile (session 级缓存, 只在首次调时读 JSON)."""
     taste = getattr(ctx, "_cached_taste", None)
     if taste is None and not getattr(ctx, "_taste_loaded", False):
         try:
@@ -144,13 +162,11 @@ def _esp_taste(ctx: Any, base: str) -> str:
             taste = ""
         ctx._cached_taste = taste
         ctx._taste_loaded = True
-    if taste:
-        base = f"{base}\n\n# User Taste Profile\n{taste}"
-    return base
+    return f"# User Taste Profile\n{taste}" if taste else ""
 
 
-def _esp_missing_backends(ctx: Any, base: str) -> str:
-    """注入缺失后端提示 (session 级缓存, 只在首次调时跑 shutil.which)."""
+def _esp_missing_backends(ctx: Any) -> str:
+    """缺失后端提示 (session 级缓存, 只在首次调时跑 shutil.which)."""
     _missing = getattr(ctx, "_cached_missing_backends", None)
     if _missing is None and not getattr(ctx, "_backends_checked", False):
         try:
@@ -170,15 +186,15 @@ def _esp_missing_backends(ctx: Any, base: str) -> str:
         ctx._cached_missing_backends = _missing
         ctx._backends_checked = True
     if _missing:
-        base += (
-            f"\n\nNote: {', '.join(_missing)} not installed locally. "
+        return (
+            f"Note: {', '.join(_missing)} not installed locally. "
             "Answer parameter questions from knowledge."
         )
-    return base
+    return ""
 
 
-def _esp_stable_principles(base: str) -> str:
-    """注入 S7 自修改回流进来的 persona 原则 (最多 5 条).
+def _esp_stable_principles() -> str:
+    """S7 自修改回流进来的 persona 原则 (最多 5 条).
 
     闭合 persona→behavior→memory→knowledge→persona 回路 (G8 加法).
     不走 CSM, benchmark 场景也保留 — 这部分是 persona 一部分,
@@ -187,13 +203,12 @@ def _esp_stable_principles(base: str) -> str:
     try:
         from huginn.memory import load_stable_principles
 
-        _principles = load_stable_principles()[:5]
-        if _principles:
-            base += "\n\n## STABLE_PRINCIPLES\n"
-            base += "\n".join(f"- {p}" for p in _principles) + "\n"
+        principles = load_stable_principles()[:5]
+        if principles:
+            return "## STABLE_PRINCIPLES\n" + "\n".join(f"- {p}" for p in principles) + "\n"
     except Exception:  # 非致命: stable_principles 注入失败则跳过
         logger.debug("stable_principles injection skipped", exc_info=True)
-    return base
+    return ""
 
 
 def _esp_csm_prompt(ctx: Any, base: str) -> str | None:
@@ -224,12 +239,44 @@ def _esp_csm_prompt(ctx: Any, base: str) -> str | None:
     return None
 
 
-def _esp_phase_prefix(ctx: Any, base: str) -> str:
+def _esp_phase_prefix(ctx: Any) -> str:
     """phase prefix 放末尾: 前面静态层稳定, phase 切换只让末尾几行重算."""
     prefix = ctx._phase_manager.prompt_prefix()
-    if prefix:
-        base = f"{base}\n\n{prefix}"
-    return base
+    return prefix or ""
+
+
+def compose_main_surface(ctx: Any) -> Surface:
+    """主路径模型面的单一组装点: 各阶段登记成有序段, 由 Surface.render() 拼接.
+
+    段级 name/source 让门能断言「模型实际收到了哪几段、来自哪个注册表」.
+    phase prefix 仍放末尾: 前面是静态层, DeepSeek context cache 命中前面,
+    phase 切换只让末尾几行重算.
+    """
+    sections: list[SurfaceSection] = [
+        SurfaceSection("base", "context.mode_prompt", _esp_base_prompt(ctx)),
+        SurfaceSection("segments", "prompt_segments", _esp_prompt_segments(ctx)),
+        *_esp_workspace_context(ctx),
+        SurfaceSection("taste", "personalization", _esp_taste(ctx)),
+        SurfaceSection("backends", "runtime.backends", _esp_missing_backends(ctx)),
+        # 能力面汇总 — 每次构建重算(不缓存), 保证装完依赖后不注入陈旧状态 (AC-4).
+        # L0 为纯静态扫描 (不 import 工具模块、无网络), 开销可控.
+        SurfaceSection(
+            "capability", "capabilities.runtime_probe", _capability_note().lstrip("\n")
+        ),
+        SurfaceSection("principles", "memory.stable_principles", _esp_stable_principles()),
+        SurfaceSection("mechanisms", "catalog", _esp_mechanisms()),
+    ]
+    surface = compose(sections)
+
+    built = _esp_csm_prompt(ctx, surface.render())
+    if built is not None:
+        # CSM 整体替换主路径正文, 故登记为单段而不是伪造子段.
+        return compose([SurfaceSection("csm", "prompt_builder", built)])
+
+    return compose([
+        *sections,
+        SurfaceSection("phase", "phases", _esp_phase_prefix(ctx)),
+    ])
 
 
 class ContextMixin:
@@ -261,28 +308,12 @@ class ContextMixin:
     _TOOL_RETRIEVAL_TOP_K = 15
 
     def _effective_system_prompt(self) -> str:
-        """Base system prompt + mode prefix + env context + phase prefix (tail).
+        """主路径模型面的渲染结果 (见 compose_main_surface)."""
+        return compose_main_surface(self).render()
 
-        phase prefix 放末尾: 前面是静态层 (system_prompt + env + principles),
-        DeepSeek context cache 命中前面; phase 切换只让末尾几行重算.
-        旧版 phase prefix 放开头, phase 一变整个 KV cache 作废.
-        """
-        base = _esp_base_prompt(self)
-        base = _esp_prompt_segments(self, base)
-        base = _esp_workspace_context(self, base)
-        base = _esp_taste(self, base)
-        base = _esp_missing_backends(self, base)
-
-        # 能力面汇总 — 每次构建重算(不缓存), 保证装完依赖后不注入陈旧状态 (AC-4).
-        # L0 为纯静态扫描 (不 import 工具模块、无网络), 开销可控.
-        base += _capability_note()
-        base = _esp_stable_principles(base)
-
-        built = _esp_csm_prompt(self, base)
-        if built is not None:
-            return built
-
-        return _esp_phase_prefix(self, base)
+    def _effective_surface(self) -> Surface:
+        """主路径模型面的有序段 (见 compose_main_surface)."""
+        return compose_main_surface(self)
 
     def _effective_tools(self, query: str | None = None) -> list[Any]:
         """Return the tool list filtered by mode, phase, and query relevance.
