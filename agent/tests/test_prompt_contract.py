@@ -41,12 +41,27 @@ def _ensure_namespace_pkg(name: str, path: pathlib.Path) -> None:
     """把 `name` 装成命名空间包 (只给 `__path__`), 绕过其重依赖 `__init__`.
 
     已加载的真实包不覆盖 (全量套件里其它测试可能已 import 真实包 —— 那正是我们想要的).
+    替身带 PEP 562 `__getattr__`: 一旦有人访问替身没有的属性 (如 `HuginnAgent`),
+    就当场升级为真实包, 避免同进程后续 import 拿到假包 (unknown location).
     """
     existing = sys.modules.get(name)
     if existing is not None and getattr(existing, "__path__", None):
         return
     pkg = types.ModuleType(name)
     pkg.__path__ = [str(path)]
+
+    def _upgrade(attr: str):
+        if sys.modules.get(name) is pkg:
+            del sys.modules[name]
+        real = importlib.import_module(name)
+        try:
+            return getattr(real, attr)
+        except AttributeError:
+            sub = importlib.import_module(f"{name}.{attr}")
+            setattr(real, attr, sub)
+            return sub
+
+    pkg.__getattr__ = _upgrade
     sys.modules[name] = pkg
 
 
