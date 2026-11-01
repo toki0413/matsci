@@ -58,6 +58,16 @@ contract:用真实 prompt 段渲染 + 真实 `ToolRegistry` 工具定义度量�
 - 冻结前只测不判;观察期后把实测上限写入 `BUDGET`,之后只减不增
 - test:`tests/test_model_surface.py`;实测 main 9765 / s7 11491 / autoloop 7236 字符,工具定义 217685 字符(125 可见工具)
 
+## G. 执行面: 多执行模式
+
+contract: 开工方式本身是 plan 里的显式选择, 不是默认默契.
+- 模式:`inline`(主上下文顺序执行)/ `subagent`(逐任务派发给隔离子代理, 只回收摘要)/ `mixed`(逐任务声明)
+- plan 头部声明 `execution: <mode>`;任务可用 `exec: inline|subagent` 覆盖;`mixed` 下每个任务必须显式声明 `exec:`
+- 选择规则:需要跨文件推理、与用户交互、依赖前序结果的任务走 `inline`;文件集互不重叠且验收可独立执行的走 `subagent`
+- 派发前提:`[parallel]` 任务的文件集必须两两不交;`exec: subagent` 任务必须带 `files` 与 `acceptance` —— 否则子代理无法独立完成与自验
+- invariant:未声明执行模式的 plan 不得开工;共享文件的任务不得并行派发
+- test:`tests/test_workflow_gate.py` 的执行面校验全绿;合成仓验证未知模式 / `mixed` 缺声明 / 并行共享文件 / 子代理缺 `acceptance` 分别 FAIL
+
 ## failure modes
 
 - contract.json 手改与 objective 冲突 → 拒绝启动(不猜)
@@ -69,6 +79,7 @@ contract:用真实 prompt 段渲染 + 真实 `ToolRegistry` 工具定义度量�
 - 不做 git hook / CI 强制;门只做仓内可执行断言,流程靠 spec → plan → 开工的顺序文件留下证据
 - 不一次清空存量:151 处注释考古与 427 处静默异常先冻结基线,分批收敛
 - 不复制 dsh 代码,只移植其门的原则
+- 不替人挑执行模式:门只校验声明合法与派发前提,不在 `inline` / `subagent` 之间自动裁决
 
 ## deferred
 

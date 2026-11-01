@@ -1,6 +1,7 @@
 # 计划：结构完整性修复（四轨）
 
 spec: `docs/staging/specs/2026-10-31-structural-integrity-repairs.md`
+execution: inline
 milestone: M-INT1（A轨）、M-INT2（B轨）、M-INT3（C轨）、M-INT4（D轨）
 
 ## A. 契约进数据流
@@ -146,6 +147,13 @@ milestone: M-INT1（A轨）、M-INT2（B轨）、M-INT3（C轨）、M-INT4（D�
   files: `tests/test_workflow_gate.py`、`docs/staging/specs/2026-10-31-structural-integrity-repairs.md`、`docs/staging/plans/2026-10-31-structural-integrity-repairs.md`
   acceptance: 流程门 2 passed; 合成仓验证缺 spec / 幽灵锚点 / 缺边界节分别 FAIL; 真实仓 T1–T21 全部带本地锚点
   spec: `#e-结构登记与流程门`
+
+- [x] T22: 执行面多模式门（inline / subagent / mixed）
+  goal: plan 头部声明 `execution`, 任务可用 `exec` 覆盖; `mixed` 下逐任务显式; `subagent` 任务必须带 `files`+`acceptance`; `[parallel]` 任务文件集两两不交
+  files: `tests/test_workflow_gate.py`、`docs/staging/specs/2026-10-31-structural-integrity-repairs.md`、`docs/staging/plans/2026-10-31-structural-integrity-repairs.md`
+  acceptance: 流程门 3 passed; 合成仓验证未知模式 / `mixed` 缺声明 / 并行共享文件 / 子代理缺 `acceptance` 分别 FAIL; 真实仓两个 plan 合规
+  exec: inline
+  spec: `#g-执行面-多执行模式`
 
 ## 收口
 

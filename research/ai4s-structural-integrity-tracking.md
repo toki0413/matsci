@@ -148,6 +148,7 @@ DeepMind 的 GNoME 预测了约 220 万种新材料 [cite:8]；二级来源称�
 | 静默异常门 + trace 默认化 | 已落地 | AST 统计全树「真正静默」except（≤2 条简单语句且无 raise/warning/print），基线 427 处 / 224 文件只减不增；`HUGINN_TRACE` 默认 true（`=0` 关闭），使「KEEP 但零执行」持续可见 | 静默门 2 passed；trace 4 passed；env 契约 `HUGINN_TRACE=True`；镜像 0 漂移 |
 | 模型面字符预算（observe） | 已落地 | 移植 dsh `model-surface` 度量：真实 prompt 段渲染 + 真实 `ToolRegistry` 工具定义（与 LLM 收到的字节一致），空描述/占位标记硬判，`KNOWN_FAILURES` 双向核对。实测 main 9765 / s7 11491 / autoloop 7236 字符，工具定义 217685 字符（125 个可见工具）；预算未冻结，只测不判 | 2 passed；观察期后填 `BUDGET`（只减不增）；可选依赖装齐后重测 |
 | spec → plan → 开工门（T21） | 已落地 | plan 头部必须声明 `spec:` 指向 `docs/staging/specs/*.md`，未归档的 legacy plan 显式写 `workflow-exempt`；每个任务块必须带 `spec:` 锚点且该节在 spec 中真实存在；spec 必须有边界节（非目标 / deferred / failure modes / out of scope）。顺序文件即证据，缺锚点的任务不得开工 | 2 passed；真实仓 T1–T21 全带本地锚点；合成仓验证缺锚点 / 幽灵锚点 / 缺边界节分别 FAIL |
+| 执行面多模式门（T22） | 已落地 | plan 头部声明 `execution: inline|subagent|mixed`，任务可用 `exec: inline|subagent` 覆盖；`mixed` 下逐任务显式；`[parallel]` 任务文件集必须两两不交；`subagent` 任务必须带 `files` 与 `acceptance`（子代理需独立完成并自验）。门只校验声明合法与派发前提，不替人挑模式 | 3 passed；合成仓验证未知模式 / mixed 缺声明 / 并行共享文件 / 子代理缺 acceptance 分别 FAIL；真实仓两个 plan 合规 |
 | 全量回归（T13） | 受限 | 收口集（契约/授权/普查/安全/结构守护/镜像）275 passed，文档断言+trace+任务契约 38 passed；环境层新发现 pytest 9.2.0 被默认装入（与锁 `pytest<9` 不符），已回锁 8.4.2 并补 pytest-cov。剩余硬限制仍是内存：cgroup 4GB 无 swap，单进程 19%、70 文件分块 83% 被 OOM 杀（EXIT=137；CI 专门加 swap） | 需 swap/更大内存或继续分块 |
 | ws35 真跑（50 轮） | 阻塞 | 书生凭证 401，无法产生真实 `results.json` | 凭证恢复后重跑 |
 | 冻结真值审计 | 待做 | 依赖 ws35 产物 | 数值容差 + 假设判定 + 行数 |
