@@ -94,43 +94,58 @@ milestone: M-INT1（A轨）、M-INT2（B轨）、M-INT3（C轨）、M-INT4（D�
   goal: 三份契约文档与 http_field golden 与代码重新对齐, 逐行评审 diff
   files: `docs/plugins-contract.md`、`docs/events-contract.md`、`docs/errors-contract.md`、`tests/golden/field_audit/http_field.json`
   acceptance: `pytest tests/test_config_contracts.py tests/test_contract_audit.py -q` → 140 passed; diff 仅为行号位移, 无语义变化
+  spec: `#c-文档被断言或删除`
 
 - [x] T15: 授权强度 + observe 影子档
   goal: `PermissionResult.strength` 三档 (IGNORE/INFERRED/EXPLICIT); `HUGINN_APPROVE_MODE` 新增 `observe`, 只拦 `auto_approve_all` 把 ASK 工具推断放行的那一类; 决策日志只记参数键名, 不记值
   files: `huginn/core_types.py`、`huginn/permissions.py`、`huginn/tools/adapter.py`、`tests/test_approval_strength.py`
   acceptance: 授权/安全探针 28 passed; 默认 `workspace` 行为与 `autoloop_auto_approve` 不变
-  spec: dsh `002-authorization` / `003-execution` (外部参考)
+  spec: `#b-默认拒绝安全基线`
+  external: dsh `002-authorization` / `003-execution`
 
 - [x] T16: 模块普查双向门
   goal: 登记表 ↔ 代码树双向相等 (漏登记与幽灵行都失败); 裁决必须属 KEEP/MOVE/SUSPECT/DELETE/ENTRY 且带理由; KEEP/MOVE 必须引用证据
   files: `research/huginn_module_census.csv`、`tests/test_module_census.py`
   acceptance: 4 passed; 首跑即抓出 `task_contract`/`trace` 漏登记, 已补齐两行
-  spec: dsh `tests/docs.spec.ts` (外部参考)
+  spec: `#e-结构登记与流程门`
+  external: dsh `tests/docs.spec.ts`
 
 - [x] T17: 模型面字符预算 (observe 阶段)
   goal: 移植 dsh `model-surface.spec.ts` 的度量原则 —— 模型能看到的 prompt 段与工具定义逐条收集, 检查空描述/占位标记, `KNOWN_FAILURES` 双向核对; 预算先 observe 只测不判
   files: `tests/test_model_surface.py`
   acceptance: 2 passed; 实测 main prompt 9765 / s7 11491 / autoloop 7236 字符, 工具定义 217685 字符 (125 个可见工具); `BUDGET` 为空, 不产生硬红
   next: 观察期结束后在 `BUDGET` 填入实测上限 (只减不增); 可选工具依赖装齐后需重测, 因其会进入可见面
-  spec: dsh `tests/model-surface.spec.ts` (外部参考)
+  spec: `#f-模型面度量`
+  external: dsh `tests/model-surface.spec.ts`
 
 - [x] T18: 规则版本化 + resume 前再验证
   goal: standing rule 绑定策略版本, `bump_policy_version()` 递增即作废旧批准并清理; checkpoint resume 恢复状态后先递增策略版本, 旧批准不得因恢复而获得新效力 (fail-closed)
   files: `huginn/permissions.py`、`huginn/runtime/checkpoint.py`、`tests/test_approval_strength.py`
   acceptance: 授权强度/常驻规则/凭证恢复 43 passed; 镜像漂移 2 passed; `is_granted` 只认当前版本
-  spec: dsh `002-authorization` (外部参考)
+  spec: `#b-默认拒绝安全基线`
+  external: dsh `002-authorization`
 
 - [x] T19: 注释卫生门
   goal: 注释只解释 why/约束, 禁止 changelog 式叙述与任务号考古; tokenize 只扫 COMMENT (字符串不误伤), `comment-ok` 显式豁免; 存量基线只减不增
   files: `tests/test_comment_hygiene.py`、`huginn/permissions.py`、`huginn/runtime/checkpoint.py`
   acceptance: 2 passed; 存量 151 处 / 62 文件; 本次清理授权与检查点文件, 新增违规即红
-  spec: dsh `docs.spec` (外部参考)
+  spec: `#e-结构登记与流程门`
+  external: dsh `docs.spec`
 
 - [x] T20: 静默异常全树门 + trace 默认化
   goal: AST 统计 `huginn/` 全树「真正静默」except (≤2 条简单语句且无 raise/warning 日志/print), 基线只减不增; `HUGINN_TRACE` 默认 true (`=0` 关闭), 让「KEEP 但零执行」持续可见
   files: `tests/test_silent_exceptions.py`、`huginn/env_schema.py`、`huginn/trace.py`、`tests/test_trace.py`
   acceptance: 静默门 2 passed (基线 427 处 / 224 文件); trace 4 passed; env 契约重生成 `HUGINN_TRACE=True`; 镜像 0 漂移
-  spec: dsh `003-execution` (外部参考)
+  spec: `#d-执行覆盖度量`
+  external: dsh `003-execution`
+
+## 流程
+
+- [x] T21: spec → plan → 开工门
+  goal: 每个 plan 头部必须声明 `spec:` 指向 `docs/staging/specs/*.md`; 每个任务必须带 `spec:` 锚点且该节真实存在; spec 必须有边界节; 否则 plan 不合法、不得开工
+  files: `tests/test_workflow_gate.py`、`docs/staging/specs/2026-10-31-structural-integrity-repairs.md`、`docs/staging/plans/2026-10-31-structural-integrity-repairs.md`
+  acceptance: 流程门 2 passed; 合成仓验证缺 spec / 幽灵锚点 / 缺边界节分别 FAIL; 真实仓 T1–T21 全部带本地锚点
+  spec: `#e-结构登记与流程门`
 
 ## 收口
 

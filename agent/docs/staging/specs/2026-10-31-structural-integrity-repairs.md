@@ -38,16 +38,37 @@ contract:`docs/*.md` 首行三类标记之一 —— `<!-- generated: <cmd> -->`
 
 ## D. 执行覆盖度量
 
-contract:`HUGINN_TRACE=1` 时 `sys.setprofile` 采样,落 `<workspace>/trace.json`:每模块调用计数 + 未执行清单
+contract:`HUGINN_TRACE` 默认开,`=0` 显式关闭;`sys.setprofile` 采样,落 `<workspace>/trace.json`:每模块调用计数 + 未执行清单
 - 输入对照:`research/huginn_module_census.csv`(123 顶层,97 KEEP)
 - invariant:一次真实运行后,「KEEP 但零执行」的模块必须可被列出;不产生 trace 时不得声称已度量
-- test:用 offline provider 跑 2 轮微型任务 → trace.json 含 engine/autoloop,counter>0;不含 `pet`
+- test:用 offline provider 跑 2 轮微型任务 → trace.json 含 engine/autoloop,counter>0;不含 `pet`;`HUGINN_TRACE=0` 时不落文件
+
+## E. 结构登记与流程门
+
+contract:
+- 模块普查双向门:census 与真实目录/注册表对齐,漏登记与幽灵行都 FAIL
+- 注释卫生:注释只写 why/约束;禁止 changelog(`以前/旧实现/早期`)与任务号考古(`P4-2:`);`comment-ok` 显式豁免;基线只减不增
+- 流程门:每个 plan 必须在头部声明 `spec:` 指向 `docs/staging/specs/*.md`;每个任务必须带 `spec:` 字段,内容为 `#section` 锚点且该节真实存在;缺任一即不得开工
+- 边界:spec 必须包含边界节(`非目标` / `deferred` / `failure modes` / `out of scope`)
+- test:`tests/test_comment_hygiene.py`、`tests/test_silent_exceptions.py`、`tests/test_workflow_gate.py` 全绿;故意写一条 `P4-9:` 注释、或任务漏写 spec 锚点 → FAIL
+
+## F. 模型面度量
+
+contract:用真实 prompt 段渲染 + 真实 `ToolRegistry` 工具定义度量字符预算(与 LLM 收到的字节一致);空描述/占位标记硬判
+- 冻结前只测不判;观察期后把实测上限写入 `BUDGET`,之后只减不增
+- test:`tests/test_model_surface.py`;实测 main 9765 / s7 11491 / autoloop 7236 字符,工具定义 217685 字符(125 可见工具)
 
 ## failure modes
 
 - contract.json 手改与 objective 冲突 → 拒绝启动(不猜)
 - 无 landlock 的容器/CI → 显式 `HUGINN_UNSAFE_ENV=1` 才可跑,并在 results 里记 `unsafe: true`
 - trace 采样开销过大 → 仅按文件计数,不记录参数
+
+## 非目标
+
+- 不做 git hook / CI 强制;门只做仓内可执行断言,流程靠 spec → plan → 开工的顺序文件留下证据
+- 不一次清空存量:151 处注释考古与 427 处静默异常先冻结基线,分批收敛
+- 不复制 dsh 代码,只移植其门的原则
 
 ## deferred
 

@@ -1,5 +1,7 @@
 # Residual risk fixes (ws9/ws10 follow-up)
 
+workflow-exempt: legacy plan, 对应 spec 未归档到 `docs/staging/specs/`; 新任务仍须走 spec → plan → 开工.
+
 来源：书生实战 10 轮（`research/shusheng_run/ws*`）暴露的 6 条残余风险。
 纪律：每条先写失败测试（RED），最小实现（GREEN），再重构与同步文档。
 
