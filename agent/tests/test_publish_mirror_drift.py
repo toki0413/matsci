@@ -1,3 +1,4 @@
+# governance-gate
 """publish/mcpb 打包镜像的漂移棘轮 (only-shrink).
 
 ``publish/mcpb/{capabilities,workflows}-mcp/`` 各自内嵌一份 ``huginn`` 源码副本.

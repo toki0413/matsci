@@ -57,6 +57,12 @@
 - **确定性输出**: 固定列序 + 字典序, 跨机逐字一致.
 - **只提示不判死**: 硬判定交给 `tests/test_arch_gate_registry.py`.
 
+门族识别是**文件名 + 登记表**两条腿, 都会因改名而漏 (参见
+`tests/test_arch_gate_ownership.py`: 治理门首行自带 ``# governance-gate`` 标记,
+标记集合与登记集合双向闭合, 再校验每个门有 full-suite-only 或 workflow 归属).
+全仓 lint 存量违规另由 `tests/ruff_baseline.json` + `tests/test_arch_ruff_baseline.py`
+做 per-file only-shrink 棘轮.
+
 重生成: ``python -m huginn.cli.governance_audit --out docs/governance-state.md``.
 """
 
@@ -86,6 +92,10 @@ FULL_SUITE_ONLY = frozenset(
         # 全量套件兜底. 三者分别锁住「未登记即静默漂移」的三个面.
         "tests/test_arch_catalog_handles.py",
         "tests/test_arch_package_exports.py",
+        # 治理门自标记 / 归属台账 (防"改名即逃逸") 与全仓 lint 棘轮: weightless,
+        # 全量套件兜底 (lint 棘轮跑 ruff, 属全仓审计而非快速失败门).
+        "tests/test_arch_gate_ownership.py",
+        "tests/test_arch_ruff_baseline.py",
         # 治理元门 (契约漂移 / MECE 审计 / 环境面棘轮 / ponytail 债清单 / 镜像漂移):
         # 均为重型治理自检, 跑全量套件兜底; 显式声明后不再判为孤儿门.
         "tests/test_config_contracts.py",
@@ -93,6 +103,10 @@ FULL_SUITE_ONLY = frozenset(
         "tests/test_env_surface_governance.py",
         "tests/test_ponytail_debt_registry.py",
         "tests/test_publish_mirror_drift.py",
+        # 事实面契约门 (文档断言 / 输出面段契约 / 静默异常棘轮): 全量套件兜底.
+        "tests/test_doc_assertions.py",
+        "tests/test_model_surface_contract.py",
+        "tests/test_silent_exceptions.py",
         # prompt「声明↔生效」一致性门 (本 spec 落地): weightless, 全量套件兜底.
         # 注: 钩子事件面「声明↔触发↔注册」已有 tests/test_contract_audit.py 全量覆盖
         # (build_hook_contract 逐事件判 wired/trigger-only), 不再新建重复门 —— 单一来源.
@@ -111,6 +125,10 @@ GOVERNANCE_META_TESTS = frozenset(
         "tests/test_ponytail_debt_registry.py",
         "tests/test_publish_mirror_drift.py",
         "tests/test_prompt_contract.py",
+        # 事实面契约门 (文档断言 / 输出面段契约 / 静默异常棘轮): 同样受孤儿门判据约束.
+        "tests/test_doc_assertions.py",
+        "tests/test_model_surface_contract.py",
+        "tests/test_silent_exceptions.py",
     }
 )
 

@@ -1,3 +1,4 @@
+# governance-gate
 """Catalog handle 契约门 —— kind / 采集器 / handle 派生三方闭合.
 
 Critical 形态: `discover_all` 是覆盖式采集, 某个 kind 的 handle 没传 → 该 kind 返回

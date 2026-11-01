@@ -1,3 +1,4 @@
+# governance-gate
 """低熵治理台账 (governance_audit) 的门禁自检.
 
 治理层自身的熵: **门存在却未登记 / CI step 指向不存在的测试 / CLI 门指向已删模块 /

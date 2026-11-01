@@ -38,6 +38,7 @@
 | `tests/test_arch_config_migration.py` | 是 | `fast-fail-guard` | Config migration guard |
 | `tests/test_arch_credential_gateway.py` | 是 | `fast-fail-guard` | Credential gateway guard |
 | `tests/test_arch_endpoint_contract.py` | 是 | `fast-fail-guard` | Endpoint contract guard |
+| `tests/test_arch_gate_ownership.py` | 是 | `full-suite-only` | — |
 | `tests/test_arch_gate_registry.py` | 是 | `fast-fail-guard` | Governance gate registry guard |
 | `tests/test_arch_matdb_dep.py` | 是 | `fast-fail-guard` | Mat-DB real MP dependency guard |
 | `tests/test_arch_mcp_governance.py` | 是 | `fast-fail-guard` | MCP single-gateway guard |
@@ -48,18 +49,22 @@
 | `tests/test_arch_package_exports.py` | 是 | `full-suite-only` | — |
 | `tests/test_arch_plugin_governance.py` | 是 | `fast-fail-guard` | Plugin admission guard |
 | `tests/test_arch_rag_memory_seam.py` | 是 | `full-suite-only` | — |
+| `tests/test_arch_ruff_baseline.py` | 是 | `full-suite-only` | — |
 | `tests/test_arch_seam_integrity.py` | 是 | `full-suite-only` | — |
 | `tests/test_arch_single_gateway.py` | 是 | `fast-fail-guard` | Architecture single-gateway guard |
 | `tests/test_arch_skill_pool_bridge.py` | 是 | `fast-fail-guard` | Skill pool bridge guard |
 | `tests/test_arch_tools_direction.py` | 是 | `full-suite-only` | — |
 | `tests/test_config_contracts.py` | 否 | `full-suite-only` | — |
 | `tests/test_contract_audit.py` | 否 | `full-suite-only` | — |
+| `tests/test_doc_assertions.py` | 否 | `full-suite-only` | — |
 | `tests/test_env_surface_governance.py` | 否 | `full-suite-only` | — |
 | `tests/test_mechanics.py` | 否 | `fast-fail-guard` | Run 7 historical-fix regression tests |
+| `tests/test_model_surface_contract.py` | 否 | `full-suite-only` | — |
 | `tests/test_naturebench.py` | 否 | `fast-fail-guard` | NatureBench repro gate |
 | `tests/test_ponytail_debt_registry.py` | 否 | `full-suite-only` | — |
 | `tests/test_prompt_contract.py` | 否 | `full-suite-only` | — |
 | `tests/test_publish_mirror_drift.py` | 否 | `full-suite-only` | — |
+| `tests/test_silent_exceptions.py` | 否 | `full-suite-only` | — |
 | `tests/test_testclient_hygiene.py` | 否 | `fast-fail-guard` | TestClient hygiene guard |
 
 ## CLI 门 (cli gates)
@@ -172,7 +177,7 @@ prompt 段的**声明面** (`prompt_segments._SEGMENT_SPECS`: 段名 -> 必须�
 | 插件准入清单 | `tests/test_arch_plugin_governance.py` | 引用 | 2 项 | — | — | Plugin admission guard |
 | 硬编码路径白名单 | `tests/test_arch_no_hardcoded_paths.py` | 引用 | 7 项 | — | — | No-hardcoded-machine-paths guard |
 | MCP 接线白名单 | `tests/test_arch_mcp_governance.py` | 引用 | 7 项 | — | — | MCP single-gateway guard |
-| arch 门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 17 | 19 | 2 | Governance gate registry guard |
+| arch 门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 17 | 21 | 4 | Governance gate registry guard |
 | CLI 门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 2 | 2 | 0 | Governance gate registry guard |
 | 本地门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 5 | 5 | 0 | Governance gate registry guard |
 | 工程门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 21 | 21 | 0 | Governance gate registry guard |

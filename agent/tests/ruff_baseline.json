@@ -1,0 +1,15 @@
+{
+  "files": {
+    "huginn/autoloop/deliverables.py": 1,
+    "huginn/autoloop/exec_observation.py": 1,
+    "huginn/autoloop/hypothesis_loop.py": 1,
+    "huginn/autoloop/plan_check.py": 1,
+    "huginn/autoloop/replay_audit.py": 8,
+    "huginn/run_cognitive_driver.py": 1,
+    "huginn/task_contract.py": 1,
+    "tests/loops/test_structural_guards.py": 11,
+    "tests/test_module_census.py": 1
+  },
+  "ruff_version": "0.16.10",
+  "total": 26
+}

@@ -1,3 +1,4 @@
+# governance-gate
 """架构门禁：单网关分层检查 (ADR-0001)。
 
 强制规则 (CI fast-fail)：

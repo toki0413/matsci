@@ -1,3 +1,4 @@
+# governance-gate
 """端点契约门禁：CLI 引用的 /v1 端点必须存在于后端 OpenAPI schema。
 
 规则 (CI fast-fail)：

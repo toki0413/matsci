@@ -1,3 +1,4 @@
+# governance-gate
 """prompt 面「声明 ↔ 生效」一致性门 (prompt contract).
 
 治理层把 prompt 段建模为"注册面 ↔ 生效面": `prompt_segments.register_prompt_segment`

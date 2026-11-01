@@ -1,3 +1,4 @@
+# governance-gate
 """全局导入环棘轮 (only-shrink) —— 锁住"纠缠度不许增长".
 
 **口径**: 只测**模块 import 时真正会执行**的 import 组成的环 (即"import 会炸 /

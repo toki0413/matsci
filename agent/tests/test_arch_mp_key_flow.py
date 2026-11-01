@@ -1,3 +1,4 @@
+# governance-gate
 """制度化闭环：Materials Project API key 前端配置 → 后端 → mat-db MCP env 链路。
 
 用户在设置面板填 MP_API_KEY → 保存 → /config → HuginnConfig.mp_api_key →

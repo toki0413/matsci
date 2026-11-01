@@ -1,3 +1,4 @@
+# governance-gate
 """共享缝防腐蚀边界门禁（发现②治理 · invariant-lock 回归测试）.
 
 锁两条不变量：

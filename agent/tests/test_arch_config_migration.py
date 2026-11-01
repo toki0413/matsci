@@ -1,3 +1,4 @@
+# governance-gate
 """配置 schema 迁移门禁：版本递增必须配套迁移函数。
 
 规则 (CI fast-fail)：

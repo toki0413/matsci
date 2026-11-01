@@ -1,3 +1,4 @@
+# governance-gate
 """架构门禁：禁止机器特定硬编码路径 (ADR-0001 配套)。
 
 强制规则 (CI fast-fail)：

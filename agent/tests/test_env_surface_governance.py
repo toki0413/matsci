@@ -1,3 +1,4 @@
+# governance-gate
 """配置面治理测试: 单一权威声明 + 只减不增的裸读棘轮.
 
 见 :mod:`huginn.env_schema` 的模块 docstring. 本测试把配置面从"无治理的散读"

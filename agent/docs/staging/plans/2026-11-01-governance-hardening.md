@@ -43,3 +43,15 @@ spec: [2026-11-01-governance-hardening](../specs/2026-11-01-governance-hardening
   files: huginn/cli/governance_audit.py, docs/governance-state.md, publish/mcpb/**
   acceptance: `python -m pytest tests/test_arch_gate_registry.py tests/test_contract_audit.py tests/test_doc_assertions.py tests/test_publish_mirror_drift.py -q -o addopts="" && python -m ruff check .`
   spec: #验收
+
+- [x] T8: 治理门自标记与归属
+  goal: 门改名不再逃逸；标记与登记双向闭合，每个门有归属。
+  files: huginn/cli/governance_audit.py, tests/test_arch_gate_ownership.py, tests/**
+  acceptance: `python -m pytest tests/test_arch_gate_ownership.py -q -o addopts=""`
+  spec: #d7-治理门自标记与归属
+
+- [x] T9: 全仓 lint 棘轮
+  goal: 逐文件存量违规只减不增，基线外文件零违规。
+  files: tests/ruff_baseline.json, tests/test_arch_ruff_baseline.py
+  acceptance: `python -m pytest tests/test_arch_ruff_baseline.py -q -o addopts=""`
+  spec: #d8-全仓-lint-棘轮

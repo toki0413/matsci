@@ -65,9 +65,29 @@ milestone: 无 (单批治理加固, 不跨里程碑)
 - 不引入新依赖。
 - 不改任何生产行为（D2 的未知 handle 拒绝除外，属错误路径收紧）。
 
+## 追加 (2026-11-01, 第二轮): 机制闭环
+
+### D7. 治理门自标记与归属
+
+- contract: 治理门首行自带 `# governance-gate`；标记集合与登记集合
+  （arch 族 ∪ `FULL_SUITE_ONLY` ∪ `GOVERNANCE_META_TESTS`）双向闭合；
+  引用治理锚点（`governance_audit` / `doc_assertions` / `SURFACE_SPECS` /
+  `KIND_HANDLE_SPECS` / `BUNDLE_MANIFEST` / `silent_exceptions_baseline`）的
+  测试必须带标记。
+- invariant: 改名不再逃逸；每个门有归属（full-suite-only 或 workflow guard）。
+- test: `tests/test_arch_gate_ownership.py`。
+
+### D8. 全仓 lint 棘轮
+
+- contract: `tests/ruff_baseline.json` 冻结逐文件存量违规数；ruff 版本记录在案。
+- invariant: 单文件违规数只减不增；基线外文件任何违规即红；总数只减不增；
+  版本不一致时 skip（规则集不可比）。
+- test: `tests/test_arch_ruff_baseline.py`。
+
 ## 验收
 
 六个门全绿 + 既有门不回归 + ruff 全绿 + `docs/governance-state.md` 重生成一致。
+追加后: D7/D8 两个门绿 + 既有门不回归 + 镜像零漂移。
 
 ## Working notes
 

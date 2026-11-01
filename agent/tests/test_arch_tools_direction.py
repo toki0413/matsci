@@ -1,3 +1,4 @@
+# governance-gate
 """工具层的重编排受控 — 顶层 import 不得直连运行时核心.
 
 对齐 ApxInf 的 "backend crates never import model concepts" 精神: `huginn/tools/`

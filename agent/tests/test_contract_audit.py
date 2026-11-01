@@ -1,3 +1,4 @@
+# governance-gate
 """MECE 契约审计 (contract_audit) 自检.
 
 两类断言:
