@@ -1,16 +1,11 @@
-"""Ponytail plugin — enforces a lazy-engineer decision ladder.
+"""Ponytail plugin — lazy-engineer decision ladder as commands + audit.
 
-Integrates the ponytail behavior-constraint rules into Huginn's LLM
-pipeline.  The core mechanism is a 7-rung ladder that the LLM must
-climb before writing any code: YAGNI → stdlib → platform → existing dep
-→ one-liner → minimal new code.  This eliminates over-engineering at
-the prompt level rather than post-hoc review.
-
-Modes:
-  lite  — build what's asked, name the lazier alternative
-  full  — ladder enforced, stdlib/native first (default)
-  ultra — YAGNI extremist, deletion before addition
-  off   — no injection
+The ladder text the model reads lives in ``SKILL.md`` and reaches the
+model through the skill loader.  This plugin adds the runtime half:
+mode state (lite/full/ultra/off) persisted in plugin storage, plus
+``/ponytail-review`` / ``/ponytail-audit`` AST scans for
+over-engineering in the workspace.  Mode is reported on demand; it is
+not injected into the system prompt.
 
 Commands:
   /ponytail [lite|full|ultra|off]  — switch mode
@@ -30,85 +25,15 @@ from pathlib import Path
 from typing import Any
 
 from huginn.api.context import PluginContext
-from huginn.api.event import Event, LLMRequestEvent
+from huginn.api.event import Event
 from huginn.api.filter import filter
 from huginn.api.star import Star
 
 logger = logging.getLogger(__name__)
 
 
-# ── Rule text ────────────────────────────────────────────────────────
-# Adapted from DietrichGebert/ponytail SKILL.md (MIT license).
-# Trimmed to the essential ladder + rules + safety boundaries so it
-# stays under ~800 tokens in the system prompt.
-
-_RULES_LITE = """\
-## Ponytail (lite)
-
-You are a lazy senior developer. Lazy means efficient, not careless.
-Before writing code, consider whether a simpler solution exists:
-stdlib, native platform feature, or existing dependency. If you built
-something complex, name the lazier alternative in one line. User picks.
-"""
-
-_RULES_FULL = """\
-## Ponytail (full)
-
-You are a lazy senior developer. Lazy means efficient, not careless.
-The best code is the code never written.
-
-### The Ladder
-Stop at the first rung that holds:
-1. Does this need to exist? Speculative need = skip it (YAGNI).
-2. Stdlib does it? Use it.
-3. Native platform feature covers it? Use it.
-4. Already-installed dependency solves it? Use it. Never add new deps.
-5. Can it be one line? One line.
-6. Only then: the minimum code that works.
-
-### Rules
-- No unrequested abstractions (interface with one impl, factory for one product).
-- Deletion over addition. Boring over clever.
-- Fewest files possible. Shortest working diff wins.
-- Mark deliberate simplifications with `# ponytail:` comment.
-- Non-trivial logic leaves ONE runnable check behind (assert or test_*.py).
-
-### Never simplify away
-- Input validation at trust boundaries
-- Error handling that prevents data loss
-- Security measures
-- Accessibility basics
-- Anything explicitly requested
-"""
-
-_RULES_ULTRA = """\
-## Ponytail (ultra)
-
-You are a lazy senior developer in YAGNI extremist mode.
-Deletion before addition. Ship the one-liner and challenge the rest.
-
-### The Ladder
-1. Does this need to exist? Probably not. Say so.
-2. Stdlib. Always.
-3. One line if possible.
-4. If code is unavoidable: the absolute minimum.
-
-### Rules
-- No abstractions, ever, unless there are 3+ implementations TODAY.
-- No config files for values that never change.
-- No scaffolding "for later". Later can scaffold for itself.
-- Ship the lazy version, then challenge the requirement in the same breath.
-- Mark simplifications with `# ponytail:` comment naming the ceiling.
-
-### Never simplify away
-- Input validation, error handling, security, accessibility.
-"""
-
-_MODE_MAP: dict[str, str] = {
-    "lite": _RULES_LITE,
-    "full": _RULES_FULL,
-    "ultra": _RULES_ULTRA,
-}
+# Modes accepted by /ponytail; rules text lives in SKILL.md, not here.
+_VALID_MODES = frozenset({"lite", "full", "ultra", "off"})
 
 
 @dataclass
@@ -125,18 +50,18 @@ class PonytailState:
 
 
 class PonytailStar(Star):
-    """Ponytail behavior-constraint plugin.
+    """Ponytail mode state + AST audit commands.
 
-    Hooks into ON_LLM_REQUEST to inject the decision-ladder rules into
-    the system prompt.  Mode is persisted in plugin storage so it
-    survives across sessions.
+    Mode is persisted in plugin storage so it survives across sessions.
+    The rules text itself is a skill (SKILL.md), loaded by the skill
+    loader; this class does not touch the system prompt.
     """
 
     name = "ponytail"
     author = "Huginn Integration"
     version = "1.0.0"
     description = "Enforces a lazy-engineer decision ladder to prevent over-engineering"
-    priority = 50  # Run before most other LLM request handlers
+    priority = 50
 
     def __init__(self, context: PluginContext | None = None) -> None:
         super().__init__(context)
@@ -176,22 +101,6 @@ class PonytailStar(Star):
         except Exception:
             logger.debug("persist failed", exc_info=True)
 
-    # ── LLM prompt injection ──────────────────────────────────────────
-
-    @filter.on_llm_request()
-    async def inject_rules(self, event: LLMRequestEvent) -> None:
-        """Inject ponytail rules into the system prompt based on current mode."""
-        if self._state.mode == "off":
-            return
-        rules = _MODE_MAP.get(self._state.mode, _RULES_FULL)
-        # Append rules to the existing system prompt
-        if event.system_prompt:
-            event.system_prompt = event.system_prompt + "\n\n" + rules
-        else:
-            event.system_prompt = rules
-        # Tag context so downstream handlers know ponytail is active
-        event.context["ponytail_mode"] = self._state.mode
-
     # ── Commands ──────────────────────────────────────────────────────
 
     @filter.command("/ponytail")
@@ -213,7 +122,7 @@ class PonytailStar(Star):
             return
 
         new_mode = parts[1].lower()
-        if new_mode not in _MODE_MAP and new_mode != "off":
+        if new_mode not in _VALID_MODES:
             self._set_reply(
                 event, f"Unknown mode '{new_mode}'. Use: lite, full, ultra, off"
             )

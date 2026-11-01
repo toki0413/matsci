@@ -7,19 +7,20 @@
 
 | 段名 | priority | 注册位置 |
 |---|---|---|
-| persona | 10 | agent/prompt_builder.py:412 |
-| core_principles | 11 | agent/prompt_builder.py:414 |
-| behavioral_discipline | 12 | agent/prompt_builder.py:415 |
-| response_format | 13 | agent/prompt_builder.py:416 |
-| mode | 20 | agent/prompt_builder.py:417 |
-| phase | 30 | agent/prompt_builder.py:418 |
-| metacog | 40 | agent/prompt_builder.py:419 |
-| tools | 50 | agent/prompt_builder.py:420 |
-| multimodal | 55 | agent/prompt_builder.py:421 |
-| writing | 60 | agent/prompt_builder.py:422 |
-| multi_agent_protocol | 65 | agent/prompt_builder.py:423 |
-| thinking | 100 | agent/prompt_builder.py:425 |
-| safety | 200 | agent/prompt_builder.py:426 |
+| persona | 10 | agent/prompt_builder.py:419 |
+| core_principles | 11 | agent/prompt_builder.py:421 |
+| behavioral_discipline | 12 | agent/prompt_builder.py:422 |
+| response_format | 13 | agent/prompt_builder.py:423 |
+| mode | 20 | agent/prompt_builder.py:424 |
+| phase | 30 | agent/prompt_builder.py:425 |
+| metacog | 40 | agent/prompt_builder.py:426 |
+| mechanisms | 45 | agent/prompt_builder.py:427 |
+| tools | 50 | agent/prompt_builder.py:428 |
+| multimodal | 55 | agent/prompt_builder.py:429 |
+| writing | 60 | agent/prompt_builder.py:430 |
+| multi_agent_protocol | 65 | agent/prompt_builder.py:431 |
+| thinking | 100 | agent/prompt_builder.py:433 |
+| safety | 200 | agent/prompt_builder.py:434 |
 
 ### Compaction 策略 (形态 B)
 
@@ -37,7 +38,7 @@
 
 | 事件 | handler | 注册位置 |
 |---|---|---|
-| on_llm_request | inject_rules | plugins/ponytail/main.py:181 |
+| — |
 
 ### 内置默认策略值 (无第三方接入时生效)
 

@@ -64,8 +64,8 @@
 | `three_cabin` | False | 三舱模型 (HUGINN_USE_THREE_CABIN) | HUGINN_USE_THREE_CABIN | autoloop/cognitive_loop.py:3596 |
 | `tool_call_router` | True | 重型工具 sanity check 路由 | — | agents/tool_call_router.py:124 |
 | `trace_inspect` | False | 模型侧过程级 trace 检索 mode: 按关键词/tool/intent recall 过往执行 (VISTA inspect 借鉴, 默认关) | HUGINN_TRACE_INSPECT | autoloop/plan_check.py:588, autoloop/plan_check.py:614 |
-| `use_atomworld` | False | AtomWorld 环境 (HUGINN_USE_ATOMWORLD) | HUGINN_USE_ATOMWORLD | agent/code_act_loop.py:360, agent/code_act_loop.py:402 |
-| `use_cognitive_map` | False | 认知地图 (HUGINN_USE_COGNITIVE_MAP) | HUGINN_USE_COGNITIVE_MAP | agent/code_act_loop.py:372, agent/code_act_loop.py:424, runtime/engine_state.py:251 |
+| `use_atomworld` | False | AtomWorld 环境 (HUGINN_USE_ATOMWORLD) | HUGINN_USE_ATOMWORLD | agent/code_act_loop.py:376, agent/code_act_loop.py:418 |
+| `use_cognitive_map` | False | 认知地图 (HUGINN_USE_COGNITIVE_MAP) | HUGINN_USE_COGNITIVE_MAP | agent/code_act_loop.py:388, agent/code_act_loop.py:440, runtime/engine_state.py:251 |
 | `visual_frame_memory` | False | 无损观测记忆: 每次 execute 的视觉帧原样落盘 + frame_inspect 区域回看/read_pixels (VISTA 借鉴, 默认关) | HUGINN_VISUAL_FRAME_MEMORY | autoloop/plan_check.py:590, autoloop/plan_check.py:621 |
 | `world_model` | True | 世界模型 (HUGINN_WORLD_MODEL) | HUGINN_WORLD_MODEL | autoloop/engine_observe.py:358 |
 

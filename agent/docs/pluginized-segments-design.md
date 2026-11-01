@@ -10,7 +10,7 @@
 
 **"Everything is a plugin" 转译: 任何一段可独立启停、可替换、可由第三方扩展的能力, 都注册为插件。**
 
-对 prompt 体系: prompt 段是注册在 `on_llm_request` 事件上的 handler, 按 priority 依次在 `system_prompt` 上 append。段之间不再有核心依赖, 第三方可以注册自己的段而不改一行核心代码。
+对 prompt 体系: prompt 段是注册在策略注册表(形态 B)里的同步渲染函数, 由 `render_prompt_segments_for_path` 按 priority 依次拼接成 system prompt。段之间不再有核心依赖, 第三方可以注册自己的段而不改一行核心代码。
 
 对工具 / 记忆 / 压缩等系统: 同理, 把"策略分歧点"抽象成可插拔单元。
 
@@ -22,7 +22,7 @@
 
 | 形态 | 机制 | 适用场景 | 例子 |
 |---|---|---|---|
-| **形态 A: 事件钩子** | `@filter.on_xxx(priority=N)` 注册 async handler, 可改事件对象, 可 `event.stop()` 阻断 | 有生命周期、需要顺序 + 阻断、粒度到单次发生时 | prompt 段、工具调用拦截、on_tool_respond |
+| **形态 A: 事件钩子** | `@filter.on_xxx(priority=N)` 注册 async handler, 可改事件对象, 可 `event.stop()` 阻断 | 有生命周期、需要顺序 + 阻断、粒度到单次发生时 | 工具调用拦截、on_tool_respond |
 | **形态 B: 策略注册表** | `dict[str, Callable]` + priority, 选一个策略执行, 无副作用事件流 | 性能敏感、纯策略选择、无嵌套副作用 | compaction policy、tool result 压缩、记忆整理、沙箱选择 |
 
 **选择判据:**

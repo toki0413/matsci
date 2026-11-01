@@ -38,6 +38,7 @@ _PRIORITY = {
     "mode": 20,
     "phase": 30,
     "metacog": 40,
+    "mechanisms": 45,  # 机制普查: 紧接 metacog 之后, 先于 tools/writing
     "tools": 50,
     "multimodal": 55,  # 多模态引导: 紧挨 tools, 先于 writing
     "writing": 60,  # 写作引导: 夹在 tools 与 thinking 之间
@@ -77,6 +78,9 @@ _APPLIES_TO: dict[str, tuple[str, ...]] = {
     "mode": ("s7",),
     "phase": ("s7",),
     "metacog": ("s7",),
+    # 机制普查 (Catalog 投影): 三条路径都必须让模型知道有哪些可用机制,
+    # 否则自主循环与主会话都在「看不见 ≠ 不存在」上失明.
+    "mechanisms": ("main", "s7", "autoloop"),
     "tools": ("s7",),
     # 以下三段此前只在 s7 生效, 主路径静默缺席 (反防御写作 / 多模态引导 / 外部思考):
     # 声明进 main 后由 render_prompt_segments_for_path("main") 真正注入.

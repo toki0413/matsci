@@ -36,7 +36,21 @@ execution: inline
 ## E 收编台账
 
 - [x] T5: 组装根台账（只减不增）
-  goal: 扫描 `agent/autoloop/agents/coder/interaction` 中直接构造 `SystemMessage(content=...)` 的文件，双向核对 15 个已登记根
+  goal: 扫描 `agent/autoloop/agents/coder/interaction`，双向核对未用 `compose()` 的 `SystemMessage(content=...)` 根
   files: `tests/test_model_surface_contract.py`、`huginn/cli/governance_audit.py`、`docs/governance-state.md`
-  acceptance: 新增一个 SystemMessage 文件 → 门红；`PROMPT_SPECS`=14 与注册表一致；`governance-state.md` 重生成后逐字一致
+  acceptance: 新增一个字符串根 → 门红；`PROMPT_SPECS`=14 与注册表一致；`governance-state.md` 重生成后逐字一致
   spec: `#e-收编台账`
+
+## F 第二批迁移与顽疾核查
+
+- [x] T6: CodeAct 并入表示层，披露覆盖第四条路径
+  goal: `_build_surface` 具名分段、`_build_system_prompt` 只 `render()`；`mechanisms` 段进 CodeAct；台账 15 → 14
+  files: `huginn/agent/code_act_loop.py`、`tests/test_model_surface_contract.py`、`docs/env-contract.md`、`docs/feature-flags-contract.md`
+  acceptance: 剔除 mechanisms 段后 sha256 不变（后缀关 802/a4ca1cf93cbea693、后缀开 1852/b0d5d717b2ca6bf5）；`test_codeact_path_discloses_mechanisms` 与台账双向核对全绿；两份行号类生成文档重生成后逐字一致
+  spec: `#f-第二批迁移与顽疾核查`
+
+- [x] T7: 删除 ponytail 的 on_llm_request 死钩子
+  goal: 移除从未生效的 `inject_rules`、`inject_system_prompt` 配置承诺与对应测试，不改任何 prompt 字节
+  files: `huginn/plugins/ponytail/main.py`、`huginn/plugins/ponytail/_conf_schema.json`、`tests/test_ponytail_plugin.py`、`docs/plugins-contract.md`、`docs/pluginized-segments-design.md`
+  acceptance: `collect_handlers()` 只含 `ON_MESSAGE_RECEIVED`；`docs/plugins-contract.md` 重生成后事件钩子表为空且含 `mechanisms` 行；`test_ponytail_plugin` / `test_model_surface_contract` / `test_doc_assertions` 全绿
+  spec: `#f-第二批迁移与顽疾核查`

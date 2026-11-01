@@ -18,7 +18,7 @@
 | `HUGINN_ALLOW_UNCONTRACTED` | False | run_cognitive_driver.py:35 | — | external |
 | `HUGINN_ALLOW_UNRESTRICTED_READ` | '' | routes/fs.py:60, tools/file_read_tool.py:100, tools/sci/xrd_sim_tool.py:395 | — | external |
 | `HUGINN_API_KEY` | '' | bench/llm_judge.py:179, cli/availability.py:49, config.py:682, +3 处 | bench/llm_judge.py:363, bench/runner.py:957, bench/llm_judge.py:350, bench/runner.py:942 | code-set |
-| `HUGINN_APPROVAL_MODE` | '' | agent/code_act_loop.py:997, agent/core.py:561 | — | external |
+| `HUGINN_APPROVAL_MODE` | '' | agent/code_act_loop.py:1013, agent/core.py:561 | — | external |
 | `HUGINN_APPROVE_MODE` | '' | permissions.py:132, permissions.py:133 | — | external |
 | `HUGINN_ATOMWORLD_DATA_DIR` | ./atomworld_data | bench/atomworld_bench.py:24 | — | external |
 | `HUGINN_AUDIT_SIGNING_KEY` | '' | security/audit.py:683 | — | external |
@@ -52,7 +52,7 @@
 | `HUGINN_CHECKPOINTER_MAX_MESSAGES` | 120 | agent/streaming.py:1432 | — | external |
 | `HUGINN_CHECKPOINTER_PATH` | '' | agent_config.py:154, bench/orchestrator.py:185, checkpointer.py:90, +4 处 | bench/orchestrator.py:539, bench/orchestrator.py:576, bench/orchestrator.py:594, bench/orchestrator.py:514 | code-set |
 | `HUGINN_CI` | '' | tools/sci/gp_tool.py:804 | — | external |
-| `HUGINN_CODEACT_MEM_CAP` | 2147483648 | agent/code_act_loop.py:1092 | — | external |
+| `HUGINN_CODEACT_MEM_CAP` | 2147483648 | agent/code_act_loop.py:1108 | — | external |
 | `HUGINN_CODELAB_REPAIR_ATTEMPTS` | 3 | autoloop/engine_act.py:946 | — | external |
 | `HUGINN_CODELAB_SCAFFOLD` | '' | autoloop/engine_act.py:685 | — | external |
 | `HUGINN_CODELAB_SLICE` | '' | autoloop/engine_control.py:692 | — | external |

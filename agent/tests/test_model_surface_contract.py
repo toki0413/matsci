@@ -155,11 +155,11 @@ def test_always_kinds_are_named_in_census_text() -> None:
 
 
 # ── 组装根台账 (只减不增) ────────────────────────────────────────────────
-# 扫描范围: 参与主对话/子代理/自主循环的包. 每个直接构造 SystemMessage(content=...)
-# 的模块都是一个组装根 —— 它自带一套 prompt, 不经 Surface, 因此模型面在那里是字符串.
-# 新增根 = 新文件出现在集合里 = 红; 迁移一个根就把它从集合里删掉, 只减不增.
+# 扫描范围: 参与主对话/子代理/自主循环的包. 台账收录「构造 SystemMessage(content=...)
+# **且未用 Surface 组装**」的模块 —— 在那里模型面仍是一根字符串, 段名在发送时丢失.
+# 用 compose() 组装并 render() 的根不在台账内 (另由 test_surface_backed_roots_render
+# 防止「调用 compose 却仍拼字符串」蒙混); 新增字符串根 = 红, 迁移一个就摘除一个.
 _LEGACY_SURFACE_ROOTS: dict[str, str] = {
-    "huginn/agent/code_act_loop.py": "CodeAct 单回合循环: 自带工具签名与规则",
     "huginn/agent/core.py": "主会话图装配与 pre-model 钩子注入",
     "huginn/agent/middlewares.py": "规划/前沿任务 SystemMessage 注入",
     "huginn/agent/reflection.py": "反思总结器 (子 LLM)",
@@ -178,26 +178,62 @@ _LEGACY_SURFACE_ROOTS: dict[str, str] = {
 _SCANNED_PACKAGES = ("agent", "autoloop", "agents", "coder", "interaction")
 
 
-def _system_message_root_files() -> set[str]:
-    """在扫描范围内找出所有直接构造 SystemMessage(content=...) 的模块."""
-    found: set[str] = set()
+def _scan_candidates() -> list[tuple[str, ast.Module]]:
+    """扫描范围内的全部模块 (rel path + 已解析 AST)."""
+    out: list[tuple[str, ast.Module]] = []
     for path in sorted((_AGENT_ROOT / "huginn").rglob("*.py")):
         rel = path.relative_to(_AGENT_ROOT).as_posix()
         if not any(rel.startswith(f"huginn/{pkg}/") for pkg in _SCANNED_PACKAGES):
             continue
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            out.append((rel, ast.parse(path.read_text(encoding="utf-8"))))
         except SyntaxError:
             continue
-        if any(
-            isinstance(n, ast.Call)
-            and isinstance(n.func, ast.Name)
-            and n.func.id == "SystemMessage"
-            and any(k.arg == "content" for k in n.keywords)
-            for n in ast.walk(tree)
-        ):
-            found.add(rel)
-    return found
+    return out
+
+
+def _has_system_message(tree: ast.Module) -> bool:
+    return any(
+        isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "SystemMessage"
+        and any(k.arg == "content" for k in n.keywords)
+        for n in ast.walk(tree)
+    )
+
+
+def _calls(tree: ast.Module, name: str) -> bool:
+    return any(
+        isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == name
+        for n in ast.walk(tree)
+    )
+
+
+def _calls_render(tree: ast.Module) -> bool:
+    return any(
+        isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "render"
+        for n in ast.walk(tree)
+    )
+
+
+def _surface_backed_root_files() -> set[str]:
+    """构造 SystemMessage 且已用 compose() 组装的模块 (已迁移的根)."""
+    return {
+        rel for rel, tree in _scan_candidates()
+        if _has_system_message(tree) and _calls(tree, "compose")
+    }
+
+
+def _system_message_root_files() -> set[str]:
+    """构造 SystemMessage **却未用 Surface 组装**的模块 —— 未迁移的字符串根."""
+    return {
+        rel for rel, tree in _scan_candidates()
+        if _has_system_message(tree) and not _calls(tree, "compose")
+    }
 
 
 def test_surface_roots_ledger_is_exact() -> None:
@@ -210,7 +246,18 @@ def test_surface_roots_ledger_is_exact() -> None:
         "出现未登记的模型面组装根 (默认不可见 = 复发):\n" + "\n".join(added) +
         "\n要么走 Surface/compose, 要么在 _LEGACY_SURFACE_ROOTS 登记迁移理由"
     )
-    assert not removed, "组装根已消失, 请从 _LEGACY_SURFACE_ROOTS 摘除: " + ", ".join(removed)
+    assert not removed, "组装根已迁移, 请从 _LEGACY_SURFACE_ROOTS 摘除: " + ", ".join(removed)
+
+
+def test_surface_backed_roots_render() -> None:
+    """compose() 组装的根必须真的 render() —— 否则段名仍会在发送前消失."""
+    backed = _surface_backed_root_files()
+    assert backed, "扫描范围内未发现 compose() 组装的根 (表示层未被使用?)"
+    missing_render = sorted(rel for rel, tree in _scan_candidates()
+                            if rel in backed and not _calls_render(tree))
+    assert not missing_render, (
+        f"以下根调用 compose() 却未 render() Surface: {missing_render}"
+    )
 
 
 def test_every_declared_root_file_exists() -> None:
@@ -252,6 +299,22 @@ def test_mechanisms_segment_covers_all_paths() -> None:
 
     paths = set(segment_applicability().get("mechanisms", ()))
     assert {"main", "s7", "autoloop"} <= paths, f"mechanisms 段未覆盖全部生产路径: {paths}"
+
+
+def test_codeact_path_discloses_mechanisms() -> None:
+    """第 4 条生产路径 (CodeAct) 也必须披露机制清单, 不能靠被 main 段覆盖."""
+    try:
+        from huginn.agent.code_act_loop import _build_surface
+    except ImportError as exc:  # 离线环境缺依赖时跳过, 不制造假红
+        pytest.skip(f"code_act_loop 依赖不可用: {exc}")
+
+    class _Tool:
+        description = "demo tool"
+        input_schema = None
+
+    surface = _build_surface({"alpha": _Tool()})
+    assert surface.names() == ("codeact", "atomworld", "cognitive_map", "mechanisms")
+    assert "## MECHANISMS" in surface.render(), "CodeAct 路径未披露机制清单"
 
 
 def test_runtime_sources_are_all_declared(main_surface: Surface) -> None:

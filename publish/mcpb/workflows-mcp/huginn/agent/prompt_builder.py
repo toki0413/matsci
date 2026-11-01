@@ -406,6 +406,13 @@ def _thinking_plugin(mode, phase, metacog_state, system_prompt):
     )
 
 
+def _mechanisms_plugin(mode, phase, metacog_state, system_prompt):
+    """机制普查段: 把 Catalog 已启用接入项投影进 prompt (三路径共用同一实现)."""
+    from huginn.agent.mechanism_census import census_text
+
+    return census_text()
+
+
 def _register_builtin_segments() -> None:
     from huginn.plugins.prompt_segments import register_prompt_segment
 
@@ -417,6 +424,7 @@ def _register_builtin_segments() -> None:
     register_prompt_segment("mode", _mode_plugin)
     register_prompt_segment("phase", _phase_plugin)
     register_prompt_segment("metacog", _metacog_plugin)
+    register_prompt_segment("mechanisms", _mechanisms_plugin)
     register_prompt_segment("tools", _tools_plugin)
     register_prompt_segment("multimodal", _multimodal_plugin)
     register_prompt_segment("writing", _writing_plugin)

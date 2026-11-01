@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from huginn.agent.mechanism_census import census_text
+from huginn.agent.model_surface import Surface, SurfaceSection, compose
 from huginn.core_types import ToolContext
 from huginn.feature_flags import FeatureFlags
 from huginn.security.code_act_sandbox import (
@@ -325,11 +327,11 @@ def _tool_signature(name: str, tool: Any) -> str:
     return f"{name}({inner})  # {desc}"
 
 
-def _build_system_prompt(tools: dict[str, Any]) -> str:
+def _codeact_base_prompt(tools: dict[str, Any]) -> str:
     sigs = "\n".join(
         f"- {name}: {_tool_signature(name, t)}" for name, t in tools.items()
     )
-    prompt = f"""You are Huginn, a research agent running in CodeAct mode.
+    return f"""You are Huginn, a research agent running in CodeAct mode.
 
 In this mode you express every action as a Python code block. The block is
 executed in-process; tools below are available as plain Python functions.
@@ -346,21 +348,35 @@ Rules:
 6. Stay within the working directory. No network, no fork/exec.
 
 Remember: one code block per turn, then stop and wait for the execution result."""
-    # AtomWorld benchmark functions are injected when HUGINN_USE_ATOMWORLD=1.
-    # Surface them in the prompt so the agent knows they exist without dir().
-    prompt += _atomworld_prompt_suffix()
-    # Structure Cognitive Map — explicit 3D coords + adjacency + SE(3) equivariant
-    # queries, opt-in via HUGINN_USE_COGNITIVE_MAP=1. Returns map_id handles so
-    # the agent doesn't dump large structures into the conversation directly.
-    prompt += _cognitive_map_prompt_suffix()
-    return prompt
+
+
+def _build_surface(tools: dict[str, Any]) -> Surface:
+    """CodeAct 模型面: 规则/工具签名 + 可选后缀 + 机制普查, 每段具名可溯源."""
+    return compose([
+        SurfaceSection("codeact", "code_act_loop.prompt", _codeact_base_prompt(tools)),
+        # AtomWorld benchmark functions are injected when HUGINN_USE_ATOMWORLD=1.
+        SurfaceSection(
+            "atomworld", "feature_flags.use_atomworld", _atomworld_prompt_suffix()
+        ),
+        # Structure Cognitive Map — 3D coords + SE(3) queries, HUGINN_USE_COGNITIVE_MAP=1.
+        SurfaceSection(
+            "cognitive_map",
+            "feature_flags.use_cognitive_map",
+            _cognitive_map_prompt_suffix(),
+        ),
+        SurfaceSection("mechanisms", "catalog", census_text()),
+    ])
+
+
+def _build_system_prompt(tools: dict[str, Any]) -> str:
+    return _build_surface(tools).render()
 
 
 def _atomworld_prompt_suffix() -> str:
     if not FeatureFlags.shared().is_enabled("use_atomworld"):
         return ""
     return (
-        "\n\nAtomWorld benchmark tools (plain Python functions in this "
+        "AtomWorld benchmark tools (plain Python functions in this "
         "namespace): atomworld_evaluate(target_cif, generated_output), "
         "atomworld_apply_action(input_cif, action_name, **params), "
         "atomworld_list_actions(). You can also `from atomworld import "
@@ -372,7 +388,7 @@ def _cognitive_map_prompt_suffix() -> str:
     if not FeatureFlags.shared().is_enabled("use_cognitive_map"):
         return ""
     return (
-        "\n\nStructure Cognitive Map tools (3D spatial reasoning, plain "
+        "Structure Cognitive Map tools (3D spatial reasoning, plain "
         "Python functions): cognitive_map_from_cif(cif_str) -> map_id, "
         "cognitive_map_query(map_id, query_type, **params) -> dict "
         "(query_type in distance/angle/neighbors/subgraph/after_rotation/"
