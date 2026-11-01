@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import sys
+from datetime import date
 from pathlib import Path
 
 AGENT_ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +40,7 @@ _GOVERNANCE_ANCHORS = re.compile(
 _GOV = AGENT_ROOT / "huginn" / "cli" / "governance_audit.py"
 _ga_spec = importlib.util.spec_from_file_location("governance_audit", _GOV)
 _ga = importlib.util.module_from_spec(_ga_spec)
+sys.modules[_ga_spec.name] = _ga  # dataclass 需在 sys.modules 里解析模块 (py3.14)
 _ga_spec.loader.exec_module(_ga)
 
 
@@ -101,14 +104,12 @@ def owners_of(rel: str, repo_root: Path = REPO_ROOT) -> list[str]:
 
 
 def gates_without_owner(root: Path = AGENT_ROOT, repo_root: Path = REPO_ROOT) -> list[str]:
-    """带标记却既不在 FULL_SUITE_ONLY、也未被任何 workflow 引用的门."""
+    """带标记却没有强度的门: 既未被 workflow guard 承载, 也非未到期的 OBSERVE/IGNORE."""
     out = []
     for rel in sorted(marked_gates(root)):
-        if rel in set(_ga.FULL_SUITE_ONLY):
-            continue
-        if owners_of(rel, repo_root):
-            continue
-        out.append(rel)
+        guarded = bool(owners_of(rel, repo_root))
+        if _ga.gate_strength(rel, guarded=guarded) is None:
+            out.append(rel)
     return out
 
 
@@ -130,6 +131,49 @@ def test_governance_referencing_tests_are_marked():
 def test_every_marked_gate_has_owner():
     """每个治理门都要有归属: full-suite-only 或某 workflow guard."""
     assert gates_without_owner() == []
+
+
+def test_exemptions_have_evidence_and_ttl():
+    """IGNORE 豁免必须带理由/证据/责任人, 且复核期限未过期 (过期即回孤儿门)."""
+    assert _ga.exemption_errors() == []
+
+
+def test_observations_are_valid():
+    """OBSERVE 影子期: 理由非空、日期合法、未到期 (到期未放权即回孤儿门)."""
+    assert _ga.observation_errors() == []
+
+
+def test_exemption_errors_primitive():
+    """自检: 缺字段 + 复核期过期都必须报错 (防本门对坏台账全绿)."""
+    _ga.EXEMPTIONS["tests/test_bogus.py"] = _ga.Exemption("", "", "", "2020-01-01")
+    try:
+        errors = _ga.exemption_errors(today=date(2026, 11, 1))
+    finally:
+        _ga.EXEMPTIONS.pop("tests/test_bogus.py", None)
+    assert any("缺字段" in e for e in errors)
+    assert any("复核期限" in e for e in errors)
+
+
+def test_observation_errors_primitive():
+    """自检: OBSERVE 缺理由 / 已到期都必须报错."""
+    _ga.OBSERVE_GATES["tests/test_bogus.py"] = _ga.Observation(
+        "", "2026-01-01", "2020-01-01"
+    )
+    try:
+        errors = _ga.observation_errors(today=date(2026, 11, 1))
+    finally:
+        _ga.OBSERVE_GATES.pop("tests/test_bogus.py", None)
+    assert any("缺理由" in e for e in errors)
+    assert any("到期" in e for e in errors)
+
+
+def test_gate_strength_precedence():
+    """强度优先级: ENFORCE > 未到期 OBSERVE > 未到期 IGNORE > 孤儿 (None)."""
+    assert _ga.gate_strength("tests/test_x.py", guarded=True) == "ENFORCE"
+    assert (
+        _ga.gate_strength("tests/test_arch_cleanliness.py", guarded=False) == "IGNORE"
+    )
+    assert _ga.gate_strength("tests/test_unknown.py", guarded=False) is None
 
 
 def test_marker_detection_primitive(tmp_path: Path):

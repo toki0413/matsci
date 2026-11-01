@@ -63,6 +63,10 @@
 全仓 lint 存量违规另由 `tests/ruff_baseline.json` + `tests/test_arch_ruff_baseline.py`
 做 per-file only-shrink 棘轮.
 
+门强度对齐 dsh superagent 的 observe → enforce 生命周期: `EXEMPTIONS` 是带
+理由/证据/责任人/复核期限的租约 (过期回落孤儿门), `OBSERVE_GATES` 是影子期登记;
+强度由 `gate_strength()` 单点判定 (ENFORCE > OBSERVE > IGNORE).
+
 重生成: ``python -m huginn.cli.governance_audit --out docs/governance-state.md``.
 """
 
@@ -72,6 +76,8 @@ import argparse
 import ast
 import logging
 import re
+from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -79,40 +85,220 @@ logger = logging.getLogger(__name__)
 # huginn/cli/governance_audit.py -> parents[2] == agent/ (tests/ 与 docs/ 的宿主).
 AGENT_ROOT = Path(__file__).resolve().parents[2]
 
+# ── 治理门强度 (对齐 dsh superagent 的 observe → enforce 生命周期) ──
+# ENFORCE: 接入任工作流 guard, 快速失败.
+# OBSERVE: 新门影子期, 只入台账不判红; 到期未放权即回落孤儿门.
+# IGNORE : 只靠全量套件兜底 —— **必须带证据与复核期限**, 过期不再豁免.
+GATE_STRENGTHS = ("ENFORCE", "OBSERVE", "IGNORE")
+
+
+@dataclass(frozen=True)
+class Exemption:
+    """IGNORE 强度门的豁免记录: 理由 / 证据 / 责任人 / 复核期限."""
+
+    reason: str
+    evidence: str
+    owner: str
+    recheck_after: str  # ISO 日期; 过期 = 必须复核, 否则不再豁免
+
+
 # 显式声明「只靠全量套件兜底、不做快速失败门」的门测试 (可见决策).
 # 新增 arch / 治理元门若不接入任工作流 guard 且不在此列, 会被判为孤儿门 (强制一次明确选择).
-FULL_SUITE_ONLY = frozenset(
-    {
-        "tests/test_arch_cleanliness.py",
-        "tests/test_arch_no_import_cycles.py",
-        "tests/test_arch_rag_memory_seam.py",
-        "tests/test_arch_seam_integrity.py",
-        "tests/test_arch_tools_direction.py",
-        # 契约面登记门 (surface 段名 / catalog handle / 包导出面): weightless,
-        # 全量套件兜底. 三者分别锁住「未登记即静默漂移」的三个面.
-        "tests/test_arch_catalog_handles.py",
-        "tests/test_arch_package_exports.py",
-        # 治理门自标记 / 归属台账 (防"改名即逃逸") 与全仓 lint 棘轮: weightless,
-        # 全量套件兜底 (lint 棘轮跑 ruff, 属全仓审计而非快速失败门).
-        "tests/test_arch_gate_ownership.py",
-        "tests/test_arch_ruff_baseline.py",
-        # 治理元门 (契约漂移 / MECE 审计 / 环境面棘轮 / ponytail 债清单 / 镜像漂移):
-        # 均为重型治理自检, 跑全量套件兜底; 显式声明后不再判为孤儿门.
-        "tests/test_config_contracts.py",
-        "tests/test_contract_audit.py",
-        "tests/test_env_surface_governance.py",
-        "tests/test_ponytail_debt_registry.py",
-        "tests/test_publish_mirror_drift.py",
-        # 事实面契约门 (文档断言 / 输出面段契约 / 静默异常棘轮): 全量套件兜底.
-        "tests/test_doc_assertions.py",
-        "tests/test_model_surface_contract.py",
-        "tests/test_silent_exceptions.py",
-        # prompt「声明↔生效」一致性门 (本 spec 落地): weightless, 全量套件兜底.
-        # 注: 钩子事件面「声明↔触发↔注册」已有 tests/test_contract_audit.py 全量覆盖
-        # (build_hook_contract 逐事件判 wired/trigger-only), 不再新建重复门 —— 单一来源.
-        "tests/test_prompt_contract.py",
-    }
-)
+EXEMPTIONS: dict[str, Exemption] = {
+    "tests/test_arch_cleanliness.py": Exemption(
+        "全仓清洁度只适合全量扫描",
+        "discover_governance_tests() 逐文件判在; 全量套件执行",
+        "arch",
+        "2027-06-30",
+    ),
+    "tests/test_arch_no_import_cycles.py": Exemption(
+        "依赖图全量构建, 单点跑无意义",
+        "AST 依赖图扫描 huginn/**; 全量套件执行",
+        "arch",
+        "2027-06-30",
+    ),
+    "tests/test_arch_rag_memory_seam.py": Exemption(
+        "接缝完整性需全仓模块视图",
+        "AST 扫描 RAG/memory 接缝; 全量套件执行",
+        "arch",
+        "2027-06-30",
+    ),
+    "tests/test_arch_seam_integrity.py": Exemption(
+        "接缝完整性需全仓模块视图",
+        "AST 扫描全部接缝; 全量套件执行",
+        "arch",
+        "2027-06-30",
+    ),
+    "tests/test_arch_tools_direction.py": Exemption(
+        "工具依赖方向需全仓视图",
+        "AST 扫描 tools 依赖方向; 全量套件执行",
+        "arch",
+        "2027-06-30",
+    ),
+    "tests/test_arch_catalog_handles.py": Exemption(
+        "契约登记门 weightless, 不进快速失败",
+        "KIND_HANDLE_SPECS 双向闭合 + 合成 entries 覆盖 7 kind",
+        "arch",
+        "2027-06-30",
+    ),
+    "tests/test_arch_package_exports.py": Exemption(
+        "包导出面需全包扫描",
+        "AST 扫描 huginn/**/__init__.py 的 __all__ 双向",
+        "arch",
+        "2027-06-30",
+    ),
+    "tests/test_arch_gate_ownership.py": Exemption(
+        "门归属台账需全部门视图",
+        "标记集合 vs 登记集合双向闭合 + 归属校验",
+        "arch",
+        "2027-06-30",
+    ),
+    "tests/test_arch_ruff_baseline.py": Exemption(
+        "全仓 lint 属审计而非快速失败",
+        "tests/ruff_baseline.json per-file only-shrink 棘轮",
+        "arch",
+        "2027-06-30",
+    ),
+    "tests/test_config_contracts.py": Exemption(
+        "重型契约自检, 全量套件兜底",
+        "契约文档重生成字节比对",
+        "governance",
+        "2027-06-30",
+    ),
+    "tests/test_contract_audit.py": Exemption(
+        "MECE 审计重型, 全量套件兜底",
+        "docs/mece-audit.md 重生成字节比对",
+        "governance",
+        "2027-06-30",
+    ),
+    "tests/test_env_surface_governance.py": Exemption(
+        "环境面棘轮需全仓读点扫描",
+        "env 读点计数棘轮 + docs/env-contract.md 重生成",
+        "governance",
+        "2027-06-30",
+    ),
+    "tests/test_ponytail_debt_registry.py": Exemption(
+        "债清单需全仓扫描",
+        "docs/TECHNICAL_DEBT_PONYTAIL.md 条目比对",
+        "governance",
+        "2027-06-30",
+    ),
+    "tests/test_publish_mirror_drift.py": Exemption(
+        "镜像漂移属发布审计",
+        "scripts/mcpb_vendor.py --check 零漂移 + BUNDLE_MANIFEST",
+        "governance",
+        "2027-06-30",
+    ),
+    "tests/test_prompt_contract.py": Exemption(
+        "prompt 段声明↔生效需全路径视图",
+        "PROMPT_SPECS 清单 + AST 读 _SEGMENT_SPECS 逐段判定",
+        "governance",
+        "2027-06-30",
+    ),
+    "tests/test_doc_assertions.py": Exemption(
+        "交付文档面需全量扫描",
+        "scripts/doc_assertions.py --regen 字节比对",
+        "governance",
+        "2027-06-30",
+    ),
+    "tests/test_model_surface_contract.py": Exemption(
+        "输出面契约需全路径渲染视图",
+        "SURFACE_SPECS 台账 + 渲染字节基线",
+        "governance",
+        "2027-06-30",
+    ),
+    "tests/test_silent_exceptions.py": Exemption(
+        "静默异常棘轮需全仓 AST 扫描",
+        "tests/silent_exceptions_baseline.json per-file only-shrink",
+        "governance",
+        "2027-06-30",
+    ),
+}
+
+# 兼容视图: 其余模块/测试按「是否只靠全量套件」读它; 强度判定见 gate_strength().
+FULL_SUITE_ONLY = frozenset(EXEMPTIONS)
+
+
+@dataclass(frozen=True)
+class Observation:
+    """OBSERVE 强度的新门影子期记录."""
+
+    reason: str
+    since: str
+    until: str  # ISO 日期; 到期未放权 → 回落孤儿门
+
+
+# 影子期门: 新门先 observe (入台账不判红), 观察期结束必须转 ENFORCE 或登记豁免.
+OBSERVE_GATES: dict[str, Observation] = {}
+
+
+def _parse_day(value: str) -> date | None:
+    """解析 ISO 日期; 非法返回 None (由调用方判红, 不静默)."""
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _overdue(value: str, today: date) -> bool:
+    day = _parse_day(value)
+    return day is None or day < today
+
+
+def exemption_errors(today: date | None = None) -> list[str]:
+    """IGNORE 豁免必须带理由 / 证据 / 责任人 / 未到期的复核期限."""
+    today = today or date.today()
+    errors: list[str] = []
+    for test, ex in sorted(EXEMPTIONS.items()):
+        missing = [
+            field
+            for field, value in (
+                ("reason", ex.reason),
+                ("evidence", ex.evidence),
+                ("owner", ex.owner),
+            )
+            if not (value or "").strip()
+        ]
+        if missing:
+            errors.append(f"{test}: 豁免缺字段 {missing}")
+        if _overdue(ex.recheck_after, today):
+            errors.append(
+                f"{test}: 豁免已过复核期限 {ex.recheck_after} —— "
+                "要么续期并更新证据, 要么接 workflow guard 转 ENFORCE"
+            )
+    return errors
+
+
+def observation_errors(today: date | None = None) -> list[str]:
+    """OBSERVE 影子期门: 日期合法 / 未到期 / 理由非空."""
+    today = today or date.today()
+    errors: list[str] = []
+    for test, obs in sorted(OBSERVE_GATES.items()):
+        if not obs.reason.strip():
+            errors.append(f"{test}: OBSERVE 缺理由")
+        if _parse_day(obs.since) is None or _parse_day(obs.until) is None:
+            errors.append(f"{test}: OBSERVE 日期非 ISO (since={obs.since}, until={obs.until})")
+        elif _overdue(obs.until, today):
+            errors.append(
+                f"{test}: OBSERVE 已于 {obs.until} 到期 —— "
+                "转 ENFORCE 或登记带证据的 IGNORE 豁免"
+            )
+    return errors
+
+
+def gate_strength(test: str, guarded: bool, today: date | None = None) -> str | None:
+    """门强度: ENFORCE > OBSERVE > IGNORE; 三者皆不成立 → None (孤儿门)."""
+    today = today or date.today()
+    if guarded:
+        return "ENFORCE"
+    obs = OBSERVE_GATES.get(test)
+    if obs is not None and not _overdue(obs.until, today):
+        return "OBSERVE"
+    ex = EXEMPTIONS.get(test)
+    if ex is not None and not _overdue(ex.recheck_after, today):
+        return "IGNORE"
+    return None
+
 
 # 治理元门族: 除 `tests/test_arch_*.py` 外, 显式声明的治理自检测试. 它们同样受"孤儿门"
 # 逻辑约束 —— 存在却既未接入工作流 guard, 也未声明 full-suite-only → 孤儿门. 这是一张
@@ -2170,23 +2356,24 @@ def _audit_guard_gates(
 def _audit_classify_unguarded(
     agent_root: Path, guard_by_test: dict[str, str], gates: list[dict]
 ) -> list[str]:
-    """未被工作流承载的治理门: FULL_SUITE_ONLY 入表, 其余记为孤儿门."""
+    """未被工作流承载的治理门: 按强度模型归类, 三者皆不成立 → 孤儿门."""
     orphans: list[str] = []
     for test in discover_governance_tests(agent_root):
         if test in guard_by_test:
             continue
-        if test in FULL_SUITE_ONLY:
-            gates.append(
-                {
-                    "test": test,
-                    "arch": test.startswith("tests/test_arch_"),
-                    "status": "full-suite-only",
-                    "ci_step": None,
-                    "exists": True,
-                }
-            )
-        else:
+        strength = gate_strength(test, guarded=False)
+        if strength is None:
             orphans.append(test)
+            continue
+        gates.append(
+            {
+                "test": test,
+                "arch": test.startswith("tests/test_arch_"),
+                "status": "observe" if strength == "OBSERVE" else "full-suite-only",
+                "ci_step": None,
+                "exists": True,
+            }
+        )
     return orphans
 
 
@@ -2728,6 +2915,34 @@ def _ga_gaps_section(reg: dict) -> list[str]:
     return lines
 
 
+def _ga_exemptions_section() -> list[str]:
+    """门强度台账: IGNORE 豁免 (带证据/复核期) + OBSERVE 影子期."""
+    lines: list[str] = [
+        "## 门强度与豁免 (IGNORE / OBSERVE)",
+        "",
+        "强度语义: ENFORCE = 工作流 guard 快速失败; OBSERVE = 影子期只入表不判红;"
+        " IGNORE = 只靠全量套件兜底, **必须带证据与复核期限**. 过期未处理的条目"
+        " 回落为孤儿门.",
+        "",
+        "| 测试 | 强度 | 责任人 | 复核/到期 | 证据 |",
+        "|---|---|---|---|---|",
+    ]
+    rows = [
+        (test, "IGNORE", ex.owner, ex.recheck_after, ex.evidence)
+        for test, ex in EXEMPTIONS.items()
+    ]
+    rows += [
+        (test, "OBSERVE", "—", obs.until, obs.reason)
+        for test, obs in OBSERVE_GATES.items()
+    ]
+    for test, strength, owner, deadline, evidence in sorted(rows):
+        lines.append(f"| `{test}` | {strength} | {owner} | {deadline} | {evidence} |")
+    lines.append("")
+    lines.append(f"共 {len(rows)} 条强度记录 (IGNORE {len(EXEMPTIONS)} / OBSERVE {len(OBSERVE_GATES)}).")
+    lines.append("")
+    return lines
+
+
 def render_markdown(reg: dict) -> str:
     """确定性渲染 (固定列序 + 门按测试路径字典序)."""
     lines: list[str] = [
@@ -2745,6 +2960,7 @@ def render_markdown(reg: dict) -> str:
     lines.extend(_ga_prompt_segments_section(reg))
     lines.extend(_ga_budgets_section(reg))
     lines.extend(_ga_loop_caps_section(reg))
+    lines.extend(_ga_exemptions_section())
     lines.extend(_ga_gaps_section(reg))
     return "\n".join(lines)
 

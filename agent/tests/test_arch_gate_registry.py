@@ -48,6 +48,7 @@ _AGENT = pathlib.Path(__file__).resolve().parents[1]
 _MOD = _AGENT / "huginn" / "cli" / "governance_audit.py"
 _spec = importlib.util.spec_from_file_location("governance_audit", _MOD)
 ga = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = ga  # dataclass 需在 sys.modules 里解析模块 (py3.14)
 _spec.loader.exec_module(ga)
 
 # 冻结门数棘轮: 值由治理台账 (governance_audit.BUDGET_SPECS) **权威声明**, 本门只读.

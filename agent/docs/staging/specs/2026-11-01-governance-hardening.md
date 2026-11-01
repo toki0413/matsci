@@ -84,10 +84,27 @@ milestone: 无 (单批治理加固, 不跨里程碑)
   版本不一致时 skip（规则集不可比）。
 - test: `tests/test_arch_ruff_baseline.py`。
 
+## 追加 (2026-11-01, 第三轮): 门强度 / 证据 / TTL (对齐 DSH superagent)
+
+### D9. 门强度生命周期
+
+- contract: `governance_audit` 新增 `GATE_STRENGTHS = ("ENFORCE", "OBSERVE", "IGNORE")`；
+  `EXEMPTIONS: dict[str, Exemption(reason, evidence, owner, recheck_after)]` 取代裸
+  `frozenset`（`FULL_SUITE_ONLY` 保留为兼容视图）；`OBSERVE_GATES` 登记影子期门
+  `Observation(reason, since, until)`。
+- invariant: `gate_strength(test, guarded, today)` 按 ENFORCE > OBSERVE > IGNORE 定级；
+  三者皆不成立 → `None`（孤儿门）。豁免缺 reason/evidence/owner 或过 `recheck_after`
+  → `exemption_errors()` 非空；OBSERVE 缺理由/日期非法/到期 → `observation_errors()` 非空。
+- 语义: 新门可先 OBSERVE（只入台账不判红），到期未放权回落孤儿门；IGNORE 必须带证据
+  与复核期限，过期同样回落孤儿门 —— 豁免从「永久白名单」变成「限期租约」。
+- test: `tests/test_arch_gate_ownership.py` 扩展（evidence/TTL/强度优先级 + 自检原语）；
+  台账渲染出「门强度与豁免」小节。
+
 ## 验收
 
 六个门全绿 + 既有门不回归 + ruff 全绿 + `docs/governance-state.md` 重生成一致。
 追加后: D7/D8 两个门绿 + 既有门不回归 + 镜像零漂移。
+第三轮: D9 门绿（含自检原语）+ 18 条豁免全部带证据与未到期复核期 + 台账重生成一致。
 
 ## Working notes
 

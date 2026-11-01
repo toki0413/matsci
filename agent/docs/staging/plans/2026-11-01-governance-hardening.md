@@ -55,3 +55,9 @@ spec: [2026-11-01-governance-hardening](../specs/2026-11-01-governance-hardening
   files: tests/ruff_baseline.json, tests/test_arch_ruff_baseline.py
   acceptance: `python -m pytest tests/test_arch_ruff_baseline.py -q -o addopts=""`
   spec: #d8-全仓-lint-棘轮
+
+- [x] T10: 门强度 / 证据 / TTL (DSH 生命周期)
+  goal: 豁免从永久白名单升级为带证据与复核期限的租约，新门可先 OBSERVE 影子期，过期回落孤儿门。
+  files: huginn/cli/governance_audit.py, tests/test_arch_gate_ownership.py, docs/governance-state.md
+  acceptance: `python -m pytest tests/test_arch_gate_ownership.py tests/test_arch_gate_registry.py -q -o addopts=""`
+  spec: #d9-门强度生命周期

@@ -220,6 +220,33 @@ prompt 段的**声明面** (`prompt_segments._SEGMENT_SPECS`: 段名 -> 必须�
 | deli_research 迭代上限 | `huginn/academic/deli_research.py` | 上限 | 5 | 5 | 0 | Governance gate registry guard |
 | 循环闸位数下限 | `tests/test_arch_gate_registry.py` | 权威 | 18 | 18 | 0 | Governance gate registry guard |
 
+## 门强度与豁免 (IGNORE / OBSERVE)
+
+强度语义: ENFORCE = 工作流 guard 快速失败; OBSERVE = 影子期只入表不判红; IGNORE = 只靠全量套件兜底, **必须带证据与复核期限**. 过期未处理的条目 回落为孤儿门.
+
+| 测试 | 强度 | 责任人 | 复核/到期 | 证据 |
+|---|---|---|---|---|
+| `tests/test_arch_catalog_handles.py` | IGNORE | arch | 2027-06-30 | KIND_HANDLE_SPECS 双向闭合 + 合成 entries 覆盖 7 kind |
+| `tests/test_arch_cleanliness.py` | IGNORE | arch | 2027-06-30 | discover_governance_tests() 逐文件判在; 全量套件执行 |
+| `tests/test_arch_gate_ownership.py` | IGNORE | arch | 2027-06-30 | 标记集合 vs 登记集合双向闭合 + 归属校验 |
+| `tests/test_arch_no_import_cycles.py` | IGNORE | arch | 2027-06-30 | AST 依赖图扫描 huginn/**; 全量套件执行 |
+| `tests/test_arch_package_exports.py` | IGNORE | arch | 2027-06-30 | AST 扫描 huginn/**/__init__.py 的 __all__ 双向 |
+| `tests/test_arch_rag_memory_seam.py` | IGNORE | arch | 2027-06-30 | AST 扫描 RAG/memory 接缝; 全量套件执行 |
+| `tests/test_arch_ruff_baseline.py` | IGNORE | arch | 2027-06-30 | tests/ruff_baseline.json per-file only-shrink 棘轮 |
+| `tests/test_arch_seam_integrity.py` | IGNORE | arch | 2027-06-30 | AST 扫描全部接缝; 全量套件执行 |
+| `tests/test_arch_tools_direction.py` | IGNORE | arch | 2027-06-30 | AST 扫描 tools 依赖方向; 全量套件执行 |
+| `tests/test_config_contracts.py` | IGNORE | governance | 2027-06-30 | 契约文档重生成字节比对 |
+| `tests/test_contract_audit.py` | IGNORE | governance | 2027-06-30 | docs/mece-audit.md 重生成字节比对 |
+| `tests/test_doc_assertions.py` | IGNORE | governance | 2027-06-30 | scripts/doc_assertions.py --regen 字节比对 |
+| `tests/test_env_surface_governance.py` | IGNORE | governance | 2027-06-30 | env 读点计数棘轮 + docs/env-contract.md 重生成 |
+| `tests/test_model_surface_contract.py` | IGNORE | governance | 2027-06-30 | SURFACE_SPECS 台账 + 渲染字节基线 |
+| `tests/test_ponytail_debt_registry.py` | IGNORE | governance | 2027-06-30 | docs/TECHNICAL_DEBT_PONYTAIL.md 条目比对 |
+| `tests/test_prompt_contract.py` | IGNORE | governance | 2027-06-30 | PROMPT_SPECS 清单 + AST 读 _SEGMENT_SPECS 逐段判定 |
+| `tests/test_publish_mirror_drift.py` | IGNORE | governance | 2027-06-30 | scripts/mcpb_vendor.py --check 零漂移 + BUNDLE_MANIFEST |
+| `tests/test_silent_exceptions.py` | IGNORE | governance | 2027-06-30 | tests/silent_exceptions_baseline.json per-file only-shrink |
+
+共 18 条强度记录 (IGNORE 18 / OBSERVE 0).
+
 ## 缺口 (gaps)
 
 - 孤儿门 (0): 无
