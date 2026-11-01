@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 
+from huginn.agent.mechanism_census import census_text
 from huginn.agent.prompt_builder import (
     behavioral_discipline_segment,
     core_principles_segment,
@@ -33,7 +34,8 @@ def _hardcoded_reference(mode, phase, metacog, system_prompt=None):
     """切换前 build_prompt 的硬编码拼接 (不含 flag-gated thinking).
 
     顺序与 prompt_segments._PRIORITY 升序一致: persona(10) → §3/§4/§7 三节(11-13)
-    → mode/phase/metacog/tools → multimodal/writing/multi_agent_protocol → safety(200).
+    → mode/phase/metacog/mechanisms(45)/tools → multimodal/writing/multi_agent_protocol
+    → safety(200).
     """
     segments = [
         persona_segment(system_prompt),
@@ -43,6 +45,7 @@ def _hardcoded_reference(mode, phase, metacog, system_prompt=None):
         mode_segment(mode),
         phase_segment(phase),
         metacog_segment(metacog),
+        census_text(),
         tools_segment(mode, phase, metacog),
         multimodal_segment(),
         writing_segment(),
@@ -163,6 +166,7 @@ class TestPluginOnlyAssembly:
             core_principles_segment(),
             behavioral_discipline_segment(),
             response_format_segment(),
+            census_text(),
         ])
         assert got == want
         # 框架骨架段 (persona/mode/phase/tools/safety) 不属插件贡献, 被排除.

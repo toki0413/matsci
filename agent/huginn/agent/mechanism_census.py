@@ -52,14 +52,18 @@ def disclosure_reason(kind: str) -> str:
 
 
 def census_text() -> str:
-    """生成 `## MECHANISMS` 段; Catalog 不可用或无条目时返回空串 (该段缺席)."""
+    """生成 `## MECHANISMS` 段.
+
+    永不返回空串: 「没有可披露的能力」本身也是必须告知模型的事实, 返回空段会让
+    「声明该段生效」与「实际渲染为空」对不上, 把披露退化成静默.
+    """
     try:
         from huginn.catalog.manager import CatalogManager
 
         entries = CatalogManager().discover_all()
-    except Exception:  # 非致命: Catalog 不可用则该段缺席, prompt 构建不崩
+    except Exception:  # 非致命: Catalog 不可用时如实告知, prompt 构建不崩
         logger.debug("mechanism census unavailable", exc_info=True)
-        return ""
+        return "## MECHANISMS\nCapability catalog unavailable this run."
 
     lines: list[str] = []
     for kind in sorted({e.kind for e in entries}):
@@ -80,7 +84,7 @@ def census_text() -> str:
             lines.append(f"- {kind} ({len(enabled)}): {hint}")
 
     if not lines:
-        return ""
+        return "## MECHANISMS\nNo capabilities registered."
     return "## MECHANISMS\nRegistered capabilities (source: catalog).\n" + "\n".join(lines)
 
 

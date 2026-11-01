@@ -44,17 +44,6 @@ def _capability_note() -> str:
         return ""
 
 
-def _esp_mechanisms() -> str:
-    """机制普查段 (Sources: catalog). 失败返回空串 → 该段缺席, 构建不崩."""
-    try:
-        from huginn.agent.mechanism_census import census_text
-
-        return census_text()
-    except Exception:  # 非致命: 普查不可用则该段缺席
-        logger.debug("mechanism census unavailable", exc_info=True)
-        return ""
-
-
 def _esp_base_prompt(ctx: Any) -> str:
     """模式前缀 + system_prompt + phase 声明 (静态层, 放 prompt 开头)."""
     if ctx._mode == "research":
@@ -264,7 +253,6 @@ def compose_main_surface(ctx: Any) -> Surface:
             "capability", "capabilities.runtime_probe", _capability_note().lstrip("\n")
         ),
         SurfaceSection("principles", "memory.stable_principles", _esp_stable_principles()),
-        SurfaceSection("mechanisms", "catalog", _esp_mechanisms()),
     ]
     surface = compose(sections)
 

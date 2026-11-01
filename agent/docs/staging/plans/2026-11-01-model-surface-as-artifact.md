@@ -28,7 +28,15 @@ execution: inline
   spec: `#d-披露面与门`
 
 - [x] T4: 把普查段接进主路径并加门
-  goal: main 面新增 `("catalog","catalog")` 段；新增契约门断言结构不变量与披露双向
-  files: `huginn/agent/context.py`、`tests/test_model_surface_contract.py`
-  acceptance: stdlib 门全绿；runtime 部分在 `importorskip` 下断言真实 Surface 含 catalog 段；`base +=` 不再出现在 `_effective_system_prompt` 内
+  goal: 普查段注册为 prompt 段（main/s7/autoloop 三路径生效）；契约门断言结构不变量与披露双向
+  files: `huginn/agent/context.py`、`huginn/agent/prompt_builder.py`、`huginn/plugins/prompt_segments.py`、`tests/test_model_surface_contract.py`
+  acceptance: stdlib 门全绿；runtime 部分在 `importorskip` 下断言真实 Surface 含 `## MECHANISMS`；三路径实测均含该段
   spec: `#d-披露面与门`
+
+## E 收编台账
+
+- [x] T5: 组装根台账（只减不增）
+  goal: 扫描 `agent/autoloop/agents/coder/interaction` 中直接构造 `SystemMessage(content=...)` 的文件，双向核对 15 个已登记根
+  files: `tests/test_model_surface_contract.py`、`huginn/cli/governance_audit.py`、`docs/governance-state.md`
+  acceptance: 新增一个 SystemMessage 文件 → 门红；`PROMPT_SPECS`=14 与注册表一致；`governance-state.md` 重生成后逐字一致
+  spec: `#e-收编台账`

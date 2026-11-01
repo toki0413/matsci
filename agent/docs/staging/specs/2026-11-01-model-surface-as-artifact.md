@@ -57,24 +57,28 @@ failure modes：任何阶段抛异常都必须仍被该阶段原来的 `try/exce
   `huginn.catalog.models.KINDS` 全部 7 类；缺声明 = 门红（二态法则的细化）。
 - `census_text()` 生成 `## MECHANISMS` 段：小集合（skill/plugin/workflow）列名；
   大集合（tool）只给数量 + 「不在可见列表里就调 `tool_search`」；prompt/model/mcp 按声明。
-- 生成失败（Catalog 不可用）返回空串，段落缺席；门在有能力面时断言段必须存在。
+- 披露做成 **prompt 段**（`register_prompt_segment("mechanisms", …, applies_to=("main","s7","autoloop"))`），
+  而不是主路径私有的一次性注入：三条生产路径共用同一实现，autoloop / s7 自动获得披露。
+- `census_text()` **永不返回空串**：无条目或 Catalog 不可用时如实告知，
+  否则「声明该段生效」与「实际渲染为空」对不上，披露会退化成静默。
 
 门 `tests/test_model_surface_contract.py`（纯 stdlib 部分可离线跑）：
 
 - Surface 语义：顺序、来源、空段跳过、重复名抛错。
-- 结构不变量：`context._effective_system_prompt` 内**不得**再出现 `base +=`
-  字符串拼接（ast 扫描）；必须调用 `compose(`。
+- 结构不变量：`compose_main_surface` 内**不得**出现 `base +=` 字符串拼接（ast 扫描）；
+  必须调用 `compose(`，`_effective_system_prompt` 必须调用 `render()`。
 - 披露双向：`KIND_DISCLOSURE` 覆盖 KINDS；`hidden` 必须带理由；`always` 的 kind
   名称必须出现在 `census_text()` 里。
 - 运行时（`importorskip("langchain.agents.middleware")`）：stub context 的真实
-  `_effective_surface()` 必须含 `catalog` 来源段，且每段 source 都在登记集合内。
+  Surface 必须含 `## MECHANISMS`，且每段 source 都在登记集合内。
 
 ## E 收编台账
 
-其余组装根（autoloop / CodeAct / Coder / 子代理 / 研究管线 / Planner / 澄清 /
-中间件 / 流式 / 插件回调）**不在本次迁移**：逐个登记到治理台账的
-`MODEL_SURFACE_SPECS.unmigrated`，只减不增。本 spec 只迁 1 个根（main），
-以证明表示层可承载真实字节。
+其余组装根（autoloop / CodeAct / Coder / 子代理 / 澄清 / 中间件 / 流式 / 插件回调）
+**不在本次迁移**，逐个登记在门内的 `_LEGACY_SURFACE_ROOTS`（15 个文件，附理由），
+按 `SystemMessage(content=...)` 出现的**文件集合**做双向精确核对：新增根 → 红；
+迁移或删除后未摘除 → 红。本 spec 只迁 1 个根（main），以证明表示层可承载真实字节。
+autoloop 虽仍以自己的字符串拼装，但**披露**已通过 `mechanisms` 段覆盖（见 §D）。
 
 ## failure modes
 
@@ -91,9 +95,9 @@ failure modes：任何阶段抛异常都必须仍被该阶段原来的 `try/exce
 
 ## deferred
 
-- 治理台账 `MODEL_SURFACE_SPECS` + `unmigrated` 棘轮落地（需重生成
-  `docs/governance-state.md`，与本次代码改动分开批次）。
-- 其余 10 个组装根迁移与 `docs/staging/plans` 中的后续批次。
+- 治理台账侧再收一层：把组装根清单（当前在门内）提升到 `governance_audit`
+  （需与 `governance-state.md` 一起重生成，单独批次）。
+- 其余 10 个组装根迁移到 `compose`，逐批把文件从 `_LEGACY_SURFACE_ROOTS` 摘除。
 - `CatalogEntry.disclosure` 字段（把披露等级从 kind 级细化到条目级）。
 
 ## 结果（as-built）
@@ -103,9 +107,11 @@ failure modes：任何阶段抛异常都必须仍被该阶段原来的 `try/exce
 - 字节不变：迁移后 default / research / extreme 三模式 prompt 的 sha256 与迁移前基线
   逐字相同（10630 / e60431842920cce7、10899 / 7a2ae63600207b84、
   11008 / 50fa17409ae2de3e）；剔除新增 `mechanisms` 段后哈希仍为 e60431842920cce7。
-- 披露：main 面新增 `("mechanisms","catalog")` 段，本机实测 56 个 skill 逐条列出，
-  主路径 prompt 由 10630 → 11491 字符（+861），census 调用热态 ~0.5ms
-  （这 1.2s 级开销来自既有 `capability_note` 的 L0 探测，非本次引入）。
-- 门：`tests/test_model_surface_contract.py` 13 项通过；相关集
-  (`test_model_surface` / `test_research_mode` / `test_deep_think_tool` /
-  `test_prompt_contract`) 68 项通过；注释卫生、静默异常、流程门全绿。
+- 披露：`mechanisms` 段注册为内置段，`applies_to=("main","s7","autoloop")`；实测三条路径
+  的 prompt 均含 `## MECHANISMS`，内容为 56 个 skill、15 个 workflow 逐条 + 161 个 tool
+  的 `tool_search` 入口；主路径 10630 → 11472 字符，census 热态 ~0.5ms
+  （1.2s 级开销来自既有 `capability_note` 的 L0 探测，非本次引入）。
+- 台账：组装根以门内 `_LEGACY_SURFACE_ROOTS`（15 个文件）双向精确核对；`PROMPT_SPECS`
+  13 → 14 段、`prompt_segment_floor` 13 → 14，`docs/governance-state.md` 已重生成
+  （差异仅 mechanisms 行与下限值）。
+- 门：`tests/test_model_surface_contract.py` 15 项、治理与流程/卫生门共 116 项通过。

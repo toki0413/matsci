@@ -33,7 +33,6 @@ _ALLOWED_SOURCES = frozenset({
     "runtime.backends",
     "capabilities.runtime_probe",
     "memory.stable_principles",
-    "catalog",
     "phases",
     "prompt_builder",
 })
@@ -155,6 +154,70 @@ def test_always_kinds_are_named_in_census_text() -> None:
         assert names[0] in text, f"always 级 kind {kind!r} 的条目未出现在普查段"
 
 
+# ── 组装根台账 (只减不增) ────────────────────────────────────────────────
+# 扫描范围: 参与主对话/子代理/自主循环的包. 每个直接构造 SystemMessage(content=...)
+# 的模块都是一个组装根 —— 它自带一套 prompt, 不经 Surface, 因此模型面在那里是字符串.
+# 新增根 = 新文件出现在集合里 = 红; 迁移一个根就把它从集合里删掉, 只减不增.
+_LEGACY_SURFACE_ROOTS: dict[str, str] = {
+    "huginn/agent/code_act_loop.py": "CodeAct 单回合循环: 自带工具签名与规则",
+    "huginn/agent/core.py": "主会话图装配与 pre-model 钩子注入",
+    "huginn/agent/middlewares.py": "规划/前沿任务 SystemMessage 注入",
+    "huginn/agent/reflection.py": "反思总结器 (子 LLM)",
+    "huginn/agent/streaming.py": "流式回合消息/预算/风格/收尾总结注入",
+    "huginn/agents/subagent.py": "子代理输出总结器 (子 LLM)",
+    "huginn/autoloop/conjecture.py": "LLM 猜想生成/重构 (子 LLM)",
+    "huginn/autoloop/engine_act.py": "autoloop 主对话 (persona+GRILL+插件段)",
+    "huginn/autoloop/engine_control.py": "旁支问题应答 (子 LLM)",
+    "huginn/autoloop/engine_reflect.py": "LLM 判定 (子 LLM)",
+    "huginn/autoloop/hypothesis_loop.py": "假设精炼 (子 LLM)",
+    "huginn/autoloop/red_team.py": "红队发现 (子 LLM)",
+    "huginn/coder/loop.py": "Coder 循环",
+    "huginn/coder/refactor_engine.py": "重构计划 (子 LLM)",
+    "huginn/interaction/clarification.py": "澄清提问 (子 LLM)",
+}
+_SCANNED_PACKAGES = ("agent", "autoloop", "agents", "coder", "interaction")
+
+
+def _system_message_root_files() -> set[str]:
+    """在扫描范围内找出所有直接构造 SystemMessage(content=...) 的模块."""
+    found: set[str] = set()
+    for path in sorted((_AGENT_ROOT / "huginn").rglob("*.py")):
+        rel = path.relative_to(_AGENT_ROOT).as_posix()
+        if not any(rel.startswith(f"huginn/{pkg}/") for pkg in _SCANNED_PACKAGES):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        if any(
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "SystemMessage"
+            and any(k.arg == "content" for k in n.keywords)
+            for n in ast.walk(tree)
+        ):
+            found.add(rel)
+    return found
+
+
+def test_surface_roots_ledger_is_exact() -> None:
+    """台账双向核对: 新增组装根红, 已迁移/已删未摘除也红."""
+    found = _system_message_root_files()
+    declared = set(_LEGACY_SURFACE_ROOTS)
+    added = sorted(found - declared)
+    removed = sorted(declared - found)
+    assert not added, (
+        "出现未登记的模型面组装根 (默认不可见 = 复发):\n" + "\n".join(added) +
+        "\n要么走 Surface/compose, 要么在 _LEGACY_SURFACE_ROOTS 登记迁移理由"
+    )
+    assert not removed, "组装根已消失, 请从 _LEGACY_SURFACE_ROOTS 摘除: " + ", ".join(removed)
+
+
+def test_every_declared_root_file_exists() -> None:
+    missing = [f for f in _LEGACY_SURFACE_ROOTS if not (_AGENT_ROOT / f).is_file()]
+    assert not missing, f"台账引用了不存在的文件: {missing}"
+
+
 # ── 运行时: 真实主路径 ────────────────────────────────────────────────────
 
 @pytest.fixture(scope="module")
@@ -180,8 +243,15 @@ def main_surface() -> Surface:
     return _Ctx()._effective_surface()
 
 
-def test_runtime_surface_declares_catalog_source(main_surface: Surface) -> None:
-    assert "catalog" in main_surface.sources(), "主路径未登记 catalog 披露段"
+def test_runtime_surface_discloses_mechanisms(main_surface: Surface) -> None:
+    assert "## MECHANISMS" in main_surface.render(), "主路径未披露机制清单"
+
+
+def test_mechanisms_segment_covers_all_paths() -> None:
+    from huginn.plugins.prompt_segments import segment_applicability
+
+    paths = set(segment_applicability().get("mechanisms", ()))
+    assert {"main", "s7", "autoloop"} <= paths, f"mechanisms 段未覆盖全部生产路径: {paths}"
 
 
 def test_runtime_sources_are_all_declared(main_surface: Surface) -> None:
