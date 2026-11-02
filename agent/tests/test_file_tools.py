@@ -256,6 +256,24 @@ async def test_write_path_traversal_rejected(tmp_path):
     assert "outside working directory" in result.error
 
 
+async def test_write_mangled_working_dir_rejected(tmp_path, monkeypatch):
+    """全角分隔符的 working_dir → 报错且不建目录 (真机曾被写进 agent/)."""
+    monkeypatch.chdir(tmp_path)
+    mangled = "C﹕＼Users＼wanzh＼Desktop＼matsci-agent"
+    tool = FileWriteTool()
+    result = await tool.call(
+        {
+            "file_path": "answer.py",
+            "content": "print('x')",
+            "working_dir": mangled,
+        },
+        context=None,
+    )
+    assert result.success is False
+    assert "working_dir" in result.error
+    assert not (tmp_path / mangled).exists()
+
+
 async def test_write_dry_run_returns_diff_no_write(tmp_path):
     """dry_run=True 返回 diff, 文件不写."""
     tool = FileWriteTool()

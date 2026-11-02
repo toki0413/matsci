@@ -62,6 +62,30 @@ def test_code_tool_detects_output_image(tmp_path: Path) -> None:
     assert Path(result.data["output_files"]["plot.png"]).exists()
 
 
+@pytest.mark.parametrize(
+    "mangled",
+    [
+        "C﹕＼Users＼wanzh＼Desktop＼matsci-agent",  # 全角冒号 + 反斜杠
+        "CUserswanzhDesktopmatsci-agentagent",  # 分隔符被吃掉
+    ],
+)
+def test_code_tool_rejects_working_dir_that_is_not_a_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mangled: str
+) -> None:
+    """畸形 working_dir 必须报错, 不能在 cwd 下建出同名目录."""
+    monkeypatch.chdir(tmp_path)
+    result = CodeTool().call(
+        {
+            "action": "execute",
+            "code": "print('hello')",
+            "working_dir": mangled,
+        }
+    )
+    assert result.success is False
+    assert "working_dir" in result.error
+    assert not (tmp_path / mangled).exists()
+
+
 def test_code_tool_input_schema() -> None:
     """CodeToolInput should validate parameters."""
     inp = CodeToolInput(
