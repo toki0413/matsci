@@ -30,6 +30,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import pathlib
+import sys
 
 import pytest
 
@@ -354,6 +355,7 @@ def test_governance_prompt_specs_match_registry():
         "governance_audit_pc", _AGENT / "huginn" / "cli" / "governance_audit.py"
     )
     ga = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = ga  # dataclass 需在 sys.modules 里解析模块 (py3.14)
     spec.loader.exec_module(ga)
     assert set(ga.PROMPT_SPECS) == set(ps.registered_prompt_segments()), (
         f"台账 PROMPT_SPECS={sorted(ga.PROMPT_SPECS)} 与注册表 "

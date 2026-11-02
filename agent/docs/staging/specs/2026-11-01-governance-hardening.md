@@ -5,7 +5,7 @@ milestone: 无 (单批治理加固, 不跨里程碑)
 
 ## 决策
 
-### D1. Surface 段名台账
+## D1. Surface 段名台账
 
 - contract: `huginn/agent/context.py` 新增 `SURFACE_SPECS: dict[str, str]`，键是
   `compose_main_surface` 产出的段名，值是 `source` 字符串。
@@ -16,7 +16,7 @@ milestone: 无 (单批治理加固, 不跨里程碑)
 - deferred: 不约束 `SurfaceSection.text` 内容；不给 `source` 加枚举校验。
 - test: `tests/test_model_surface_contract.py` 用合成 ctx 渲染，双向核对。
 
-### D2. Catalog handle 契约
+## D2. Catalog handle 契约
 
 - contract: `huginn/catalog/manager.py` 新增
   `KIND_HANDLE_SPECS: dict[str, str | None]`，kind → 该 kind 采集所依赖的 handle 键
@@ -27,7 +27,7 @@ milestone: 无 (单批治理加固, 不跨里程碑)
   「传错了也不算错」）。
 - test: `tests/test_arch_catalog_handles.py`（登记为 full-suite-only）。
 
-### D3. `__all__` 双向一致性
+## D3. `__all__` 双向一致性
 
 - contract: 新增 weightless AST 门，扫 `huginn/**/__init__.py`。
 - invariant: `__all__` 中每个名字都能在该模块命名空间解析（模块顶层定义 / 导入 /
@@ -35,14 +35,14 @@ milestone: 无 (单批治理加固, 不跨里程碑)
 - deferred: 不检查类型标注、不检查 `__init__.py` 之外的重导出模块。
 - test: `tests/test_arch_package_exports.py`。
 
-### D4. 静默异常 per-file 棘轮
+## D4. 静默异常 per-file 棘轮
 
 - contract: `tests/silent_exceptions_baseline.json` 记录每个文件的当前计数。
 - invariant: 每个文件的计数 ≤ 基线；基线里消失的文件自动从比较集中剔除（只减不增），
   新增文件计数必须为 0。
 - test: `tests/test_silent_exceptions.py` 扩展。
 
-### D5. 文档分类全量
+## D5. 文档分类全量
 
 - contract: `scripts/doc_assertions.py` 的 `TARGET_DOCS` 改为目录扫描：
   `docs/*.md` 全部纳入，首行必须 `<!-- generated: <cmd> -->` 或
@@ -52,7 +52,7 @@ milestone: 无 (单批治理加固, 不跨里程碑)
   非交付契约）。
 - test: `tests/test_doc_assertions.py` 扩展。
 
-### D6. 发布 bundle 内容白名单
+## D6. 发布 bundle 内容白名单
 
 - contract: `scripts/mcpb_vendor.py` 新增 `BUNDLE_MANIFEST`：允许进入 bundle 的
   顶层目录/文件模式。
@@ -67,7 +67,7 @@ milestone: 无 (单批治理加固, 不跨里程碑)
 
 ## 追加 (2026-11-01, 第二轮): 机制闭环
 
-### D7. 治理门自标记与归属
+## D7. 治理门自标记与归属
 
 - contract: 治理门首行自带 `# governance-gate`；标记集合与登记集合
   （arch 族 ∪ `FULL_SUITE_ONLY` ∪ `GOVERNANCE_META_TESTS`）双向闭合；
@@ -77,7 +77,7 @@ milestone: 无 (单批治理加固, 不跨里程碑)
 - invariant: 改名不再逃逸；每个门有归属（full-suite-only 或 workflow guard）。
 - test: `tests/test_arch_gate_ownership.py`。
 
-### D8. 全仓 lint 棘轮
+## D8. 全仓 lint 棘轮
 
 - contract: `tests/ruff_baseline.json` 冻结逐文件存量违规数；ruff 版本记录在案。
 - invariant: 单文件违规数只减不增；基线外文件任何违规即红；总数只减不增；
@@ -86,7 +86,7 @@ milestone: 无 (单批治理加固, 不跨里程碑)
 
 ## 追加 (2026-11-01, 第三轮): 门强度 / 证据 / TTL (对齐 DSH superagent)
 
-### D9. 门强度生命周期
+## D9. 门强度生命周期
 
 - contract: `governance_audit` 新增 `GATE_STRENGTHS = ("ENFORCE", "OBSERVE", "IGNORE")`；
   `EXEMPTIONS: dict[str, Exemption(reason, evidence, owner, recheck_after)]` 取代裸

@@ -237,6 +237,7 @@ def _parse_day(value: str) -> date | None:
     try:
         return date.fromisoformat(value)
     except ValueError:
+        logger.debug("invalid ISO date %r", value, exc_info=True)
         return None
 
 
