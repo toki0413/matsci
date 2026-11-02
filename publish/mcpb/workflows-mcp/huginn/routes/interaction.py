@@ -38,7 +38,116 @@ router = APIRouter(tags=["interaction"])
 logger = logging.getLogger(__name__)
 
 
+def _handle_interrupt_event(evt: Any, interceptor: StreamInterceptor) -> bool:
+    """处理一次中断事件; 返回 True 表示本轮应中止."""
+    if evt is None:
+        return False
+    if evt.type == "cancel":
+        interceptor.on_error(f"cancelled by user: {evt.message}")
+        return True
+    if evt.type == "modify":
+        # modify: 把用户的新消息当 token 喂回去, 让前端看到 agent 收到了修改意见
+        interceptor.on_thought(f"[用户修改] {evt.message}")
+    return False
+
+
+def _push_state_messages(
+    state: Any, interceptor: StreamInterceptor, final_text: str
+) -> str:
+    """把一个 state 里的消息推进 interceptor; 返回最新 final_text."""
+    msgs = state.get("messages", []) if isinstance(state, dict) else []
+    for msg in msgs:
+        # AIMessage 的 content 当 token 流推
+        content = getattr(msg, "content", "")
+        msg_type = getattr(msg, "type", "")
+        if msg_type == "ai" and isinstance(content, str) and content:
+            interceptor.on_llm_token(content)
+            final_text = content
+        # ToolMessage 当 tool_end 推 (简化: 不拦截 start)
+        elif msg_type == "tool":
+            name = getattr(msg, "name", "unknown")
+            interceptor.on_tool_end(name, content, 0.0)
+    return final_text
+
+
+async def _stream_agent_chat(
+    agent: Any,
+    message: str,
+    thread_id: str,
+    interceptor: StreamInterceptor,
+    interrupt_mgr: Any,
+) -> None:
+    """跑 agent.chat, 把中断事件与 state 消息喂给 interceptor."""
+    final_text = ""
+    try:
+        # agent.chat 是 async generator, 每轮 yield 一个 state
+        async for state in agent.chat(message, thread_id=thread_id):
+            # 命中中断就停
+            if _handle_interrupt_event(
+                interrupt_mgr.check_interrupt(thread_id), interceptor
+            ):
+                return
+            # 暂停态: 阻塞到 resume
+            await interrupt_mgr.wait_if_paused(thread_id)
+            final_text = _push_state_messages(state, interceptor, final_text)
+        interceptor.on_done(final_text)
+    except InterruptCancelled:
+        interceptor.on_error("cancelled by user")
+    except Exception as exc:
+        interceptor.on_error(str(exc))
+
+
 # ── 实时反馈: SSE 流式 chat ──────────────────────────────────────
+
+
+async def _run_agent_stream(
+    agent_id: str,
+    req: ChatRequest,
+    message: str,
+    thread_id: str,
+    interceptor,
+    interrupt_mgr,
+) -> None:
+    """后台跑 agent, 把事件喂给 interceptor."""
+    try:
+        if message:
+            # 走跟 /chat 一样的 factory 路径, 拿到 agent 后调 chat()
+            factory = get_agent_factory()
+            agent = factory.create(
+                agent_id,
+                thread_id=thread_id,
+                thinking=req.thinking,
+                max_tokens=req.max_tokens,
+            )
+            # sidecar serve 模式: 只读工具直放, 写/执行工具强制 ASK.
+            # 名单与判定都取自 permissions.py 单一来源 (见
+            # apply_sse_read_only_policy), 这里不各自硬编码工具名 —— 早期写的是
+            # read_file/file_write 这类短名, 与注册表对不上, set_mode 永不命中,
+            # 只读工具实际仍走 ASK (MECE 审计记的"允许表死项").
+            # 危险命令模式检查仍在 adapter._check_permission 里生效, rm -rf / 这类
+            # 会被拦下要求确认, 不受 auto_approve 影响.
+            apply_sse_read_only_policy(agent._permission_config)
+            await _stream_agent_chat(
+                agent, message, thread_id, interceptor, interrupt_mgr
+            )
+        else:
+            interceptor.on_error("empty message")
+    except Exception as exc:
+        logger.error("unexpected error", exc_info=True)
+        interceptor.on_error(f"server error: {exc}")
+
+
+async def _sse_stream(interceptor, task: asyncio.Task) -> Any:
+    """SSE 生成器: 把 interceptor 的事件流吐出去."""
+    try:
+        async for chunk in interceptor.to_event_stream():
+            yield chunk
+    finally:
+        # SSE 客户端断开时把后台任务也取消, 避免 agent 白跑
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
 
 @router.post("/agents/{agent_id}/chat/stream")
@@ -73,89 +182,13 @@ async def chat_stream(agent_id: str, params: dict[str, Any]) -> StreamingRespons
     # 进来就清掉历史残留干预, 避免上一轮的 pause 还挂着
     interrupt_mgr.clear_interrupt(thread_id)
 
-    async def _run_agent() -> None:
-        """后台跑 agent, 把事件喂给 interceptor."""
-        try:
-            if message:
-                # 走跟 /chat 一样的 factory 路径, 拿到 agent 后调 chat()
-                factory = get_agent_factory()
-                agent = factory.create(
-                    agent_id,
-                    thread_id=thread_id,
-                    thinking=req.thinking,
-                    max_tokens=req.max_tokens,
-                )
-                # sidecar serve 模式: 只读工具直放, 写/执行工具强制 ASK.
-                # 名单与判定都取自 permissions.py 单一来源 (见
-                # apply_sse_read_only_policy), 这里不各自硬编码工具名 —— 早期写的是
-                # read_file/file_write 这类短名, 与注册表对不上, set_mode 永不命中,
-                # 只读工具实际仍走 ASK (MECE 审计记的"允许表死项").
-                # 危险命令模式检查仍在 adapter._check_permission 里生效, rm -rf / 这类
-                # 会被拦下要求确认, 不受 auto_approve 影响.
-                apply_sse_read_only_policy(agent._permission_config)
-
-                final_text = ""
-                try:
-                    # agent.chat 是 async generator, 每轮 yield 一个 state
-                    # 把 state 里的 AIMessage 内容喂给 interceptor.on_llm_token
-                    async for state in agent.chat(message, thread_id=thread_id):
-                        # 命中中断就停
-                        evt = interrupt_mgr.check_interrupt(thread_id)
-                        if evt is not None:
-                            if evt.type == "cancel":
-                                interceptor.on_error(
-                                    f"cancelled by user: {evt.message}"
-                                )
-                                return
-                            if evt.type == "modify":
-                                # modify: 把用户的新消息当 token 喂回去,
-                                # 让前端看到 agent 收到了修改意见
-                                interceptor.on_thought(
-                                    f"[用户修改] {evt.message}"
-                                )
-                        # 暂停态: 阻塞到 resume
-                        await interrupt_mgr.wait_if_paused(thread_id)
-
-                        msgs = state.get("messages", []) if isinstance(state, dict) else []
-                        for msg in msgs:
-                            # AIMessage 的 content 当 token 流推
-                            content = getattr(msg, "content", "")
-                            msg_type = getattr(msg, "type", "")
-                            if msg_type == "ai" and isinstance(content, str) and content:
-                                interceptor.on_llm_token(content)
-                                final_text = content
-                            # ToolMessage 当 tool_end 推 (简化: 不拦截 start)
-                            elif msg_type == "tool":
-                                name = getattr(msg, "name", "unknown")
-                                interceptor.on_tool_end(name, content, 0.0)
-                    interceptor.on_done(final_text)
-                except InterruptCancelled:
-                    interceptor.on_error("cancelled by user")
-                except Exception as exc:
-                    interceptor.on_error(str(exc))
-            else:
-                interceptor.on_error("empty message")
-        except Exception as exc:
-            logger.error("unexpected error", exc_info=True)
-            interceptor.on_error(f"server error: {exc}")
-
     # 后台任务: 跑 agent, 不阻塞 SSE 流的产出
-    task = asyncio.create_task(_run_agent())
-
-    async def _sse() -> Any:
-        """SSE 生成器: 把 interceptor 的事件流吐出去."""
-        try:
-            async for chunk in interceptor.to_event_stream():
-                yield chunk
-        finally:
-            # SSE 客户端断开时把后台任务也取消, 避免 agent 白跑
-            if not task.done():
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await task
+    task = asyncio.create_task(
+        _run_agent_stream(agent_id, req, message, thread_id, interceptor, interrupt_mgr)
+    )
 
     return StreamingResponse(
-        _sse(),
+        _sse_stream(interceptor, task),
         media_type="text/event-stream",
         headers={
             # 关闭 nginx 的 buffer, 否则 SSE 会被攒一批再发, 延迟很大
@@ -260,6 +293,7 @@ async def list_inbox(
     from dataclasses import asdict
 
     from huginn.interaction.inbox import get_inbox_store
+
     store = get_inbox_store()
     items = store.list(session_id=session_id, state=state)
     return {"success": True, "count": len(items), "items": [asdict(i) for i in items]}
@@ -275,6 +309,7 @@ async def resolve_inbox_item(item_id: str, params: dict[str, Any]) -> dict[str, 
     if not resolution:
         return {"success": False, "error": "resolution is required"}
     from huginn.interaction.inbox import get_inbox_store
+
     store = get_inbox_store()
     ok = store.resolve(item_id, resolution)
     return {"success": ok, "item_id": item_id}

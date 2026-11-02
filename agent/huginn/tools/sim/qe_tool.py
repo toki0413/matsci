@@ -22,6 +22,183 @@ from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 logger = logging.getLogger(__name__)
 
 
+def _qe_parse_energy(lines: list[str]) -> float | None:
+    """取最后一个 `!    total energy = ...` 行的数值."""
+    energy: float | None = None
+    for line in lines:
+        if "!    total energy" in line:
+            parts = line.split("=")
+            if len(parts) > 1:
+                with contextlib.suppress(ValueError, IndexError):
+                    energy = float(parts[-1].strip().split()[0])
+    return energy
+
+
+def _qe_parse_forces(lines: list[str]) -> list[list[float]]:
+    """取最后一个 `Forces acting on atoms` 块的原子受力."""
+    force_blocks: list[list[list[float]]] = []
+    current_block: list[list[float]] = []
+    in_forces = False
+    for line in lines:
+        if "Forces acting on atoms" in line:
+            in_forces = True
+            current_block = []
+            continue
+        if not in_forces:
+            continue
+        if line.strip().startswith("atom"):
+            parts = line.split()
+            if len(parts) >= 8:
+                with contextlib.suppress(ValueError, IndexError):
+                    fx = float(parts[-3])
+                    fy = float(parts[-2])
+                    fz = float(parts[-1])
+                    current_block.append([fx, fy, fz])
+        elif "Total force" in line:
+            if current_block:
+                force_blocks.append(current_block)
+                current_block = []
+            in_forces = False
+        elif line.strip() == "" and current_block:
+            force_blocks.append(current_block)
+            current_block = []
+            in_forces = False
+    if current_block:
+        force_blocks.append(current_block)
+    return force_blocks[-1] if force_blocks else []
+
+
+def _qe_stress_row(lines: list[str], i: int, offset: int) -> list[float] | None:
+    """取 lines[i+offset] 前 3 个浮点数作为一行应力, 越界/解析失败返回 None."""
+    idx = i + offset
+    if idx >= len(lines):
+        return None
+    parts = lines[idx].split()
+    if len(parts) < 3:
+        return None
+    with contextlib.suppress(ValueError, IndexError):
+        return [float(parts[0]), float(parts[1]), float(parts[2])]
+    return None
+
+
+def _qe_parse_stress(lines: list[str]) -> list[list[float]]:
+    """取最后一个 stress 张量 (3x3)."""
+    stress_result: list[list[float]] = []
+    for i, line in enumerate(lines):
+        lowered = line.lower()
+        if not (
+            "total   stress" in line or ("stress" in lowered and "kbar" in lowered)
+        ):
+            continue
+        rows = (_qe_stress_row(lines, i, j) for j in range(1, 4))
+        stress = [row for row in rows if row is not None]
+        if len(stress) == 3:
+            stress_result = stress
+    return stress_result
+
+
+def _qe_header_lines(
+    args: QuantumEspressoToolInput, prefix: str, work_dir: Path, ecutrho: float
+) -> list[str]:
+    """生成 &CONTROL / &SYSTEM / &ELECTRONS / &IONS / &CELL 段."""
+    lines = []
+    lines.append("&CONTROL")
+    lines.append(f"  calculation = '{args.calculation}'")
+    lines.append(f"  prefix = '{prefix}'")
+    lines.append(f"  outdir = '{work_dir.as_posix()}'")
+    lines.append("  pseudo_dir = './'")
+    lines.append("  tprnfor = .true.")
+    lines.append("  tstress = .true.")
+    lines.append("/")
+
+    lines.append("&SYSTEM")
+    lines.append("  ibrav = 0")
+    lines.append(f"  nat = {len(args.structure.get('species', []))}")
+    lines.append(f"  ntyp = {len(set(args.structure.get('species', [])))}")
+    lines.append(f"  ecutwfc = {args.ecutwfc}")
+    lines.append(f"  ecutrho = {ecutrho}")
+    lines.append(f"  smearing = '{args.smearing}'")
+    lines.append(f"  degauss = {args.degauss}")
+    lines.append(f"  nspin = {args.nspin}")
+    lines.append("/")
+
+    lines.append("&ELECTRONS")
+    lines.append(f"  mixing_beta = {args.mixing_beta}")
+    lines.append(f"  electron_maxstep = {args.electron_maxstep}")
+    lines.append("/")
+
+    if args.calculation in ("relax", "vc-relax", "md"):
+        lines.append("&IONS")
+        lines.append("/")
+
+    if args.calculation == "vc-relax":
+        lines.append("&CELL")
+        lines.append("/")
+
+    return lines
+
+
+def _qe_structure_lines(
+    tool: QuantumEspressoTool, args: QuantumEspressoToolInput, species: list
+) -> list[str]:
+    """生成 ATOMIC_SPECIES / ATOMIC_POSITIONS / K_POINTS / CELL_PARAMETERS 段."""
+    lines = []
+
+    lines.append("ATOMIC_SPECIES")
+    for element in sorted(set(species)):
+        pseudo = args.pseudopotentials.get(element, f"{element}.UPF")
+        mass = tool._atomic_mass(element)
+        lines.append(f"  {element} {mass:.4f} {pseudo}")
+
+    lines.append("ATOMIC_POSITIONS {angstrom}")
+    positions = args.structure.get("positions", [])
+    for elem, pos in zip(species, positions):
+        lines.append(f"  {elem} {pos[0]:.8f} {pos[1]:.8f} {pos[2]:.8f}")
+
+    lines.append("K_POINTS {automatic}")
+    grid = args.kpoints.get("grid", [4, 4, 4])
+    shift = args.kpoints.get("shift", [0, 0, 0])
+    lines.append(f"  {grid[0]} {grid[1]} {grid[2]} {shift[0]} {shift[1]} {shift[2]}")
+
+    lines.append("CELL_PARAMETERS {angstrom}")
+    lattice = args.structure.get("lattice", [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    for row in lattice:
+        lines.append(f"  {row[0]:.8f} {row[1]:.8f} {row[2]:.8f}")
+
+    return lines
+
+
+def _qe_input_export_result(input_path: Path) -> ToolResult:
+    """QE 未安装时只导出输入文件的结果."""
+    return ToolResult(
+        data={
+            "input_path": str(input_path),
+            "qe_available": False,
+            "message": (
+                "QE executable not found. Input file exported; "
+                "run manually with: pw.x -in " + input_path.name
+            ),
+        },
+        success=True,
+    )
+
+
+def _attach_qe_audit(
+    args: QuantumEspressoToolInput, parsed: dict[str, Any], data: dict[str, Any]
+) -> None:
+    """兜底补跑一次物理审计，失败不阻断结果返回."""
+    try:
+        from huginn.execution.physics_auditor import PhysicsAuditor
+
+        auditor = PhysicsAuditor()
+        audit_report = auditor.audit(
+            "qe_tool", args.calculation, parsed, args.model_dump()
+        )
+        data["physics_audit"] = audit_report.to_dict()
+    except Exception:  # 防御: 审计失败不阻断结果返回
+        logger.debug("audit failure can't block result delivery", exc_info=True)
+
+
 class QuantumEspressoToolInput(BaseModel):
     action: Literal["generate", "run", "parse"] = Field(default="run")
     calculation: Literal["scf", "relax", "vc-relax", "md", "bands"] = Field(
@@ -134,63 +311,9 @@ class QuantumEspressoTool(HuginnTool):
         input_path = work_dir / f"{prefix}.in"
         ecutrho = args.ecutrho or 4 * args.ecutwfc
 
-        lines = []
-        lines.append("&CONTROL")
-        lines.append(f"  calculation = '{args.calculation}'")
-        lines.append(f"  prefix = '{prefix}'")
-        lines.append(f"  outdir = '{work_dir.as_posix()}'")
-        lines.append("  pseudo_dir = './'")
-        lines.append("  tprnfor = .true.")
-        lines.append("  tstress = .true.")
-        lines.append("/")
-
-        lines.append("&SYSTEM")
-        lines.append("  ibrav = 0")
-        lines.append(f"  nat = {len(args.structure.get('species', []))}")
-        lines.append(f"  ntyp = {len(set(args.structure.get('species', [])))}")
-        lines.append(f"  ecutwfc = {args.ecutwfc}")
-        lines.append(f"  ecutrho = {ecutrho}")
-        lines.append(f"  smearing = '{args.smearing}'")
-        lines.append(f"  degauss = {args.degauss}")
-        lines.append(f"  nspin = {args.nspin}")
-        lines.append("/")
-
-        lines.append("&ELECTRONS")
-        lines.append(f"  mixing_beta = {args.mixing_beta}")
-        lines.append(f"  electron_maxstep = {args.electron_maxstep}")
-        lines.append("/")
-
-        if args.calculation in ("relax", "vc-relax", "md"):
-            lines.append("&IONS")
-            lines.append("/")
-
-        if args.calculation == "vc-relax":
-            lines.append("&CELL")
-            lines.append("/")
-
-        lines.append("ATOMIC_SPECIES")
         species = args.structure.get("species", [])
-        for element in sorted(set(species)):
-            pseudo = args.pseudopotentials.get(element, f"{element}.UPF")
-            mass = self._atomic_mass(element)
-            lines.append(f"  {element} {mass:.4f} {pseudo}")
-
-        lines.append("ATOMIC_POSITIONS {angstrom}")
-        positions = args.structure.get("positions", [])
-        for elem, pos in zip(species, positions):
-            lines.append(f"  {elem} {pos[0]:.8f} {pos[1]:.8f} {pos[2]:.8f}")
-
-        lines.append("K_POINTS {automatic}")
-        grid = args.kpoints.get("grid", [4, 4, 4])
-        shift = args.kpoints.get("shift", [0, 0, 0])
-        lines.append(
-            f"  {grid[0]} {grid[1]} {grid[2]} {shift[0]} {shift[1]} {shift[2]}"
-        )
-
-        lines.append("CELL_PARAMETERS {angstrom}")
-        lattice = args.structure.get("lattice", [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
-        for row in lattice:
-            lines.append(f"  {row[0]:.8f} {row[1]:.8f} {row[2]:.8f}")
+        lines = _qe_header_lines(args, prefix, work_dir, ecutrho)
+        lines.extend(_qe_structure_lines(self, args, species))
 
         input_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return input_path
@@ -234,17 +357,7 @@ class QuantumEspressoTool(HuginnTool):
         self, args: QuantumEspressoToolInput, work_dir: Path, input_path: Path
     ) -> ToolResult:
         if not self.qe_executable:
-            return ToolResult(
-                data={
-                    "input_path": str(input_path),
-                    "qe_available": False,
-                    "message": (
-                        "QE executable not found. Input file exported; "
-                        "run manually with: pw.x -in " + input_path.name
-                    ),
-                },
-                success=True,
-            )
+            return _qe_input_export_result(input_path)
 
         output_path = work_dir / f"{args.output_prefix}.out"
         cmd = [self.qe_executable, "-in", str(input_path)]
@@ -259,71 +372,131 @@ class QuantumEspressoTool(HuginnTool):
         max_retries = args.max_auto_retries
 
         for attempt in range(max_retries + 1):
-            with open(output_path, "w", encoding="utf-8") as stdout_file:
-                result = self.sandbox.run(
-                    cmd,
-                    cwd=work_dir,
-                    config=cfg,
-                    stdout=stdout_file,
-                    stderr=subprocess.STDOUT,
-                )
+            result = self._run_qe_once(cmd, work_dir, output_path, cfg)
 
             rc = result.get("returncode", -1)
             # 判断这次跑完到底算成功还是失败:
             # - rc != 0 → 硬失败, stderr 被合进 output 文件了, 读出来诊断
             # - rc == 0 但 SCF 没收敛 → 软失败, QE 经常静默返回 0
-            error: str | None = None
-            soft_failure_msg = None
-            if rc != 0:
-                error = self._read_output_tail(output_path)
-            else:
-                parsed_now = self._parse_output_file(output_path)
-                if not parsed_now.get("converged", True):
-                    error = "SCF did not converge — convergence not achieved"
-                    soft_failure_msg = error
-                else:
-                    # SCF converged, run physics audit for soft failures
-                    try:
-                        from huginn.execution.physics_auditor import (
-                            PhysicsAuditor,
-                        )
-
-                        auditor = PhysicsAuditor()
-                        audit_report = auditor.audit(
-                            "qe_tool",
-                            args.calculation,
-                            parsed_now,
-                            args.model_dump(),
-                        )
-                        if audit_report.has_errors:
-                            errs = [
-                                f.message
-                                for f in audit_report.findings
-                                if f.severity == "error"
-                            ]
-                            error = f"Physics audit found errors: {errs}"
-                            soft_failure_msg = error
-                    except Exception:  # 防御: 审计异常不阻断重试流程
-                        logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
+            error, soft_failure_msg, audit_report = self._classify_qe_attempt(
+                args, output_path, rc, audit_report
+            )
 
             if error is None:
                 break  # 真正成功
 
             # 失败了 (硬失败或软失败), 看还有没有重试额度 + 能不能自动修
-            if attempt < max_retries:
-                fixed = self._try_autofix(input_path, error)
-                if fixed:
-                    autoheal_log.append(
-                        {
-                            "attempt": attempt + 1,
-                            "error": error[:300],
-                            "fixes_applied": fixed["fixes"],
-                            "reasoning": fixed["reasoning"],
-                        }
-                    )
-                    continue
-            break  # 没修动或重试耗尽
+            if not self._should_retry_qe(
+                args, input_path, attempt, error, autoheal_log
+            ):
+                break
 
+        return self._finalize_qe(
+            args,
+            input_path,
+            output_path,
+            result,
+            soft_failure_msg,
+            audit_report,
+            autoheal_log,
+        )
+
+    def _run_qe_once(
+        self,
+        cmd: list[str],
+        work_dir: Path,
+        output_path: Path,
+        cfg: SandboxConfig,
+    ) -> dict[str, Any]:
+        """跑一次 pw.x, stdout 直接写入 output 文件."""
+        with open(output_path, "w", encoding="utf-8") as stdout_file:
+            result = self.sandbox.run(
+                cmd,
+                cwd=work_dir,
+                config=cfg,
+                stdout=stdout_file,
+                stderr=subprocess.STDOUT,
+            )
+        return result
+
+    def _classify_qe_attempt(
+        self,
+        args: QuantumEspressoToolInput,
+        output_path: Path,
+        rc: int,
+        audit_report: Any,
+    ) -> tuple[str | None, str | None, Any]:
+        """判定本次运行是硬失败/软失败/成功, 返回 (error, 软失败原因, 审计)."""
+        error: str | None = None
+        soft_failure_msg: str | None = None
+        if rc != 0:
+            error = self._read_output_tail(output_path)
+        else:
+            parsed_now = self._parse_output_file(output_path)
+            if not parsed_now.get("converged", True):
+                error = "SCF did not converge — convergence not achieved"
+                soft_failure_msg = error
+            else:
+                # SCF converged, run physics audit for soft failures
+                try:
+                    from huginn.execution.physics_auditor import (
+                        PhysicsAuditor,
+                    )
+
+                    auditor = PhysicsAuditor()
+                    audit_report = auditor.audit(
+                        "qe_tool",
+                        args.calculation,
+                        parsed_now,
+                        args.model_dump(),
+                    )
+                    if audit_report.has_errors:
+                        errs = [
+                            f.message
+                            for f in audit_report.findings
+                            if f.severity == "error"
+                        ]
+                        error = f"Physics audit found errors: {errs}"
+                        soft_failure_msg = error
+                except Exception:  # 防御: 审计异常不阻断重试流程
+                    logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
+        return error, soft_failure_msg, audit_report
+
+    def _should_retry_qe(
+        self,
+        args: QuantumEspressoToolInput,
+        input_path: Path,
+        attempt: int,
+        error: str,
+        autoheal_log: list[dict[str, Any]],
+    ) -> bool:
+        """判断是否再进行一轮重试 (可自动修复时记录 autoheal)."""
+        if attempt >= args.max_auto_retries:
+            return False
+        fixed = self._try_autofix(input_path, error)
+        if not fixed:
+            return False
+        autoheal_log.append(
+            {
+                "attempt": attempt + 1,
+                "error": error[:300],
+                "fixes_applied": fixed["fixes"],
+                "reasoning": fixed["reasoning"],
+            }
+        )
+        return True
+
+    def _finalize_qe(
+        self,
+        args: QuantumEspressoToolInput,
+        input_path: Path,
+        output_path: Path,
+        result: dict[str, Any],
+        soft_failure_msg: str | None,
+        audit_report: Any,
+        autoheal_log: list[dict[str, Any]],
+    ) -> ToolResult:
+        """解析输出并组装最终结果."""
         parsed = self._parse_output_file(output_path)
         ok = result.get("returncode", -1) == 0 and soft_failure_msg is None
         data: dict[str, Any] = {
@@ -332,9 +505,7 @@ class QuantumEspressoTool(HuginnTool):
             "qe_available": True,
             "parsed": parsed,
             "message": (
-                "QE execution completed."
-                if ok
-                else "QE execution failed; see output."
+                "QE execution completed." if ok else "QE execution failed; see output."
             ),
         }
         if autoheal_log:
@@ -344,24 +515,13 @@ class QuantumEspressoTool(HuginnTool):
         if audit_report is not None:
             data["physics_audit"] = audit_report.to_dict()
         else:
-            try:
-                from huginn.execution.physics_auditor import PhysicsAuditor
-
-                auditor = PhysicsAuditor()
-                audit_report = auditor.audit(
-                    "qe_tool", args.calculation, parsed, args.model_dump()
-                )
-                data["physics_audit"] = audit_report.to_dict()
-            except Exception:  # 防御: 审计失败不阻断结果返回
-                logger.debug("audit failure can't block result delivery", exc_info=True)
+            _attach_qe_audit(args, parsed, data)
 
         return ToolResult(
             data=data,
             success=ok,
             error=(
-                None
-                if ok
-                else (soft_failure_msg or "QE execution failed; see output.")
+                None if ok else (soft_failure_msg or "QE execution failed; see output.")
             ),
         )
 
@@ -461,82 +621,14 @@ class QuantumEspressoTool(HuginnTool):
         return self._parse_output(content)
 
     def _parse_output(self, content: str) -> dict[str, Any]:
-        result: dict[str, Any] = {
-            "energy": None,
-            "converged": False,
-            "forces": [],
-            "stress": [],
-            "n_scf_steps": 0,
-        }
-
         lines = content.splitlines()
-
-        # Energy
-        for line in lines:
-            if "!    total energy" in line:
-                parts = line.split("=")
-                if len(parts) > 1:
-                    with contextlib.suppress(ValueError, IndexError):
-                        result["energy"] = float(parts[-1].strip().split()[0])
-
-        # Convergence
-        result["converged"] = "convergence has been achieved" in content
-
-        # SCF steps
-        result["n_scf_steps"] = content.count("iteration #")
-
-        # Forces (last block)
-        force_blocks = []
-        current_block = []
-        in_forces = False
-        for line in lines:
-            if "Forces acting on atoms" in line:
-                in_forces = True
-                current_block = []
-                continue
-            if in_forces:
-                if line.strip().startswith("atom"):
-                    parts = line.split()
-                    if len(parts) >= 8:
-                        with contextlib.suppress(ValueError, IndexError):
-                            fx = float(parts[-3])
-                            fy = float(parts[-2])
-                            fz = float(parts[-1])
-                            current_block.append([fx, fy, fz])
-                elif "Total force" in line:
-                    if current_block:
-                        force_blocks.append(current_block)
-                        current_block = []
-                    in_forces = False
-                elif line.strip() == "" and current_block:
-                    force_blocks.append(current_block)
-                    current_block = []
-                    in_forces = False
-        if current_block:
-            force_blocks.append(current_block)
-        if force_blocks:
-            result["forces"] = force_blocks[-1]
-
-        # Stress (last occurrence)
-        for i, line in enumerate(lines):
-            if (
-                "total   stress" in line
-                or "stress" in line.lower()
-                and "kbar" in line.lower()
-            ):
-                stress = []
-                for j in range(1, 4):
-                    if i + j < len(lines):
-                        parts = lines[i + j].split()
-                        if len(parts) >= 3:
-                            with contextlib.suppress(ValueError, IndexError):
-                                stress.append(
-                                    [float(parts[0]), float(parts[1]), float(parts[2])]
-                                )
-                if len(stress) == 3:
-                    result["stress"] = stress
-
-        return result
+        return {
+            "energy": _qe_parse_energy(lines),
+            "converged": "convergence has been achieved" in content,
+            "forces": _qe_parse_forces(lines),
+            "stress": _qe_parse_stress(lines),
+            "n_scf_steps": content.count("iteration #"),
+        }
 
     def _parse_results(
         self, args: QuantumEspressoToolInput, work_dir: Path

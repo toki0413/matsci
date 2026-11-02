@@ -15,6 +15,7 @@
   - 子评估器按需懒导入, 避免 numpy/langchain 等重依赖在模块加载时被拉起.
   - 适配方法用 duck-typing (getattr / dict.get), 兼容 dataclass 和 dict 两种形态.
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,6 +29,141 @@ _DEFAULT_THRESHOLD = 0.5
 
 # on_track 字符串 → score 的映射 (StepEvaluator 用)
 _ON_TRACK_SCORE: dict[str, float] = {"true": 1.0, "unsure": 0.5, "false": 0.0}
+
+
+def _extract_mcda_fields(result: Any) -> tuple[dict, list, str]:
+    if isinstance(result, dict):
+        scores = result.get("scores", {}) or {}
+        ranking = result.get("ranking", []) or []
+        method = result.get("method", "mcda")
+    else:
+        scores = getattr(result, "scores", None) or {}
+        ranking = getattr(result, "ranking", []) or []
+        method = getattr(result, "method", "mcda")
+    return scores, ranking, method
+
+
+def _extract_grader_fields(result: Any) -> tuple[str, float, bool, list, str]:
+    if isinstance(result, dict):
+        name = result.get("name", "grader")
+        score = float(result.get("score", 0.0))
+        passed = bool(result.get("passed", False))
+        checks = result.get("checks", []) or []
+        message = result.get("message", "") or ""
+    else:
+        name = getattr(result, "name", "grader")
+        score = float(getattr(result, "score", 0.0))
+        passed = bool(getattr(result, "passed", False))
+        checks = getattr(result, "checks", []) or []
+        message = getattr(result, "message", "") or ""
+    return name, score, passed, checks, message
+
+
+def _build_grader_evidence(
+    name: str, score: float, message: str, checks: list
+) -> list[str]:
+    evidence = [f"grader={name} score={score:.3f}"]
+    if message:
+        evidence.append(message)
+    # 把 checks 里的关键字段也作为证据
+    for chk in checks:
+        if isinstance(chk, dict):
+            detail = (
+                chk.get("issue")
+                or chk.get("violation")
+                or chk.get("description")
+                or chk.get("reason")
+                or ""
+            )
+            if detail:
+                evidence.append(str(detail))
+        elif chk:
+            evidence.append(str(chk))
+    return evidence
+
+
+def _build_grader_gaps(name: str, passed: bool, message: str) -> list[str]:
+    if passed:
+        return []
+    return [f"{name} 未通过: {message}"] if message else [f"{name} 未通过"]
+
+
+def _extract_step_fields(result: Any) -> tuple:
+    if isinstance(result, dict):
+        step_id = result.get("step_id", -1)
+        on_track = str(result.get("on_track", "unsure")).lower()
+        struct = result.get("structure_check", "not_applicable")
+        eq = result.get("evidence_quality", "unknown")
+        deviation = result.get("deviation", "") or ""
+        target_ref = result.get("target_chain_ref")
+    else:
+        step_id = getattr(result, "step_id", -1)
+        on_track = str(getattr(result, "on_track", "unsure")).lower()
+        struct = getattr(result, "structure_check", "not_applicable")
+        eq = getattr(result, "evidence_quality", "unknown")
+        deviation = getattr(result, "deviation", "") or ""
+        target_ref = getattr(result, "target_chain_ref", None)
+    return step_id, on_track, struct, eq, deviation, target_ref
+
+
+def _build_step_evidence(
+    step_id: int, on_track: str, struct: Any, eq: Any, target_ref: Any
+) -> list[str]:
+    evidence = [
+        f"step={step_id} on_track={on_track}",
+        f"structure_check={struct} evidence_quality={eq}",
+    ]
+    if target_ref:
+        evidence.append(f"target_chain={target_ref}")
+    return evidence
+
+
+def _build_step_gaps(deviation: str, struct: Any, eq: Any) -> list[str]:
+    gaps: list[str] = []
+    if deviation:
+        gaps.append(str(deviation))
+    if struct == "failed":
+        gaps.append("结构不变量检查失败")
+    if eq == "low":
+        gaps.append("证据质量低")
+    return gaps
+
+
+def _collect_sub_results(
+    evaluator: Any, context: dict[str, Any]
+) -> list[UnifiedEvaluationResult]:
+    """依次收集各子评估器的结果 (顺序: mcda → goal_judge → grader → step)."""
+    sub_results: list[UnifiedEvaluationResult] = []
+
+    # MCDA 分支
+    mcda_ctx = context.get("mcda")
+    if mcda_ctx is not None:
+        res = evaluator._eval_mcda(mcda_ctx)
+        if res is not None:
+            sub_results.append(res)
+
+    # GoalJudge 分支
+    gj_ctx = context.get("goal_judge")
+    if gj_ctx is not None:
+        res = evaluator._eval_goal_judge(gj_ctx)
+        if res is not None:
+            sub_results.append(res)
+
+    # Grader 分支
+    grader_ctx = context.get("grader")
+    if grader_ctx is not None:
+        res = evaluator._eval_grader(grader_ctx)
+        if res is not None:
+            sub_results.append(res)
+
+    # Step 分支
+    step_ctx = context.get("step")
+    if step_ctx is not None:
+        res = evaluator._eval_step(step_ctx)
+        if res is not None:
+            sub_results.append(res)
+
+    return sub_results
 
 
 @dataclass
@@ -87,7 +223,9 @@ class UnifiedEvaluator:
     # ── 适配方法: 子结果 → UnifiedEvaluationResult ───────────────
 
     @staticmethod
-    def from_mcda(result: Any, alternative: str | None = None) -> UnifiedEvaluationResult:
+    def from_mcda(
+        result: Any, alternative: str | None = None
+    ) -> UnifiedEvaluationResult:
         """从 MCDA EvaluationResult 转换.
 
         取指定 alternative 的分; 未指定时取 ranking 第一名; 都没有则取首个 score.
@@ -100,14 +238,7 @@ class UnifiedEvaluator:
             归一后的 UnifiedEvaluationResult, category="mcda".
         """
         try:
-            if isinstance(result, dict):
-                scores = result.get("scores", {}) or {}
-                ranking = result.get("ranking", []) or []
-                method = result.get("method", "mcda")
-            else:
-                scores = getattr(result, "scores", None) or {}
-                ranking = getattr(result, "ranking", []) or []
-                method = getattr(result, "method", "mcda")
+            scores, ranking, method = _extract_mcda_fields(result)
 
             # 选 alternative: 显式指定 > 排名第一 > 首个 score 键
             alt = alternative
@@ -119,7 +250,11 @@ class UnifiedEvaluator:
             score = float(scores.get(alt, 0.0)) if alt is not None else 0.0
             achieved = score >= _DEFAULT_THRESHOLD
             ranking_str = " > ".join(ranking) if ranking else "(空)"
-            evidence = [f"method={method}", f"alternative={alt}", f"ranking={ranking_str}"]
+            evidence = [
+                f"method={method}",
+                f"alternative={alt}",
+                f"ranking={ranking_str}",
+            ]
             gaps = (
                 []
                 if achieved
@@ -189,41 +324,9 @@ class UnifiedEvaluator:
             归一后的 UnifiedEvaluationResult, category="grader", source=grader.name.
         """
         try:
-            if isinstance(result, dict):
-                name = result.get("name", "grader")
-                score = float(result.get("score", 0.0))
-                passed = bool(result.get("passed", False))
-                checks = result.get("checks", []) or []
-                message = result.get("message", "") or ""
-            else:
-                name = getattr(result, "name", "grader")
-                score = float(getattr(result, "score", 0.0))
-                passed = bool(getattr(result, "passed", False))
-                checks = getattr(result, "checks", []) or []
-                message = getattr(result, "message", "") or ""
-
-            evidence = [f"grader={name} score={score:.3f}"]
-            if message:
-                evidence.append(message)
-            # 把 checks 里的关键字段也作为证据
-            for chk in checks:
-                if isinstance(chk, dict):
-                    detail = (
-                        chk.get("issue")
-                        or chk.get("violation")
-                        or chk.get("description")
-                        or chk.get("reason")
-                        or ""
-                    )
-                    if detail:
-                        evidence.append(str(detail))
-                elif chk:
-                    evidence.append(str(chk))
-
-            if passed:
-                gaps = []
-            else:
-                gaps = [f"{name} 未通过: {message}"] if message else [f"{name} 未通过"]
+            name, score, passed, checks, message = _extract_grader_fields(result)
+            evidence = _build_grader_evidence(name, score, message, checks)
+            gaps = _build_grader_gaps(name, passed, message)
 
             return UnifiedEvaluationResult(
                 score=score,
@@ -255,38 +358,15 @@ class UnifiedEvaluator:
             归一后的 UnifiedEvaluationResult, category="step", source="StepEvaluator".
         """
         try:
-            if isinstance(result, dict):
-                step_id = result.get("step_id", -1)
-                on_track = str(result.get("on_track", "unsure")).lower()
-                struct = result.get("structure_check", "not_applicable")
-                eq = result.get("evidence_quality", "unknown")
-                deviation = result.get("deviation", "") or ""
-                target_ref = result.get("target_chain_ref")
-            else:
-                step_id = getattr(result, "step_id", -1)
-                on_track = str(getattr(result, "on_track", "unsure")).lower()
-                struct = getattr(result, "structure_check", "not_applicable")
-                eq = getattr(result, "evidence_quality", "unknown")
-                deviation = getattr(result, "deviation", "") or ""
-                target_ref = getattr(result, "target_chain_ref", None)
+            step_id, on_track, struct, eq, deviation, target_ref = _extract_step_fields(
+                result
+            )
 
             score = _ON_TRACK_SCORE.get(on_track, 0.5)
             achieved = on_track == "true"
 
-            evidence = [
-                f"step={step_id} on_track={on_track}",
-                f"structure_check={struct} evidence_quality={eq}",
-            ]
-            if target_ref:
-                evidence.append(f"target_chain={target_ref}")
-
-            gaps: list[str] = []
-            if deviation:
-                gaps.append(str(deviation))
-            if struct == "failed":
-                gaps.append("结构不变量检查失败")
-            if eq == "low":
-                gaps.append("证据质量低")
+            evidence = _build_step_evidence(step_id, on_track, struct, eq, target_ref)
+            gaps = _build_step_gaps(deviation, struct, eq)
 
             return UnifiedEvaluationResult(
                 score=score,
@@ -298,9 +378,7 @@ class UnifiedEvaluator:
             )
         except Exception as exc:
             logger.warning("from_step_evaluator 转换失败: %s", exc)
-            return UnifiedEvaluationResult(
-                category="step", source="step_error"
-            )
+            return UnifiedEvaluationResult(category="step", source="step_error")
 
     # ── 聚合主入口 ───────────────────────────────────────────────
 
@@ -324,35 +402,7 @@ class UnifiedEvaluator:
         Returns:
             聚合后的 UnifiedEvaluationResult. 无任何可用子结果时返回默认值.
         """
-        sub_results: list[UnifiedEvaluationResult] = []
-
-        # MCDA 分支
-        mcda_ctx = context.get("mcda")
-        if mcda_ctx is not None:
-            res = self._eval_mcda(mcda_ctx)
-            if res is not None:
-                sub_results.append(res)
-
-        # GoalJudge 分支
-        gj_ctx = context.get("goal_judge")
-        if gj_ctx is not None:
-            res = self._eval_goal_judge(gj_ctx)
-            if res is not None:
-                sub_results.append(res)
-
-        # Grader 分支
-        grader_ctx = context.get("grader")
-        if grader_ctx is not None:
-            res = self._eval_grader(grader_ctx)
-            if res is not None:
-                sub_results.append(res)
-
-        # Step 分支
-        step_ctx = context.get("step")
-        if step_ctx is not None:
-            res = self._eval_step(step_ctx)
-            if res is not None:
-                sub_results.append(res)
+        sub_results = _collect_sub_results(self, context)
 
         if not sub_results:
             return self._default_result()
@@ -577,28 +627,39 @@ if __name__ == "__main__":
     assert _u.evidence == ["数值合理"]
     assert _u.category == "goal_judge" and _u.source == "GoalJudge"
     # 对象形式
-    _gj_obj = SimpleNamespace(achieved=False, score=0.2, evidence=[], gaps=["无机制解释"])
+    _gj_obj = SimpleNamespace(
+        achieved=False, score=0.2, evidence=[], gaps=["无机制解释"]
+    )
     _u = UnifiedEvaluator.from_goal_judge(_gj_obj)
     assert _u.achieved is False and _u.gaps == ["无机制解释"]
 
     # 4) from_grader — GraderResult mock
     _gr = SimpleNamespace(
-        name="physics", score=0.6, passed=True,
-        checks=[{"issue": "ok"}], message="no findings",
+        name="physics",
+        score=0.6,
+        passed=True,
+        checks=[{"issue": "ok"}],
+        message="no findings",
     )
     _u = UnifiedEvaluator.from_grader(_gr)
     assert _u.score == 0.6 and _u.achieved is True
     assert _u.source == "physics" and _u.category == "grader"
     assert any("no findings" in _e for _e in _u.evidence)
     # 未通过
-    _gr2 = SimpleNamespace(name="dimensional", score=0.0, passed=False, checks=[], message="量纲不一致")
+    _gr2 = SimpleNamespace(
+        name="dimensional", score=0.0, passed=False, checks=[], message="量纲不一致"
+    )
     _u = UnifiedEvaluator.from_grader(_gr2)
     assert _u.achieved is False and _u.gaps, "未通过应有 gaps"
 
     # 5) from_step_evaluator — StepEvaluation mock
     _step = SimpleNamespace(
-        step_id=3, on_track="true", structure_check="passed",
-        evidence_quality="high", deviation="", target_chain_ref="T1",
+        step_id=3,
+        on_track="true",
+        structure_check="passed",
+        evidence_quality="high",
+        deviation="",
+        target_chain_ref="T1",
     )
     _u = UnifiedEvaluator.from_step_evaluator(_step)
     assert _u.score == 1.0 and _u.achieved is True
@@ -606,16 +667,24 @@ if __name__ == "__main__":
     assert any("step=3" in _e for _e in _u.evidence)
     # unsure
     _step2 = SimpleNamespace(
-        step_id=4, on_track="unsure", structure_check="not_applicable",
-        evidence_quality="unknown", deviation="机械信号不足", target_chain_ref=None,
+        step_id=4,
+        on_track="unsure",
+        structure_check="not_applicable",
+        evidence_quality="unknown",
+        deviation="机械信号不足",
+        target_chain_ref=None,
     )
     _u = UnifiedEvaluator.from_step_evaluator(_step2)
     assert _u.score == 0.5 and _u.achieved is False
     assert "机械信号不足" in _u.gaps
     # false + 结构失败
     _step3 = SimpleNamespace(
-        step_id=5, on_track="false", structure_check="failed",
-        evidence_quality="low", deviation="脱轨", target_chain_ref=None,
+        step_id=5,
+        on_track="false",
+        structure_check="failed",
+        evidence_quality="low",
+        deviation="脱轨",
+        target_chain_ref=None,
     )
     _u = UnifiedEvaluator.from_step_evaluator(_step3)
     assert _u.score == 0.0 and _u.achieved is False
@@ -627,12 +696,20 @@ if __name__ == "__main__":
     _ctx = {
         "goal_judge": {"achieved": True, "score": 0.8, "evidence": ["e1"], "gaps": []},
         "grader": [
-            SimpleNamespace(name="physics", score=0.7, passed=True, checks=[], message="ok"),
-            SimpleNamespace(name="dim", score=0.0, passed=False, checks=[], message="bad"),
+            SimpleNamespace(
+                name="physics", score=0.7, passed=True, checks=[], message="ok"
+            ),
+            SimpleNamespace(
+                name="dim", score=0.0, passed=False, checks=[], message="bad"
+            ),
         ],
         "step": SimpleNamespace(
-            step_id=1, on_track="true", structure_check="passed",
-            evidence_quality="high", deviation="", target_chain_ref="T",
+            step_id=1,
+            on_track="true",
+            structure_check="passed",
+            evidence_quality="high",
+            deviation="",
+            target_chain_ref="T",
         ),
     }
     _u = _ev.evaluate(_ctx)
@@ -648,28 +725,44 @@ if __name__ == "__main__":
     assert _u.source == "default"
 
     # 8) 异常输入不抛 (各分支走 try/except 返回 None / 默认)
-    _u = _ev.evaluate({
-        "mcda": object(),
-        "goal_judge": [1, 2, 3],
-        "grader": 12345,
-        "step": 99,
-    })
+    _u = _ev.evaluate(
+        {
+            "mcda": object(),
+            "goal_judge": [1, 2, 3],
+            "grader": 12345,
+            "step": 99,
+        }
+    )
     assert isinstance(_u, UnifiedEvaluationResult)
     assert _u.source == "default", f"全异常应回默认: {_u.source}"
 
     # 9) 单分支也能跑 (只给 grader data dict 之外的 GraderResult list)
-    _u = _ev.evaluate({
-        "grader": [SimpleNamespace(name="hallucination", score=1.0, passed=True, checks=[], message="clean")],
-    })
+    _u = _ev.evaluate(
+        {
+            "grader": [
+                SimpleNamespace(
+                    name="hallucination",
+                    score=1.0,
+                    passed=True,
+                    checks=[],
+                    message="clean",
+                )
+            ],
+        }
+    )
     assert _u.score == 1.0 and _u.achieved is True
     assert _u.source == "hallucination"
 
     # 10) from_grader 的 dict 形式 (序列化 GraderResult)
-    _u = UnifiedEvaluator.from_grader({
-        "name": "materials_bounds", "score": 0.0, "passed": False,
-        "checks": [{"violation": "band_gap_eV=50 outside [0, 10]"}],
-        "message": "band_gap_eV=50 outside [0, 10]",
-    })
+    _u = UnifiedEvaluator.from_grader(
+        {
+            "name": "materials_bounds",
+            "score": 0.0,
+            "passed": False,
+            "checks": [{"violation": "band_gap_eV=50 outside [0, 10]"}],
+            "message": "band_gap_eV=50 outside [0, 10]",
+        }
+    )
     assert _u.score == 0.0 and _u.achieved is False
     assert _u.source == "materials_bounds"
     assert any("band_gap" in _e for _e in _u.evidence)

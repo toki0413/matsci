@@ -24,28 +24,97 @@ logger = logging.getLogger(__name__)
 # 专业黑话 (DFT/VASP 等领域术语), 命中 ≥3 个判 expert
 _EXPERT_TERMS = {
     # DFT / VASP
-    "dft", "encut", "ismear", "pbe", "brillouin", "vasp", "kpoints",
-    "potcar", "poscar", "incar", "lda", "gga", "hse06", "bse", "gw",
-    "soc", "dos", "pdos", "scf", "neb", "npt", "nvt", "vcrelax",
-    "hubbard", "bader", "fermi", "phonon", "eos", "born effective",
+    "dft",
+    "encut",
+    "ismear",
+    "pbe",
+    "brillouin",
+    "vasp",
+    "kpoints",
+    "potcar",
+    "poscar",
+    "incar",
+    "lda",
+    "gga",
+    "hse06",
+    "bse",
+    "gw",
+    "soc",
+    "dos",
+    "pdos",
+    "scf",
+    "neb",
+    "npt",
+    "nvt",
+    "vcrelax",
+    "hubbard",
+    "bader",
+    "fermi",
+    "phonon",
+    "eos",
+    "born effective",
     # 计算软件
-    "lammps", "cp2k", "quantum espresso", "abinit",
+    "lammps",
+    "cp2k",
+    "quantum espresso",
+    "abinit",
     # 物理量 / 概念
-    "bandgap", "kpoint", "spin-orbit", "paw",
+    "bandgap",
+    "kpoint",
+    "spin-orbit",
+    "paw",
 }
 
 # 技术词 (中文材料学术语), 命中 ≥2 个判 technical
 _TECHNICAL_TERMS_ZH = {
-    "带隙", "晶格", "优化", "能带", "态密度", "弛豫", "电子结构",
-    "缺陷", "表面", "界面", "异质结", "铁电", "压电", "应力", "应变",
-    "杨氏模量", "热导", "电导", "磁矩", "相图", "固溶体", "掺杂",
-    "能带结构", "费米面", "声子谱", "弹性常数", "介电", "波函数",
+    "带隙",
+    "晶格",
+    "优化",
+    "能带",
+    "态密度",
+    "弛豫",
+    "电子结构",
+    "缺陷",
+    "表面",
+    "界面",
+    "异质结",
+    "铁电",
+    "压电",
+    "应力",
+    "应变",
+    "杨氏模量",
+    "热导",
+    "电导",
+    "磁矩",
+    "相图",
+    "固溶体",
+    "掺杂",
+    "能带结构",
+    "费米面",
+    "声子谱",
+    "弹性常数",
+    "介电",
+    "波函数",
 }
 
 # 通用词, 命中任一判 intermediate
 _INTERMEDIATE_TERMS = {
-    "计算", "模拟", "材料", "性质", "结构", "参数", "模型", "结果",
-    "分析", "预测", "实验", "理论", "方法", "数据", "能量", "温度",
+    "计算",
+    "模拟",
+    "材料",
+    "性质",
+    "结构",
+    "参数",
+    "模型",
+    "结果",
+    "分析",
+    "预测",
+    "实验",
+    "理论",
+    "方法",
+    "数据",
+    "能量",
+    "温度",
 }
 
 # 中英文术语对, 用于 preferred_terms 提取
@@ -87,14 +156,18 @@ _CASUAL_MARKERS = {"嗨", "嗯", "哈", "吧", "呢", "啊", "哎", "哟", "嘛"
 class UserStyleProfile:
     """用户语言偏好 profile, 由 StyleLearner 通过 EMA 更新."""
 
-    vocabulary_level: str = "intermediate"  # expert / technical / intermediate / beginner
-    formality: str = "neutral"              # formal / neutral / casual
-    verbosity: str = "moderate"             # concise / moderate / detailed
-    language: str = "zh"                    # zh / en / mixed
-    preferred_terms: dict[str, str] = field(default_factory=dict)  # zh_term -> 偏好的形式
+    vocabulary_level: str = (
+        "intermediate"  # expert / technical / intermediate / beginner
+    )
+    formality: str = "neutral"  # formal / neutral / casual
+    verbosity: str = "moderate"  # concise / moderate / detailed
+    language: str = "zh"  # zh / en / mixed
+    preferred_terms: dict[str, str] = field(
+        default_factory=dict
+    )  # zh_term -> 偏好的形式
     avoid_terms: list[str] = field(default_factory=list)
-    response_format: str = "markdown"       # markdown / plain / table_heavy
-    code_style: str = "commented"           # commented / minimal / verbose
+    response_format: str = "markdown"  # markdown / plain / table_heavy
+    code_style: str = "commented"  # commented / minimal / verbose
     confidence: float = 0.0
     sample_count: int = 0
 
@@ -106,7 +179,9 @@ _CATEGORICAL_DIMS = ("vocabulary_level", "formality", "verbosity", "language")
 _AVOID_PATTERNS = [
     re.compile(r"[避免别][要用说]([^\s，。、,.;:！!？?]+)"),
     re.compile(r"不要[用说]([^\s，。、,.;:！!？?]+)"),
-    re.compile(r'[""\u2018\u2019\u201c\u201d]([^"\u2018\u2019\u201c\u201d]+)[""\u2018\u2019\u201c\u201d]'),
+    re.compile(
+        r'[""\u2018\u2019\u201c\u201d]([^"\u2018\u2019\u201c\u201d]+)[""\u2018\u2019\u201c\u201d]'
+    ),
 ]
 
 
@@ -149,6 +224,7 @@ class StyleLearner:
         # flag 关掉时不学习, 直接返回
         try:
             from huginn.feature_flags import FeatureFlags
+
             if not FeatureFlags.shared().is_enabled("personalization"):
                 return
         except Exception:
@@ -284,7 +360,7 @@ class StyleLearner:
         _trailing_desc = ("这个词", "这种话", "这些话", "这个词儿", "这种词", "这句话")
         for pat in _AVOID_PATTERNS:
             for m in pat.finditer(feedback):
-                term = m.group(1).strip().strip('"\'\u201c\u201d\u2018\u2019')
+                term = m.group(1).strip().strip("\"'\u201c\u201d\u2018\u2019")
                 for suffix in _trailing_desc:
                     if term.endswith(suffix):
                         term = term[: -len(suffix)]
@@ -346,6 +422,7 @@ class StyleLearner:
         # flag 关掉时不注入风格指令
         try:
             from huginn.feature_flags import FeatureFlags
+
             if not FeatureFlags.shared().is_enabled("personalization"):
                 return ""
         except Exception:
@@ -358,6 +435,13 @@ class StyleLearner:
             return ""
 
         lines = ["## 通信风格定制"]
+        lines.extend(StyleLearner._style_lines(p))
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _style_lines(p: UserStyleProfile) -> list[str]:
+        lines: list[str] = []
         vocab_hint = {
             "expert": "用 DFT/VASP/ENCUT 等专业术语, 不解释基础概念",
             "technical": "可以用带隙/晶格/优化等技术词, 复杂概念简要说明",
@@ -405,7 +489,7 @@ class StyleLearner:
         elif p.code_style == "verbose":
             lines.append("- 代码: 完整可跑, 加详细注释")
 
-        return "\n".join(lines)
+        return lines
 
     def reset(self) -> None:
         """重置 profile 到初始状态, 清掉所有学习结果和手动设置."""

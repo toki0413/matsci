@@ -67,6 +67,66 @@ def _get_default_config() -> dict[str, Any]:
     return defaults
 
 
+def _remove_orphan_keys(healed: dict[str, Any], reference: dict[str, Any]) -> list[str]:
+    """删除 reference 里不存在的孤儿键 (下划线前缀的保留)."""
+    changes: list[str] = []
+    orphan_keys = [k for k in healed if k not in reference]
+    for k in orphan_keys:
+        # 下划线开头的键视为私有扩展, 保留不动
+        if not k.startswith("_"):
+            del healed[k]
+            changes.append(f"removed orphan key '{k}'")
+    return changes
+
+
+def _heal_dict(
+    stored: dict[str, Any],
+    reference: dict[str, Any],
+    *,
+    remove_orphans: bool,
+    fix_types: bool,
+) -> tuple[dict[str, Any], list[str]]:
+    """递归比对并自愈一个配置 dict 层级."""
+    changes: list[str] = []
+    healed = dict(stored)
+
+    # 补全缺失键 / 修正类型
+    for key, default_value in reference.items():
+        if key not in healed:
+            healed[key] = default_value
+            changes.append(f"added missing key '{key}'")
+        elif (
+            fix_types
+            and isinstance(default_value, dict)
+            and not isinstance(healed[key], dict)
+        ):
+            healed[key] = default_value
+            changes.append(f"fixed type mismatch for '{key}' (expected dict)")
+        elif isinstance(default_value, dict) and isinstance(healed[key], dict):
+            # 默认值非空才递归; 空字典视为不透明容器(用户自填键),
+            # 递归会误删 hpc_queue_map / feature_flags / mcp_servers 等用户数据
+            if default_value:
+                nested_healed, nested_changes = _heal_dict(
+                    healed[key],
+                    default_value,
+                    remove_orphans=remove_orphans,
+                    fix_types=fix_types,
+                )
+                if nested_changes:
+                    healed[key] = nested_healed
+                    for nc in nested_changes:
+                        changes.append(f"'{key}.{nc}'")
+
+    # 删除孤儿键
+    if remove_orphans:
+        changes.extend(_remove_orphan_keys(healed, reference))
+
+    # 确保版本号存在
+    healed["config_version"] = CONFIG_VERSION
+
+    return healed, changes
+
+
 def check_config_integrity(
     stored: dict[str, Any],
     reference: dict[str, Any] | None = None,
@@ -87,50 +147,9 @@ def check_config_integrity(
     """
     if reference is None:
         reference = _get_default_config()
-
-    changes: list[str] = []
-    healed = dict(stored)
-
-    # 补全缺失键 / 修正类型
-    for key, default_value in reference.items():
-        if key not in healed:
-            healed[key] = default_value
-            changes.append(f"added missing key '{key}'")
-        elif (
-            fix_types
-            and isinstance(default_value, dict)
-            and not isinstance(healed[key], dict)
-        ):
-            healed[key] = default_value
-            changes.append(f"fixed type mismatch for '{key}' (expected dict)")
-        elif isinstance(default_value, dict) and isinstance(healed[key], dict):
-            # 默认值非空才递归; 空字典视为不透明容器(用户自填键),
-            # 递归会误删 hpc_queue_map / feature_flags / mcp_servers 等用户数据
-            if default_value:
-                nested_healed, nested_changes = check_config_integrity(
-                    healed[key],
-                    default_value,
-                    remove_orphans=remove_orphans,
-                    fix_types=fix_types,
-                )
-                if nested_changes:
-                    healed[key] = nested_healed
-                    for nc in nested_changes:
-                        changes.append(f"'{key}.{nc}'")
-
-    # 删除孤儿键
-    if remove_orphans:
-        orphan_keys = [k for k in healed if k not in reference]
-        for k in orphan_keys:
-            # 下划线开头的键视为私有扩展, 保留不动
-            if not k.startswith("_"):
-                del healed[k]
-                changes.append(f"removed orphan key '{k}'")
-
-    # 确保版本号存在
-    healed["config_version"] = CONFIG_VERSION
-
-    return healed, changes
+    return _heal_dict(
+        stored, reference, remove_orphans=remove_orphans, fix_types=fix_types
+    )
 
 
 def migrate_config(stored: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -153,7 +172,7 @@ def migrate_config(stored: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
         fn = MIGRATIONS.get(version)
         if fn is None:
             # 缺迁移函数：保持原样并记录，不硬崩（由门禁在 CI 拦截缺注册）。
-            notes.append(f"no migration registered for v{version}->v{version+1}")
+            notes.append(f"no migration registered for v{version}->v{version + 1}")
             break
         migrated = fn(migrated)
         version += 1

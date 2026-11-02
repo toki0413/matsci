@@ -331,7 +331,9 @@ PROTOCOLS: dict[str, dict[str, Any]] = {
 }
 
 
-def _validate_protocol_params(protocol: str, params: dict[str, Any]) -> tuple[bool, list[str]]:
+def _validate_protocol_params(
+    protocol: str, params: dict[str, Any]
+) -> tuple[bool, list[str]]:
     """校验参数是否符合协议 schema. 返回 (ok, errors)."""
     if protocol not in PROTOCOLS:
         return False, [f"未知协议: {protocol}, 支持: {list(PROTOCOLS.keys())}"]
@@ -346,10 +348,12 @@ def _validate_protocol_params(protocol: str, params: dict[str, Any]) -> tuple[bo
             continue  # 未知参数, 不报错 (允许扩展)
         spec = schema[name]
         rng = spec.get("range")
-        if rng and isinstance(value, int | float) and (not math.isfinite(value) or value < rng[0] or value > rng[1]):
-                errors.append(
-                    f"参数 {name}={value} 超出范围 [{rng[0]}, {rng[1]}]"
-                )
+        if (
+            rng
+            and isinstance(value, int | float)
+            and (not math.isfinite(value) or value < rng[0] or value > rng[1])
+        ):
+            errors.append(f"参数 {name}={value} 超出范围 [{rng[0]}, {rng[1]}]")
     return len(errors) == 0, errors
 
 
@@ -364,6 +368,68 @@ def _parse_protocol_result(protocol: str, raw: dict[str, Any]) -> dict[str, Any]
     parsed["raw"] = raw
     parsed["parsed_fields"] = list(result_schema.keys())
     return parsed
+
+
+def _fill_protocol_defaults(protocol: str, params: dict[str, Any]) -> dict[str, Any]:
+    """按协议 schema 填默认值 (未传且无 default 的参数不出现)."""
+    full_params = {}
+    for name, spec in PROTOCOLS[protocol]["params"].items():
+        if name in params:
+            full_params[name] = params[name]
+        elif "default" in spec:
+            full_params[name] = spec["default"]
+    return full_params
+
+
+def _check_protocol_inputs(
+    protocol: str, params: dict[str, Any], sample: dict[str, Any]
+) -> tuple[dict[str, Any], ToolResult | None]:
+    """校验协议参数 + 样品必填字段. 成功返回 (上下文, None), 失败返回 ({}, 错误结果)."""
+    ok, errors = _validate_protocol_params(protocol, params)
+    if not ok:
+        return {}, ToolResult(
+            data={"protocol": protocol, "validation_errors": errors},
+            success=False,
+            error="协议参数校验失败: " + "; ".join(errors),
+        )
+
+    # 检查样品元数据必填字段
+    required_sample = PROTOCOLS[protocol]["sample_fields"]
+    missing_sample = [f for f in required_sample if f not in sample]
+    if missing_sample:
+        return {}, ToolResult(
+            data={
+                "protocol": protocol,
+                "missing_sample_fields": missing_sample,
+                "required_sample_fields": required_sample,
+            },
+            success=False,
+            error=f"样品元数据缺少必填字段: {missing_sample}",
+        )
+
+    return {
+        "sample": sample,
+        "params": _fill_protocol_defaults(protocol, params),
+        "required_sample": required_sample,
+    }, None
+
+
+def _protocol_submit_template(
+    args: WetlabInput,
+    protocol: str,
+    sample: dict[str, Any],
+    full_params: dict[str, Any],
+) -> dict[str, Any]:
+    """构造 LIMS-style 请求模板."""
+    return {
+        "protocol": protocol,
+        "protocol_name": PROTOCOLS[protocol]["name"],
+        "lab_id": args.lab_id,
+        "sample": sample,
+        "params": full_params,
+        "result_schema": PROTOCOLS[protocol]["result_schema"],
+        "lims_format": True,
+    }
 
 
 class WetlabInput(BaseModel):
@@ -419,7 +485,12 @@ class WetlabRpcTool(HuginnTool):
     input_schema = WetlabInput
 
     def is_read_only(self, args: WetlabInput) -> bool:
-        return args.action in ("check_status", "fetch_result", "list_labs", "parse_result")
+        return args.action in (
+            "check_status",
+            "fetch_result",
+            "list_labs",
+            "parse_result",
+        )
 
     @staticmethod
     def _endpoint() -> str | None:
@@ -460,7 +531,9 @@ class WetlabRpcTool(HuginnTool):
         """校验协议参数 + 样品元数据, 返回 LIMS-style 请求模板."""
         if not args.protocol:
             return ToolResult(
-                data=None, success=False, error="submit_protocol 需要 protocol",
+                data=None,
+                success=False,
+                error="submit_protocol 需要 protocol",
             )
         protocol = args.protocol.upper()
         if protocol not in PROTOCOLS:
@@ -469,53 +542,21 @@ class WetlabRpcTool(HuginnTool):
                 success=False,
                 error=f"未知协议: {protocol}, 支持: {list(PROTOCOLS.keys())}",
             )
-        params = args.params or {}
-        sample = args.sample or {}
 
-        ok, errors = _validate_protocol_params(protocol, params)
-        if not ok:
-            return ToolResult(
-                data={"protocol": protocol, "validation_errors": errors},
-                success=False,
-                error="协议参数校验失败: " + "; ".join(errors),
-            )
-
-        # 检查样品元数据必填字段
-        required_sample = PROTOCOLS[protocol]["sample_fields"]
-        missing_sample = [f for f in required_sample if f not in sample]
-        if missing_sample:
-            return ToolResult(
-                data={
-                    "protocol": protocol,
-                    "missing_sample_fields": missing_sample,
-                    "required_sample_fields": required_sample,
-                },
-                success=False,
-                error=f"样品元数据缺少必填字段: {missing_sample}",
-            )
-
-        # 填默认值
-        schema_params = PROTOCOLS[protocol]["params"]
-        full_params = {}
-        for name, spec in schema_params.items():
-            if name in params:
-                full_params[name] = params[name]
-            elif "default" in spec:
-                full_params[name] = spec["default"]
+        checked, error = _check_protocol_inputs(
+            protocol, args.params or {}, args.sample or {}
+        )
+        if error is not None:
+            return error
+        full_params = checked["params"]
+        required_sample = checked["required_sample"]
 
         # 构造 LIMS-style 请求模板
-        request_template = {
-            "protocol": protocol,
-            "protocol_name": PROTOCOLS[protocol]["name"],
-            "lab_id": args.lab_id,
-            "sample": sample,
-            "params": full_params,
-            "result_schema": PROTOCOLS[protocol]["result_schema"],
-            "lims_format": True,
-        }
         return ToolResult(
             data={
-                "request_template": request_template,
+                "request_template": _protocol_submit_template(
+                    args, protocol, checked["sample"], full_params
+                ),
                 "protocol": protocol,
                 "validated": True,
                 "n_params": len(full_params),
@@ -528,11 +569,15 @@ class WetlabRpcTool(HuginnTool):
         """按协议 schema 解析原始结果, 抽出结构化字段."""
         if not args.protocol:
             return ToolResult(
-                data=None, success=False, error="parse_result 需要 protocol",
+                data=None,
+                success=False,
+                error="parse_result 需要 protocol",
             )
         if not args.raw_result:
             return ToolResult(
-                data=None, success=False, error="parse_result 需要 raw_result",
+                data=None,
+                success=False,
+                error="parse_result 需要 raw_result",
             )
         protocol = args.protocol.upper()
         parsed = _parse_protocol_result(protocol, args.raw_result)
@@ -559,24 +604,30 @@ class WetlabRpcTool(HuginnTool):
             "request_type": args.request_type,
             "payload": args.payload or {},
         }
-        async with aiohttp.ClientSession() as session, session.post(url, json=body) as resp:
-                data = await resp.json()
-                if resp.status >= 400:
-                    return ToolResult(
-                        data=data, success=False,
-                        error=f"submit_request HTTP {resp.status}",
-                    )
+        async with (
+            aiohttp.ClientSession() as session,
+            session.post(url, json=body) as resp,
+        ):
+            data = await resp.json()
+            if resp.status >= 400:
                 return ToolResult(
-                    data={"request_id": data.get("request_id"), "raw": data},
-                    success=True,
+                    data=data,
+                    success=False,
+                    error=f"submit_request HTTP {resp.status}",
                 )
+            return ToolResult(
+                data={"request_id": data.get("request_id"), "raw": data},
+                success=True,
+            )
 
     async def _do_check_status(self, endpoint: str, args: WetlabInput) -> ToolResult:
         import aiohttp
 
         if not args.request_id:
             return ToolResult(
-                data=None, success=False, error="check_status requires request_id.",
+                data=None,
+                success=False,
+                error="check_status requires request_id.",
             )
         url = f"{endpoint.rstrip('/')}/requests/{args.request_id}"
         deadline = asyncio.get_running_loop().time() + args.poll_timeout
@@ -586,13 +637,15 @@ class WetlabRpcTool(HuginnTool):
                     data = await resp.json()
                     if resp.status >= 400:
                         return ToolResult(
-                            data=data, success=False,
+                            data=data,
+                            success=False,
                             error=f"check_status HTTP {resp.status}",
                         )
                     status = data.get("status", "unknown")
                     if status in ("done", "failed", "cancelled"):
                         return ToolResult(
-                            data={"status": status, "raw": data}, success=True,
+                            data={"status": status, "raw": data},
+                            success=True,
                         )
                 if asyncio.get_running_loop().time() >= deadline:
                     return ToolResult(
@@ -606,14 +659,17 @@ class WetlabRpcTool(HuginnTool):
 
         if not args.request_id:
             return ToolResult(
-                data=None, success=False, error="fetch_result requires request_id.",
+                data=None,
+                success=False,
+                error="fetch_result requires request_id.",
             )
         url = f"{endpoint.rstrip('/')}/requests/{args.request_id}/result"
         async with aiohttp.ClientSession() as session, session.get(url) as resp:
             data = await resp.json()
             if resp.status >= 400:
                 return ToolResult(
-                    data=data, success=False,
+                    data=data,
+                    success=False,
                     error=f"fetch_result HTTP {resp.status}",
                 )
             return ToolResult(data={"result": data}, success=True)
@@ -626,7 +682,8 @@ class WetlabRpcTool(HuginnTool):
             data = await resp.json()
             if resp.status >= 400:
                 return ToolResult(
-                    data=data, success=False,
+                    data=data,
+                    success=False,
                     error=f"list_labs HTTP {resp.status}",
                 )
             return ToolResult(data={"labs": data}, success=True)

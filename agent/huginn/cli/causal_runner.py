@@ -17,6 +17,7 @@ Env:
     CAUSALGAME_DIR  (path to the CausalGame repo that contains agent/client.py;
                      defaults to /tmp/CausalGame)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -39,65 +40,126 @@ DEFAULT_BASE_URL = "http://localhost:8000"
 # ── Tool factory: wrap one CanyonClient session as Huginn tools ─────────────
 def _make_tools(client) -> list:
     """Build first-class tools bound to a single CausalGame session."""
+    return [
+        _make_status_tool(client),
+        _make_action_space_tool(client),
+        _make_history_tool(client),
+        _make_deploy_tool(client),
+        _make_submit_tool(client),
+    ]
 
-    @tool("causal_status", description=(
-        "Get the current mission status: stage (1 or 2), drones_remaining, "
-        "deployments_remaining, and the victory_threshold survival rate. "
-        "Call this at the start to know your budget."))
+
+def _make_status_tool(client):
+    @tool(
+        "causal_status",
+        description=(
+            "Get the current mission status: stage (1 or 2), drones_remaining, "
+            "deployments_remaining, and the victory_threshold survival rate. "
+            "Call this at the start to know your budget."
+        ),
+    )
     def causal_status() -> str:
         return json.dumps(client.get_status(), ensure_ascii=False)
 
-    @tool("causal_action_space", description=(
-        "Get the action space: the design parameters (component DEF values with "
-        "min/max/default), equipment options, and budget constraints (e.g. "
-        "total_def_budget). Call this to learn what you can control."))
+    return causal_status
+
+
+def _make_action_space_tool(client):
+    @tool(
+        "causal_action_space",
+        description=(
+            "Get the action space: the design parameters (component DEF values with "
+            "min/max/default), equipment options, and budget constraints (e.g. "
+            "total_def_budget). Call this to learn what you can control."
+        ),
+    )
     def causal_action_space() -> str:
         return json.dumps(client.get_action_space(), ensure_ascii=False)
 
-    @tool("causal_history", description=(
-        "Get the historical flight records for every past deployment: survival "
-        "status, hit_count, plus per-flight environment data. Use this to compare "
-        "survival across designs and detect confounders / selection bias / noise."))
+    return causal_action_space
+
+
+def _make_history_tool(client):
+    @tool(
+        "causal_history",
+        description=(
+            "Get the historical flight records for every past deployment: survival "
+            "status, hit_count, plus per-flight environment data. Use this to compare "
+            "survival across designs and detect confounders / selection bias / noise."
+        ),
+    )
     def causal_history() -> str:
         return json.dumps(client.get_history(), ensure_ascii=False)
 
-    @tool("causal_deploy", description=(
-        "Deploy drones for an experiment. Arguments: design = dict of "
-        "{component_name: def_value} (use the names/values from causal_action_space); "
-        "count = number of drones (default 1); equipment = optional dict, e.g. "
-        "{'enhancement_module': 'signal_filter'}. Returns per-drone survival status. "
-        "Run CONTROLLED experiments: change one variable at a time. "
-        "If the response says the deployment budget is exhausted, STOP deploying and "
-        "immediately call causal_submit with your best design."))
-    def causal_deploy(design: dict, count: int = 1, equipment: dict | None = None) -> str:
-        try:
-            res = client.deploy_drone(design=design, count=count, equipment=equipment)
-        except Exception as e:
-            # HTTPError (e.g. 400 when deployment budget is exhausted) must NOT
-            # crash the agent loop — return a structured hint so the agent can
-            # pivot to causal_submit instead of dying mid-turn.
-            return json.dumps({
-                "error": str(e),
-                "hint": ("Deployment rejected. If the deployment budget is now exhausted "
-                         "(deployments_remaining == 0), do NOT keep deploying. Call "
-                         "causal_submit immediately with the best design you have discovered."),
-            }, ensure_ascii=False)
-        return json.dumps(res, ensure_ascii=False)
+    return causal_history
 
-    @tool("causal_submit", description=(
-        "ONE-SHOT final submission of your design for Stage-2 evaluation on a "
-        "1000-drone fleet. Can only be called ONCE. Arguments: design = dict of "
-        "{component_name: def_value}, equipment = optional dict. Returns survival_rate, "
-        "victory, final_score. Call ONLY when you are confident in the causal mechanism."))
+
+def _make_deploy_tool(client):
+    @tool(
+        "causal_deploy",
+        description=(
+            "Deploy drones for an experiment. Arguments: design = dict of "
+            "{component_name: def_value} (use the names/values from causal_action_space); "
+            "count = number of drones (default 1); equipment = optional dict, e.g. "
+            "{'enhancement_module': 'signal_filter'}. Returns per-drone survival status. "
+            "Run CONTROLLED experiments: change one variable at a time. "
+            "If the response says the deployment budget is exhausted, STOP deploying and "
+            "immediately call causal_submit with your best design."
+        ),
+    )
+    def causal_deploy(
+        design: dict, count: int = 1, equipment: dict | None = None
+    ) -> str:
+        return _causal_deploy(client, design, count, equipment)
+
+    return causal_deploy
+
+
+def _make_submit_tool(client):
+    @tool(
+        "causal_submit",
+        description=(
+            "ONE-SHOT final submission of your design for Stage-2 evaluation on a "
+            "1000-drone fleet. Can only be called ONCE. Arguments: design = dict of "
+            "{component_name: def_value}, equipment = optional dict. Returns survival_rate, "
+            "victory, final_score. Call ONLY when you are confident in the causal mechanism."
+        ),
+    )
     def causal_submit(design: dict, equipment: dict | None = None) -> str:
-        try:
-            res = client.submit_final_design(design=design, equipment=equipment)
-        except Exception as e:
-            return json.dumps({"error": str(e)}, ensure_ascii=False)
-        return json.dumps(res, ensure_ascii=False)
+        return _causal_submit(client, design, equipment)
 
-    return [causal_status, causal_action_space, causal_history,
-            causal_deploy, causal_submit]
+    return causal_submit
+
+
+def _causal_deploy(
+    client, design: dict, count: int = 1, equipment: dict | None = None
+) -> str:
+    try:
+        res = client.deploy_drone(design=design, count=count, equipment=equipment)
+    except Exception as e:
+        # HTTPError (e.g. 400 when deployment budget is exhausted) must NOT
+        # crash the agent loop — return a structured hint so the agent can
+        # pivot to causal_submit instead of dying mid-turn.
+        return json.dumps(
+            {
+                "error": str(e),
+                "hint": (
+                    "Deployment rejected. If the deployment budget is now exhausted "
+                    "(deployments_remaining == 0), do NOT keep deploying. Call "
+                    "causal_submit immediately with the best design you have discovered."
+                ),
+            },
+            ensure_ascii=False,
+        )
+    return json.dumps(res, ensure_ascii=False)
+
+
+def _causal_submit(client, design: dict, equipment: dict | None = None) -> str:
+    try:
+        res = client.submit_final_design(design=design, equipment=equipment)
+    except Exception as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+    return json.dumps(res, ensure_ascii=False)
 
 
 def _system_prompt() -> str:
@@ -163,10 +225,49 @@ async def run(
     cfg = HuginnConfig.from_env()
     registry = ModelRegistry.from_config(cfg)
     alias = registry.default_alias()
-    model = registry.resolve(alias) if alias else registry.resolve(model_ref or "deepseek/deepseek-chat")
+    model = (
+        registry.resolve(alias)
+        if alias
+        else registry.resolve(model_ref or "deepseek/deepseek-chat")
+    )
 
+    client, agent = _create_causal_agent(
+        experiment, base_url, model, model_ref, alias, cfg, max_tool_calls
+    )
+
+    msg = (
+        "Begin the CausalGame mission for scenario '" + experiment + "'. "
+        "Read the action space, run controlled experiments to uncover the hidden causal "
+        "mechanism of survival, then submit your final design once."
+    )
+    thread_id = f"causal_{experiment}"
+    print("\n=== Huginn agent running ===\n", flush=True)
+    try:
+        await _stream_agent_chat(agent, msg, thread_id)
+    except Exception as e:
+        print(f"\n[ERROR] {e}", flush=True)
+
+    # Fallback: if the agent exhausted its deployment budget but never submitted,
+    # force a final submit turn so a discovered best design is not thrown away.
+    await _force_submit_if_budget_exhausted(agent, client, thread_id)
+
+    # Report final outcome.
+    _print_final_status(client)
+    return 0
+
+
+def _create_causal_agent(
+    experiment: str,
+    base_url: str,
+    model,
+    model_ref: str | None,
+    alias: str | None,
+    cfg,
+    max_tool_calls: int,
+):
     # Bind a CausalGame session for this experiment.
     from agent.client import CanyonClient  # now on sys.path
+
     client = CanyonClient(
         base_url=base_url,
         model_name=getattr(model, "name", None) or model_ref or "huginn",
@@ -174,12 +275,20 @@ async def run(
         experiment=experiment,
         execution_mode="hybrid",
     )
-    print(f"[causal] experiment={experiment} session={client._session_id} model={model_ref or alias}", flush=True)
+    print(
+        f"[causal] experiment={experiment} session={client._session_id} model={model_ref or alias}",
+        flush=True,
+    )
 
-    ws = Path(os.environ.get("HUGINN_WORKSPACE", "/workspace")) / "causalgame_ws" / experiment
+    ws = (
+        Path(os.environ.get("HUGINN_WORKSPACE", "/workspace"))
+        / "causalgame_ws"
+        / experiment
+    )
     ws.mkdir(parents=True, exist_ok=True)
 
     from huginn.agent import HuginnAgent
+
     agent = HuginnAgent(
         model=model,
         system_prompt=_system_prompt(),
@@ -191,27 +300,20 @@ async def run(
     )
     for t in _make_tools(client):
         agent.register_tool(t)
+    return client, agent
 
-    msg = (
-        "Begin the CausalGame mission for scenario '" + experiment + "'. "
-        "Read the action space, run controlled experiments to uncover the hidden causal "
-        "mechanism of survival, then submit your final design once."
-    )
-    thread_id = f"causal_{experiment}"
-    print("\n=== Huginn agent running ===\n", flush=True)
-    try:
-        async for chunk in agent.chat(msg, thread_id=thread_id):
-            messages = chunk.get("messages", [])
-            if not messages:
-                continue
-            for c in chunk.get("streaming", []):
-                if isinstance(c, str):
-                    print(c, end="", flush=True)
-    except Exception as e:
-        print(f"\n[ERROR] {e}", flush=True)
 
-    # Fallback: if the agent exhausted its deployment budget but never submitted,
-    # force a final submit turn so a discovered best design is not thrown away.
+async def _stream_agent_chat(agent, msg: str, thread_id: str) -> None:
+    async for chunk in agent.chat(msg, thread_id=thread_id):
+        messages = chunk.get("messages", [])
+        if not messages:
+            continue
+        for c in chunk.get("streaming", []):
+            if isinstance(c, str):
+                print(c, end="", flush=True)
+
+
+async def _force_submit_if_budget_exhausted(agent, client, thread_id: str) -> None:
     try:
         st = client.get_status()
         if not st.get("game_over") and st.get("deployments_remaining", 0) <= 0:
@@ -227,36 +329,49 @@ async def run(
     except Exception as e:
         print(f"\n[force-submit error] {e}", flush=True)
 
-    # Report final outcome.
+
+def _print_final_status(client) -> None:
     try:
         st = client.get_status()
         final = st.get("final_evaluation") or st.get("final_result")
         print("\n=== final status ===\n", flush=True)
-        print(json.dumps({
-            "game_over": st.get("game_over"),
-            "stage": st.get("stage"),
-            "deployments_used": st.get("deployments_used"),
-            "drones_used": st.get("drones_used"),
-            "final_evaluation": final,
-        }, ensure_ascii=False, indent=2), flush=True)
+        print(
+            json.dumps(
+                {
+                    "game_over": st.get("game_over"),
+                    "stage": st.get("stage"),
+                    "deployments_used": st.get("deployments_used"),
+                    "drones_used": st.get("drones_used"),
+                    "final_evaluation": final,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            flush=True,
+        )
     except Exception as e:
         print(f"\n[final status error] {e}", flush=True)
-    return 0
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Huginn CausalGame adapter runner")
     parser.add_argument("--experiment", required=True, help="CausalGame scenario name")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
-    parser.add_argument("--model", default=None, help="provider/model ref, e.g. deepseek/deepseek-chat")
+    parser.add_argument(
+        "--model", default=None, help="provider/model ref, e.g. deepseek/deepseek-chat"
+    )
     parser.add_argument("--max-tool-calls", type=int, default=40)
     parser.add_argument("--thinking", default=os.environ.get("HUGINN_THINKING", "high"))
     args = parser.parse_args()
-    asyncio.run(run(
-        args.experiment, args.base_url,
-        model_ref=args.model, max_tool_calls=args.max_tool_calls,
-        thinking=args.thinking,
-    ))
+    asyncio.run(
+        run(
+            args.experiment,
+            args.base_url,
+            model_ref=args.model,
+            max_tool_calls=args.max_tool_calls,
+            thinking=args.thinking,
+        )
+    )
 
 
 if __name__ == "__main__":

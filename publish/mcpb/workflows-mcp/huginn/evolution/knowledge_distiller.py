@@ -28,10 +28,10 @@ logger = logging.getLogger(__name__)
 # MemoryManager._verify_distilled_for_tool → verify_knowledge 把"被检索并成功使用"
 # 的知识升为 confirmed (usage_count+1, confidence+0.1). evaluate_meta_knowledge_rules
 # 读回这些统计并施加维护决策, 反哺蒸馏知识库.
-_META_KNOWLEDGE_PROMOTE_USAGE = 3       # confirmed/复用 ≥3 次才谈 promote
+_META_KNOWLEDGE_PROMOTE_USAGE = 3  # confirmed/复用 ≥3 次才谈 promote
 _META_KNOWLEDGE_PROMOTE_CONFIDENCE = 0.8  # 且 confidence ≥0.8 → 提升为稳定原则候选
-_META_KNOWLEDGE_FLAG_USAGE = 2          # ≥2 次调用才有资格判"低价值"
-_META_KNOWLEDGE_FLAG_CONFIDENCE = 0.4   # confidence <0.4 → flag_low_value
+_META_KNOWLEDGE_FLAG_USAGE = 2  # ≥2 次调用才有资格判"低价值"
+_META_KNOWLEDGE_FLAG_CONFIDENCE = 0.4  # confidence <0.4 → flag_low_value
 
 
 def _has_real_signal(text: str) -> bool:
@@ -48,8 +48,20 @@ def _has_real_signal(text: str) -> bool:
     if re.search(r"\d+\.?\d*\s*(ev|mev|hartree|kj|kcal|k|a|nm|cm-1|\%/|mol)", low):
         return True
     # 明确的结论动词/形容词也算信号 (区别于纯 trace)
-    for kw in ("converged", "gap", "band", "energy", "temp", "formula", "volume",
-               "成功", "收敛", "失败", "建议", "原因"):
+    for kw in (
+        "converged",
+        "gap",
+        "band",
+        "energy",
+        "temp",
+        "formula",
+        "volume",
+        "成功",
+        "收敛",
+        "失败",
+        "建议",
+        "原因",
+    ):
         if kw in low:
             return True
     return False
@@ -69,7 +81,9 @@ class DistilledKnowledge:
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     usage_count: int = 0  # v23: 实际语义是 "被确认有效的次数" (confirmed_count), 仅在 verify 时 +1. 不重命名以保持序列化兼容 (已落盘 JSON 有 usage_count 字段).
     verification_status: str = "unverified"  # "unverified", "confirmed", "rejected"
-    meta_status: str = ""  # 元蒸馏评估标记: "" | "promote" | "flag_low_value" | "untested"
+    meta_status: str = (
+        ""  # 元蒸馏评估标记: "" | "promote" | "flag_low_value" | "untested"
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -77,6 +91,179 @@ class DistilledKnowledge:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DistilledKnowledge:
         return cls(**data)
+
+
+def _count_visual_features(entries: list[dict]) -> Any:
+    """统计一组 visual primitives 的关键词频率."""
+    from collections import Counter
+
+    word_freq: Counter = Counter()
+    for e in entries:
+        prim = e.get("primitives", "") or ""
+        # 提取 <point>/<box>/<band> 等 visual primitive 标签
+        tags = re.findall(r"\[(\w+)\]|<(\w+)>", prim)
+        for t in tags:
+            for g in t:
+                if g:
+                    word_freq[g] += 1
+        # 提取峰/异常/趋势等关键词
+        for kw in ("peak", "min", "max", "anomal", "trend", "increasing", "decreasing"):
+            if kw in prim.lower():
+                word_freq[kw] += 1
+    return word_freq
+
+
+def _build_visual_lesson_content(tool: str, entries: list[dict], word_freq: Any) -> str:
+    """拼装一条 visual lesson 的正文."""
+    top_features = word_freq.most_common(5)
+    features_str = ", ".join(f"{k}({v})" for k, v in top_features)
+
+    content_parts = [
+        f"# Visual Lesson ({tool})",
+        f"## Observed Pattern (n={len(entries)})",
+        f"Common visual features in {len(entries)} {tool} results:",
+        f"- Top features: {features_str}",
+    ]
+    # 附 2-3 个原始 primitives 作例子
+    examples = entries[:3]
+    for i, e in enumerate(examples):
+        prim = (e.get("primitives", "") or "")[:200]
+        content_parts.append(f"\nExample {i + 1}:\n{prim}")
+    return "\n".join(content_parts)
+
+
+def _visual_lesson_id(tool: str, content: str) -> str:
+    return f"visual_lesson_{tool}_{hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()[:8]}"
+
+
+def _distill_visual_group(
+    tool: str,
+    entries: list[dict],
+    min_support: int,
+    knowledge_base: list[DistilledKnowledge],
+) -> str | None:
+    """对单个 tool 分组蒸馏一条 visual lesson; 返回 kid 或 None."""
+    if len(entries) < min_support:
+        return None
+
+    # 抽 primitives 里的关键词频率
+    word_freq = _count_visual_features(entries)
+
+    if not word_freq:
+        return None
+
+    content = _build_visual_lesson_content(tool, entries, word_freq)
+
+    kid = _visual_lesson_id(tool, content)
+    if any(k.knowledge_id == kid for k in knowledge_base):
+        return None
+
+    dk = DistilledKnowledge(
+        knowledge_id=kid,
+        content=content,
+        source_type="visual_lesson",
+        source_evidence=[e.get("ts", "unknown") for e in entries],
+        confidence=min(0.8, 0.4 + 0.1 * len(entries)),
+        category=f"visual_{tool}",
+        tags=["visual", "lesson", tool],
+    )
+    knowledge_base.append(dk)
+    return kid
+
+
+def _resolve_knowledge_base() -> Any:
+    """懒加载 KnowledgeBase; 不可用时返回 None."""
+    try:
+        from huginn.knowledge.store import get_knowledge_base
+
+        return get_knowledge_base()
+    except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
+        return None
+
+
+def _should_ingest(dk: DistilledKnowledge) -> bool:
+    """Only ingest high-quality knowledge."""
+    if dk.verification_status == "rejected":
+        return False
+    return dk.verification_status == "confirmed" or dk.confidence >= 0.7
+
+
+def _ingest_chunk(dk: DistilledKnowledge, kb: Any) -> bool:
+    """把一条知识写入 KB; 失败返回 False."""
+    try:
+        kb.add_text(
+            text=dk.content,
+            metadata={
+                "source": "distilled_knowledge",
+                "source_type": dk.source_type,
+                "category": dk.category,
+                "confidence": dk.confidence,
+                "knowledge_id": dk.knowledge_id,
+                "tags": dk.tags,
+            },
+        )
+        return True
+    except Exception as e:
+        logger.debug("auto_ingest_to_kb chunk failed: %s", e)
+        return False
+
+
+def _build_meta_record(k: DistilledKnowledge) -> dict[str, Any]:
+    return {
+        "knowledge_id": k.knowledge_id,
+        "source_type": k.source_type,
+        "usage_count": k.usage_count,
+        "confidence": round(k.confidence, 3),
+        "verification_status": k.verification_status,
+    }
+
+
+def _accumulate_source_stats(
+    by_source: dict[str, dict[str, Any]],
+    src_type: str,
+    conf: float,
+    usage: int,
+    status: str,
+) -> None:
+    src = by_source.setdefault(
+        src_type,
+        {"count": 0, "confirmed": 0, "rejected": 0, "reuse": 0, "confidence_sum": 0.0},
+    )
+    src["count"] += 1
+    src["confidence_sum"] += conf
+    src["reuse"] += usage
+    if status == "confirmed":
+        src["confirmed"] += 1
+    elif status == "rejected":
+        src["rejected"] += 1
+
+
+def _classify_meta(usage: int, conf: float, status: str) -> str | None:
+    """按元蒸馏规则给单条知识定状态."""
+    if status == "rejected" or (
+        usage >= _META_KNOWLEDGE_FLAG_USAGE and conf < _META_KNOWLEDGE_FLAG_CONFIDENCE
+    ):
+        return "flag_low_value"
+    if (
+        usage >= _META_KNOWLEDGE_PROMOTE_USAGE
+        and conf >= _META_KNOWLEDGE_PROMOTE_CONFIDENCE
+    ):
+        return "promote"
+    if usage == 0 and status == "unverified":
+        return "untested"
+    return None
+
+
+def _finalize_source_stats(by_source: dict[str, dict[str, Any]]) -> None:
+    for _s, agg in by_source.items():
+        agg["avg_confidence"] = (
+            round(agg["confidence_sum"] / agg["count"], 3) if agg["count"] else 0.0
+        )
+        agg["reuse_rate"] = (
+            round(agg["reuse"] / agg["count"], 3) if agg["count"] else 0.0
+        )
+        agg.pop("confidence_sum", None)
 
 
 class KnowledgeDistiller:
@@ -134,14 +321,14 @@ class KnowledgeDistiller:
         if self._kb is None:
             try:
                 from huginn.knowledge.store import get_knowledge_base
+
                 # 没有 workspace 上下文时用默认 cache 路径 (~/.huginn)
                 self._kb = get_knowledge_base()
             except Exception:
                 logger.debug("best-effort op failed", exc_info=True)
                 return  # 无 KB 环境时静默跳过 (e.g. 离线 distill 命令)
         new_entries = [
-            k for k in self.knowledge_base
-            if k.knowledge_id not in self._kb_synced
+            k for k in self.knowledge_base if k.knowledge_id not in self._kb_synced
         ]
         if not new_entries:
             return
@@ -198,11 +385,11 @@ class KnowledgeDistiller:
         switch to embedding similarity if knowledge_base grows past 5K.
         """
         # 去标点再分词, 否则 "convergence:" 和 "convergence" 算不同词
-        words_new = set(re.sub(r'[^\w\s]', '', content.lower()).split())
+        words_new = set(re.sub(r"[^\w\s]", "", content.lower()).split())
         if not words_new or len(words_new) < 4:
             return False
         for k in self.knowledge_base:
-            words_old = set(re.sub(r'[^\w\s]', '', k.content.lower()).split())
+            words_old = set(re.sub(r"[^\w\s]", "", k.content.lower()).split())
             if not words_old:
                 continue
             overlap = len(words_new & words_old)
@@ -410,7 +597,9 @@ class KnowledgeDistiller:
             content_parts.append(f"## Hypothesis\n{hypothesis[:200]}")
         content_parts.append(f"## Simple Explanation\n{explanation}")
         if gaps:
-            content_parts.append("## Knowledge Gaps\n" + "\n".join(f"- {g}" for g in gaps))
+            content_parts.append(
+                "## Knowledge Gaps\n" + "\n".join(f"- {g}" for g in gaps)
+            )
         content = "\n\n".join(content_parts)
 
         kid = f"feynman_{iteration}_{hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()[:8]}"
@@ -462,60 +651,9 @@ class KnowledgeDistiller:
 
         kids: list[str] = []
         for tool, entries in groups.items():
-            if len(entries) < min_support:
-                continue
-
-            # 抽 primitives 里的关键词频率
-            import re
-            from collections import Counter
-            word_freq: Counter = Counter()
-            for e in entries:
-                prim = e.get("primitives", "") or ""
-                # 提取 <point>/<box>/<band> 等 visual primitive 标签
-                tags = re.findall(r"\[(\w+)\]|<(\w+)>", prim)
-                for t in tags:
-                    for g in t:
-                        if g:
-                            word_freq[g] += 1
-                # 提取峰/异常/趋势等关键词
-                for kw in ("peak", "min", "max", "anomal", "trend", "increasing", "decreasing"):
-                    if kw in prim.lower():
-                        word_freq[kw] += 1
-
-            if not word_freq:
-                continue
-
-            top_features = word_freq.most_common(5)
-            features_str = ", ".join(f"{k}({v})" for k, v in top_features)
-
-            content_parts = [
-                f"# Visual Lesson ({tool})",
-                f"## Observed Pattern (n={len(entries)})",
-                f"Common visual features in {len(entries)} {tool} results:",
-                f"- Top features: {features_str}",
-            ]
-            # 附 2-3 个原始 primitives 作例子
-            examples = entries[:3]
-            for i, e in enumerate(examples):
-                prim = (e.get("primitives", "") or "")[:200]
-                content_parts.append(f"\nExample {i+1}:\n{prim}")
-            content = "\n".join(content_parts)
-
-            kid = f"visual_lesson_{tool}_{hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()[:8]}"
-            if any(k.knowledge_id == kid for k in self.knowledge_base):
-                continue
-
-            dk = DistilledKnowledge(
-                knowledge_id=kid,
-                content=content,
-                source_type="visual_lesson",
-                source_evidence=[e.get("ts", "unknown") for e in entries],
-                confidence=min(0.8, 0.4 + 0.1 * len(entries)),
-                category=f"visual_{tool}",
-                tags=["visual", "lesson", tool],
-            )
-            self.knowledge_base.append(dk)
-            kids.append(kid)
+            kid = _distill_visual_group(tool, entries, min_support, self.knowledge_base)
+            if kid:
+                kids.append(kid)
 
         if kids:
             self._save()
@@ -647,13 +785,7 @@ class KnowledgeDistiller:
         Returns the number of newly ingested chunks.
         """
         if kb is None:
-            try:
-                from huginn.knowledge.store import get_knowledge_base
-
-                kb = get_knowledge_base()
-            except Exception:
-                logger.debug("best-effort op failed", exc_info=True)
-                return 0
+            kb = _resolve_knowledge_base()
         if kb is None:
             return 0
 
@@ -661,30 +793,11 @@ class KnowledgeDistiller:
         claim_registered = 0
         for dk in self.knowledge_base:
             # Only ingest high-quality knowledge
-            if dk.verification_status == "rejected":
+            if not _should_ingest(dk):
                 continue
-            if (
-                dk.verification_status != "confirmed"
-                and dk.confidence < 0.7
-            ):
+            if not _ingest_chunk(dk, kb):
                 continue
-            try:
-                kb.add_text(
-                    text=dk.content,
-                    metadata={
-                        "source": "distilled_knowledge",
-                        "source_type": dk.source_type,
-                        "category": dk.category,
-                        "confidence": dk.confidence,
-                        "knowledge_id": dk.knowledge_id,
-                        "tags": dk.tags,
-                    },
-                )
-                ingested += 1
-            except Exception as e:
-                logger.debug("auto_ingest_to_kb chunk failed: %s", e)
-                continue
-
+            ingested += 1
             # claim 层登记 (best-effort): confirmed/高置信的领域事实提升为可
             # 被挑战/传播的结论节点. 复用 ClaimAuditor. 失败不阻塞 RAG ingest.
             if (
@@ -725,9 +838,7 @@ class KnowledgeDistiller:
             logger.debug("claim registration failed: %s", exc)
             return False
 
-    def verify_knowledge(
-        self, knowledge_id: str, status: str = "confirmed"
-    ) -> bool:
+    def verify_knowledge(self, knowledge_id: str, status: str = "confirmed") -> bool:
         """Update verification status of a distilled knowledge entry.
 
         Enables the self-correction loop: knowledge that gets recalled
@@ -769,54 +880,21 @@ class KnowledgeDistiller:
             usage = k.usage_count
             conf = k.confidence
             status = k.verification_status
-            rec = {
-                "knowledge_id": k.knowledge_id,
-                "source_type": k.source_type,
-                "usage_count": usage,
-                "confidence": round(conf, 3),
-                "verification_status": status,
-            }
+            rec = _build_meta_record(k)
 
-            src = by_source.setdefault(
-                k.source_type,
-                {"count": 0, "confirmed": 0, "rejected": 0, "reuse": 0,
-                 "confidence_sum": 0.0},
-            )
-            src["count"] += 1
-            src["confidence_sum"] += conf
-            src["reuse"] += usage
-            if status == "confirmed":
-                src["confirmed"] += 1
-            elif status == "rejected":
-                src["rejected"] += 1
+            _accumulate_source_stats(by_source, k.source_type, conf, usage, status)
 
-            mstatus = None
-            if status == "rejected" or (
-                usage >= _META_KNOWLEDGE_FLAG_USAGE
-                and conf < _META_KNOWLEDGE_FLAG_CONFIDENCE
-            ):
+            mstatus = _classify_meta(usage, conf, status)
+            if mstatus == "flag_low_value":
                 flag_low_value.append(rec)
-                mstatus = "flag_low_value"
-            elif (
-                usage >= _META_KNOWLEDGE_PROMOTE_USAGE
-                and conf >= _META_KNOWLEDGE_PROMOTE_CONFIDENCE
-            ):
+            elif mstatus == "promote":
                 promote.append(rec)
-                mstatus = "promote"
-            elif usage == 0 and status == "unverified":
+            elif mstatus == "untested":
                 untested.append(k.knowledge_id)
-                mstatus = "untested"
             if mstatus:
                 k.meta_status = mstatus
 
-        for _s, agg in by_source.items():
-            agg["avg_confidence"] = round(
-                agg["confidence_sum"] / agg["count"], 3
-            ) if agg["count"] else 0.0
-            agg["reuse_rate"] = round(
-                agg["reuse"] / agg["count"], 3
-            ) if agg["count"] else 0.0
-            agg.pop("confidence_sum", None)
+        _finalize_source_stats(by_source)
 
         report = {
             "timestamp": datetime.now().isoformat(),
@@ -826,14 +904,18 @@ class KnowledgeDistiller:
             "distillation_quality_by_source": by_source,
             "total_knowledge": len(self.knowledge_base),
         }
+        KnowledgeDistiller._write_meta_report(self, report)
+        self._save()
+        return report
+
+    def _write_meta_report(self, report: dict[str, Any]) -> None:
+        """把元蒸馏决策写 sidecar (失败只 warn)."""
         try:
             report_path = self.output_dir / "meta_knowledge_rules.json"
             with report_path.open("w", encoding="utf-8") as f:
                 json.dump(report, f, ensure_ascii=False, indent=2)
         except Exception:
             logger.warning("meta_knowledge_rules sidecar write failed", exc_info=True)
-        self._save()
-        return report
 
     def _generate_error_lesson(
         self, tool: str, error: str, software: str, calc_type: str

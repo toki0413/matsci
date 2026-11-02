@@ -55,6 +55,7 @@ class SubagentSpec:
     ponytail: 不引入 schema validator, 让 LLM 自律输出 JSON.
       升级路径: pydantic schema validate + retry on parse fail.
     """
+
     name: str
     description: str
     system_prompt: str
@@ -79,6 +80,7 @@ class SubagentResult:
 
     summary 是喂回主上下文的压缩结果, full_output 是完整输出留档.
     """
+
     summary: str
     full_output: str
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
@@ -97,6 +99,199 @@ class SubagentResult:
             "error": self.error,
             "spec_name": self.spec_name,
         }
+
+
+def _dispatch_error(
+    spec_name: str, message: str
+) -> tuple[None, dict, None, None, SubagentResult]:
+    """构造 dispatch 早退的错误结果元组."""
+    return (
+        None,
+        {},
+        None,
+        None,
+        SubagentResult(
+            summary="",
+            full_output="",
+            success=False,
+            error=message,
+            spec_name=spec_name,
+        ),
+    )
+
+
+def _dispatch_preflight(
+    host: Any, spec_name: str, depth: int, context: dict | None
+) -> tuple[SubagentSpec | None, dict, Any, Any, SubagentResult | None]:
+    """校验 spec / 递归深度 / agent_factory, 返回目标与可选错误结果."""
+    spec = host._specs.get(spec_name)
+    if spec is None:
+        return _dispatch_error(
+            spec_name,
+            f"Unknown subagent spec: {spec_name}. "
+            f"Available: {sorted(host._specs.keys())}",
+        )
+
+    # G1: 递归深度守卫. 超 max_depth 拒绝, 防 subagent 无限递归.
+    if depth >= spec.max_depth:
+        return _dispatch_error(
+            spec_name,
+            f"depth {depth} >= max_depth {spec.max_depth} "
+            f"(spec={spec_name}). 递归过深, 拒绝 dispatch.",
+        )
+
+    ctx = context or {}
+    factory = ctx.get("agent_factory")
+    if factory is None:
+        return _dispatch_error(
+            spec_name,
+            "agent_factory not available in context. "
+            "Configure models and agent profiles first.",
+        )
+
+    # v7: 从 context 拿父 agent 的 approval_callback, 透传给子 agent.
+    # 之前不传, 子 agent 调 vasp_tool 等 ASK 工具会被静默拒绝.
+    approval_callback = ctx.get("approval_callback")
+    return spec, ctx, factory, approval_callback, None
+
+
+def _create_dispatch_agent(
+    host: Any,
+    spec: SubagentSpec,
+    factory: Any,
+    approval_callback: Any,
+    spec_name: str,
+    thread_id: str,
+) -> tuple[Any, SubagentResult | None]:
+    """创建子 agent; 失败时返回 (None, 错误结果)."""
+    try:
+        agent = host._create_subagent(spec, factory, thread_id, approval_callback)
+    except Exception as exc:
+        logger.debug("subagent creation failed", exc_info=True)
+        return None, SubagentResult(
+            summary="",
+            full_output="",
+            success=False,
+            error=f"Failed to create subagent: {exc}",
+            spec_name=spec_name,
+        )
+    return agent, None
+
+
+async def _run_dispatch_agent(
+    host: Any,
+    agent: Any,
+    ctx: dict,
+    spec: SubagentSpec,
+    factory: Any,
+    spec_name: str,
+    task: str,
+    thread_id: str,
+    on_state: Any,
+    depth: int,
+) -> SubagentResult:
+    """运行子 agent并收集输出 (含 contextvar 深度守卫)."""
+    # G1: 把 _depth+1 注入 contextvar, 子 agent 调 subagent_tool 时
+    # 能读到正确的递归深度. chat() 里的 tool call 同 task, contextvar 可见.
+    token = _current_depth.set(depth + 1)
+    try:
+        final_state = await host._run_subagent_stream(agent, task, thread_id, on_state)
+
+        # 子 agent 完成: 触发 SUBAGENT_STOP hook.
+        await host._fire_subagent_stop(ctx, agent, spec_name, thread_id, task)
+
+        output = host._extract_output(final_state)
+        tool_calls = host._extract_tool_calls(final_state)
+        tokens = host._estimate_tokens(final_state)
+        summary = await host._maybe_summarize(spec, agent, factory, output, task)
+
+        return SubagentResult(
+            summary=summary,
+            full_output=output,
+            tool_calls=tool_calls,
+            tokens_used=tokens,
+            success=True,
+            spec_name=spec_name,
+        )
+    except Exception as exc:
+        logger.debug("subagent execution failed", exc_info=True)
+        return SubagentResult(
+            summary="",
+            full_output="",
+            success=False,
+            error=f"Subagent execution failed: {exc}",
+            spec_name=spec_name,
+        )
+    finally:
+        _current_depth.reset(token)
+
+
+async def _execute_dispatch(
+    host: Any,
+    spec: SubagentSpec,
+    ctx: dict,
+    factory: Any,
+    approval_callback: Any,
+    spec_name: str,
+    task: str,
+    on_state: Any,
+    depth: int,
+) -> SubagentResult:
+    """创建并运行子 agent, 收集输出并返回结果."""
+    # 独立 thread_id, 跟主对话完全隔离
+    thread_id = f"subagent_{spec_name}_{uuid.uuid4().hex[:8]}"
+
+    agent, err = _create_dispatch_agent(
+        host, spec, factory, approval_callback, spec_name, thread_id
+    )
+    if err is not None:
+        return err
+
+    return await _run_dispatch_agent(
+        host, agent, ctx, spec, factory, spec_name, task, thread_id, on_state, depth
+    )
+
+
+def _resolve_summary_model(factory: Any) -> Any:
+    """从 factory 的 default_alias 解析总结模型, 失败返回 None."""
+    try:
+        alias = factory.model_registry.default_alias()
+        if not alias:
+            return None
+        return factory.model_registry.resolve(alias)
+    except Exception:  # 防御: 总结模型解析失败则截断兜底
+        logger.debug("resolve model for summarize failed", exc_info=True)
+        return None
+
+
+def _summary_system_content(summary_format: str) -> str:
+    """按 summary_format 选总结 system prompt (json 结构化 / free 散文)."""
+    if summary_format == "json":
+        return (
+            "Extract structured findings from the subagent output as JSON. "
+            'Schema: {"findings": str, "evidence": [str], '
+            '"limitations": [str], "artifacts": [str]}. '
+            "findings = 主要结论一句话; evidence = 支撑证据/数据来源列表; "
+            "limitations = 适用边界/未验证项; artifacts = 产出文件路径列表. "
+            "Output ONLY the JSON object, no prose, no markdown fences."
+        )
+    return (
+        "Summarize the following subagent output concisely. "
+        "Focus on key findings, results, and any errors. "
+        "Keep it under 500 words."
+    )
+
+
+def _build_summary_messages(system_content: str, task: str, output: str) -> list[Any]:
+    """构造总结请求消息 (system + task/output 截断)."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    return [
+        SystemMessage(content=system_content),
+        HumanMessage(
+            content=(f"Task: {task}\n\nOutput:\n{output[:_SUMMARIZE_INPUT_LIMIT]}")
+        ),
+    ]
 
 
 class SubagentDispatch:
@@ -124,8 +319,11 @@ class SubagentDispatch:
             ),
             # glob / grep 不是独立工具, 填了也只是静默跳过, 留着是给将来加的
             allowed_tools=[
-                "file_read_tool", "glob", "grep",
-                "web_search_tool", "literature_tool",
+                "file_read_tool",
+                "glob",
+                "grep",
+                "web_search_tool",
+                "literature_tool",
             ],
             max_tool_calls=8,
             max_iterations=3,
@@ -138,8 +336,12 @@ class SubagentDispatch:
             # 子 agent 可用 file_write_tool 写大文件 (分块写入), 也可用 code_tool 的 open().
             # ponytail: 去掉 bench_infra (plot/training_matrix) — 让 coder 自己用 code_tool 实现
             allowed_tools=[
-                "code_tool", "bash_tool",
-                "file_read_tool", "file_write_tool", "glob", "grep",
+                "code_tool",
+                "bash_tool",
+                "file_read_tool",
+                "file_write_tool",
+                "glob",
+                "grep",
             ],
             # benchmark 需要更多预算: 训练循环 + 画图 + 调试
             max_tool_calls=50,
@@ -154,8 +356,11 @@ class SubagentDispatch:
                 "Implement metrics (C2ST/MCMC) in code_tool, don't expect pre-built tools."
             ),
             allowed_tools=[
-                "code_tool", "bash_tool", "file_read_tool",
-                "numerical_tool", "visualize_tool",
+                "code_tool",
+                "bash_tool",
+                "file_read_tool",
+                "numerical_tool",
+                "visualize_tool",
             ],
             max_tool_calls=20,
             max_iterations=5,
@@ -174,9 +379,13 @@ class SubagentDispatch:
                 "Do not include reasoning process or intermediate steps in your final output."
             ),
             allowed_tools=[
-                "code_tool", "bash_tool",
-                "file_read_tool", "glob", "grep",
-                "web_search_tool", "numerical_tool",
+                "code_tool",
+                "bash_tool",
+                "file_read_tool",
+                "glob",
+                "grep",
+                "web_search_tool",
+                "numerical_tool",
             ],
             max_tool_calls=30,
             max_iterations=8,
@@ -193,15 +402,17 @@ class SubagentDispatch:
                 "statement and must independently derive whether it holds, from first "
                 "principles. You do NOT see the original proof, evidence, or reasoning.\n\n"
                 "Output a JSON with fields:\n"
-                "- \"holds\": true/false — does the statement hold under your derivation?\n"
-                "- \"derivation\": your independent reasoning (concise, <300 words)\n"
-                "- \"key_assumption\": the one assumption your derivation relies on\n"
-                "- \"confidence\": 0.0-1.0\n"
+                '- "holds": true/false — does the statement hold under your derivation?\n'
+                '- "derivation": your independent reasoning (concise, <300 words)\n'
+                '- "key_assumption": the one assumption your derivation relies on\n'
+                '- "confidence": 0.0-1.0\n'
                 "Be rigorous. If you cannot derive it, say holds=false with reason."
             ),
             allowed_tools=[
-                "code_tool", "bash_tool",
-                "file_read_tool", "numerical_tool",
+                "code_tool",
+                "bash_tool",
+                "file_read_tool",
+                "numerical_tool",
             ],
             max_tool_calls=15,
             max_iterations=5,
@@ -219,15 +430,17 @@ class SubagentDispatch:
                 "trace back from the failed result to which step / assumption broke, "
                 "and what counterfactual change could make it work.\n\n"
                 "Output a JSON with fields:\n"
-                "- \"failure_reasoning\": the full reverse-engineered failure path (<300 words)\n"
-                "- \"failure_point\": at which step / assumption does it break\n"
-                "- \"counterfactual\": what condition could change to make it work\n"
-                "- \"confidence\": 0.0-1.0\n"
+                '- "failure_reasoning": the full reverse-engineered failure path (<300 words)\n'
+                '- "failure_point": at which step / assumption does it break\n'
+                '- "counterfactual": what condition could change to make it work\n'
+                '- "confidence": 0.0-1.0\n'
                 "Be rigorous. If you cannot invert, return empty failure_reasoning with confidence=0.0."
             ),
             allowed_tools=[
-                "code_tool", "bash_tool",
-                "file_read_tool", "numerical_tool",
+                "code_tool",
+                "bash_tool",
+                "file_read_tool",
+                "numerical_tool",
             ],
             max_tool_calls=15,
             max_iterations=5,
@@ -246,6 +459,7 @@ class SubagentDispatch:
             from huginn.harness.phase_spec import (
                 get_subagent_specs_for_dispatch,
             )
+
             specs_override = get_subagent_specs_for_dispatch()
         except Exception:  # 防御: 阶段规格覆盖不可用则用内置
             logger.debug("subagent phase spec override unavailable", exc_info=True)
@@ -255,6 +469,121 @@ class SubagentDispatch:
             self._specs: dict[str, SubagentSpec] = dict(self.BUILTIN_SPECS)
 
     # ------------------------------------------------------------------ API
+
+    def _create_subagent(
+        self,
+        spec: SubagentSpec,
+        factory: Any,
+        thread_id: str,
+        approval_callback: Any,
+    ) -> Any:
+        """按 spec 创建子 agent, 并应用工具白名单与调用预算."""
+        profile_id = self._pick_profile(factory)
+        agent = factory.create(
+            profile_id=profile_id,
+            thread_id=thread_id,
+            system_prompt_override=spec.system_prompt,
+            approval_callback=approval_callback,
+        )
+        # 应用工具白名单: 清掉 factory 注册的默认工具, 按白名单重新注册
+        if spec.allowed_tools:
+            agent.tool_filter = set(spec.allowed_tools)
+            agent.langchain_tools.clear()
+            agent.register_tools_from_registry()
+        # 设工具调用预算, chat() 里会据此建 ToolCallBudget
+        agent._max_tool_calls = spec.max_tool_calls
+        return agent
+
+    async def _run_subagent_stream(
+        self, agent: Any, task: str, thread_id: str, on_state: Any
+    ) -> Any:
+        """消费子 agent 的 chat 流, 返回最后一个带非空 messages 的真实状态."""
+        final_state = None
+        async for state in agent.chat(task, thread_id):
+            if not isinstance(state, dict):
+                continue
+            # chat() 除 langgraph state (含 "messages") 外, 还 yield 一批
+            # **控制事件**: {"_token":..} / {"_reasoning":..} /
+            # {"tool_break":True,"state":{...}} / {"_auto_continue":True} /
+            # {"_compacted":..}. 末条常是控制事件 → 若直接取最后一条,
+            # 后面的 _extract_output/_extract_tool_calls/_estimate_tokens
+            # 读到的 state 根本没有 "messages", 整个子 agent 产出被判为空
+            # (run62/64 实测: blind_recon dispatch success=True 却
+            # summary_len=0, 6 次派发里 3 次空手).
+            # 故只认带非空 messages 的真实状态; {"state": {...}} 一层解开.
+            # 从未见过 messages 时兜底保留首条 dict (保持旧行为).
+            cand = state.get("state") if "messages" not in state else state
+            if isinstance(cand, dict) and cand.get("messages"):
+                final_state = cand
+            elif final_state is None:
+                final_state = state
+            if on_state is not None:
+                try:
+                    await on_state(state)
+                except Exception:  # 防御: 状态回调失败则忽略
+                    logger.debug("on_state callback failed", exc_info=True)
+        return final_state
+
+    async def _fire_subagent_stop(
+        self,
+        ctx: dict | None,
+        agent: Any,
+        spec_name: str,
+        thread_id: str,
+        task: str,
+    ) -> None:
+        """子 agent 完成后触发 SUBAGENT_STOP hook."""
+        try:
+            from huginn.hooks import SUBAGENT_STOP, HookContext
+
+            # 优先用父 agent 的 hook_manager, 这样父 agent 能观察到子 agent
+            # 完成; fallback 到子 agent 自己的保持向后兼容.
+            parent_mgr = ctx.get("hook_manager") if ctx else None
+            hook_mgr = parent_mgr or getattr(agent, "hook_manager", None)
+            if hook_mgr is None:
+                return
+            sub_ctx = HookContext(
+                tool_name="subagent",
+                metadata={
+                    "spec_name": spec_name,
+                    "thread_id": thread_id,
+                    "task": task,
+                },
+            )
+            await hook_mgr.trigger(SUBAGENT_STOP, sub_ctx)
+        except Exception:  # 防御: 停止钩子失败则忽略
+            logger.debug("SUBAGENT_STOP hook raised (non-fatal)", exc_info=True)
+
+    async def _maybe_summarize(
+        self,
+        spec: SubagentSpec,
+        agent: Any,
+        factory: Any,
+        output: str,
+        task: str,
+    ) -> str:
+        """按 spec 配置决定是否总结子 agent 的长输出."""
+        if not (spec.summarize_result and len(output) > _SUMMARIZE_THRESHOLD):
+            return output
+        # H5-a: 走 task 路由选总结模型, 与 engine._llm_chat(task="summarize")
+        # 行为一致. 子 agent 无 model_router / select_model 失败时回退到
+        # factory 的 default_alias — 保持向后兼容.
+        summarize_model = None
+        try:
+            if hasattr(agent, "select_model"):
+                summarize_model = agent.select_model("summarize")
+        except Exception:  # 防御: 总结模型选择失败回退默认
+            logger.debug(
+                "select summarize model failed, fallback to default",
+                exc_info=True,
+            )
+        return await self._summarize(
+            factory,
+            output,
+            task,
+            summary_format=spec.summary_format,
+            model=summarize_model,
+        )
 
     async def dispatch(
         self,
@@ -273,163 +602,23 @@ class SubagentDispatch:
         _depth: 递归深度 (G1 守卫). 主 agent 调 dispatch 时 _depth=0,
         subagent 内再调 dispatch 时 _depth=1, 以此类推. 超 spec.max_depth 拒.
         """
-        spec = self._specs.get(spec_name)
-        if spec is None:
-            return SubagentResult(
-                summary="", full_output="",
-                success=False,
-                error=f"Unknown subagent spec: {spec_name}. "
-                      f"Available: {sorted(self._specs.keys())}",
-                spec_name=spec_name,
-            )
+        spec, ctx, factory, approval_callback, err = _dispatch_preflight(
+            self, spec_name, _depth, context
+        )
+        if err is not None:
+            return err
 
-        # G1: 递归深度守卫. 超 max_depth 拒绝, 防 subagent 无限递归.
-        if _depth >= spec.max_depth:
-            return SubagentResult(
-                summary="", full_output="",
-                success=False,
-                error=f"depth {_depth} >= max_depth {spec.max_depth} "
-                      f"(spec={spec_name}). 递归过深, 拒绝 dispatch.",
-                spec_name=spec_name,
-            )
-
-        ctx = context or {}
-        factory = ctx.get("agent_factory")
-        if factory is None:
-            return SubagentResult(
-                summary="", full_output="",
-                success=False,
-                error="agent_factory not available in context. "
-                      "Configure models and agent profiles first.",
-                spec_name=spec_name,
-            )
-
-        # v7: 从 context 拿父 agent 的 approval_callback, 透传给子 agent.
-        # 之前不传, 子 agent 调 vasp_tool 等 ASK 工具会被静默拒绝.
-        approval_callback = ctx.get("approval_callback")
-
-        # 独立 thread_id, 跟主对话完全隔离
-        thread_id = f"subagent_{spec_name}_{uuid.uuid4().hex[:8]}"
-
-        try:
-            profile_id = self._pick_profile(factory)
-            agent = factory.create(
-                profile_id=profile_id,
-                thread_id=thread_id,
-                system_prompt_override=spec.system_prompt,
-                approval_callback=approval_callback,
-            )
-        except Exception as exc:
-            logger.debug("subagent creation failed", exc_info=True)
-            return SubagentResult(
-                summary="", full_output="",
-                success=False,
-                error=f"Failed to create subagent: {exc}",
-                spec_name=spec_name,
-            )
-
-        # 应用工具白名单: 清掉 factory 注册的默认工具, 按白名单重新注册
-        if spec.allowed_tools:
-            agent.tool_filter = set(spec.allowed_tools)
-            agent.langchain_tools.clear()
-            agent.register_tools_from_registry()
-
-        # 设工具调用预算, chat() 里会据此建 ToolCallBudget
-        agent._max_tool_calls = spec.max_tool_calls
-
-        # G1: 把 _depth+1 注入 contextvar, 子 agent 调 subagent_tool 时
-        # 能读到正确的递归深度. chat() 里的 tool call 同 task, contextvar 可见.
-        token = _current_depth.set(_depth + 1)
-        try:
-            final_state = None
-            async for state in agent.chat(task, thread_id):
-                if isinstance(state, dict):
-                    # chat() 除 langgraph state (含 "messages") 外, 还 yield 一批
-                    # **控制事件**: {"_token":..} / {"_reasoning":..} /
-                    # {"tool_break":True,"state":{...}} / {"_auto_continue":True} /
-                    # {"_compacted":..}. 末条常是控制事件 → 若直接取最后一条,
-                    # 后面的 _extract_output/_extract_tool_calls/_estimate_tokens
-                    # 读到的 state 根本没有 "messages", 整个子 agent 产出被判为空
-                    # (run62/64 实测: blind_recon dispatch success=True 却
-                    # summary_len=0, 6 次派发里 3 次空手).
-                    # 故只认带非空 messages 的真实状态; {"state": {...}} 一层解开.
-                    # 从未见过 messages 时兜底保留首条 dict (保持旧行为).
-                    _cand = state.get("state") if "messages" not in state else state
-                    if isinstance(_cand, dict) and _cand.get("messages"):
-                        final_state = _cand
-                    elif final_state is None:
-                        final_state = state
-                    if on_state is not None:
-                        try:
-                            await on_state(state)
-                        except Exception:  # 防御: 状态回调失败则忽略
-                            logger.debug("on_state callback failed", exc_info=True)
-
-            # 子 agent 完成: 触发 SUBAGENT_STOP hook.
-            # 优先用父 agent 的 hook_manager (从 context 取 "hook_manager"),
-            # 这样父 agent 能观察到子 agent 完成. 之前只取子 agent 自己的
-            # hook_manager, 父 agent 永远收不到 SUBAGENT_STOP. fallback 到
-            # 子 agent 的保持向后兼容 (调用方未传 hook_manager 时).
-            try:
-                from huginn.hooks import SUBAGENT_STOP, HookContext
-
-                _parent_hook_mgr = ctx.get("hook_manager") if ctx else None
-                _hook_mgr = _parent_hook_mgr or getattr(agent, "hook_manager", None)
-                if _hook_mgr is not None:
-                    _sub_ctx = HookContext(
-                        tool_name="subagent",
-                        metadata={
-                            "spec_name": spec_name,
-                            "thread_id": thread_id,
-                            "task": task,
-                        },
-                    )
-                    await _hook_mgr.trigger(SUBAGENT_STOP, _sub_ctx)
-            except Exception:  # 防御: 停止钩子失败则忽略
-                logger.debug("SUBAGENT_STOP hook raised (non-fatal)", exc_info=True)
-
-            output = self._extract_output(final_state)
-            tool_calls = self._extract_tool_calls(final_state)
-            tokens = self._estimate_tokens(final_state)
-
-            if spec.summarize_result and len(output) > _SUMMARIZE_THRESHOLD:
-                # H5-a: 走 task 路由选总结模型, 与 engine._llm_chat(task="summarize")
-                # 行为一致. 子 agent 无 model_router / select_model 失败时回退到
-                # factory 的 default_alias — 保持向后兼容.
-                summarize_model = None
-                try:
-                    if hasattr(agent, "select_model"):
-                        summarize_model = agent.select_model("summarize")
-                except Exception:  # 防御: 总结模型选择失败回退默认
-                    logger.debug(
-                        "select summarize model failed, fallback to default",
-                        exc_info=True,
-                    )
-                summary = await self._summarize(
-                    factory, output, task, summary_format=spec.summary_format,
-                    model=summarize_model,
-                )
-            else:
-                summary = output
-
-            return SubagentResult(
-                summary=summary,
-                full_output=output,
-                tool_calls=tool_calls,
-                tokens_used=tokens,
-                success=True,
-                spec_name=spec_name,
-            )
-        except Exception as exc:
-            logger.debug("subagent execution failed", exc_info=True)
-            return SubagentResult(
-                summary="", full_output="",
-                success=False,
-                error=f"Subagent execution failed: {exc}",
-                spec_name=spec_name,
-            )
-        finally:
-            _current_depth.reset(token)
+        return await _execute_dispatch(
+            self,
+            spec,
+            ctx,
+            factory,
+            approval_callback,
+            spec_name,
+            task,
+            on_state,
+            _depth,
+        )
 
     def register_spec(self, spec: SubagentSpec) -> None:
         """Register a custom subagent type. 覆盖同名 spec."""
@@ -492,10 +681,12 @@ class SubagentDispatch:
             tool_calls = getattr(msg, "tool_calls", None) or []
             for tc in tool_calls:
                 if isinstance(tc, dict):
-                    calls.append({
-                        "name": tc.get("name", "unknown"),
-                        "args": tc.get("args", {}),
-                    })
+                    calls.append(
+                        {
+                            "name": tc.get("name", "unknown"),
+                            "args": tc.get("args", {}),
+                        }
+                    )
                 else:
                     calls.append({"name": str(tc), "args": {}})
         return calls
@@ -523,8 +714,12 @@ class SubagentDispatch:
 
     @staticmethod
     async def _summarize(
-        factory: Any, output: str, task: str, *,
-        summary_format: str = "free", model: Any = None,
+        factory: Any,
+        output: str,
+        task: str,
+        *,
+        summary_format: str = "free",
+        model: Any = None,
     ) -> str:
         """用 LLM 压缩子 agent 输出, 拿不到模型就截断兜底.
 
@@ -537,43 +732,14 @@ class SubagentDispatch:
         ponytail: json 模式不校验 schema, LLM 自律输出. 升级路径 pydantic + retry.
         """
         if model is None:
-            try:
-                alias = factory.model_registry.default_alias()
-                if not alias:
-                    return output[:_SUMMARIZE_THRESHOLD] + "..."
-                model = factory.model_registry.resolve(alias)
-            except Exception:  # 防御: 总结模型解析失败则截断兜底
-                logger.debug("resolve model for summarize failed", exc_info=True)
+            model = _resolve_summary_model(factory)
+            if model is None:
                 return output[:_SUMMARIZE_THRESHOLD] + "..."
 
-        if summary_format == "json":
-            system_content = (
-                "Extract structured findings from the subagent output as JSON. "
-                "Schema: {\"findings\": str, \"evidence\": [str], "
-                "\"limitations\": [str], \"artifacts\": [str]}. "
-                "findings = 主要结论一句话; evidence = 支撑证据/数据来源列表; "
-                "limitations = 适用边界/未验证项; artifacts = 产出文件路径列表. "
-                "Output ONLY the JSON object, no prose, no markdown fences."
-            )
-        else:
-            system_content = (
-                "Summarize the following subagent output concisely. "
-                "Focus on key findings, results, and any errors. "
-                "Keep it under 500 words."
-            )
+        system_content = _summary_system_content(summary_format)
 
         try:
-            from langchain_core.messages import HumanMessage, SystemMessage
-
-            messages = [
-                SystemMessage(content=system_content),
-                HumanMessage(
-                    content=(
-                        f"Task: {task}\n\n"
-                        f"Output:\n{output[:_SUMMARIZE_INPUT_LIMIT]}"
-                    )
-                ),
-            ]
+            messages = _build_summary_messages(system_content, task, output)
             result = await asyncio.to_thread(model.invoke, messages)
             return result.content if hasattr(result, "content") else str(result)
         except Exception:  # 防御: 总结LLM调用失败则截断兜底
@@ -588,8 +754,8 @@ class SubagentDispatch:
 # 升级路径: 在 simplicial complex 上算真实 H¹, 需要 persistent homology 库.
 
 # H¹ 检查的相似度阈值 — spec SubTask 10.2 规定
-_H1_HIGH_OVERLAP = 0.8   # > 此值 + 数值不同 → obstruction
-_H1_LOW_OVERLAP = 0.5    # ≤ 此值视为新信息, 无 obstruction
+_H1_HIGH_OVERLAP = 0.8  # > 此值 + 数值不同 → obstruction
+_H1_LOW_OVERLAP = 0.5  # ≤ 此值视为新信息, 无 obstruction
 # 中间区 (0.5, 0.8] 保守不 reject
 
 # 数值相近判据: 相对误差 < 10% 视为一致
@@ -604,6 +770,28 @@ def _is_close(a: float, b: float, rel_tol: float = _H1_NUM_REL_TOL) -> bool:
     """
     denom = max(abs(a), abs(b), 1e-9)
     return abs(a - b) / denom < rel_tol
+
+
+def _h1_numeric_conflict(
+    finding_str: str, core_context: str, overlap: float
+) -> tuple[bool, str]:
+    """高重叠时校验数值一致; 不一致返回 obstruction 结论."""
+    # 高重叠: 数值必须一致, 否则 obstruction
+    finding_nums = [float(x) for x in re.findall(r"\d+\.?\d*", finding_str)]
+    core_nums = [float(x) for x in re.findall(r"\d+\.?\d*", core_context)]
+
+    if not finding_nums:
+        return True, f"high overlap, no numbers to conflict (sim={overlap:.2f})"
+
+    for n in finding_nums:
+        if not any(_is_close(n, m) for m in core_nums):
+            closest = min(core_nums, key=lambda m: abs(n - m)) if core_nums else None
+            return False, (
+                f"numeric conflict: finding has {n}, core has {closest} "
+                f"(sim={overlap:.2f})"
+            )
+
+    return True, f"high overlap, numbers consistent (sim={overlap:.2f})"
 
 
 def _check_finding_consistency(
@@ -632,6 +820,7 @@ def _check_finding_consistency(
         return True, "empty input, no obstruction"
 
     from huginn.context_builder import _compute_semantic_overlap
+
     overlap = _compute_semantic_overlap(finding_str, core_context)
 
     if overlap <= _H1_LOW_OVERLAP:
@@ -642,22 +831,7 @@ def _check_finding_consistency(
         # 成本太高. 升级: 加 LLM judge 做语义一致性判定.
         return True, f"moderate overlap, assuming consistent (sim={overlap:.2f})"
 
-    # 高重叠: 数值必须一致, 否则 obstruction
-    finding_nums = [float(x) for x in re.findall(r"\d+\.?\d*", finding_str)]
-    core_nums = [float(x) for x in re.findall(r"\d+\.?\d*", core_context)]
-
-    if not finding_nums:
-        return True, f"high overlap, no numbers to conflict (sim={overlap:.2f})"
-
-    for n in finding_nums:
-        if not any(_is_close(n, m) for m in core_nums):
-            closest = min(core_nums, key=lambda m: abs(n - m)) if core_nums else None
-            return False, (
-                f"numeric conflict: finding has {n}, core has {closest} "
-                f"(sim={overlap:.2f})"
-            )
-
-    return True, f"high overlap, numbers consistent (sim={overlap:.2f})"
+    return _h1_numeric_conflict(finding_str, core_context, overlap)
 
 
 def _write_support_rejection(
@@ -675,14 +849,23 @@ def _write_support_rejection(
     ws = Path(workspace)
     rejection_path = ws / HUGINN_DIR_NAME / "support_rejections.jsonl"
     rejection_path.parent.mkdir(parents=True, exist_ok=True)
-    snippet = core_context[:500] if isinstance(core_context, str) else str(core_context)[:500]
+    snippet = (
+        core_context[:500] if isinstance(core_context, str) else str(core_context)[:500]
+    )
     with rejection_path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps({
-            "ts": datetime.now().isoformat(),
-            "finding": finding,
-            "reason": reason,
-            "core_context_snippet": snippet,
-        }, ensure_ascii=False, default=str) + "\n")
+        f.write(
+            json.dumps(
+                {
+                    "ts": datetime.now().isoformat(),
+                    "finding": finding,
+                    "reason": reason,
+                    "core_context_snippet": snippet,
+                },
+                ensure_ascii=False,
+                default=str,
+            )
+            + "\n"
+        )
     return rejection_path
 
 
@@ -799,10 +982,12 @@ if __name__ == "__main__":
     # case B: _depth=0 < max_depth=1 → 不被 depth guard 拦, 走到 factory 检查
     result = asyncio.run(d.dispatch("explore", "test", _depth=0))
     assert not result.success, "无 factory 应失败"
-    assert "depth" not in (result.error or "").lower(), \
+    assert "depth" not in (result.error or "").lower(), (
         f"_depth=0 不该触发 depth guard: {result.error}"
-    assert "agent_factory" in (result.error or ""), \
+    )
+    assert "agent_factory" in (result.error or ""), (
         f"_depth=0 应走到 factory 检查: {result.error}"
+    )
     print("[ok] G1 _depth=0 放行 depth guard, 走到 factory 检查")
 
     # case C: contextvar 默认 0
@@ -826,12 +1011,14 @@ if __name__ == "__main__":
     assert d._specs["deep_test"].max_depth == 3
     # _depth=2 < 3 放行 (走到 factory 检查)
     result = asyncio.run(d.dispatch("deep_test", "test", _depth=2))
-    assert not result.success and "depth" not in (result.error or "").lower(), \
+    assert not result.success and "depth" not in (result.error or "").lower(), (
         f"_depth=2 < max_depth=3 不该被 depth 拒: {result.error}"
+    )
     # _depth=3 >= 3 拒
     result = asyncio.run(d.dispatch("deep_test", "test", _depth=3))
-    assert not result.success and "depth" in (result.error or "").lower(), \
+    assert not result.success and "depth" in (result.error or "").lower(), (
         f"_depth=3 >= max_depth=3 应被拒: {result.error}"
+    )
     print("[ok] G1 max_depth 可配置, _depth=2 放行, _depth=3 拒")
 
     print("\nG1 self-check PASSED")

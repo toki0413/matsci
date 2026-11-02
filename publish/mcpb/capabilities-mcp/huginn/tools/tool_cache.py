@@ -36,9 +36,9 @@ EXTERNAL_API_TTL = 7 * 24 * 3600
 # prefetch 白名单: 只对幂等无副作用的轻量工具预热缓存.
 # 重型仿真工具 (vasp/lammps/qe/...) 绝不在这里, 避免误触发烧算力.
 PREFETCH_SAFE_TOOLS: set[str] = {
-    "structure_tool",          # analyze/read 都是纯读
+    "structure_tool",  # analyze/read 都是纯读
     "materials_database_tool",  # mp_summary/mp_structure 只查不写
-    "symbolic_math_tool",       # 纯符号计算, 无副作用
+    "symbolic_math_tool",  # 纯符号计算, 无副作用
 }
 
 
@@ -226,9 +226,7 @@ class ToolCache:
                 rows = conn.execute(
                     "SELECT cache_key, tool_name FROM tool_cache"
                 ).fetchall()
-            to_delete = [
-                k for k, tn in rows if (tn and regex.search(tn))
-            ]
+            to_delete = [k for k, tn in rows if (tn and regex.search(tn))]
             if to_delete:
                 with self._connect() as conn:
                     conn.executemany(
@@ -307,15 +305,71 @@ class ToolCache:
     def _invalidate_one(self, key_str: str) -> None:
         try:
             with self._connect() as conn:
-                conn.execute(
-                    "DELETE FROM tool_cache WHERE cache_key = ?", (key_str,)
-                )
+                conn.execute("DELETE FROM tool_cache WHERE cache_key = ?", (key_str,))
                 conn.commit()
         except Exception:
             logger.debug("connect failed", exc_info=True)
 
 
 # ---- 装饰器 ----
+
+
+def _build_cache_key(key_fn, tname, args: tuple, kwargs: dict) -> tuple | None:
+    """构造缓存 key; 失败或不缓存返回 None."""
+    try:
+        if key_fn is not None:
+            inner = key_fn(*args, **kwargs)
+        else:
+            inner = _default_key(args, kwargs)
+    except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
+        return None
+    if inner is None:
+        return None
+    return (tname, _stable_hash(inner))
+
+
+def _make_async_wrapper(func: Callable, build_key, ttl_seconds: int, tname: str):
+    @functools.wraps(func)
+    async def async_wrapper(*args, **kwargs):
+        ckey = build_key(args, kwargs)
+        if ckey is not None:
+            cache = ToolCache.shared()
+            hit = cache.get(ckey)
+            if hit is not None:
+                logger.debug("cacheable hit: %s", tname)
+                return _restore(hit, func)
+        result = await func(*args, **kwargs)
+        if ckey is not None:
+            payload = _extract(result)
+            if payload is not None:
+                cache = ToolCache.shared()
+                cache.set(ckey, payload, ttl=ttl_seconds)
+        return result
+
+    return async_wrapper
+
+
+def _make_sync_wrapper(func: Callable, build_key, ttl_seconds: int, tname: str):
+    @functools.wraps(func)
+    def sync_wrapper(*args, **kwargs):
+        ckey = build_key(args, kwargs)
+        if ckey is not None:
+            cache = ToolCache.shared()
+            hit = cache.get(ckey)
+            if hit is not None:
+                logger.debug("cacheable hit: %s", tname)
+                return _restore(hit, func)
+        result = func(*args, **kwargs)
+        if ckey is not None:
+            payload = _extract(result)
+            if payload is not None:
+                cache = ToolCache.shared()
+                cache.set(ckey, payload, ttl=ttl_seconds)
+        return result
+
+    return sync_wrapper
+
 
 def cacheable(
     ttl_seconds: int = DEFAULT_TTL,
@@ -344,54 +398,12 @@ def cacheable(
         is_async = inspect.iscoroutinefunction(func)
         tname = tool_name or getattr(func, "__qualname__", "").split(".")[0]
 
-        def _build_key(args: tuple, kwargs: dict) -> tuple | None:
-            try:
-                if key_fn is not None:
-                    inner = key_fn(*args, **kwargs)
-                else:
-                    inner = _default_key(args, kwargs)
-            except Exception:
-                logger.debug("best-effort op failed", exc_info=True)
-                return None
-            if inner is None:
-                return None
-            return (tname, _stable_hash(inner))
+        def build_key(args: tuple, kwargs: dict) -> tuple | None:
+            return _build_cache_key(key_fn, tname, args, kwargs)
 
-        @functools.wraps(func)
-        async def async_wrapper(*args, **kwargs):
-            ckey = _build_key(args, kwargs)
-            if ckey is not None:
-                cache = ToolCache.shared()
-                hit = cache.get(ckey)
-                if hit is not None:
-                    logger.debug("cacheable hit: %s", tname)
-                    return _restore(hit, func)
-            result = await func(*args, **kwargs)
-            if ckey is not None:
-                payload = _extract(result)
-                if payload is not None:
-                    cache = ToolCache.shared()
-                    cache.set(ckey, payload, ttl=ttl_seconds)
-            return result
-
-        @functools.wraps(func)
-        def sync_wrapper(*args, **kwargs):
-            ckey = _build_key(args, kwargs)
-            if ckey is not None:
-                cache = ToolCache.shared()
-                hit = cache.get(ckey)
-                if hit is not None:
-                    logger.debug("cacheable hit: %s", tname)
-                    return _restore(hit, func)
-            result = func(*args, **kwargs)
-            if ckey is not None:
-                payload = _extract(result)
-                if payload is not None:
-                    cache = ToolCache.shared()
-                    cache.set(ckey, payload, ttl=ttl_seconds)
-            return result
-
-        return async_wrapper if is_async else sync_wrapper
+        if is_async:
+            return _make_async_wrapper(func, build_key, ttl_seconds, tname)
+        return _make_sync_wrapper(func, build_key, ttl_seconds, tname)
 
     return decorator
 

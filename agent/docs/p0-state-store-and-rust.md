@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # P0 里程碑：共享状态后端化 + Rust 沙箱确定性
 
 > 状态：**已完成**（T1–T5 全部落地，由 `staging/plans/2026-08-12-p0-state-store-and-rust.md` 提升，

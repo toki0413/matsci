@@ -109,12 +109,15 @@ class SklearnInput(BaseModel):
     )
     random_state: int = Field(default=0)
     test_size: float = Field(
-        default=0.25, ge=0.05, le=0.5,
+        default=0.25,
+        ge=0.05,
+        le=0.5,
         description="Holdout fraction for classify/regress/evaluate metrics.",
     )
 
 
 # ── data loading ────────────────────────────────────────────────
+
 
 def _coerce(v: str) -> Any:
     """Try float, fall back to the raw string — LabelEncoder handles the rest."""
@@ -188,6 +191,7 @@ def _load_x_only(args: SklearnInput) -> tuple[np.ndarray, list[str]]:
 
 # ── estimator resolution ───────────────────────────────────────
 
+
 def _resolve_estimator(action: str, model_type: str, args: SklearnInput):
     """Lazily import the sklearn class and instantiate with model_params."""
     from sklearn.cluster import DBSCAN, AgglomerativeClustering, KMeans
@@ -237,17 +241,147 @@ def _resolve_estimator(action: str, model_type: str, args: SklearnInput):
     return cls(**params)
 
 
-def _feature_importances(estimator, feature_names: list[str]) -> dict[str, float] | None:
+def _feature_importances(
+    estimator, feature_names: list[str]
+) -> dict[str, float] | None:
     """Pull feature_importances_ or coef_ out of a fitted estimator, if present."""
     importances = getattr(estimator, "feature_importances_", None)
     if importances is not None:
-        return {n: float(v) for n, v in zip(feature_names, np.asarray(importances).ravel())}
+        return {
+            n: float(v) for n, v in zip(feature_names, np.asarray(importances).ravel())
+        }
     coef = getattr(estimator, "coef_", None)
     if coef is not None:
         arr = np.asarray(coef).ravel()
         if arr.shape == (len(feature_names),):
             return {n: float(v) for n, v in zip(feature_names, arr)}
     return None
+
+
+def _split_supervised(
+    args: SklearnInput, task: Literal["classify", "regress"]
+) -> tuple[np.ndarray, list[str], np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Load X/y, label-encode string targets, and build the holdout split."""
+    from sklearn.model_selection import train_test_split
+    from sklearn.preprocessing import LabelEncoder
+
+    X, y, feats = _load_xy(args)
+    # String targets → label-encode so sklearn estimators accept them.
+    if y.dtype.kind in {"U", "S", "O"}:
+        y = LabelEncoder().fit_transform(y)
+
+    stratify = y if task == "classify" and len(set(y)) > 1 else None
+    X_tr, X_te, y_tr, y_te = train_test_split(
+        X,
+        y,
+        test_size=args.test_size,
+        random_state=args.random_state,
+        stratify=stratify,
+    )
+    return X, feats, X_tr, X_te, y_tr, y_te
+
+
+def _supervised_metrics(task: str, y_te, preds) -> dict[str, float]:
+    """Compute holdout metrics for the classify / regress task."""
+    from sklearn.metrics import (
+        accuracy_score,
+        f1_score,
+        mean_absolute_error,
+        mean_squared_error,
+        r2_score,
+    )
+
+    if task == "classify":
+        return {
+            "accuracy": float(accuracy_score(y_te, preds)),
+            "f1_macro": float(f1_score(y_te, preds, average="macro", zero_division=0)),
+            "f1_weighted": float(
+                f1_score(y_te, preds, average="weighted", zero_division=0)
+            ),
+        }
+    mse = float(mean_squared_error(y_te, preds))
+    return {
+        "mse": mse,
+        "rmse": float(np.sqrt(mse)),
+        "mae": float(mean_absolute_error(y_te, preds)),
+        "r2": float(r2_score(y_te, preds)),
+    }
+
+
+def _evaluate_cross_val(
+    args: SklearnInput, X, y, est, inferred_task: str
+) -> ToolResult:
+    """Run cross_val_score and shape the evaluate response."""
+    from sklearn.model_selection import cross_val_score
+
+    scoring = args.scoring or (None if inferred_task == "regress" else "f1_macro")
+    scores = cross_val_score(est, X, y, cv=args.cv, scoring=scoring)
+    label = scoring or ("r2" if inferred_task == "regress" else "f1_macro")
+    return ToolResult(
+        data={
+            "action": "evaluate",
+            "eval_metric": "cross_val_score",
+            "model_class": type(est).__name__,
+            "task": inferred_task,
+            "scoring": label,
+            "cv": args.cv,
+            "n_samples": int(X.shape[0]),
+            "scores": scores.tolist(),
+            "mean": float(np.mean(scores)),
+            "std": float(np.std(scores)),
+            "message": (
+                f"{args.cv}-fold CV ({label}): "
+                f"{np.mean(scores):.4f} ± {np.std(scores):.4f}"
+            ),
+        },
+        success=True,
+    )
+
+
+def _evaluate_holdout(args: SklearnInput, X, y, est) -> ToolResult:
+    """Fit on a holdout split and emit report / confusion matrix."""
+    from sklearn.metrics import classification_report, confusion_matrix
+    from sklearn.model_selection import train_test_split
+
+    # classification_report / confusion_matrix need a fitted model on a holdout.
+    stratify = y if len(set(y.tolist())) > 1 else None
+    X_tr, X_te, y_tr, y_te = train_test_split(
+        X,
+        y,
+        test_size=args.test_size,
+        random_state=args.random_state,
+        stratify=stratify,
+    )
+    est.fit(X_tr, y_tr)
+    preds = est.predict(X_te)
+
+    if args.eval_metric == "classification_report":
+        report = classification_report(y_te, preds, output_dict=True, zero_division=0)
+        return ToolResult(
+            data={
+                "action": "evaluate",
+                "eval_metric": "classification_report",
+                "model_class": type(est).__name__,
+                "n_test": int(X_te.shape[0]),
+                "report": report,
+                "message": "classification_report generated on holdout split.",
+            },
+            success=True,
+        )
+
+    # confusion_matrix
+    cm = confusion_matrix(y_te, preds).tolist()
+    return ToolResult(
+        data={
+            "action": "evaluate",
+            "eval_metric": "confusion_matrix",
+            "model_class": type(est).__name__,
+            "n_test": int(X_te.shape[0]),
+            "confusion_matrix": cm,
+            "message": "confusion_matrix generated on holdout split.",
+        },
+        success=True,
+    )
 
 
 class SklearnTool(HuginnTool):
@@ -274,7 +408,8 @@ class SklearnTool(HuginnTool):
             import sklearn  # noqa: F401
         except ImportError:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="scikit-learn is not installed in this environment",
             )
 
@@ -293,37 +428,21 @@ class SklearnTool(HuginnTool):
             if input_data.action == "evaluate":
                 return self._evaluate(input_data)
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"unknown action: {input_data.action}",
             )
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"sklearn_tool failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"sklearn_tool failed: {e}"
+            )
 
     # ── supervised: classify / regress share the same fit+holdout path ──
 
     def _supervised(
         self, args: SklearnInput, task: Literal["classify", "regress"]
     ) -> ToolResult:
-        from sklearn.metrics import (
-            accuracy_score,
-            f1_score,
-            mean_absolute_error,
-            mean_squared_error,
-            r2_score,
-        )
-        from sklearn.model_selection import train_test_split
-        from sklearn.preprocessing import LabelEncoder
-
-        X, y, feats = _load_xy(args)
-        # String targets → label-encode so sklearn estimators accept them.
-        if y.dtype.kind in {"U", "S", "O"}:
-            y = LabelEncoder().fit_transform(y)
-
-        stratify = y if task == "classify" and len(set(y)) > 1 else None
-        X_tr, X_te, y_tr, y_te = train_test_split(
-            X, y, test_size=args.test_size, random_state=args.random_state,
-            stratify=stratify,
-        )
+        X, feats, X_tr, X_te, y_tr, y_te = _split_supervised(args, task)
 
         est = _resolve_estimator(task, args.model_type, args)
         est.fit(X_tr, y_tr)
@@ -341,21 +460,7 @@ class SklearnTool(HuginnTool):
             "n_test": int(X_te.shape[0]),
             "predictions_sample": np.asarray(preds[:10]).tolist(),
         }
-
-        if task == "classify":
-            data["metrics"] = {
-                "accuracy": float(accuracy_score(y_te, preds)),
-                "f1_macro": float(f1_score(y_te, preds, average="macro", zero_division=0)),
-                "f1_weighted": float(f1_score(y_te, preds, average="weighted", zero_division=0)),
-            }
-        else:
-            mse = float(mean_squared_error(y_te, preds))
-            data["metrics"] = {
-                "mse": mse,
-                "rmse": float(np.sqrt(mse)),
-                "mae": float(mean_absolute_error(y_te, preds)),
-                "r2": float(r2_score(y_te, preds)),
-            }
+        data["metrics"] = _supervised_metrics(task, y_te, preds)
 
         imp = _feature_importances(est, feats)
         if imp is not None:
@@ -379,8 +484,8 @@ class SklearnTool(HuginnTool):
         labels = np.asarray(labels)
 
         # KMeans / AgglomerativeClustering expose n_clusters_; DBSCAN doesn't.
-        n_found = (
-            int(getattr(est, "n_clusters_", len(set(labels)) - (1 if -1 in labels else 0)))
+        n_found = int(
+            getattr(est, "n_clusters_", len(set(labels)) - (1 if -1 in labels else 0))
         )
         n_noise = int(np.sum(labels == -1))
 
@@ -414,8 +519,6 @@ class SklearnTool(HuginnTool):
     # ── evaluate ─────────────────────────────────────────────────
 
     def _evaluate(self, args: SklearnInput) -> ToolResult:
-        from sklearn.metrics import classification_report, confusion_matrix
-        from sklearn.model_selection import cross_val_score, train_test_split
         from sklearn.preprocessing import LabelEncoder
 
         X, y, feats = _load_xy(args)
@@ -426,155 +529,154 @@ class SklearnTool(HuginnTool):
         # ponytail: simple heuristic, ceiling = mislabels ordinal regression as
         # classify; upgrade = let caller pass task explicitly via a new field.
         inferred_task = (
-            "classify" if len(set(y.tolist())) <= 20 and y.dtype.kind in {"i", "u"} else "regress"
+            "classify"
+            if len(set(y.tolist())) <= 20 and y.dtype.kind in {"i", "u"}
+            else "regress"
         )
         est = _resolve_estimator(inferred_task, args.model_type, args)
 
         if args.eval_metric == "cross_val_score":
-            scoring = args.scoring or (None if inferred_task == "regress" else "f1_macro")
-            scores = cross_val_score(est, X, y, cv=args.cv, scoring=scoring)
-            label = scoring or ("r2" if inferred_task == "regress" else "f1_macro")
-            return ToolResult(
-                data={
-                    "action": "evaluate",
-                    "eval_metric": "cross_val_score",
-                    "model_class": type(est).__name__,
-                    "task": inferred_task,
-                    "scoring": label,
-                    "cv": args.cv,
-                    "n_samples": int(X.shape[0]),
-                    "scores": scores.tolist(),
-                    "mean": float(np.mean(scores)),
-                    "std": float(np.std(scores)),
-                    "message": (
-                        f"{args.cv}-fold CV ({label}): "
-                        f"{np.mean(scores):.4f} ± {np.std(scores):.4f}"
-                    ),
-                },
-                success=True,
-            )
+            return _evaluate_cross_val(args, X, y, est, inferred_task)
 
-        # classification_report / confusion_matrix need a fitted model on a holdout.
-        stratify = y if len(set(y.tolist())) > 1 else None
-        X_tr, X_te, y_tr, y_te = train_test_split(
-            X, y, test_size=args.test_size, random_state=args.random_state,
-            stratify=stratify,
-        )
-        est.fit(X_tr, y_tr)
-        preds = est.predict(X_te)
-
-        if args.eval_metric == "classification_report":
-            report = classification_report(y_te, preds, output_dict=True, zero_division=0)
-            return ToolResult(
-                data={
-                    "action": "evaluate",
-                    "eval_metric": "classification_report",
-                    "model_class": type(est).__name__,
-                    "n_test": int(X_te.shape[0]),
-                    "report": report,
-                    "message": "classification_report generated on holdout split.",
-                },
-                success=True,
-            )
-
-        # confusion_matrix
-        cm = confusion_matrix(y_te, preds).tolist()
-        return ToolResult(
-            data={
-                "action": "evaluate",
-                "eval_metric": "confusion_matrix",
-                "model_class": type(est).__name__,
-                "n_test": int(X_te.shape[0]),
-                "confusion_matrix": cm,
-                "message": "confusion_matrix generated on holdout split.",
-            },
-            success=True,
-        )
+        return _evaluate_holdout(args, X, y, est)
 
 
 # ── self-check ─────────────────────────────────────────────────
 # Smallest thing that fails if fit/predict/score breaks. Run directly:
 #   python -m huginn.tools.sci.sklearn_tool
 
-def _self_check() -> None:
+
+def _self_check_data():
     rng = np.random.default_rng(0)
     n = 60
     # Two well-separated blobs for classification.
-    X_clf = np.vstack([
-        rng.normal(loc=[-2, -2], size=(n // 2, 2)),
-        rng.normal(loc=[ 2,  2], size=(n // 2, 2)),
-    ])
+    X_clf = np.vstack(
+        [
+            rng.normal(loc=[-2, -2], size=(n // 2, 2)),
+            rng.normal(loc=[2, 2], size=(n // 2, 2)),
+        ]
+    )
     y_clf = np.array([0] * (n // 2) + [1] * (n // 2))
     # Linear regression: y = 3*x0 - 2*x1 + noise.
     X_reg = rng.normal(size=(n, 2))
     y_reg = 3.0 * X_reg[:, 0] - 2.0 * X_reg[:, 1] + 0.1 * rng.normal(size=n)
 
     inline_clf = {
-        "x0": X_clf[:, 0].tolist(), "x1": X_clf[:, 1].tolist(), "y": y_clf.tolist(),
+        "x0": X_clf[:, 0].tolist(),
+        "x1": X_clf[:, 1].tolist(),
+        "y": y_clf.tolist(),
     }
     inline_reg = {
-        "x0": X_reg[:, 0].tolist(), "x1": X_reg[:, 1].tolist(), "y": y_reg.tolist(),
+        "x0": X_reg[:, 0].tolist(),
+        "x1": X_reg[:, 1].tolist(),
+        "y": y_reg.tolist(),
     }
+    return inline_clf, inline_reg
 
-    tool = SklearnTool()
 
+def _self_check_classify(tool: SklearnTool, inline_clf) -> None:
     print("== classify (random_forest) ==")
-    r = tool.call({
-        "action": "classify", "model_type": "random_forest",
-        "data_json": inline_clf, "target_column": "y",
-    })
+    r = tool.call(
+        {
+            "action": "classify",
+            "model_type": "random_forest",
+            "data_json": inline_clf,
+            "target_column": "y",
+        }
+    )
     assert r.success, r.error
     acc = r.data["metrics"]["accuracy"]
     print(f"  acc={acc:.3f}  f1_macro={r.data['metrics']['f1_macro']:.3f}")
     assert acc > 0.85, f"acc too low: {acc}"
     assert "feature_importances" in r.data
 
+
+def _self_check_regress(tool: SklearnTool, inline_reg) -> None:
     print("== regress (gradient_boosting) ==")
-    r = tool.call({
-        "action": "regress", "model_type": "gradient_boosting",
-        "data_json": inline_reg, "target_column": "y",
-    })
+    r = tool.call(
+        {
+            "action": "regress",
+            "model_type": "gradient_boosting",
+            "data_json": inline_reg,
+            "target_column": "y",
+        }
+    )
     assert r.success, r.error
     r2 = r.data["metrics"]["r2"]
     print(f"  r2={r2:.3f}  rmse={r.data['metrics']['rmse']:.3f}")
     assert r2 > 0.7, f"r2 too low: {r2}"
     assert "feature_importances" in r.data
 
+
+def _self_check_cluster(tool: SklearnTool, inline_clf) -> None:
     print("== cluster (kmeans) ==")
-    r = tool.call({
-        "action": "cluster", "model_type": "kmeans",
-        "data_json": inline_clf, "n_clusters": 2,
-    })
+    r = tool.call(
+        {
+            "action": "cluster",
+            "model_type": "kmeans",
+            "data_json": inline_clf,
+            "n_clusters": 2,
+        }
+    )
     assert r.success, r.error
-    print(f"  n_clusters_found={r.data['n_clusters_found']}  silhouette={r.data['silhouette']:.3f}")
+    print(
+        f"  n_clusters_found={r.data['n_clusters_found']}  silhouette={r.data['silhouette']:.3f}"
+    )
     assert r.data["n_clusters_found"] == 2
 
+
+def _self_check_evaluate(tool: SklearnTool, inline_clf) -> None:
     print("== evaluate (cross_val_score) ==")
-    r = tool.call({
-        "action": "evaluate", "data_json": inline_clf, "target_column": "y",
-        "eval_metric": "cross_val_score", "cv": 3,
-    })
+    r = tool.call(
+        {
+            "action": "evaluate",
+            "data_json": inline_clf,
+            "target_column": "y",
+            "eval_metric": "cross_val_score",
+            "cv": 3,
+        }
+    )
     assert r.success, r.error
-    print(f"  task={r.data['task']}  mean={r.data['mean']:.3f}  std={r.data['std']:.3f}")
+    print(
+        f"  task={r.data['task']}  mean={r.data['mean']:.3f}  std={r.data['std']:.3f}"
+    )
     assert r.data["mean"] > 0.7
 
     print("== evaluate (classification_report) ==")
-    r = tool.call({
-        "action": "evaluate", "data_json": inline_clf, "target_column": "y",
-        "eval_metric": "classification_report",
-    })
+    r = tool.call(
+        {
+            "action": "evaluate",
+            "data_json": inline_clf,
+            "target_column": "y",
+            "eval_metric": "classification_report",
+        }
+    )
     assert r.success, r.error
     print(f"  report keys={list(r.data['report'].keys())}")
 
     print("== evaluate (confusion_matrix) ==")
-    r = tool.call({
-        "action": "evaluate", "data_json": inline_clf, "target_column": "y",
-        "eval_metric": "confusion_matrix",
-    })
+    r = tool.call(
+        {
+            "action": "evaluate",
+            "data_json": inline_clf,
+            "target_column": "y",
+            "eval_metric": "confusion_matrix",
+        }
+    )
     assert r.success, r.error
     cm = r.data["confusion_matrix"]
     assert len(cm) == 2 and len(cm[0]) == 2
     print(f"  cm={cm}")
+
+
+def _self_check() -> None:
+    inline_clf, inline_reg = _self_check_data()
+    tool = SklearnTool()
+
+    _self_check_classify(tool, inline_clf)
+    _self_check_regress(tool, inline_reg)
+    _self_check_cluster(tool, inline_clf)
+    _self_check_evaluate(tool, inline_clf)
 
     print("\nALL OK")
 

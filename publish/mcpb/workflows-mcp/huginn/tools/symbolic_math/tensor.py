@@ -54,208 +54,379 @@ def tensor_ops(args: SymbolicMathInput) -> ToolResult:
     return ToolResult(data=results, success=True)
 
 
+def _tc_parse_inputs(
+    args: SymbolicMathInput,
+) -> tuple[str, list[float], str, ToolResult | None]:
+    """解析公共入参; voigt 长度非法时返回错误结果."""
+    operation = (args.expression or "invariants").lower()
+    voigt = args.voigt_vector or []
+    tensor_type = (args.tensor_type or "stress").lower()
+    if len(voigt) not in (6, 21):
+        return (
+            operation,
+            voigt,
+            tensor_type,
+            _tc_error(
+                "voigt_vector must have 6 components (2nd-order) or 21 "
+                "components (4th-order stiffness)"
+            ),
+        )
+    return operation, voigt, tensor_type, None
+
+
+def _tc_serialize(data: dict[str, Any]) -> ToolResult:
+    """把成功分支的数据封装成 ToolResult."""
+    return ToolResult(data=data, success=True)
+
+
+def _tc_error(message: str) -> ToolResult:
+    """把失败分支的错误封装成 ToolResult."""
+    return ToolResult(data=None, success=False, error=message)
+
+
+def _tc_unknown(operation: str) -> ToolResult:
+    """未知 operation 的统一报错."""
+    return _tc_error(f"Unknown tensor_calculus operation: {operation}")
+
+
+def _tc_build_sigma(voigt: list[float]) -> sp.Matrix:
+    """把 6 分量 Voigt 向量组装成 3×3 对称应力张量."""
+    s11, s22, s33, s23, s13, s12 = (float(v) for v in voigt)
+    return sp.Matrix(
+        [
+            [s11, s12, s13],
+            [s12, s22, s23],
+            [s13, s23, s33],
+        ]
+    )
+
+
+def _tc_build_stiffness(voigt: list[float]) -> sp.Matrix:
+    """把 21 分量 Voigt 向量映射成 6×6 对称刚度阵."""
+    idx = 0
+    stiffness = sp.zeros(6, 6)
+    for i in range(6):
+        for j in range(i, 6):
+            stiffness[i, j] = float(voigt[idx])
+            stiffness[j, i] = float(voigt[idx])
+            idx += 1
+    return stiffness
+
+
+def _tc_invariants(
+    sigma: sp.Matrix, tensor_type: str, voigt: list[float]
+) -> ToolResult:
+    """2 阶张量的三个不变量."""
+    I1 = float(sigma.trace())
+    I2 = float((sigma.trace() ** 2 - (sigma**2).trace()) / 2)
+    I3 = float(sigma.det())
+    return _tc_serialize(
+        {
+            "tensor_type": tensor_type,
+            "voigt_vector": voigt,
+            "invariants": {"I1": I1, "I2": I2, "I3": I3},
+            "trace": I1,
+            "determinant": I3,
+        }
+    )
+
+
+def _tc_deviatoric(sigma: sp.Matrix, tensor_type: str) -> ToolResult:
+    """应力张量的静水压力与偏量部分."""
+    p = float(sigma.trace()) / 3.0
+    dev = sigma - p * sp.eye(3)
+    return _tc_serialize(
+        {
+            "tensor_type": tensor_type,
+            "hydrostatic_pressure": p,
+            "deviatoric_voigt": [
+                float(dev[0, 0]),
+                float(dev[1, 1]),
+                float(dev[2, 2]),
+                float(dev[1, 2]),
+                float(dev[0, 2]),
+                float(dev[0, 1]),
+            ],
+        }
+    )
+
+
+def _tc_principal(sigma: sp.Matrix, tensor_type: str) -> ToolResult:
+    """按降序排列的主应力."""
+    ev = sigma.eigenvals()
+    principal = sorted([float(v) for v in ev], reverse=True)
+    return _tc_serialize(
+        {
+            "tensor_type": tensor_type,
+            "principal_values": principal,
+            "max_principal": principal[0] if principal else None,
+            "min_principal": principal[-1] if principal else None,
+        }
+    )
+
+
+def _tc_von_mises(sigma: sp.Matrix, tensor_type: str) -> ToolResult:
+    """von Mises 等效应力."""
+    p = float(sigma.trace()) / 3.0
+    s = sigma - p * sp.eye(3)
+    vm = float(
+        sp.sqrt(1.5 * sum(s[i, j] ** 2 for i in range(3) for j in range(3)))
+    )
+    return _tc_serialize(
+        {
+            "tensor_type": tensor_type,
+            "von_mises": vm,
+        }
+    )
+
+
+def _tc_rotate(
+    sigma: sp.Matrix,
+    tensor_type: str,
+    rotation_matrix: list[list[float]] | None,
+) -> ToolResult:
+    """把应力张量旋转到新坐标系."""
+    R = rotation_matrix
+    if not R or len(R) != 3 or any(len(r) != 3 for r in R):
+        return _tc_error("rotation_matrix must be 3×3 for rotate operation")
+    Rm = sp.Matrix(R)
+    sigma_rot = Rm * sigma * Rm.T
+    return _tc_serialize(
+        {
+            "tensor_type": tensor_type,
+            "rotated_voigt": [
+                float(sigma_rot[0, 0]),
+                float(sigma_rot[1, 1]),
+                float(sigma_rot[2, 2]),
+                float(sigma_rot[1, 2]),
+                float(sigma_rot[0, 2]),
+                float(sigma_rot[0, 1]),
+            ],
+        }
+    )
+
+
+def _tc_stiffness_invariants(
+    stiffness: sp.Matrix, tensor_type: str
+) -> ToolResult:
+    """4 阶刚度张量的 Voigt 特征值."""
+    ev = stiffness.eigenvals()
+    eigenvalues = []
+    for val, mult in ev.items():
+        eigenvalues.extend([float(val)] * mult)
+    eigenvalues.sort(reverse=True)
+    return _tc_serialize(
+        {
+            "tensor_type": tensor_type,
+            "voigt_eigenvalues": eigenvalues,
+            "is_positive_definite": all(ev > 0 for ev in eigenvalues),
+        }
+    )
+
+
+def _tc_apply_to_strain(
+    stiffness: sp.Matrix,
+    tensor_type: str,
+    strain_voigt: list[list[float]] | None,
+) -> ToolResult:
+    """用刚度阵把 Voigt 应变映射成应力."""
+    if (
+        not strain_voigt
+        or len(strain_voigt) != 1
+        or len(strain_voigt[0]) != 6
+    ):
+        return _tc_error(
+            "rotation_matrix must contain [ε11, ε22, ε33, 2ε23, 2ε13, 2ε12] "
+            "for apply_to_strain"
+        )
+    eps = sp.Matrix(strain_voigt[0])
+    sigma_voigt = stiffness * eps
+    return _tc_serialize(
+        {
+            "tensor_type": tensor_type,
+            "stress_voigt": [float(sigma_voigt[i]) for i in range(6)],
+        }
+    )
+
+
 def tensor_calculus(args: SymbolicMathInput) -> ToolResult:
     """连续介质力学张量微积分操作."""
     # einstein_sum 子动作走独立分支，不需要 voigt 向量
     if (args.sub_action or "").lower() == "einstein_sum":
         return einstein_sum(args)
 
-    operation = (args.expression or "invariants").lower()
-    voigt = args.voigt_vector or []
-    tensor_type = (args.tensor_type or "stress").lower()
-
-    if len(voigt) not in (6, 21):
-        return ToolResult(
-            data=None,
-            success=False,
-            error="voigt_vector must have 6 components (2nd-order) or 21 components (4th-order stiffness)",
-        )
+    operation, voigt, tensor_type, error = _tc_parse_inputs(args)
+    if error is not None:
+        return error
 
     if len(voigt) == 6:
-        s11, s22, s33, s23, s13, s12 = (float(v) for v in voigt)
-        sigma = sp.Matrix(
-            [
-                [s11, s12, s13],
-                [s12, s22, s23],
-                [s13, s23, s33],
-            ]
-        )
-
+        sigma = _tc_build_sigma(voigt)
         if operation == "invariants":
-            I1 = float(sigma.trace())
-            I2 = float((sigma.trace() ** 2 - (sigma**2).trace()) / 2)
-            I3 = float(sigma.det())
-            return ToolResult(
-                data={
-                    "tensor_type": tensor_type,
-                    "voigt_vector": voigt,
-                    "invariants": {"I1": I1, "I2": I2, "I3": I3},
-                    "trace": I1,
-                    "determinant": I3,
-                },
-                success=True,
-            )
-
+            return _tc_invariants(sigma, tensor_type, voigt)
         if operation == "deviatoric":
-            p = float(sigma.trace()) / 3.0
-            dev = sigma - p * sp.eye(3)
-            return ToolResult(
-                data={
-                    "tensor_type": tensor_type,
-                    "hydrostatic_pressure": p,
-                    "deviatoric_voigt": [
-                        float(dev[0, 0]),
-                        float(dev[1, 1]),
-                        float(dev[2, 2]),
-                        float(dev[1, 2]),
-                        float(dev[0, 2]),
-                        float(dev[0, 1]),
-                    ],
-                },
-                success=True,
-            )
-
+            return _tc_deviatoric(sigma, tensor_type)
         if operation == "principal":
-            ev = sigma.eigenvals()
-            principal = sorted([float(v) for v in ev], reverse=True)
-            return ToolResult(
-                data={
-                    "tensor_type": tensor_type,
-                    "principal_values": principal,
-                    "max_principal": principal[0] if principal else None,
-                    "min_principal": principal[-1] if principal else None,
-                },
-                success=True,
-            )
-
+            return _tc_principal(sigma, tensor_type)
         if operation == "von_mises":
-            p = float(sigma.trace()) / 3.0
-            s = sigma - p * sp.eye(3)
-            vm = float(
-                sp.sqrt(1.5 * sum(s[i, j] ** 2 for i in range(3) for j in range(3)))
-            )
-            return ToolResult(
-                data={
-                    "tensor_type": tensor_type,
-                    "von_mises": vm,
-                },
-                success=True,
-            )
-
+            return _tc_von_mises(sigma, tensor_type)
         if operation == "rotate":
-            R = args.rotation_matrix
-            if not R or len(R) != 3 or any(len(r) != 3 for r in R):
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="rotation_matrix must be 3×3 for rotate operation",
-                )
-            Rm = sp.Matrix(R)
-            sigma_rot = Rm * sigma * Rm.T
-            return ToolResult(
-                data={
-                    "tensor_type": tensor_type,
-                    "rotated_voigt": [
-                        float(sigma_rot[0, 0]),
-                        float(sigma_rot[1, 1]),
-                        float(sigma_rot[2, 2]),
-                        float(sigma_rot[1, 2]),
-                        float(sigma_rot[0, 2]),
-                        float(sigma_rot[0, 1]),
-                    ],
-                },
-                success=True,
-            )
+            return _tc_rotate(sigma, tensor_type, args.rotation_matrix)
+        return _tc_unknown(operation)
 
-    elif len(voigt) == 21:
-        # 4阶刚度张量的 Voigt 表示, 映射成 6×6 对称阵
-        idx = 0
-        C = sp.zeros(6, 6)
-        for i in range(6):
-            for j in range(i, 6):
-                C[i, j] = float(voigt[idx])
-                C[j, i] = float(voigt[idx])
-                idx += 1
-
-        if operation == "invariants":
-            ev = C.eigenvals()
-            eigenvalues = []
-            for val, mult in ev.items():
-                eigenvalues.extend([float(val)] * mult)
-            eigenvalues.sort(reverse=True)
-            return ToolResult(
-                data={
-                    "tensor_type": tensor_type,
-                    "voigt_eigenvalues": eigenvalues,
-                    "is_positive_definite": all(ev > 0 for ev in eigenvalues),
-                },
-                success=True,
-            )
-
-        if operation == "apply_to_strain":
-            strain_voigt = args.rotation_matrix  # 复用字段当应变向量
-            if (
-                not strain_voigt
-                or len(strain_voigt) != 1
-                or len(strain_voigt[0]) != 6
-            ):
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="rotation_matrix must contain [ε11, ε22, ε33, 2ε23, 2ε13, 2ε12] for apply_to_strain",
-                )
-            eps = sp.Matrix(strain_voigt[0])
-            sigma_voigt = C * eps
-            return ToolResult(
-                data={
-                    "tensor_type": tensor_type,
-                    "stress_voigt": [float(sigma_voigt[i]) for i in range(6)],
-                },
-                success=True,
-            )
-
-    return ToolResult(
-        data=None,
-        success=False,
-        error=f"Unknown tensor_calculus operation: {operation}",
-    )
-
-
-def einstein_sum(args: SymbolicMathInput) -> ToolResult:
-    """按 Einstein 求和约定对带指标的张量表达式求和并化简."""
-    from sympy.tensor.indexed import IndexedBase
-
-    expr_str = args.expression or ""
-    if not expr_str.strip():
-        return ToolResult(
-            data=None,
-            success=False,
-            error="expression is required for einstein_sum",
+    stiffness = _tc_build_stiffness(voigt)
+    if operation == "invariants":
+        return _tc_stiffness_invariants(stiffness, tensor_type)
+    if operation == "apply_to_strain":
+        return _tc_apply_to_strain(
+            stiffness, tensor_type, args.rotation_matrix
         )
+    return _tc_unknown(operation)
 
-    tokens = expr_str.split()
+
+def _es_parse_tokens(
+    expr_str: str,
+) -> tuple[list[tuple[str, list[str], list[str]]], ToolResult | None]:
+    """Split the expression into parsed tensor tokens (or an error result)."""
     parsed: list[tuple[str, list[str], list[str]]] = []
-    for tok in tokens:
+    for tok in expr_str.split():
         p = parse_einstein_token(tok)
         if p is None:
-            return ToolResult(
+            return [], ToolResult(
                 data=None,
                 success=False,
                 error=f"无法解析的张量 token: {tok}",
             )
         parsed.append(p)
+    return parsed, None
 
-    # 汇总每个指标的出现情况: {idx: [("upper"|"lower", tensor_pos), ...]}
+
+def _es_occurrences(
+    parsed: list[tuple[str, list[str], list[str]]],
+) -> dict[str, list[tuple[str, int]]]:
+    """Map each index to its (upper|lower, tensor-position) occurrences."""
     occurrences: dict[str, list[tuple[str, int]]] = {}
     for tpos, (_name, upper, lower) in enumerate(parsed):
         for idx in upper:
             occurrences.setdefault(idx, []).append(("upper", tpos))
         for idx in lower:
             occurrences.setdefault(idx, []).append(("lower", tpos))
+    return occurrences
 
+
+def _es_check_declared(
+    args: SymbolicMathInput, free_indices: list[str]
+) -> ToolResult | None:
+    """Verify explicitly declared indices match the free indices."""
+    if not args.indices:
+        return None
+    declared = set(args.indices)
+    actual = set(free_indices)
+    if declared == actual:
+        return None
+    return ToolResult(
+        data=None,
+        success=False,
+        error=(
+            f"自由指标不一致: 声明 {sorted(declared)}, "
+            f"实际 {sorted(actual)}"
+        ),
+    )
+
+
+def _es_metric_factors(
+    args: SymbolicMathInput,
+    occurrences: dict[str, list[tuple[str, int]]],
+    sum_indices: list[str],
+) -> tuple[list[Any], bool]:
+    """Build metric-tensor factors for cases like g_{ii} on a repeated index."""
+    from sympy.tensor.indexed import IndexedBase
+
+    if not args.metric:
+        return [], False
+    g_name = "g"
+    g_entries = None
+    if isinstance(args.metric, dict):
+        g_name = args.metric.get("name", "g")
+        g_entries = (
+            args.metric.get("components")
+            or args.metric.get("g")
+            or args.metric.get(g_name)
+        )
+    if g_entries is None:
+        return [], False
+
+    g_base = IndexedBase(g_name)
+    factors: list[Any] = []
+    for idx in sum_indices:
+        positions = [p for p, _ in occurrences.get(idx, [])]
+        if len(positions) == 2 and positions[0] == positions[1]:
+            idx_sym = sp.Symbol(idx, integer=True)
+            partner = sp.Symbol(f"{idx}p", integer=True)
+            factors.append(g_base[idx_sym, partner])
+    return factors, bool(factors)
+
+
+def _es_build_expr(
+    parsed: list[tuple[str, list[str], list[str]]],
+    occurrences: dict[str, list[tuple[str, int]]],
+    metric_factors: list[Any],
+) -> tuple[dict[str, sp.Symbol], Any]:
+    """Build the implicit tensor product expression."""
+    from sympy.tensor.indexed import IndexedBase
+
+    idx_symbols: dict[str, sp.Symbol] = {
+        idx: sp.Symbol(idx, integer=True) for idx in occurrences
+    }
+    bases: dict[str, IndexedBase] = {}
+    expr: Any = sp.Integer(1)
+    for name, upper, lower in parsed:
+        if name not in bases:
+            bases[name] = IndexedBase(name)
+        all_idx = [idx_symbols[i] for i in upper + lower]
+        term = bases[name][tuple(all_idx)] if all_idx else sp.Symbol(name)
+        expr = expr * term
+    for gf in metric_factors:
+        expr = expr * gf
+    return idx_symbols, expr
+
+
+def _es_evaluate(
+    expr: Any,
+    sum_indices: list[str],
+    idx_symbols: dict[str, sp.Symbol],
+    do_simplify: bool,
+) -> tuple[str, str, Any]:
+    """Apply the Einstein sums and optionally simplify; return text forms."""
+    N = sp.Symbol("N", integer=True, positive=True)
+    sum_expr = expr
+    for idx in sum_indices:
+        sym = idx_symbols.get(idx, sp.Symbol(idx, integer=True))
+        sum_expr = sp.Sum(sum_expr, (sym, 0, N - 1))
+
+    try:
+        evaluated = sum_expr.doit()
+    except Exception:
+        evaluated = sum_expr
+    before = str(evaluated)
+
+    if do_simplify:
+        try:
+            after_expr = sp.simplify(evaluated)
+        except Exception:
+            after_expr = evaluated
+    else:
+        after_expr = evaluated
+    return before, str(after_expr), after_expr
+
+
+def _es_resolve_indices(
+    args: SymbolicMathInput,
+    occurrences: dict[str, list[tuple[str, int]]],
+) -> tuple[list[str], list[str], ToolResult | None]:
+    """Validate index multiplicities + declared free indices."""
     bad = [idx for idx, occ in occurrences.items() if len(occ) > 2]
     if bad:
-        return ToolResult(
+        return [], [], ToolResult(
             data=None,
             success=False,
             error=f"指标出现超过两次，违反 Einstein 约定: {bad}",
@@ -267,95 +438,49 @@ def einstein_sum(args: SymbolicMathInput) -> ToolResult:
         sum_indices = [
             idx for idx, occ in occurrences.items() if len(occ) == 2
         ]
-
     free_indices = [
         idx
         for idx, occ in occurrences.items()
         if len(occ) == 1 and idx not in sum_indices
     ]
 
+    declared_error = _es_check_declared(args, free_indices)
+    if declared_error is not None:
+        return [], [], declared_error
     if args.indices:
-        declared = set(args.indices)
-        actual = set(free_indices)
-        if declared != actual:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=(
-                    f"自由指标不一致: 声明 {sorted(declared)}, "
-                    f"实际 {sorted(actual)}"
-                ),
-            )
         free_indices = list(args.indices)
+    return sum_indices, free_indices, None
 
-    metric_used = False
-    metric_factors: list[Any] = []
-    if args.metric:
-        g_name = "g"
-        g_entries = None
-        if isinstance(args.metric, dict):
-            g_name = args.metric.get("name", "g")
-            g_entries = (
-                args.metric.get("components")
-                or args.metric.get("g")
-                or args.metric.get(g_name)
-            )
-        if g_entries is not None:
-            g_base = IndexedBase(g_name)
-            for idx in sum_indices:
-                occ = occurrences.get(idx, [])
-                positions = [p for p, _ in occ]
-                if len(positions) == 2 and positions[0] == positions[1]:
-                    idx_sym = sp.Symbol(idx, integer=True)
-                    partner = sp.Symbol(f"{idx}p", integer=True)
-                    metric_factors.append(g_base[idx_sym, partner])
-                    metric_used = True
 
-    idx_symbols: dict[str, sp.Symbol] = {
-        idx: sp.Symbol(idx, integer=True) for idx in occurrences
-    }
+def einstein_sum(args: SymbolicMathInput) -> ToolResult:
+    """按 Einstein 求和约定对带指标的张量表达式求和并化简."""
+    expr_str = args.expression or ""
+    if not expr_str.strip():
+        return ToolResult(
+            data=None,
+            success=False,
+            error="expression is required for einstein_sum",
+        )
 
-    bases: dict[str, IndexedBase] = {}
-    terms: list[Any] = []
-    for name, upper, lower in parsed:
-        if name not in bases:
-            bases[name] = IndexedBase(name)
-        all_idx = [idx_symbols[i] for i in upper + lower]
-        if all_idx:
-            terms.append(bases[name][tuple(all_idx)])
-        else:
-            terms.append(sp.Symbol(name))
+    parsed, parse_error = _es_parse_tokens(expr_str)
+    if parse_error is not None:
+        return parse_error
 
-    expr: sp.Expr = sp.Integer(1)
-    for t in terms:
-        expr = expr * t
-    for gf in metric_factors:
-        expr = expr * gf
+    occurrences = _es_occurrences(parsed)
+    sum_indices, free_indices, index_error = _es_resolve_indices(
+        args, occurrences
+    )
+    if index_error is not None:
+        return index_error
 
+    metric_factors, metric_used = _es_metric_factors(
+        args, occurrences, sum_indices
+    )
+    idx_symbols, expr = _es_build_expr(parsed, occurrences, metric_factors)
     implicit_product = str(expr)
-
-    N = sp.Symbol("N", integer=True, positive=True)
-    sum_expr = expr
-    for idx in sum_indices:
-        sym = idx_symbols.get(idx, sp.Symbol(idx, integer=True))
-        sum_expr = sp.Sum(sum_expr, (sym, 0, N - 1))
-
-    try:
-        evaluated = sum_expr.doit()
-    except Exception:
-        evaluated = sum_expr
-
-    before = str(evaluated)
-
-    if args.simplify:
-        try:
-            after_expr = sp.simplify(evaluated)
-        except Exception:
-            after_expr = evaluated
-    else:
-        after_expr = evaluated
-    after = str(after_expr)
-
+    before, after, after_expr = _es_evaluate(
+        expr, sum_indices, idx_symbols, args.simplify
+    )
     parsed_summary = [
         {"tensor": name, "upper": upper, "lower": lower}
         for name, upper, lower in parsed

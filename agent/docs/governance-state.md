@@ -1,3 +1,5 @@
+<!-- generated: python -m huginn.cli.governance_audit --out docs/governance-state.md -->
+
 # 低熵治理台账 (governance state)
 
 自动生成: `python -m huginn.cli.governance_audit --out docs/governance-state.md`.
@@ -31,10 +33,12 @@
 | `tests/security/pentest_api_security.py` | 否 | `fast-fail-guard` | Run API security PoC tests |
 | `tests/security/pentest_archive_safety.py` | 否 | `fast-fail-guard` | Run archive security PoC tests |
 | `tests/stress/test_http_stress.py` | 否 | `fast-fail-guard` | Run pytest stress tests (fallback) |
+| `tests/test_arch_catalog_handles.py` | 是 | `full-suite-only` | — |
 | `tests/test_arch_cleanliness.py` | 是 | `full-suite-only` | — |
 | `tests/test_arch_config_migration.py` | 是 | `fast-fail-guard` | Config migration guard |
 | `tests/test_arch_credential_gateway.py` | 是 | `fast-fail-guard` | Credential gateway guard |
 | `tests/test_arch_endpoint_contract.py` | 是 | `fast-fail-guard` | Endpoint contract guard |
+| `tests/test_arch_gate_ownership.py` | 是 | `full-suite-only` | — |
 | `tests/test_arch_gate_registry.py` | 是 | `fast-fail-guard` | Governance gate registry guard |
 | `tests/test_arch_matdb_dep.py` | 是 | `fast-fail-guard` | Mat-DB real MP dependency guard |
 | `tests/test_arch_mcp_governance.py` | 是 | `fast-fail-guard` | MCP single-gateway guard |
@@ -42,20 +46,25 @@
 | `tests/test_arch_mp_key_flow.py` | 是 | `fast-fail-guard` | MP API key flow guard |
 | `tests/test_arch_no_hardcoded_paths.py` | 是 | `fast-fail-guard` | No-hardcoded-machine-paths guard |
 | `tests/test_arch_no_import_cycles.py` | 是 | `full-suite-only` | — |
+| `tests/test_arch_package_exports.py` | 是 | `full-suite-only` | — |
 | `tests/test_arch_plugin_governance.py` | 是 | `fast-fail-guard` | Plugin admission guard |
 | `tests/test_arch_rag_memory_seam.py` | 是 | `full-suite-only` | — |
+| `tests/test_arch_ruff_baseline.py` | 是 | `full-suite-only` | — |
 | `tests/test_arch_seam_integrity.py` | 是 | `full-suite-only` | — |
 | `tests/test_arch_single_gateway.py` | 是 | `fast-fail-guard` | Architecture single-gateway guard |
 | `tests/test_arch_skill_pool_bridge.py` | 是 | `fast-fail-guard` | Skill pool bridge guard |
 | `tests/test_arch_tools_direction.py` | 是 | `full-suite-only` | — |
 | `tests/test_config_contracts.py` | 否 | `full-suite-only` | — |
 | `tests/test_contract_audit.py` | 否 | `full-suite-only` | — |
+| `tests/test_doc_assertions.py` | 否 | `full-suite-only` | — |
 | `tests/test_env_surface_governance.py` | 否 | `full-suite-only` | — |
 | `tests/test_mechanics.py` | 否 | `fast-fail-guard` | Run 7 historical-fix regression tests |
+| `tests/test_model_surface_contract.py` | 否 | `full-suite-only` | — |
 | `tests/test_naturebench.py` | 否 | `fast-fail-guard` | NatureBench repro gate |
 | `tests/test_ponytail_debt_registry.py` | 否 | `full-suite-only` | — |
 | `tests/test_prompt_contract.py` | 否 | `full-suite-only` | — |
 | `tests/test_publish_mirror_drift.py` | 否 | `full-suite-only` | — |
+| `tests/test_silent_exceptions.py` | 否 | `full-suite-only` | — |
 | `tests/test_testclient_hygiene.py` | 否 | `fast-fail-guard` | TestClient hygiene guard |
 
 ## CLI 门 (cli gates)
@@ -135,7 +144,7 @@
 
 ## prompt 段生效面 (prompt segments)
 
-prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 -> 必须生效的生产路径 {main,s7,autoloop}) 与**生效面** (各生产路径实际渲染点) 的登记 (源: `governance_audit.PROMPT_SPECS` 期望段名 + 按文件路径 ast 读源文件 `_APPLIES_TO`). 逐段的生效路径**不在此复制** (无镜像漂移); 「声明 == 渲染」由 `tests/test_prompt_contract.py` 硬判定. 此处只显形**清单漂移** (清单有、源里无 = 段被删; 源里有、清单无 = 新增未登记) 与逐段声明路径. 段数下限棘轮 `prompt_segment_floor` 兜底.
+prompt 段的**声明面** (`prompt_segments._SEGMENT_SPECS`: 段名 -> 必须生效的生产路径 {main,s7,autoloop}) 与**生效面** (各生产路径实际渲染点) 的登记 (源: `governance_audit.PROMPT_SPECS` 期望段名 + 按文件路径 ast 读源文件 `_SEGMENT_SPECS`). 逐段的生效路径**不在此复制** (无镜像漂移); 「声明 == 渲染」由 `tests/test_prompt_contract.py` 硬判定. 此处只显形**清单漂移** (清单有、源里无 = 段被删; 源里有、清单无 = 新增未登记) 与逐段声明路径. 段数下限棘轮 `prompt_segment_floor` 兜底.
 
 | 段 | 声明生效路径 |
 |---|---|
@@ -146,6 +155,7 @@ prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 -> 必须生�
 | `mode` | `s7` |
 | `phase` | `s7` |
 | `metacog` | `s7` |
+| `mechanisms` | `main`, `s7`, `autoloop` |
 | `tools` | `s7` |
 | `multimodal` | `main`, `s7` |
 | `writing` | `main`, `s7` |
@@ -159,15 +169,15 @@ prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 -> 必须生�
 
 | 预算 | 位置 | 模式 | 冻结值 | 实测 | 余量 | 消费者门 |
 |---|---|---|---|---|---|---|
-| MECE 发现基线 | `tests/golden/mece_findings_baseline.txt` | 引用 | 47 项 | — | — | MECE wiring-contract guard (ratchet) |
+| MECE 发现基线 | `tests/golden/mece_findings_baseline.txt` | 引用 | 48 项 | — | — | MECE wiring-contract guard (ratchet) |
 | 镜像漂移预算 | `tests/test_publish_mirror_drift.py` | 权威 | 0/0/0 | — | — | publish mirror drift (only-shrink) · 全量 |
-| 环境裸读基线 | `huginn/env_schema.py` | 引用 | 467 | — | — | env surface governance · 全量 |
+| 环境裸读基线 | `huginn/env_schema.py` | 引用 | 464 | — | — | env surface governance · 全量 |
 | 外部直连白名单 | `tests/test_arch_single_gateway.py` | 引用 | 19 项 | — | — | Architecture single-gateway guard |
 | 冻结委托子命令 | `tests/test_arch_single_gateway.py` | 引用 | 11 项 | — | — | Architecture single-gateway guard |
 | 插件准入清单 | `tests/test_arch_plugin_governance.py` | 引用 | 2 项 | — | — | Plugin admission guard |
 | 硬编码路径白名单 | `tests/test_arch_no_hardcoded_paths.py` | 引用 | 7 项 | — | — | No-hardcoded-machine-paths guard |
 | MCP 接线白名单 | `tests/test_arch_mcp_governance.py` | 引用 | 7 项 | — | — | MCP single-gateway guard |
-| arch 门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 17 | 17 | 0 | Governance gate registry guard |
+| arch 门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 17 | 21 | 4 | Governance gate registry guard |
 | CLI 门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 2 | 2 | 0 | Governance gate registry guard |
 | 本地门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 5 | 5 | 0 | Governance gate registry guard |
 | 工程门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 21 | 21 | 0 | Governance gate registry guard |
@@ -177,9 +187,9 @@ prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 -> 必须生�
 | 技能库审计基线 | `scripts/skill_audit_baseline.json` | 引用 | 56/38 | — | — | Run skill library audit (gate) |
 | 工作流命名 step 总数下限 | `tests/test_arch_gate_registry.py` | 权威 | 122 | 127 | 5 | Governance gate registry guard |
 | 能力锚点数下限 | `tests/test_arch_gate_registry.py` | 权威 | 19 | 19 | 0 | Governance gate registry guard |
-| prompt 段数下限 | `tests/test_arch_gate_registry.py` | 权威 | 13 | 13 | 0 | Governance gate registry guard |
+| prompt 段数下限 | `tests/test_arch_gate_registry.py` | 权威 | 14 | 14 | 0 | Governance gate registry guard |
 | gitleaks 密钥豁免数 | `.gitleaks.toml` | 上限 | 7 | 7 | 0 | Governance gate registry guard |
-| pip-audit 漏洞豁免数 | `.github/workflows/ci.yml` | 上限 | 24 | 24 | 0 | Governance gate registry guard |
+| pip-audit 漏洞豁免数 | `.github/workflows/ci.yml` | 上限 | 26 | 26 | 0 | Governance gate registry guard |
 | dependabot 忽略项数 | `.github/dependabot.yml` | 上限 | 5 | 5 | 0 | Governance gate registry guard |
 | 覆盖率下限 | `pyproject.toml` | 下限 | 60 | 60 | 0 | Governance gate registry guard |
 | 可运行性探针清单下限 | `huginn/capabilities/smoke_specs.py` | 权威 | 7 | 7 | 0 | Governance gate registry guard |
@@ -209,6 +219,33 @@ prompt 段的**声明面** (`prompt_segments._APPLIES_TO`: 段名 -> 必须生�
 | causal_runner tool-call 上限 | `huginn/cli/causal_runner.py` | 上限 | 40 | 40 | 0 | Governance gate registry guard |
 | deli_research 迭代上限 | `huginn/academic/deli_research.py` | 上限 | 5 | 5 | 0 | Governance gate registry guard |
 | 循环闸位数下限 | `tests/test_arch_gate_registry.py` | 权威 | 18 | 18 | 0 | Governance gate registry guard |
+
+## 门强度与豁免 (IGNORE / OBSERVE)
+
+强度语义: ENFORCE = 工作流 guard 快速失败; OBSERVE = 影子期只入表不判红; IGNORE = 只靠全量套件兜底, **必须带证据与复核期限**. 过期未处理的条目 回落为孤儿门.
+
+| 测试 | 强度 | 责任人 | 复核/到期 | 证据 |
+|---|---|---|---|---|
+| `tests/test_arch_catalog_handles.py` | IGNORE | arch | 2027-06-30 | KIND_HANDLE_SPECS 双向闭合 + 合成 entries 覆盖 7 kind |
+| `tests/test_arch_cleanliness.py` | IGNORE | arch | 2027-06-30 | discover_governance_tests() 逐文件判在; 全量套件执行 |
+| `tests/test_arch_gate_ownership.py` | IGNORE | arch | 2027-06-30 | 标记集合 vs 登记集合双向闭合 + 归属校验 |
+| `tests/test_arch_no_import_cycles.py` | IGNORE | arch | 2027-06-30 | AST 依赖图扫描 huginn/**; 全量套件执行 |
+| `tests/test_arch_package_exports.py` | IGNORE | arch | 2027-06-30 | AST 扫描 huginn/**/__init__.py 的 __all__ 双向 |
+| `tests/test_arch_rag_memory_seam.py` | IGNORE | arch | 2027-06-30 | AST 扫描 RAG/memory 接缝; 全量套件执行 |
+| `tests/test_arch_ruff_baseline.py` | IGNORE | arch | 2027-06-30 | tests/ruff_baseline.json per-file only-shrink 棘轮 |
+| `tests/test_arch_seam_integrity.py` | IGNORE | arch | 2027-06-30 | AST 扫描全部接缝; 全量套件执行 |
+| `tests/test_arch_tools_direction.py` | IGNORE | arch | 2027-06-30 | AST 扫描 tools 依赖方向; 全量套件执行 |
+| `tests/test_config_contracts.py` | IGNORE | governance | 2027-06-30 | 契约文档重生成字节比对 |
+| `tests/test_contract_audit.py` | IGNORE | governance | 2027-06-30 | docs/mece-audit.md 重生成字节比对 |
+| `tests/test_doc_assertions.py` | IGNORE | governance | 2027-06-30 | scripts/doc_assertions.py --regen 字节比对 |
+| `tests/test_env_surface_governance.py` | IGNORE | governance | 2027-06-30 | env 读点计数棘轮 + docs/env-contract.md 重生成 |
+| `tests/test_model_surface_contract.py` | IGNORE | governance | 2027-06-30 | SURFACE_SPECS 台账 + 渲染字节基线 |
+| `tests/test_ponytail_debt_registry.py` | IGNORE | governance | 2027-06-30 | docs/TECHNICAL_DEBT_PONYTAIL.md 条目比对 |
+| `tests/test_prompt_contract.py` | IGNORE | governance | 2027-06-30 | PROMPT_SPECS 清单 + AST 读 _SEGMENT_SPECS 逐段判定 |
+| `tests/test_publish_mirror_drift.py` | IGNORE | governance | 2027-06-30 | scripts/mcpb_vendor.py --check 零漂移 + BUNDLE_MANIFEST |
+| `tests/test_silent_exceptions.py` | IGNORE | governance | 2027-06-30 | tests/silent_exceptions_baseline.json per-file only-shrink |
+
+共 18 条强度记录 (IGNORE 18 / OBSERVE 0).
 
 ## 缺口 (gaps)
 

@@ -29,7 +29,6 @@ from huginn.tools.registry import ToolRegistry
 logger = logging.getLogger(__name__)
 
 
-
 # workflow_template → 实际跑计算用的 tool 名
 # 缺省走 vasp_tool, aimd 这种分子动力学走 lammps_tool, ml_potential 走 ml_potential_tool
 _TEMPLATE_TOOL_MAP: dict[str, str] = {
@@ -77,9 +76,7 @@ class MaterialsAutoResearchInput(BaseModel):
         default="standard_dft",
         description="用哪个 workflow 模板跑实验 (standard_dft/aimd/defect/surface/ml_potential/...)",
     )
-    max_iterations: int = Field(
-        default=10, ge=1, le=100, description="最多迭代几轮"
-    )
+    max_iterations: int = Field(default=10, ge=1, le=100, description="最多迭代几轮")
     convergence_threshold: float | None = Field(
         default=None,
         description="收敛阈值, 最近 3 轮指标波动小于该值就停; 留空则跑到 max_iterations",
@@ -95,7 +92,7 @@ class MaterialsAutoResearchInput(BaseModel):
     literature_context: bool = Field(
         default=True,
         description="循环开始前是否用 literature_tool 检索研究目标相关文献, 把已知实验/计算值注入提案与报告. "
-                    "离线/未配置时自动降级为不检索, 不阻塞循环.",
+        "离线/未配置时自动降级为不检索, 不阻塞循环.",
     )
     work_dir: str | None = Field(
         default=None,
@@ -141,36 +138,44 @@ class MaterialsAutoResearchTool(HuginnTool):
         self, args: MaterialsAutoResearchInput, context: ToolContext
     ) -> ToolResult:
         # 1. 初始化工作目录 + ratchet 状态
+        state, error = await MaterialsAutoResearchTool._prepare_run_state(
+            self, args, context
+        )
+        if error is not None:
+            return error
+
+        # 2. 迭代循环 + 3. Report
+        converged, report = await MaterialsAutoResearchTool._run_iterations(
+            self, args, context, state
+        )
+
+        return ToolResult(
+            data=_run_result_data(
+                state["run_id"],
+                state["base_dir"],
+                state["ratchet_state"],
+                converged,
+                report,
+                state["lit_findings"],
+                state["lit_note"],
+                args.literature_context,
+            ),
+            success=True,
+        )
+
+    async def _prepare_run_state(
+        self, args: MaterialsAutoResearchInput, context: ToolContext
+    ) -> tuple[dict[str, Any] | None, ToolResult | None]:
+        """初始化工作目录 + ratchet 状态, 并检索文献背景."""
         run_id = f"mar_{uuid.uuid4().hex[:8]}"
         base_dir = self._resolve_base_dir(args, context, run_id)
         base_dir.mkdir(parents=True, exist_ok=True)
 
         # 把初始结构拷到 base_dir/POSCAR 作为模板, 后续每轮从它复制
         poscar_template = base_dir / "POSCAR_template"
-        if args.initial_structure:
-            src = Path(args.initial_structure).expanduser().resolve()
-            if not src.exists():
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"initial_structure 不存在: {src}",
-                )
-            shutil.copyfile(src, poscar_template)
-        else:
-            # 没给 initial_structure 就看 context.workspace 里有没有现成的 POSCAR
-            ws_poscar = (
-                Path(context.workspace) / "POSCAR"
-                if getattr(context, "workspace", None)
-                else None
-            )
-            if ws_poscar and ws_poscar.exists():
-                shutil.copyfile(ws_poscar, poscar_template)
-            else:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="需要 initial_structure 或工作目录下现成的 POSCAR",
-                )
+        stage_error = _stage_poscar_template(args, context, poscar_template)
+        if stage_error is not None:
+            return None, ToolResult(data=None, success=False, error=stage_error)
 
         tool_name = _TEMPLATE_TOOL_MAP.get(args.workflow_template, "vasp_tool")
         extraction = _METRIC_EXTRACTION.get(
@@ -190,92 +195,172 @@ class MaterialsAutoResearchTool(HuginnTool):
             "history": [],
         }
 
-        # 2. 迭代循环
+        return {
+            "run_id": run_id,
+            "base_dir": base_dir,
+            "poscar_template": poscar_template,
+            "tool_name": tool_name,
+            "extraction": extraction,
+            "lit_findings": lit_findings,
+            "lit_note": lit_note,
+            "ratchet_state": ratchet_state,
+        }, None
+
+    async def _run_iterations(
+        self,
+        args: MaterialsAutoResearchInput,
+        context: ToolContext,
+        state: dict[str, Any],
+    ) -> tuple[bool, str]:
+        """跑满 max_iterations 轮 (或提前收敛), 然后生成报告."""
+        base_dir = state["base_dir"]
         converged = False
         for i in range(args.max_iterations):
             iteration = i + 1
             iter_dir = base_dir / f"iter_{iteration:03d}"
             iter_dir.mkdir(parents=True, exist_ok=True)
-
-            # 2a. Propose: LLM 提议下一组参数
-            try:
-                proposal = await self._propose_params(
-                    args, ratchet_state, iteration, lit_findings
-                )
-            except Exception as exc:
-                self._record(ratchet_state, iteration, None, None, False, f"propose 失败: {exc}", iter_dir)
-                continue
-
-            params = proposal.get("params", {})
-            rationale = proposal.get("rationale", "")
-
-            # 2b. Execute: 写输入文件 + 调 vasp_tool/lammps_tool
-            exec_result = await self._execute_experiment(
-                args, context, tool_name, extraction, params, iter_dir, poscar_template
-            )
-
-            # 2c. Extract: 从计算结果抠指标
-            metric_value = None
-            extract_note = ""
-            if exec_result.get("success"):
-                metric_value, extract_note = self._extract_metric(
-                    args.ratchet_metric, extraction, exec_result, iter_dir
-                )
-
-            # 2d. Ratchet: 比较 best
-            is_best = False
-            if metric_value is not None and self._is_improved(
-                metric_value, ratchet_state["best_metric"], args.ratchet_direction
+            if await MaterialsAutoResearchTool._run_iteration(
+                self, args, context, state, iteration, iter_dir
             ):
-                ratchet_state["best_metric"] = metric_value
-                ratchet_state["best_params"] = params
-                ratchet_state["best_iteration"] = iteration
-                is_best = True
+                converged = True
+                break
 
-            # 2e. Record
-            if args.record_history:
-                self._record(
-                    ratchet_state,
-                    iteration,
-                    params,
-                    metric_value,
-                    is_best,
-                    rationale,
-                    iter_dir,
-                    note=extract_note,
-                    exec_status=exec_result.get("status", "unknown"),
-                )
-
-            # 2f. Check convergence: 最近 3 轮非 None 指标的极差 < threshold
-            if args.convergence_threshold is not None and self._check_convergence(
-                    ratchet_state["history"], args.convergence_threshold
-                ):
-                    converged = True
-                    break
-
-        # 3. Report
         report = await self._generate_report(
-            args, ratchet_state, converged, lit_findings, lit_note
+            args,
+            state["ratchet_state"],
+            converged,
+            state["lit_findings"],
+            state["lit_note"],
+        )
+        return converged, report
+
+    async def _run_iteration(
+        self,
+        args: MaterialsAutoResearchInput,
+        context: ToolContext,
+        state: dict[str, Any],
+        iteration: int,
+        iter_dir: Path,
+    ) -> bool:
+        """跑一轮 Propose → Execute → Extract → Ratchet → Record, 返回是否收敛."""
+        outcome = await MaterialsAutoResearchTool._propose_and_run(
+            self, args, context, state, iteration, iter_dir
+        )
+        if outcome is None:
+            return False
+        return MaterialsAutoResearchTool._ratchet_and_record(
+            self, args, state, iteration, iter_dir, outcome
         )
 
-        return ToolResult(
-            data={
-                "run_id": run_id,
-                "best_params": ratchet_state["best_params"],
-                "best_metric": ratchet_state["best_metric"],
-                "best_iteration": ratchet_state["best_iteration"],
-                "total_iterations": len(ratchet_state["history"]),
-                "converged": converged,
-                "history": ratchet_state["history"],
-                "report": report,
-                "base_dir": str(base_dir),
-                "literature": {
-                    "enabled": args.literature_context,
-                    "note": lit_note,
-                    "findings": lit_findings,
-                },
-            },
-            success=True,
+    async def _propose_or_record_failure(
+        self,
+        args: MaterialsAutoResearchInput,
+        state: dict[str, Any],
+        iteration: int,
+        iter_dir: Path,
+    ) -> dict[str, Any] | None:
+        """2a. Propose: LLM 提议下一组参数; 失败时记录一笔并返回 None."""
+        try:
+            return await self._propose_params(
+                args, state["ratchet_state"], iteration, state["lit_findings"]
+            )
+        except Exception as exc:
+            self._record(
+                state["ratchet_state"],
+                iteration,
+                None,
+                None,
+                False,
+                f"propose 失败: {exc}",
+                iter_dir,
+            )
+            return None
+
+    async def _propose_and_run(
+        self,
+        args: MaterialsAutoResearchInput,
+        context: ToolContext,
+        state: dict[str, Any],
+        iteration: int,
+        iter_dir: Path,
+    ) -> dict[str, Any] | None:
+        """2b-2c: 跑计算 → 抠指标; propose 失败返回 None."""
+        proposal = await MaterialsAutoResearchTool._propose_or_record_failure(
+            self, args, state, iteration, iter_dir
+        )
+        if proposal is None:
+            return None
+
+        params = proposal.get("params", {})
+        rationale = proposal.get("rationale", "")
+
+        # 2b. Execute: 写输入文件 + 调 vasp_tool/lammps_tool
+        exec_result = await self._execute_experiment(
+            args,
+            context,
+            state["tool_name"],
+            state["extraction"],
+            params,
+            iter_dir,
+            state["poscar_template"],
+        )
+
+        # 2c. Extract: 从计算结果抠指标
+        metric_value = None
+        extract_note = ""
+        if exec_result.get("success"):
+            metric_value, extract_note = self._extract_metric(
+                args.ratchet_metric, state["extraction"], exec_result, iter_dir
+            )
+
+        return {
+            "params": params,
+            "rationale": rationale,
+            "metric": metric_value,
+            "note": extract_note,
+            "exec_status": exec_result.get("status", "unknown"),
+        }
+
+    def _ratchet_and_record(
+        self,
+        args: MaterialsAutoResearchInput,
+        state: dict[str, Any],
+        iteration: int,
+        iter_dir: Path,
+        outcome: dict[str, Any],
+    ) -> bool:
+        """2d-2f: ratchet 比较 → 记录 → 检查收敛."""
+        ratchet_state = state["ratchet_state"]
+        params = outcome["params"]
+        metric_value = outcome["metric"]
+
+        # 2d. Ratchet: 比较 best
+        is_best = False
+        if metric_value is not None and self._is_improved(
+            metric_value, ratchet_state["best_metric"], args.ratchet_direction
+        ):
+            ratchet_state["best_metric"] = metric_value
+            ratchet_state["best_params"] = params
+            ratchet_state["best_iteration"] = iteration
+            is_best = True
+
+        # 2e. Record
+        if args.record_history:
+            self._record(
+                ratchet_state,
+                iteration,
+                params,
+                metric_value,
+                is_best,
+                outcome["rationale"],
+                iter_dir,
+                note=outcome["note"],
+                exec_status=outcome["exec_status"],
+            )
+
+        # 2f. Check convergence: 最近 3 轮非 None 指标的极差 < threshold
+        return args.convergence_threshold is not None and self._check_convergence(
+            ratchet_state["history"], args.convergence_threshold
         )
 
     # ------------------------------------------------------------------ propose
@@ -292,50 +377,11 @@ class MaterialsAutoResearchTool(HuginnTool):
 
         self._get_model()
 
-        # 历史只喂最近 8 轮, 避免上下文爆
-        recent = ratchet_state["history"][-8:]
-        history_block = (
-            json.dumps(recent, ensure_ascii=False, indent=2)
-            if recent
-            else "(还没有历史, 这是第一轮)"
+        history_block, ps_block, lit_block = _proposal_blocks(
+            args, ratchet_state, lit_findings
         )
-
-        ps_block = (
-            json.dumps(args.parameter_space, ensure_ascii=False, indent=2)
-            if args.parameter_space
-            else "(未指定参数空间, 请根据研究目标自行推荐合理的 VASP 参数)"
-        )
-
-        lit_block = (
-            json.dumps(
-                [{"title": f.get("title", ""), "abstract": f.get("abstract", "")[:400],
-                  "year": f.get("year"), "doi": f.get("doi", ""), "source": f.get("source", "")}
-                 for f in (lit_findings or [])],
-                ensure_ascii=False, indent=2,
-            )
-            if lit_findings
-            else "(未检索到文献, 请依据材料物理直觉提案)"
-        )
-
-        system = (
-            "你是计算材料科学专家. 你的任务是基于迭代历史和研究目标, 提议下一组计算参数. "
-            "只能从给定的参数空间里选值 (如果提供了); 如果某参数没在空间里, 可以推荐一个合理值. "
-            "文献背景里可能包含该体系已知的实验/计算值 (例如带隙、形成能), 提案时应参考这些值, "
-            "让计算设置与已知物理一致. 输出必须是严格的 JSON, 不要加 markdown 代码块标记, 格式如下:\n"
-            '{"params": {"encut": 500, "kpoints": "6 6 6", "ismear": 0, ...}, '
-            '"rationale": "一句话解释为什么这么选"}'
-        )
-
-        prompt = (
-            f"研究目标: {args.research_goal}\n"
-            f"ratchet 指标: {args.ratchet_metric} ({args.ratchet_direction})\n"
-            f"workflow 模板: {args.workflow_template}\n"
-            f"当前迭代: 第 {iteration} 轮\n\n"
-            f"文献背景 (已知值, 仅供参考):\n{lit_block}\n\n"
-            f"参数空间:\n{ps_block}\n\n"
-            f"迭代历史 (最近 8 轮):\n{history_block}\n\n"
-            "请提议下一组参数. 如果历史里有 best, 优先在 best 附近做小调整; "
-            "如果连续几轮没进步, 可以试一下差距更大的参数."
+        system, prompt = _proposal_messages(
+            args, iteration, history_block, ps_block, lit_block
         )
 
         content = await self._llm_invoke(
@@ -376,30 +422,56 @@ class MaterialsAutoResearchTool(HuginnTool):
 
         # 走 VASP 路径: 写 INCAR + KPOINTS, 调 vasp_tool
         if tool_name == "vasp_tool":
-            self._write_incar(iter_dir / "INCAR", params)
-            kpoints_str = params.get("kpoints", "4 4 4")
-            self._write_kpoints(iter_dir / "KPOINTS", kpoints_str)
-            vasp_action = extraction.get("vasp_action", "relax")
-            tool_input = tool.input_schema(
-                action=vasp_action,
-                working_dir=str(iter_dir),
-                incar_overrides={},
-                walltime_hours=args.walltime_hours,
+            return await MaterialsAutoResearchTool._execute_vasp(
+                self, args, context, extraction, params, iter_dir, tool
             )
-            tool_ctx = self._make_ctx(context, str(iter_dir))
-            try:
-                result = await tool.call(tool_input, tool_ctx)
-            except Exception as exc:
-                return {"success": False, "status": "tool_error", "error": str(exc)}
 
-            return {
-                "success": result.success,
-                "status": "completed" if result.success else "failed",
-                "data": result.data,
-                "error": result.error,
-                "iter_dir": str(iter_dir),
-            }
+        return await MaterialsAutoResearchTool._execute_other(
+            self, args, context, iter_dir, tool
+        )
 
+    async def _execute_vasp(
+        self,
+        args: MaterialsAutoResearchInput,
+        context: ToolContext,
+        extraction: dict[str, str],
+        params: dict[str, Any],
+        iter_dir: Path,
+        tool: Any,
+    ) -> dict[str, Any]:
+        """VASP 路径: 写 INCAR + KPOINTS, 调 vasp_tool."""
+        self._write_incar(iter_dir / "INCAR", params)
+        kpoints_str = params.get("kpoints", "4 4 4")
+        self._write_kpoints(iter_dir / "KPOINTS", kpoints_str)
+        vasp_action = extraction.get("vasp_action", "relax")
+        tool_input = tool.input_schema(
+            action=vasp_action,
+            working_dir=str(iter_dir),
+            incar_overrides={},
+            walltime_hours=args.walltime_hours,
+        )
+        tool_ctx = self._make_ctx(context, str(iter_dir))
+        try:
+            result = await tool.call(tool_input, tool_ctx)
+        except Exception as exc:
+            return {"success": False, "status": "tool_error", "error": str(exc)}
+
+        return {
+            "success": result.success,
+            "status": "completed" if result.success else "failed",
+            "data": result.data,
+            "error": result.error,
+            "iter_dir": str(iter_dir),
+        }
+
+    async def _execute_other(
+        self,
+        args: MaterialsAutoResearchInput,
+        context: ToolContext,
+        iter_dir: Path,
+        tool: Any,
+    ) -> dict[str, Any]:
+        """非 VASP 工具 (lammps/ml_potential) 的兜底处理."""
         # 非 VASP 工具 (lammps/ml_potential) —— 参数透传, 接口可能不一样, 兜底处理
         # 这里把 params 当成 incar_overrides 之类的字段塞进去, 失败就记一下
         try:
@@ -581,7 +653,7 @@ class MaterialsAutoResearchTool(HuginnTool):
         # 去掉开头动作词 (minimize/maximize/optimize 等)
         for w in ("minimize ", "maximize ", "optimize ", "reduce ", "increase "):
             if goal.lower().startswith(w):
-                goal = goal[len(w):]
+                goal = goal[len(w) :]
                 break
         goal = goal.strip()
         metric = args.ratchet_metric.replace("_", " ")
@@ -605,25 +677,9 @@ class MaterialsAutoResearchTool(HuginnTool):
             from langchain_core.messages import HumanMessage, SystemMessage
 
             self._get_model()
-            summary = {
-                "research_goal": args.research_goal,
-                "ratchet_metric": args.ratchet_metric,
-                "ratchet_direction": args.ratchet_direction,
-                "best_metric": ratchet_state["best_metric"],
-                "best_params": ratchet_state["best_params"],
-                "best_iteration": ratchet_state["best_iteration"],
-                "converged": converged,
-                "total_iterations": len(ratchet_state["history"]),
-                "history": ratchet_state["history"],
-                "literature_background": {
-                    "note": lit_note,
-                    "findings": [
-                        {"title": f.get("title", ""), "abstract": f.get("abstract", "")[:300],
-                         "year": f.get("year"), "doi": f.get("doi", "")}
-                        for f in (lit_findings or [])
-                    ],
-                },
-            }
+            summary = _build_report_summary(
+                args, ratchet_state, converged, lit_findings, lit_note
+            )
             system = (
                 "你是材料计算专家. 根据迭代历史写一份简洁的中文报告, 包含: "
                 "1) 关键发现 (最佳参数和对应指标); 2) 收敛分析 (是否收敛, 指标随迭代的变化趋势); "
@@ -638,24 +694,7 @@ class MaterialsAutoResearchTool(HuginnTool):
             return content
         except Exception as exc:
             # LLM 挂了也不能让整个 loop 白跑, 给个最小报告兜底
-            lit_block = ""
-            if lit_findings:
-                lit_block = "\n\n文献背景:\n" + "\n".join(
-                    f"- {f.get('title', '')} ({f.get('year', '')}) [{f.get('source', '')}]"
-                    for f in lit_findings[:5]
-                )
-            return (
-                f"# Materials AutoResearch Report\n\n"
-                f"研究目标: {args.research_goal}\n"
-                f"ratchet 指标: {args.ratchet_metric} ({args.ratchet_direction})\n"
-                f"最佳指标: {ratchet_state['best_metric']}\n"
-                f"最佳参数: {ratchet_state['best_params']}\n"
-                f"最佳轮次: {ratchet_state['best_iteration']}\n"
-                f"是否收敛: {converged}\n"
-                f"总迭代数: {len(ratchet_state['history'])}\n"
-                f"{lit_block}\n\n"
-                f"(LLM 报告生成失败: {exc})"
-            )
+            return _fallback_report(args, ratchet_state, converged, lit_findings, exc)
 
     # ------------------------------------------------------------------ helpers
 
@@ -761,9 +800,197 @@ class MaterialsAutoResearchTool(HuginnTool):
         )
         path.write_text(content, encoding="utf-8")
 
-    def estimate_cost(self, args: MaterialsAutoResearchInput) -> dict[str, float] | None:
+    def estimate_cost(
+        self, args: MaterialsAutoResearchInput
+    ) -> dict[str, float] | None:
         # 每轮 VASP 大约 walltime_hours, 总共 max_iterations 轮
         return {
             "cpu_hours": args.walltime_hours * 4 * args.max_iterations,
             "walltime_hours": args.walltime_hours * args.max_iterations,
         }
+
+
+# ---------------------------------------------------------------------- helpers
+
+
+def _stage_poscar_template(
+    args: MaterialsAutoResearchInput, context: ToolContext, poscar_template: Path
+) -> str | None:
+    """把初始结构拷到 POSCAR 模板; 成功返回 None, 失败返回错误消息."""
+    if args.initial_structure:
+        src = Path(args.initial_structure).expanduser().resolve()
+        if not src.exists():
+            return f"initial_structure 不存在: {src}"
+        shutil.copyfile(src, poscar_template)
+    else:
+        # 没给 initial_structure 就看 context.workspace 里有没有现成的 POSCAR
+        ws_poscar = (
+            Path(context.workspace) / "POSCAR"
+            if getattr(context, "workspace", None)
+            else None
+        )
+        if ws_poscar and ws_poscar.exists():
+            shutil.copyfile(ws_poscar, poscar_template)
+        else:
+            return "需要 initial_structure 或工作目录下现成的 POSCAR"
+    return None
+
+
+def _run_result_data(
+    run_id: str,
+    base_dir: Path,
+    ratchet_state: dict[str, Any],
+    converged: bool,
+    report: str,
+    lit_findings: list[dict[str, Any]],
+    lit_note: str,
+    literature_enabled: bool,
+) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "best_params": ratchet_state["best_params"],
+        "best_metric": ratchet_state["best_metric"],
+        "best_iteration": ratchet_state["best_iteration"],
+        "total_iterations": len(ratchet_state["history"]),
+        "converged": converged,
+        "history": ratchet_state["history"],
+        "report": report,
+        "base_dir": str(base_dir),
+        "literature": {
+            "enabled": literature_enabled,
+            "note": lit_note,
+            "findings": lit_findings,
+        },
+    }
+
+
+def _proposal_blocks(
+    args: MaterialsAutoResearchInput,
+    ratchet_state: dict[str, Any],
+    lit_findings: list[dict[str, Any]] | None,
+) -> tuple[str, str, str]:
+    """拼出历史 / 参数空间 / 文献三段 prompt 文本."""
+    # 历史只喂最近 8 轮, 避免上下文爆
+    recent = ratchet_state["history"][-8:]
+    history_block = (
+        json.dumps(recent, ensure_ascii=False, indent=2)
+        if recent
+        else "(还没有历史, 这是第一轮)"
+    )
+
+    ps_block = (
+        json.dumps(args.parameter_space, ensure_ascii=False, indent=2)
+        if args.parameter_space
+        else "(未指定参数空间, 请根据研究目标自行推荐合理的 VASP 参数)"
+    )
+
+    lit_block = (
+        json.dumps(
+            [
+                {
+                    "title": f.get("title", ""),
+                    "abstract": f.get("abstract", "")[:400],
+                    "year": f.get("year"),
+                    "doi": f.get("doi", ""),
+                    "source": f.get("source", ""),
+                }
+                for f in (lit_findings or [])
+            ],
+            ensure_ascii=False,
+            indent=2,
+        )
+        if lit_findings
+        else "(未检索到文献, 请依据材料物理直觉提案)"
+    )
+    return history_block, ps_block, lit_block
+
+
+def _proposal_messages(
+    args: MaterialsAutoResearchInput,
+    iteration: int,
+    history_block: str,
+    ps_block: str,
+    lit_block: str,
+) -> tuple[str, str]:
+    """构造 system + user prompt."""
+    system = (
+        "你是计算材料科学专家. 你的任务是基于迭代历史和研究目标, 提议下一组计算参数. "
+        "只能从给定的参数空间里选值 (如果提供了); 如果某参数没在空间里, 可以推荐一个合理值. "
+        "文献背景里可能包含该体系已知的实验/计算值 (例如带隙、形成能), 提案时应参考这些值, "
+        "让计算设置与已知物理一致. 输出必须是严格的 JSON, 不要加 markdown 代码块标记, 格式如下:\n"
+        '{"params": {"encut": 500, "kpoints": "6 6 6", "ismear": 0, ...}, '
+        '"rationale": "一句话解释为什么这么选"}'
+    )
+
+    prompt = (
+        f"研究目标: {args.research_goal}\n"
+        f"ratchet 指标: {args.ratchet_metric} ({args.ratchet_direction})\n"
+        f"workflow 模板: {args.workflow_template}\n"
+        f"当前迭代: 第 {iteration} 轮\n\n"
+        f"文献背景 (已知值, 仅供参考):\n{lit_block}\n\n"
+        f"参数空间:\n{ps_block}\n\n"
+        f"迭代历史 (最近 8 轮):\n{history_block}\n\n"
+        "请提议下一组参数. 如果历史里有 best, 优先在 best 附近做小调整; "
+        "如果连续几轮没进步, 可以试一下差距更大的参数."
+    )
+    return system, prompt
+
+
+def _build_report_summary(
+    args: MaterialsAutoResearchInput,
+    ratchet_state: dict[str, Any],
+    converged: bool,
+    lit_findings: list[dict[str, Any]] | None,
+    lit_note: str,
+) -> dict[str, Any]:
+    return {
+        "research_goal": args.research_goal,
+        "ratchet_metric": args.ratchet_metric,
+        "ratchet_direction": args.ratchet_direction,
+        "best_metric": ratchet_state["best_metric"],
+        "best_params": ratchet_state["best_params"],
+        "best_iteration": ratchet_state["best_iteration"],
+        "converged": converged,
+        "total_iterations": len(ratchet_state["history"]),
+        "history": ratchet_state["history"],
+        "literature_background": {
+            "note": lit_note,
+            "findings": [
+                {
+                    "title": f.get("title", ""),
+                    "abstract": f.get("abstract", "")[:300],
+                    "year": f.get("year"),
+                    "doi": f.get("doi", ""),
+                }
+                for f in (lit_findings or [])
+            ],
+        },
+    }
+
+
+def _fallback_report(
+    args: MaterialsAutoResearchInput,
+    ratchet_state: dict[str, Any],
+    converged: bool,
+    lit_findings: list[dict[str, Any]] | None,
+    exc: Exception,
+) -> str:
+    """LLM 挂了也不能让整个 loop 白跑, 给个最小报告兜底."""
+    lit_block = ""
+    if lit_findings:
+        lit_block = "\n\n文献背景:\n" + "\n".join(
+            f"- {f.get('title', '')} ({f.get('year', '')}) [{f.get('source', '')}]"
+            for f in lit_findings[:5]
+        )
+    return (
+        f"# Materials AutoResearch Report\n\n"
+        f"研究目标: {args.research_goal}\n"
+        f"ratchet 指标: {args.ratchet_metric} ({args.ratchet_direction})\n"
+        f"最佳指标: {ratchet_state['best_metric']}\n"
+        f"最佳参数: {ratchet_state['best_params']}\n"
+        f"最佳轮次: {ratchet_state['best_iteration']}\n"
+        f"是否收敛: {converged}\n"
+        f"总迭代数: {len(ratchet_state['history'])}\n"
+        f"{lit_block}\n\n"
+        f"(LLM 报告生成失败: {exc})"
+    )

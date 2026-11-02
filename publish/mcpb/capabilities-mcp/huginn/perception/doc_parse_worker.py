@@ -8,6 +8,7 @@
 进度通过 stdout 的 ``PROGRESS <json>`` 行逐阶段上报, 主进程逐行转成 SSE 事件.
 成功写最终结果 dict 到 out.json 并打印 DONE; 失败向 stderr 打 FAIL 并退出码 1.
 """
+
 from __future__ import annotations
 
 import json
@@ -31,66 +32,21 @@ _STAGE_LABELS = [
 ]
 
 
-def run_pipeline(pdf_path: str, filename: str, workspace: str) -> dict[str, Any]:
-    """跑完整 DocGraph 管线 (M1-M6) + KB 自动入库. 返回给前端/后端的结果 dict."""
-    # 延迟 import: worker 只在被 `-m` 拉起时才真正 import 感知管线, 避免把
-    # 重型依赖带进无关路径.
-    from huginn.perception.cross_validator import CrossModalAdapter
-    from huginn.perception.data_extractor import FigureDataExtractor
-    from huginn.perception.document_graph import DocumentGraph
-    from huginn.perception.info_pack import InfoPackAssembler
-    from huginn.perception.pdf_parser import PDFElementExtractor
-    from huginn.perception.relation_predictor import RelationPredictor
-
-    def report(idx: int) -> None:
-        sys.stdout.write(
-            "PROGRESS "
-            + json.dumps(
-                {"type": "stage", "pct": _STAGE_OFFSETS[idx], "message": _STAGE_LABELS[idx]}
-            )
-            + "\n"
-        )
-        sys.stdout.flush()
-
-    # M1: 解析 PDF 为元素
-    extractor = PDFElementExtractor()
-    elements = extractor.extract(Path(pdf_path))
-    report(0)
-
-    # M2: 图表数据提取 (best-effort, 失败不阻断)
+def _extract_figure_data(figure_extractor: Any, elements: list[Any]) -> None:
+    """M2: 图表数据提取, best-effort, 失败不阻断."""
     try:
-        FigureDataExtractor().process(elements)
+        figure_extractor().process(elements)
     except Exception as exc:
         logger.warning("M2 figure data extraction skipped: %s", exc)
-    report(1)
 
-    # M3: 文档图 (仅结构边)
-    graph = DocumentGraph(elements)
-    report(2)
 
-    # M4: 预测 REFERENCES 边 (mention -> figure/table)
-    RelationPredictor().predict(graph)
-    report(3)
-
-    # M5: 跨模态校验 (注入 CLAIM 节点 + 判定边)
-    CrossModalAdapter().process(graph)
-    report(4)
-
-    # M6: 组装信息包
-    packages = InfoPackAssembler().assemble(graph)
-    report(5)
-
-    document_id = uuid.uuid4().hex
-    record: dict[str, Any] = {
-        "document_id": document_id,
-        "filename": filename,
-        "graph": graph.to_dict(),
-        "packages": [p.to_dict() for p in packages],
-        "stats": graph.stats(),
-    }
-
-    # KB 自动入库 (best-effort 旁路): 失败只记日志, 不阻断解析结果.
-    # 在子进程里做, 即便 embedding 原生崩, 也只挂 worker.
+def _auto_ingest(
+    workspace: str,
+    packages: list[Any],
+    document_id: str,
+    filename: str,
+) -> int:
+    """KB 自动入库 (best-effort 旁路): 失败只记日志, 不阻断解析结果."""
     auto_ingested = 0
     if workspace:
         try:
@@ -104,21 +60,91 @@ def run_pipeline(pdf_path: str, filename: str, workspace: str) -> dict[str, Any]
                 )
         except Exception as exc:
             logger.warning("worker KB ingest failed: %s", exc, exc_info=True)
-    record["auto_ingested"] = auto_ingested
+    return auto_ingested
+
+
+def _report_stage(idx: int) -> None:
+    """向 stdout 打一行 PROGRESS, 供主进程转 SSE."""
+    sys.stdout.write(
+        "PROGRESS "
+        + json.dumps(
+            {
+                "type": "stage",
+                "pct": _STAGE_OFFSETS[idx],
+                "message": _STAGE_LABELS[idx],
+            }
+        )
+        + "\n"
+    )
+    sys.stdout.flush()
+
+
+def run_pipeline(pdf_path: str, filename: str, workspace: str) -> dict[str, Any]:
+    """跑完整 DocGraph 管线 (M1-M6) + KB 自动入库. 返回给前端/后端的结果 dict."""
+    # 延迟 import: worker 只在被 `-m` 拉起时才真正 import 感知管线, 避免把
+    # 重型依赖带进无关路径.
+    from huginn.perception.cross_validator import CrossModalAdapter
+    from huginn.perception.data_extractor import FigureDataExtractor
+    from huginn.perception.document_graph import DocumentGraph
+    from huginn.perception.info_pack import InfoPackAssembler
+    from huginn.perception.pdf_parser import PDFElementExtractor
+    from huginn.perception.relation_predictor import RelationPredictor
+
+    # M1: 解析 PDF 为元素
+    extractor = PDFElementExtractor()
+    elements = extractor.extract(Path(pdf_path))
+    _report_stage(0)
+
+    # M2: 图表数据提取 (best-effort, 失败不阻断)
+    _extract_figure_data(FigureDataExtractor, elements)
+    _report_stage(1)
+
+    # M3: 文档图 (仅结构边)
+    graph = DocumentGraph(elements)
+    _report_stage(2)
+
+    # M4: 预测 REFERENCES 边 (mention -> figure/table)
+    RelationPredictor().predict(graph)
+    _report_stage(3)
+
+    # M5: 跨模态校验 (注入 CLAIM 节点 + 判定边)
+    CrossModalAdapter().process(graph)
+    _report_stage(4)
+
+    # M6: 组装信息包
+    packages = InfoPackAssembler().assemble(graph)
+    _report_stage(5)
+
+    document_id = uuid.uuid4().hex
+    record: dict[str, Any] = {
+        "document_id": document_id,
+        "filename": filename,
+        "graph": graph.to_dict(),
+        "packages": [p.to_dict() for p in packages],
+        "stats": graph.stats(),
+    }
+
+    # KB 自动入库 (best-effort 旁路): 失败只记日志, 不阻断解析结果.
+    # 在子进程里做, 即便 embedding 原生崩, 也只挂 worker.
+    record["auto_ingested"] = _auto_ingest(workspace, packages, document_id, filename)
     return record
 
 
 def main() -> int:
     """CLI 入口: argv = in.pdf, out.json, [filename], [workspace]."""
     if len(sys.argv) < 3:
-        sys.stderr.write("usage: doc_parse_worker <in.pdf> <out.json> [filename] [workspace]\n")
+        sys.stderr.write(
+            "usage: doc_parse_worker <in.pdf> <out.json> [filename] [workspace]\n"
+        )
         return 2
     pdf_path, out_json = sys.argv[1], sys.argv[2]
     filename = sys.argv[3] if len(sys.argv) > 3 else Path(pdf_path).name
     workspace = sys.argv[4] if len(sys.argv) > 4 else ""
     try:
         record = run_pipeline(pdf_path, filename, workspace)
-        Path(out_json).write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+        Path(out_json).write_text(
+            json.dumps(record, ensure_ascii=False), encoding="utf-8"
+        )
         sys.stdout.write("DONE\n")
         sys.stdout.flush()
         return 0

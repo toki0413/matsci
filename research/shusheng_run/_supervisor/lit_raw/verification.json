@@ -1,0 +1,353 @@
+[
+  {
+    "row": 2,
+    "ok": null,
+    "detail": "FETCH_FAIL HTTP Error 403: Forbidden"
+  },
+  {
+    "row": 3,
+    "ok": null,
+    "detail": "FETCH_FAIL HTTP Error 403: Forbidden"
+  },
+  {
+    "row": 4,
+    "ok": null,
+    "detail": "FETCH_FAIL HTTP Error 403: Forbidden"
+  },
+  {
+    "row": 5,
+    "ok": null,
+    "detail": "FETCH_FAIL HTTP Error 403: Forbidden"
+  },
+  {
+    "row": 6,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10053828/",
+    "missing": [
+      "From the figure, the activation energy of milled MgH2 was 133 kJ/mol. "
+    ]
+  },
+  {
+    "row": 7,
+    "ok": true,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10053828/",
+    "missing": []
+  },
+  {
+    "row": 8,
+    "ok": true,
+    "src": "https://www.ebi.ac.uk/europepmc/webservices/rest/PMC9693504/fullTextXML",
+    "missing": []
+  },
+  {
+    "row": 9,
+    "ok": true,
+    "src": "https://www.ebi.ac.uk/europepmc/webservices/rest/PMC9693504/fullTextXML",
+    "missing": []
+  },
+  {
+    "row": 10,
+    "ok": null,
+    "detail": "FETCH_FAIL HTTP Error 403: Forbidden"
+  },
+  {
+    "row": 11,
+    "ok": null,
+    "detail": "FETCH_FAIL HTTP Error 403: Forbidden"
+  },
+  {
+    "row": 12,
+    "ok": null,
+    "detail": "FETCH_FAIL HTTP Error 403: Forbidden"
+  },
+  {
+    "row": 13,
+    "ok": true,
+    "src": "https://www.ebi.ac.uk/europepmc/webservices/rest/PMC8541418/fullTextXML",
+    "missing": []
+  },
+  {
+    "row": 14,
+    "ok": true,
+    "src": "https://www.ebi.ac.uk/europepmc/webservices/rest/PMC8541418/fullTextXML",
+    "missing": []
+  },
+  {
+    "row": 15,
+    "ok": true,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10856060/",
+    "missing": []
+  },
+  {
+    "row": 16,
+    "ok": true,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10856060/",
+    "missing": []
+  },
+  {
+    "row": 17,
+    "ok": true,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12156327/",
+    "missing": []
+  },
+  {
+    "row": 18,
+    "ok": true,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12156327/",
+    "missing": []
+  },
+  {
+    "row": 19,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12156327/",
+    "missing": [
+      "From the Kissinger plot presented in Figure 9, the apparent activation"
+    ]
+  },
+  {
+    "row": 20,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10419626/",
+    "missing": [
+      "As shown in Table 3, adding 5 wt.% of vanadium leads to a significant "
+    ]
+  },
+  {
+    "row": 21,
+    "ok": true,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9317334/",
+    "missing": []
+  },
+  {
+    "row": 22,
+    "ok": true,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9317334/",
+    "missing": []
+  },
+  {
+    "row": 23,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9317334/",
+    "missing": [
+      "It can be calculated that the activation energy of hydrogen absorption"
+    ]
+  },
+  {
+    "row": 24,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9317334/",
+    "missing": [
+      "It can be calculated that the activation energy of hydrogen absorption"
+    ]
+  },
+  {
+    "row": 25,
+    "ok": true,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10057918/",
+    "missing": []
+  },
+  {
+    "row": 26,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11096980/",
+    "missing": [
+      "The activation energy of pure MgH2 was recorded at 132.19 kJ/mol, whic",
+      " MgH2 exhibited a dehydrogenation onset temperature of approximately 3",
+      " The dehydrogenation temperature of MgH2 +10 wt% Ni/NiO was approximat"
+    ]
+  },
+  {
+    "row": 27,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11096980/",
+    "missing": [
+      "The activation energy of pure MgH2 was recorded at 132.19 kJ/mol, whic",
+      " MgH2 exhibited a dehydrogenation onset temperature of approximately 3",
+      " The dehydrogenation temperature of MgH2 +10 wt% Ni/NiO was approximat"
+    ]
+  },
+  {
+    "row": 28,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11096980/",
+    "missing": [
+      "The activation energies of pure MgH2 and MgH2 +10 wt% Ni/NiO were 68.3"
+    ]
+  },
+  {
+    "row": 29,
+    "ok": true,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11096980/",
+    "missing": []
+  },
+  {
+    "row": 30,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9457766/",
+    "missing": [
+      "The activation energy of the MgH2 + 10 wt.% CoTiO3 and as-milled MgH2 "
+    ]
+  },
+  {
+    "row": 31,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9457766/",
+    "missing": [
+      "The activation energy of the MgH2 + 10 wt.% CoTiO3 and as-milled MgH2 "
+    ]
+  },
+  {
+    "row": 32,
+    "ok": true,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10058655/",
+    "missing": []
+  },
+  {
+    "row": 33,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10058655/",
+    "missing": [
+      "The fast hydriding kinetics is attributed to a reduction of the activa"
+    ]
+  },
+  {
+    "row": 34,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11289713/",
+    "missing": [
+      "Fig. 3(b and d) illustrate the Ea value of milled MgH2 calculated to b",
+      " Kinetic tests suggested that the onset hydrogen desorption temperatur"
+    ]
+  },
+  {
+    "row": 35,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11289713/",
+    "missing": [
+      "Fig. 3(b and d) illustrate the Ea value of milled MgH2 calculated to b",
+      " Kinetic tests suggested that the onset hydrogen desorption temperatur"
+    ]
+  },
+  {
+    "row": 36,
+    "ok": true,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10025938/",
+    "missing": []
+  },
+  {
+    "row": 37,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10025938/",
+    "missing": [
+      "The apparent activation energy (Ea) for the dehydrogenation of the MgH"
+    ]
+  },
+  {
+    "row": 38,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10025938/",
+    "missing": [
+      "Further comparing the hydrogen absorption activation energy for the Mg"
+    ]
+  },
+  {
+    "row": 39,
+    "ok": true,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12400306/",
+    "missing": []
+  },
+  {
+    "row": 40,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12400306/",
+    "missing": [
+      "8c) reveal that the Mg-25Ni alloy exhibits a lower activation energy f"
+    ]
+  },
+  {
+    "row": 41,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9532614/",
+    "missing": [
+      "The results show that the apparent activation energy of MgH2@Nb2C comp",
+      " It can be seen from the figure that the initial desorption temperatur",
+      " The initial desorption temperature of MgH2@Ti2C is 235°C and the term"
+    ]
+  },
+  {
+    "row": 42,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9532614/",
+    "missing": [
+      "The results show that the apparent activation energy of MgH2@Nb2C comp",
+      " It can be seen from the figure that the initial desorption temperatur",
+      " The initial desorption temperature of MgH2@Ti2C is 235°C and the term"
+    ]
+  },
+  {
+    "row": 43,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9532614/",
+    "missing": [
+      "The results show that the apparent activation energy of MgH2@Nb2C comp",
+      " It can be seen from the figure that the initial desorption temperatur",
+      " The initial desorption temperature of MgH2@Ti2C is 235°C and the term"
+    ]
+  },
+  {
+    "row": 44,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9084346/",
+    "missing": [
+      "A rather low activation energy value (65.9 kJ mol−1) for the dehydroge"
+    ]
+  },
+  {
+    "row": 45,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9084346/",
+    "missing": [
+      "A rather low activation energy value (65.9 kJ mol−1) for the dehydroge"
+    ]
+  },
+  {
+    "row": 46,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC8320109/",
+    "missing": [
+      "The apparent activation energy for the decomposition of MgH2 (second s"
+    ]
+  },
+  {
+    "row": 47,
+    "ok": true,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC8320109/",
+    "missing": []
+  },
+  {
+    "row": 48,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11231122/",
+    "missing": [
+      "The results showed that the Ea of MgH2-10 wt% H-V2O5 and pristine MgH2",
+      " The as-prepared MgH2-H-V2O5 composites exhibit low desorption tempera"
+    ]
+  },
+  {
+    "row": 49,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11231122/",
+    "missing": [
+      "The results showed that the Ea of MgH2-10 wt% H-V2O5 and pristine MgH2",
+      " The as-prepared MgH2-H-V2O5 composites exhibit low desorption tempera"
+    ]
+  },
+  {
+    "row": 50,
+    "ok": false,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11231122/",
+    "missing": [
+      "the Ea (84.55 ± 1.37 kJ mol−1 H2) for dehydrogenation was obtained as "
+    ]
+  }
+]

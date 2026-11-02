@@ -187,6 +187,31 @@ def register_tool_keep_keys(
     _KEEP_KEYS_REGISTRY.register(tool_name, frozenset(keep_keys), priority=priority)
 
 
+def _split_head_middle_tail(
+    text: str, head_end: int, tail_start: int
+) -> tuple[str, str, str]:
+    lines = text.splitlines(keepends=True)
+    head = "".join(lines[:head_end])
+    middle = "".join(lines[head_end:tail_start])
+    tail = "".join(lines[tail_start:])
+    return head, middle, tail
+
+
+def _coerce_summary(result: Any) -> str:
+    if hasattr(result, "content"):
+        return result.content
+    if isinstance(result, dict):
+        return result.get("content", str(result))
+    return str(result)
+
+
+def _truncate_summary(summary: str, max_summary_tokens: int) -> str:
+    if count_tokens(summary) > max_summary_tokens:
+        max_chars = max_summary_tokens * 4
+        return summary[:max_chars] + "..."
+    return summary
+
+
 async def smart_compress_text(
     text: str,
     max_tokens: int = 8000,
@@ -223,36 +248,19 @@ async def smart_compress_text(
     n = len(lines)
     head_end = max(1, n // 5)
     tail_start = n - max(1, n // 5)
-    head = "".join(lines[:head_end])
-    middle = "".join(lines[head_end:tail_start])
-    tail = "".join(lines[tail_start:])
+    head, middle, tail = _split_head_middle_tail(text, head_end, tail_start)
+    omitted = n - head_end - (n - tail_start)
 
     if summarizer is not None and count_tokens(middle) > 200:
         try:
-            result = await summarizer(middle)
-            if hasattr(result, "content"):
-                summary = result.content
-            elif isinstance(result, dict):
-                summary = result.get("content", str(result))
-            else:
-                summary = str(result)
+            summary = _coerce_summary(await summarizer(middle))
             # Truncate summary to a reasonable size
-            summary_tokens = count_tokens(summary)
-            max_summary_tokens = max_tokens // 3
-            if summary_tokens > max_summary_tokens:
-                max_chars = max_summary_tokens * 4
-                summary = summary[:max_chars] + "..."
-            omitted = n - head_end - (n - tail_start)
-            return (
-                head
-                + f"\n[... {omitted} lines summarized: {summary} ...]\n"
-                + tail
-            )
+            summary = _truncate_summary(summary, max_tokens // 3)
+            return head + f"\n[... {omitted} lines summarized: {summary} ...]\n" + tail
         except Exception as exc:
             logger.debug("Smart compression summarization failed: %s", exc)
 
     # Fallback: head/tail with omission marker
-    omitted = n - head_end - (n - tail_start)
     return head + f"\n[... {omitted} lines omitted ...]\n" + tail
 
 
@@ -262,6 +270,8 @@ async def smart_compress_text(
 _OFFLOAD_THRESHOLD_TOKENS = 20000
 # 预览的字符数 (头+尾各一半)
 _OFFLOAD_PREVIEW_CHARS = 4000
+
+
 # 卸载文件存放目录
 def _offload_dir() -> Path:
     import os
@@ -299,7 +309,7 @@ def offload_tool_output(
     import uuid
 
     ts = int(time.time())
-    short_id = (tool_call_id or uuid.uuid4().hex[:8])
+    short_id = tool_call_id or uuid.uuid4().hex[:8]
     safe_name = tool_name.replace("/", "_")
     artifact = _offload_dir() / f"{ts}-{safe_name}-{short_id}.txt"
     artifact.write_text(output, encoding="utf-8")

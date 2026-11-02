@@ -22,6 +22,7 @@ offload 后模型只拿到一个裸文件路径(``_artifact_path``), 无法在�
   纯本地文件存储, 无 LLM/网络; 失败一律返回可读错误而非抛异常; 句柄带会话隔离,
   拒绝读取会话目录之外的文件(路径穿越防护)。
 """
+
 from __future__ import annotations
 
 import os
@@ -37,7 +38,9 @@ from huginn.tools.base import HuginnTool
 
 # 句柄前缀/格式: "@obs:<uuid>"。只认 hex+连字符(32~36), 挡住路径分隔符/点号
 # → 强制句柄 id 只落进档案目录内, 防路径穿越。
-_HANDLE_RE = re.compile(r"^@obs:([0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$")
+_HANDLE_RE = re.compile(
+    r"^@obs:([0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
+)
 
 # 默认每页字符数(近似 ~1k token)
 _DEFAULT_PAGE_CHARS = 4000
@@ -146,6 +149,17 @@ class ObservationArchive:
         """便捷入口: 归档正文, 返回 (handle, path)。"""
         return self.archive_body(body)
 
+    def has_entries(self) -> bool:
+        """本 session 是否已有可召回的档案。
+
+        供工具面裁剪用: 没有句柄时 ``recall_observation`` 必然失败 (模型只能
+        瞎猜 ``@obs:``), 不该挂给 LLM。
+        """
+        try:
+            return any(p.suffix == ".txt" for p in self.dir.iterdir())
+        except OSError:
+            return False
+
 
 class _RecallInput(BaseModel):
     handle: str = Field(..., description="例如 @obs:<uuid>; 由工具超长输出句柄给出")
@@ -181,7 +195,9 @@ class RecallObservationTool(HuginnTool):
         archive = ObservationArchive(session_id)
         res = archive.recall(args.handle, page=args.page, page_size=args.page_size)
         if not res["found"]:
-            return ToolResult(success=False, data=None, error=res.get("error", "not found"))
+            return ToolResult(
+                success=False, data=None, error=res.get("error", "not found")
+            )
         return ToolResult(success=True, data=res)
 
 
@@ -212,59 +228,71 @@ def handle_for_body(
         return None
 
 
-def _selfcheck() -> None:
+def _check_archive_and_paging(archive: ObservationArchive) -> str:
+    """1. 归档 + 召回精确一致; 2. 分页拼回全文."""
+    body = "_".join(f"line{i}" for i in range(1000))
+    handle, path = archive.archive_body(body)
+    assert handle.startswith("@obs:"), handle
+    assert path.is_file()
+    rec = archive.recall(handle, page=0, page_size=4000)
+    assert rec["found"] and rec["total_pages"] >= 1, rec
+    assert rec["handle"] == handle
+    # 2. 分页: 拼回分页内容应还原全部正文(无丢字)
+    rebuild = ""
+    p = 0
+    while True:
+        r = archive.recall(handle, page=p, page_size=211)
+        assert r["found"], r
+        rebuild += r["text"][:211] if r["more"] else r["text"]
+        if not r["more"]:
+            break
+        p += 1
+    assert rebuild == body, "paged recall must reconstruct the exact body"
+    return handle
+
+
+def _check_bad_handles(archive: ObservationArchive) -> None:
+    """3. 坏句柄 / 不存在 → found=False, 不抛; 4. 路径穿越."""
+    assert not archive.recall("not-a-handle")["found"]
+    assert not archive.recall("@obs:00000000-0000-0000-0000-000000000000")["found"]
+    # 4. 路径穿越: 非法 id 不进文件系统
+    assert not archive.recall("@obs:../../etc/passwd")["found"]
+
+
+def _check_tool_layer(handle: str, tmp: str) -> None:
+    """5. Tool 层: _execute 返回 ToolResult."""
     import asyncio
+
+    from huginn.core_types import ToolContext
+
+    tool = RecallObservationTool()
+    ctx = ToolContext(session_id="selftest", workspace=tmp, config=None)
+
+    async def _run():
+        r1 = await tool._execute(
+            _RecallInput(handle=handle, page=0, page_size=4000), ctx
+        )
+        assert r1.success and r1.data["handle"] == handle, r1
+        rule_bad = _RecallInput(handle="bad", page=0)
+        r2 = await tool._execute(rule_bad, ctx)
+        assert not r2.success, r2
+        miss = _RecallInput(handle="@obs:00000000-0000-0000-0000-000000000000", page=0)
+        r3 = await tool._execute(miss, ctx)
+        assert not r3.success, r3
+
+    asyncio.run(_run())
+
+
+def _selfcheck() -> None:
     import tempfile
 
     tmp = tempfile.mkdtemp()
     os.environ["HUGINN_CACHE_DIR"] = tmp
     try:
-        # 1. 归档 + 召回精确一致
         archive = ObservationArchive("selftest")
-        body = "_".join(f"line{i}" for i in range(1000))
-        handle, path = archive.archive_body(body)
-        assert handle.startswith("@obs:"), handle
-        assert path.is_file()
-        rec = archive.recall(handle, page=0, page_size=4000)
-        assert rec["found"] and rec["total_pages"] >= 1, rec
-        assert rec["handle"] == handle
-        # 2. 分页: 拼回分页内容应还原全部正文(无丢字)
-        rebuild = ""
-        p = 0
-        while True:
-            r = archive.recall(handle, page=p, page_size=211)
-            assert r["found"], r
-            rebuild += r["text"][:211] if r["more"] else r["text"]
-            if not r["more"]:
-                break
-            p += 1
-        assert rebuild == body, "paged recall must reconstruct the exact body"
-        # 3. 坏句柄 / 不存在 → found=False, 不抛
-        assert not archive.recall("not-a-handle")["found"]
-        assert not archive.recall("@obs:00000000-0000-0000-0000-000000000000")["found"]
-        # 4. 路径穿越: 非法 id 不进文件系统
-        assert not archive.recall("@obs:../../etc/passwd")["found"]
-        # 5. Tool 层: _execute 返回 ToolResult
-        from huginn.core_types import ToolContext
-
-        tool = RecallObservationTool()
-        ctx = ToolContext(session_id="selftest", workspace=tmp, config=None)
-
-        async def _run():
-            r1 = await tool._execute(
-                _RecallInput(handle=handle, page=0, page_size=4000), ctx
-            )
-            assert r1.success and r1.data["handle"] == handle, r1
-            rule_bad = _RecallInput(handle="bad", page=0)
-            r2 = await tool._execute(rule_bad, ctx)
-            assert not r2.success, r2
-            miss = _RecallInput(
-                handle="@obs:00000000-0000-0000-0000-000000000000", page=0
-            )
-            r3 = await tool._execute(miss, ctx)
-            assert not r3.success, r3
-
-        asyncio.run(_run())
+        handle = _check_archive_and_paging(archive)
+        _check_bad_handles(archive)
+        _check_tool_layer(handle, tmp)
         print("OK observation_pack self-check passed (archive / paged recall / tool)")
     finally:
         import shutil

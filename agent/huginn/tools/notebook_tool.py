@@ -25,7 +25,8 @@ class NotebookEditInput(BaseModel):
         default="replace",
     )
     cell_index: int = Field(
-        default=0, ge=0,
+        default=0,
+        ge=0,
         description="目标 cell 的 0-based 索引. insert 时表示插入位置 (原 cell 及之后后移).",
     )
     cell_type: str = Field(
@@ -61,6 +62,51 @@ class NotebookEditOutput(BaseModel):
     cell_index: int
 
 
+def _build_new_cell(nbformat, cell_type: str, source: str):
+    return (
+        nbformat.v4.new_code_cell(source)
+        if cell_type == "code"
+        else nbformat.v4.new_markdown_cell(source)
+    )
+
+
+def _apply_cell_edit(
+    nbformat,
+    cells: list,
+    n_before: int,
+    args: NotebookEditInput,
+    mode: str,
+    idx: int,
+) -> ToolResult | None:
+    """就地执行 insert/replace/delete; 失败返回 ToolResult, 成功返回 None."""
+    if mode == "delete":
+        if idx >= n_before:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"cell_index {idx} out of range (total {n_before})",
+            )
+        del cells[idx]
+        return None
+    if mode == "insert":
+        if idx > n_before:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"insert index {idx} > total {n_before}",
+            )
+        cells.insert(idx, _build_new_cell(nbformat, args.cell_type, args.source))
+        return None
+    if idx >= n_before:  # replace
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"cell_index {idx} out of range (total {n_before})",
+        )
+    cells[idx] = _build_new_cell(nbformat, args.cell_type, args.source)
+    return None
+
+
 class NotebookEditTool(HuginnTool[NotebookEditInput, NotebookEditOutput]):
     name = "notebook_edit_tool"
     category = "core"
@@ -78,19 +124,22 @@ class NotebookEditTool(HuginnTool[NotebookEditInput, NotebookEditOutput]):
         path = Path(args.notebook_path)
         if not path.exists():
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"notebook not found: {args.notebook_path}",
             )
         if path.suffix.lower() != ".ipynb":
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"not a .ipynb file: {args.notebook_path}",
             )
         try:
             import nbformat
         except ImportError as e:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"nbformat not installed: {e}",
             )
         try:
@@ -100,34 +149,9 @@ class NotebookEditTool(HuginnTool[NotebookEditInput, NotebookEditOutput]):
             mode = args.edit_mode
             idx = args.cell_index
 
-            if mode == "delete":
-                if idx >= n_before:
-                    return ToolResult(
-                        data=None, success=False,
-                        error=f"cell_index {idx} out of range (total {n_before})",
-                    )
-                del cells[idx]
-            else:
-                if mode == "insert":
-                    if idx > n_before:
-                        return ToolResult(
-                            data=None, success=False,
-                            error=f"insert index {idx} > total {n_before}",
-                        )
-                    new_cell = nbformat.v4.new_code_cell(args.source) \
-                        if args.cell_type == "code" \
-                        else nbformat.v4.new_markdown_cell(args.source)
-                    cells.insert(idx, new_cell)
-                else:  # replace
-                    if idx >= n_before:
-                        return ToolResult(
-                            data=None, success=False,
-                            error=f"cell_index {idx} out of range (total {n_before})",
-                        )
-                    new_cell = nbformat.v4.new_code_cell(args.source) \
-                        if args.cell_type == "code" \
-                        else nbformat.v4.new_markdown_cell(args.source)
-                    cells[idx] = new_cell
+            failure = _apply_cell_edit(nbformat, cells, n_before, args, mode, idx)
+            if failure is not None:
+                return failure
 
             nb["cells"] = cells
             nbformat.write(nb, str(path))

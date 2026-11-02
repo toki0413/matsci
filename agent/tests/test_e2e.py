@@ -96,76 +96,92 @@ class TestSkillsExecution:
         assert len(data["steps"]) > 0
 
 
+def _report_methods() -> dict:
+    return {
+        "software": "VASP 6.3.2",
+        "functional": "PBE",
+        "encut": 520,
+        "kpoints": "4x4x4",
+        "pseudopotentials": "PAW_PBE",
+        "smearing": "Gaussian 0.05",
+        "ediffg": -0.01,
+    }
+
+
+def _report_structure() -> dict:
+    return {
+        "formula": "Si2",
+        "spacegroup": "Fd-3m",
+        "initial_a": 5.43,
+        "final_a": 5.47,
+    }
+
+
+def _report_validation() -> dict:
+    return {
+        "checks": [
+            {"name": "Energy convergence", "passed": True, "message": "< 1e-5 eV"},
+            {"name": "Force convergence", "passed": True, "message": "< 0.01 eV/Å"},
+        ]
+    }
+
+
+def _report_literature_comparison() -> dict:
+    return {
+        "comparisons": [
+            {
+                "property": "band_gap",
+                "calculated": 0.65,
+                "reference": 1.12,
+                "source": "Exp.",
+            },
+        ]
+    }
+
+
+def _report_state() -> dict:
+    return {
+        "methods": _report_methods(),
+        "structure": _report_structure(),
+        "convergence": {
+            "energy": -10.1234,
+            "n_iterations": 12,
+            "n_electronic": 45,
+        },
+        "results": {
+            "band_gap": {"value": 0.65, "unit": "eV", "method": "PBE"},
+            "bulk_modulus": {"value": 97.8, "unit": "GPa"},
+        },
+        "validation": _report_validation(),
+        "literature_comparison": _report_literature_comparison(),
+        "resources": {
+            "cpu_hours": 4.5,
+            "walltime_hours": 0.5,
+            "memory_gb": 8,
+            "cores": 16,
+        },
+        "software_version": "VASP 6.3.2",
+        "input_hash": "abc123",
+        "random_seed": 42,
+        "input_files": ["INCAR", "POSCAR", "KPOINTS"],
+    }
+
+
+def _assert_report_sections(content: str) -> None:
+    assert "PBE" in content
+    assert "Fd-3m" in content
+    assert "Validation" in content
+
+
 class TestReportGeneration:
     """Test report tool with realistic data."""
 
     def test_generate_markdown_report(self, tmp_report_dir):
         """Generate a full Markdown report from workflow data."""
         tool = ReportTool()
-        data = {
-            "methods": {
-                "software": "VASP 6.3.2",
-                "functional": "PBE",
-                "encut": 520,
-                "kpoints": "4x4x4",
-                "pseudopotentials": "PAW_PBE",
-                "smearing": "Gaussian 0.05",
-                "ediffg": -0.01,
-            },
-            "structure": {
-                "formula": "Si2",
-                "spacegroup": "Fd-3m",
-                "initial_a": 5.43,
-                "final_a": 5.47,
-            },
-            "convergence": {
-                "energy": -10.1234,
-                "n_iterations": 12,
-                "n_electronic": 45,
-            },
-            "results": {
-                "band_gap": {"value": 0.65, "unit": "eV", "method": "PBE"},
-                "bulk_modulus": {"value": 97.8, "unit": "GPa"},
-            },
-            "validation": {
-                "checks": [
-                    {
-                        "name": "Energy convergence",
-                        "passed": True,
-                        "message": "< 1e-5 eV",
-                    },
-                    {
-                        "name": "Force convergence",
-                        "passed": True,
-                        "message": "< 0.01 eV/Å",
-                    },
-                ]
-            },
-            "literature_comparison": {
-                "comparisons": [
-                    {
-                        "property": "band_gap",
-                        "calculated": 0.65,
-                        "reference": 1.12,
-                        "source": "Exp.",
-                    },
-                ]
-            },
-            "resources": {
-                "cpu_hours": 4.5,
-                "walltime_hours": 0.5,
-                "memory_gb": 8,
-                "cores": 16,
-            },
-            "software_version": "VASP 6.3.2",
-            "input_hash": "abc123",
-            "random_seed": 42,
-            "input_files": ["INCAR", "POSCAR", "KPOINTS"],
-        }
-
         args = ReportToolInput(
             action="generate",
-            workflow_results=data,
+            workflow_results=_report_state(),
             style="full",
             format="markdown",
             output_path=os.path.join(tmp_report_dir, "report.md"),
@@ -181,10 +197,7 @@ class TestReportGeneration:
         # Verify file was written
         path = Path(result.data["saved_to"])
         assert path.exists()
-        content = path.read_text(encoding="utf-8")
-        assert "PBE" in content
-        assert "Fd-3m" in content
-        assert "Validation" in content
+        _assert_report_sections(path.read_text(encoding="utf-8"))
 
     def test_generate_json_report(self):
         """Generate JSON report format."""

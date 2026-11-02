@@ -30,7 +30,7 @@ from huginn.core_types import (
 )
 from huginn.phases import ResearchPhase
 from huginn.tools.profile import CostTier, ToolProfile
-from huginn.utils.common import now_iso
+from huginn.utils.common import default_workspace_dir, now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +120,15 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
     # 后台任务标记 (AstrBot FunctionTool.is_background_task 模式)
     # True 时工具调用立即返回 task_id, 结果异步轮询
     is_background_task: bool = False
+
+    def default_work_dir(self) -> Path:
+        """调用方没给 ``working_dir`` 时的缺省目录.
+
+        不再直接用 ``Path.cwd()``: driver 的 cwd 是源码树, 缺省落到那里会让
+        agent 产物写进代码目录 (ws9 的 4 个 ``.py``). run 期间 ``HUGINN_WORKSPACE``
+        由 engine 写实, 此处优先采用; 未设时 `default_workspace_dir` 仍回退 cwd.
+        """
+        return default_workspace_dir()
 
     def is_available(self) -> bool:
         """Whether this tool is currently usable.

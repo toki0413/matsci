@@ -16,6 +16,7 @@ ponytail: 复用 mechanics.py 的 ElasticTensor + numpy, 不引新依赖.
 ceiling: haptic_distance 用相对范数差代理真度量, 升级路径接 Mahalanobis (按
 协方差加权) 或学习式 embedding 距离.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -36,6 +37,58 @@ _HAPTIC_WEIGHTS: dict[str, float] = {
 }
 
 _EPS = 1e-12
+
+
+def _rel_norm_dist(va: np.ndarray, vb: np.ndarray) -> float:
+    diff = float(np.linalg.norm(va - vb))
+    scale = float(np.linalg.norm(va)) + float(np.linalg.norm(vb))
+    return diff / (scale + _EPS)
+
+
+def _elastic_dist(ea, eb) -> float | None:
+    if ea is None or eb is None:
+        return None
+    ca, cb = ea.C, eb.C
+    if ca.shape != cb.shape:
+        return None
+    return _rel_norm_dist(ca, cb)
+
+
+def _phonon_dist(fa, fb) -> float | None:
+    if fa is None or fb is None:
+        return None
+    fa = np.asarray(fa, dtype=float)
+    fb = np.asarray(fb, dtype=float)
+    if fa.shape != fb.shape:
+        return None
+    return _rel_norm_dist(fa, fb)
+
+
+def _scalar_dist(a, b) -> float | None:
+    if a is None or b is None:
+        return None
+    a = float(a)
+    b = float(b)
+    return abs(a - b) / (abs(a) + abs(b) + _EPS)
+
+
+def _thermal_dist(ta, tb) -> float | None:
+    if ta is None or tb is None:
+        return None
+    common = set(ta) & set(tb)
+    if not common:
+        return None
+    va = np.array([float(ta[k]) for k in common])
+    vb = np.array([float(tb[k]) for k in common])
+    return _rel_norm_dist(va, vb)
+
+
+def _record(
+    dists: dict[str, float], weights: dict[str, float], key: str, value: float | None
+) -> None:
+    if value is not None:
+        dists[key] = value
+        weights[key] = _HAPTIC_WEIGHTS[key]
 
 
 @dataclass
@@ -70,13 +123,9 @@ class HapticPropertyLayer:
     def to_dict(self) -> dict[str, Any]:
         """JSON-safe dict. ElasticTensor.C → list-of-list, phonon → list."""
         return {
-            "elastic": (
-                self.elastic.C.tolist() if self.elastic is not None else None
-            ),
+            "elastic": (self.elastic.C.tolist() if self.elastic is not None else None),
             "phonon_freqs": (
-                self.phonon_freqs.tolist()
-                if self.phonon_freqs is not None
-                else None
+                self.phonon_freqs.tolist() if self.phonon_freqs is not None else None
             ),
             "surface_energy": self.surface_energy,
             "stress_strain": self.stress_strain,
@@ -121,55 +170,25 @@ class HapticPropertyLayer:
         weights: dict[str, float] = {}
 
         # elastic: Frobenius 范数差
-        if self.elastic is not None and other.elastic is not None:
-            ca = self.elastic.C
-            cb = other.elastic.C
-            if ca.shape == cb.shape:
-                diff = float(np.linalg.norm(ca - cb))
-                scale = float(np.linalg.norm(ca)) + float(np.linalg.norm(cb))
-                dists["elastic"] = diff / (scale + _EPS)
-                weights["elastic"] = _HAPTIC_WEIGHTS["elastic"]
-
+        _record(dists, weights, "elastic", _elastic_dist(self.elastic, other.elastic))
         # phonon: 频率向量 L2
-        if (
-            self.phonon_freqs is not None
-            and other.phonon_freqs is not None
-        ):
-            fa = np.asarray(self.phonon_freqs, dtype=float)
-            fb = np.asarray(other.phonon_freqs, dtype=float)
-            if fa.shape == fb.shape:
-                diff = float(np.linalg.norm(fa - fb))
-                scale = float(np.linalg.norm(fa)) + float(np.linalg.norm(fb))
-                dists["phonon"] = diff / (scale + _EPS)
-                weights["phonon"] = _HAPTIC_WEIGHTS["phonon"]
-
+        _record(
+            dists,
+            weights,
+            "phonon",
+            _phonon_dist(self.phonon_freqs, other.phonon_freqs),
+        )
         # surface_energy: 标量绝对差
-        if (
-            self.surface_energy is not None
-            and other.surface_energy is not None
-        ):
-            a = float(self.surface_energy)
-            b = float(other.surface_energy)
-            dists["surface"] = abs(a - b) / (abs(a) + abs(b) + _EPS)
-            weights["surface"] = _HAPTIC_WEIGHTS["surface"]
-
+        _record(
+            dists,
+            weights,
+            "surface",
+            _scalar_dist(self.surface_energy, other.surface_energy),
+        )
         # thermal: 公共 key 的值向量 L2
-        if self.thermal is not None and other.thermal is not None:
-            common = set(self.thermal) & set(other.thermal)
-            if common:
-                va = np.array([float(self.thermal[k]) for k in common])
-                vb = np.array([float(other.thermal[k]) for k in common])
-                diff = float(np.linalg.norm(va - vb))
-                scale = float(np.linalg.norm(va)) + float(np.linalg.norm(vb))
-                dists["thermal"] = diff / (scale + _EPS)
-                weights["thermal"] = _HAPTIC_WEIGHTS["thermal"]
-
+        _record(dists, weights, "thermal", _thermal_dist(self.thermal, other.thermal))
         # density: 标量绝对差
-        if self.density is not None and other.density is not None:
-            a = float(self.density)
-            b = float(other.density)
-            dists["density"] = abs(a - b) / (abs(a) + abs(b) + _EPS)
-            weights["density"] = _HAPTIC_WEIGHTS["density"]
+        _record(dists, weights, "density", _scalar_dist(self.density, other.density))
 
         if not dists:
             return 0.0
@@ -182,8 +201,8 @@ class HapticPropertyLayer:
 
 # ── self-check ─────────────────────────────────────────────────
 
-def _selfcheck() -> None:
-    """Assert-based demo: 创建 + 序列化 round-trip + 距离单调性."""
+
+def _check_empty_and_density() -> None:
     # 1. 空 layer
     h = HapticPropertyLayer()
     assert h.elastic is None and h.density is None
@@ -196,6 +215,8 @@ def _selfcheck() -> None:
     assert d > 0.0, f"density diff should be > 0, got {d}"
     assert a.haptic_distance(a) == 0.0
 
+
+def _check_roundtrip() -> HapticPropertyLayer:
     # 3. 序列化 round-trip (elastic + phonon + density)
     C = np.eye(6) * 100.0
     src = HapticPropertyLayer(
@@ -215,14 +236,20 @@ def _selfcheck() -> None:
     assert rt.density == 5.0
     # round-trip 后自距离 = 0
     assert src.haptic_distance(rt) == 0.0
+    return rt
 
+
+def _check_partial_renorm() -> float:
     # 4. 缺失子模态权重重归一化: 只 density 时距离用 density 权重 (归一化到 1)
     #    两个 density 差 1 倍 → 相对差 = 1/(1+2) ≈ 0.333
     only_d1 = HapticPropertyLayer(density=1.0)
     only_d2 = HapticPropertyLayer(density=2.0)
     d_only = only_d1.haptic_distance(only_d2)
     assert abs(d_only - (1.0 / 3.0)) < 1e-9, f"re-normalized density dist: {d_only}"
+    return d_only
 
+
+def _check_full() -> float:
     # 5. 全子模态: 距离单调 (相同=0, 不同>0)
     C2 = np.eye(6) * 200.0
     full_a = HapticPropertyLayer(
@@ -244,6 +271,15 @@ def _selfcheck() -> None:
     # 各子模态相对差都是 1/3 → 加权后也是 1/3
     d_full = full_a.haptic_distance(full_b)
     assert abs(d_full - (1.0 / 3.0)) < 1e-9, f"uniform relative diff: {d_full}"
+    return d_full
+
+
+def _selfcheck() -> None:
+    """Assert-based demo: 创建 + 序列化 round-trip + 距离单调性."""
+    _check_empty_and_density()
+    rt = _check_roundtrip()
+    d_only = _check_partial_renorm()
+    d_full = _check_full()
 
     print("✓ haptic_property_layer self-check passed")
     print("  empty distance = 0.0")

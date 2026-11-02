@@ -131,6 +131,46 @@ async def upload_knowledge(file: UploadFile = File(...)) -> dict[str, Any]:
 _MAX_UPLOAD_COUNT = 50
 
 
+def _landed_meta(landing: Any) -> list[dict[str, Any]]:
+    """落地文件的元信息列表, 回给前端展示。"""
+    return [
+        {
+            "filename": info.filename,
+            "path": str(info.path),
+            "size": info.size,
+            "compressed": info.compressed,
+        }
+        for info in landing.files
+    ]
+
+
+async def _ingest_landed_files(
+    kb: Any, landing: Any
+) -> tuple[list[dict[str, Any]], int]:
+    """逐份从磁盘读回落地文件并摄入 KB, 返回 (逐文件结果, 成功数)。"""
+    results: list[dict[str, Any]] = []
+    ingested = 0
+    for info in landing.files:
+        if info.size > _MAX_UPLOAD_BYTES:
+            results.append(
+                {"filename": info.filename, "success": False, "error": "file too large"}
+            )
+            continue
+        try:
+            content = info.path.read_bytes()  # 摄入需完整字节, 从磁盘读回
+            result = await _ingest_bytes(kb, info.filename, content)
+            results.append(
+                {"filename": info.filename, "success": True, "document": result}
+            )
+            ingested += 1
+        except Exception as e:
+            logger.error("入 KB 失败: %s", info.filename, exc_info=True)
+            results.append(
+                {"filename": info.filename, "success": False, "error": str(e)}
+            )
+    return results, ingested
+
+
 @router.post("/knowledge/upload_many")
 async def upload_knowledge_many(files: list[UploadFile] = File(...)) -> dict[str, Any]:
     """多文件上传: 先把所有附件**分块流式落地**到统一附件目录, 再逐个摄入 KB.
@@ -163,36 +203,8 @@ async def upload_knowledge_many(files: list[UploadFile] = File(...)) -> dict[str
         logger.error("附件落地失败", exc_info=True)
         return {"success": False, "error": f"landing failed: {e}", "landed": 0}
 
-    landed_meta = [
-        {
-            "filename": info.filename,
-            "path": str(info.path),
-            "size": info.size,
-            "compressed": info.compressed,
-        }
-        for info in landing.files
-    ]
-
-    results: list[dict[str, Any]] = []
-    ingested = 0
-    for info in landing.files:
-        if info.size > _MAX_UPLOAD_BYTES:
-            results.append(
-                {"filename": info.filename, "success": False, "error": "file too large"}
-            )
-            continue
-        try:
-            content = info.path.read_bytes()  # 摄入需完整字节, 从磁盘读回
-            result = await _ingest_bytes(kb, info.filename, content)
-            results.append(
-                {"filename": info.filename, "success": True, "document": result}
-            )
-            ingested += 1
-        except Exception as e:
-            logger.error("入 KB 失败: %s", info.filename, exc_info=True)
-            results.append(
-                {"filename": info.filename, "success": False, "error": str(e)}
-            )
+    landed_meta = _landed_meta(landing)
+    results, ingested = await _ingest_landed_files(kb, landing)
 
     return {
         "success": True,
@@ -220,6 +232,32 @@ async def list_knowledge() -> dict[str, Any]:
         return {"documents": [], "error": str(e), "available": False}
 
 
+def _fetch_url_text(url: str) -> str:
+    """抓网页并粗暴转纯文本 (去 script/style/标签, 压空白)。"""
+    import re
+    import urllib.request
+
+    req_obj = urllib.request.Request(url, headers={"User-Agent": "Huginn/1.0"})
+
+    # 关闭重定向跟随: 30x 到内网是已知 SSRF 绕过手段.
+    # urllib 的 HTTPRedirectHandler 默认跟随, 这里装一个 no-op 替代.
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            raise urllib.error.HTTPError(newurl, code, msg, headers, fp)
+
+    opener = urllib.request.build_opener(_NoRedirect)
+    with opener.open(req_obj, timeout=30) as resp:
+        raw = resp.read(5 * 1024 * 1024)  # 5 MB cap
+        charset = resp.headers.get_content_charset() or "utf-8"
+        html = raw.decode(charset, errors="replace")
+
+    # crude HTML → text: strip tags, collapse whitespace
+    text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.S | re.I)
+    text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.S | re.I)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 @router.post("/knowledge/ingest-url")
 async def ingest_url(req: UrlIngestRequest) -> dict[str, Any]:
     """Fetch a web page and add it to the knowledge base."""
@@ -239,28 +277,7 @@ async def ingest_url(req: UrlIngestRequest) -> dict[str, Any]:
         return {"success": False, "error": f"URL blocked by SSRF protection: {reason}"}
 
     try:
-        import re
-        import urllib.request
-
-        req_obj = urllib.request.Request(url, headers={"User-Agent": "Huginn/1.0"})
-
-        # 关闭重定向跟随: 30x 到内网是已知 SSRF 绕过手段.
-        # urllib 的 HTTPRedirectHandler 默认跟随, 这里装一个 no-op 替代.
-        class _NoRedirect(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self, req, fp, code, msg, headers, newurl):
-                raise urllib.error.HTTPError(newurl, code, msg, headers, fp)
-
-        opener = urllib.request.build_opener(_NoRedirect)
-        with opener.open(req_obj, timeout=30) as resp:
-            raw = resp.read(5 * 1024 * 1024)  # 5 MB cap
-            charset = resp.headers.get_content_charset() or "utf-8"
-            html = raw.decode(charset, errors="replace")
-
-        # crude HTML → text: strip tags, collapse whitespace
-        text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.S | re.I)
-        text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.S | re.I)
-        text = re.sub(r"<[^>]+>", " ", text)
-        text = re.sub(r"\s+", " ", text).strip()
+        text = _fetch_url_text(url)
 
         if len(text) < 50:
             return {
@@ -392,24 +409,12 @@ async def get_document_images(doc_id: str) -> dict[str, Any]:
         return {"images": [], "error": str(e)}
 
 
-@router.post("/knowledge/report")
-async def generate_kb_report(req: ReportRequest) -> dict[str, Any]:
-    """把选定文档的文本+数据摘要+图表说明自动汇总成一份 Markdown 报告.
-
-    用 lead agent 一次性合成(不强跑工具循环), 生成结论不污染聊天历史
-    (独立 thread_id). doc_ids 为空/无文本时返回可读错误, 不空跑 LLM.
-    """
-    kb = get_context().kb
-    if kb is None:
-        return {"success": False, "error": "Knowledge base is not available"}
-    if not req.doc_ids:
-        return {"success": False, "error": "doc_ids 不能为空"}
-
-    # 收拢各文档文本 + 图片说明, 供报告引用 (限制总量避免上下文爆炸)
+def _collect_report_sections(kb: Any, doc_ids: list[str]) -> list[str]:
+    """收拢各文档文本 + 图片说明, 供报告引用 (限制总量避免上下文爆炸)。"""
     sections: list[str] = []
     total_chars = 0
     cap = 60_000
-    for doc_id in req.doc_ids:
+    for doc_id in doc_ids:
         try:
             chunks = kb.get_document_chunks(doc_id)
         except Exception:
@@ -431,6 +436,40 @@ async def generate_kb_report(req: ReportRequest) -> dict[str, Any]:
         body = "\n\n".join(text_parts)
         if body:
             sections.append(f"## 来源文档：{fname}\n\n{body}")
+    return sections
+
+
+async def _invoke_kb_report(agent: Any, prompt: str) -> str:
+    """让 lead agent 在独立 thread 里一次性合成报告, 返回 Markdown 正文。"""
+    import asyncio as _aio
+
+    agent._permission_config.auto_approve_all = sidecar_auto_approve()
+    # invoke 内部用 asyncio.run, 放线程池跑; 独立 thread_id 避免污染默认对话
+    state = await _aio.wait_for(
+        _aio.to_thread(agent.invoke, prompt, thread_id="kb_report"),
+        timeout=240,
+    )
+    messages = state.get("messages", [])
+    content = ""
+    if messages and hasattr(messages[-1], "content"):
+        content = messages[-1].content
+    return content
+
+
+@router.post("/knowledge/report")
+async def generate_kb_report(req: ReportRequest) -> dict[str, Any]:
+    """把选定文档的文本+数据摘要+图表说明自动汇总成一份 Markdown 报告.
+
+    用 lead agent 一次性合成(不强跑工具循环), 生成结论不污染聊天历史
+    (独立 thread_id). doc_ids 为空/无文本时返回可读错误, 不空跑 LLM.
+    """
+    kb = get_context().kb
+    if kb is None:
+        return {"success": False, "error": "Knowledge base is not available"}
+    if not req.doc_ids:
+        return {"success": False, "error": "doc_ids 不能为空"}
+
+    sections = _collect_report_sections(kb, req.doc_ids)
     if not sections:
         return {"success": False, "error": "所选文档没有可汇总的文本内容"}
 
@@ -446,18 +485,7 @@ async def generate_kb_report(req: ReportRequest) -> dict[str, Any]:
     if agent is None:
         return {"success": False, "error": "Lead agent 未就绪，无法生成报告"}
     try:
-        import asyncio as _aio
-
-        agent._permission_config.auto_approve_all = sidecar_auto_approve()
-        # invoke 内部用 asyncio.run, 放线程池跑; 独立 thread_id 避免污染默认对话
-        state = await _aio.wait_for(
-            _aio.to_thread(agent.invoke, prompt, thread_id="kb_report"),
-            timeout=240,
-        )
-        messages = state.get("messages", [])
-        content = ""
-        if messages and hasattr(messages[-1], "content"):
-            content = messages[-1].content
+        content = await _invoke_kb_report(agent, prompt)
         if not content:
             return {"success": False, "error": "报告生成返回为空（可能超时）"}
         return {"success": True, "report": content, "title": title}

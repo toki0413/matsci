@@ -1,0 +1,60 @@
+{
+  "plans": [
+    {
+      "id": "plan_9443ccde",
+      "objective": "** **[DIM: computation]** — the traceability fraction `f_trace` is the most sharply discriminating and cheapest-to-test prediction: a single read of `design_solid_h2.md` plus a single pass over review.md suffices to determine whether `f_trace = 0` (hallucination, document absent) or `f_trace > 0` (genuine review). This directly resolves the blind spot flagged in the task metadata (\"若文件实际不存在或不可读，后续评审将基于幻觉内容而非真实文档\"), and its binary outcome at w = any review length is unambiguous — no parameter fitting needed, unlike the power-law exponents in the dynamics hypothesis or the mutual-information estimation in the measure hypothesis.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-28T05:39:57.560035+00:00",
+      "confirmed_at": "2026-10-28T05:39:57.561027+00:00",
+      "completed_at": "2026-10-28T05:44:01.165028+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_4d2a4802",
+      "objective": "** **[DIM: computation]** — the traceability fraction `f_trace` is the most sharply discriminating and cheapest-to-test prediction: a single read of `design_solid_h2.md` plus a single pass over review.md suffices to determine whether `f_trace = 0` (hallucination, document absent) or `f_trace > 0` (genuine review). This directly resolves the blind spot flagged in the task metadata (\"若文件实际不存在或不可读，后续评审将基于幻觉内容而非真实文档\"), and its binary outcome at w = any review length is unambiguous — no parameter fitting needed, unlike the power-law exponents in the dynamics hypothesis or the mutual-information estimation in the measure hypothesis.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "(1) 形式化定义 traceability fraction `f_trace = |tokens(review) ∩ tokens(source)| / |tokens(review)|`（含 n-gram 变体与模糊匹配版本），并写出 power-law 拟合残差、互信息估计量的计算公式；(2) 生成一组可控的合成 review 样本（覆盖 f_trace=0 的幻觉情形到 f_trace≈1 的忠实情形，并注入噪声/改写/摘要等退化模式）；(3) 实现单一 Python 脚本，同时计算三类度量：f_trace、power-law 拟合指数/残差、互信息估计量，并输出判别力对比（类间方差、ROC 边界清晰度、达到给定功效所需样本量）与代价模型（解析成本、拟合迭代数、样本复杂度）；(4) 显式给出 f_trace=0 时其他度量是否仍可计算的边界分析，以及 f_trace 自身失效条件（如改写、释义、跨文档溯源）。",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-10-28T05:47:54.989493+00:00",
+      "confirmed_at": "2026-10-28T05:47:54.990892+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
+    }
+  ]
+}

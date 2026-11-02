@@ -1,0 +1,27 @@
+[
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "352082d19ed7",
+    "reason": "plan 的 DESCRIPTION 和 PREDICTION 在统计内容上覆盖 hypothesis（Welch 检验、t 分布 95% CI、point-biserial r_pb、方向与效应量），但 MODE=workflow 在当前预算档位（medium）不被允许，系统明确要求改用 coder/explore。且前两次迭代已因同一理由拒绝：plan 未含可直接运行的数值脚本片段，仅以文字描述代替执行。因此该 plan 形式上不可通过，无法进入 execute→validate 带回真实数值。",
+    "missing_steps": [
+      "将 mode 改为 coder（或 explore），并嵌入可直接运行的 python 脚本（import pandas/scipy/numpy + 数据加载 + Welch t 检验 + t 分布 CI + point-biserial r 及其 CI + Shapiro/Levene/bootstrap/Cohen's d + 写入 results.json）",
+      "先实际运行脚本并带回数值（n、均值、SD、t、p、CI、r_pb），再进入 execute→validate 验证 hypothesis 的三个硬性条件",
+      "处理 col 13 目标变量 0→4 的二元化逻辑与缺失值/异常值说明"
+    ],
+    "mode": "workflow",
+    "description": "Choose source A (UCI Cleveland heart disease, 14 cols, 303 rows). Step 1: bash_tool runs `python3 -c \"import urllib.request,hashlib; urllib.request.urlretrieve('https://archive.ics.uci.edu/ml/machine-"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "352082d19ed7",
+    "reason": "该 plan 与历史失败完全同构：MODE=workflow 在 medium 预算档位不被允许，系统明确要求改用 coder/explore；DESCRIPTION 和 PREDICTION 虽在统计内容上完整覆盖 hypothesis（Welch t、t 分布 95% CI、point-biserial r_pb、方向与效应量、前提检查与稳健性），但 plan 正文未嵌入可直接运行的 python 脚本片段，仅以文字描述代替执行。已知失败模式与场景历史均指出必须先产出可执行代码（import pandas/scipy/numpy + 数据加载 + 检验 + 写入 results.json），实际运行带回 n/均值/SD/t/p/CI/r_pb 等数值后，才能进入 execute→validate 验证 hypothesis 的三个硬性条件。因此当前 plan 形式上不可通过。",
+    "missing_steps": [
+      "将 MODE 从 workflow 改为 coder（或 explore）以符合预算档位要求",
+      "在 plan 中嵌入可直接运行的 python 脚本：下载并校验 sha256、加载 14 列无表头数据、target≥1 vs target=0 分组、Welch t 检验与 Welch-Satterthwaite df、t 分布临界值计算均值差 95% CI、point-biserial r_pb 及其 95% CI、Shapiro-Wilk、Levene、Cohen's d、bootstrap 均值差 CI、±3SD 异常值剔除复测、写入 results.json",
+      "真实运行脚本并带回具体数值（n、均值、SD、t、p、CI、r_pb），再进入 execute→validate 逐条验证 hypothesis 的三个硬性条件",
+      "说明 target 原始取值 0–4 的二元化逻辑与缺失值（'?'）处理方式"
+    ],
+    "mode": "workflow",
+    "description": "选 A 源 UCI Cleveland 心脏病数据（已验证可达）。用 bash_tool 跑 python3 -c urllib 下载 data/processed.cleveland.data 并校验 sha256 与已知 a74b7efa... 一致；若一致则跳过重复下载。然后写 analysis.py：加载 14 列无表头数据、列名按 UCI 约定（age, sex, cp, trestbp"
+  }
+]

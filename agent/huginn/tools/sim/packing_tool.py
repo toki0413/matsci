@@ -78,12 +78,144 @@ class PackingToolInput(BaseModel):
         return self
 
 
+def _try_place_one(
+    tool: PackingTool,
+    base_coords: np.ndarray,
+    base_symbols: list[str],
+    args: PackingToolInput,
+    rng: np.random.Generator,
+    box: np.ndarray,
+    collected: tuple[Any, ...],
+    comp_index: int,
+    source_type: str,
+    particle_meta: dict[str, Any],
+    object_id: int,
+) -> int | None:
+    """尝试随机放置一个对象，成功返回下一个 object_id，失败返回 None."""
+    placed, placed_object_ids, object_metadata = collected
+    for _trial in range(args.max_trials):
+        rot = tool._random_rotation_matrix(rng)
+        rotated = (rot @ base_coords.T).T
+        centroid = rotated.mean(axis=0)
+        centered = rotated - centroid
+        low = centered.min(axis=0)
+        high = centered.max(axis=0)
+        trans_min = -low
+        trans_max = box - high
+        if np.any(trans_min > trans_max):
+            continue
+        translation = rng.uniform(trans_min, trans_max)
+        candidate = centered + translation
+
+        if not tool._check_distance(candidate, placed, args.tolerance):
+            continue
+
+        placed.extend(zip(base_symbols, candidate))
+        placed_object_ids.extend([object_id] * len(base_symbols))
+        object_metadata[object_id] = {
+            "component_index": comp_index,
+            "source_type": source_type,
+            "symbol": particle_meta.get("symbol", base_symbols[0]),
+            "radius": particle_meta.get("radius"),
+            "size": particle_meta.get("size"),
+        }
+        return object_id + 1
+    return None
+
+
+def _place_count(
+    tool: PackingTool,
+    base: list[tuple[str, np.ndarray]],
+    count: int,
+    args: PackingToolInput,
+    rng: np.random.Generator,
+    box: np.ndarray,
+    collected: tuple[Any, ...],
+    comp_index: int,
+    source_type: str,
+    particle_meta: dict[str, Any],
+    object_id: int,
+) -> tuple[int, int, int]:
+    """放置 count 个对象，返回 (成功数, 失败数, 下一个 object_id)."""
+    base_coords = np.stack([c for _, c in base])
+    base_symbols = [s for s, _ in base]
+    success_count = 0
+    fail_count = 0
+
+    for _ in range(count):
+        new_id = _try_place_one(
+            tool,
+            base_coords,
+            base_symbols,
+            args,
+            rng,
+            box,
+            collected,
+            comp_index,
+            source_type,
+            particle_meta,
+            object_id,
+        )
+        if new_id is None:
+            fail_count += 1
+        else:
+            object_id = new_id
+            success_count += 1
+
+    return success_count, fail_count, object_id
+
+
+def _pack_component(
+    tool: PackingTool,
+    spec: ComponentSpec,
+    comp_index: int,
+    args: PackingToolInput,
+    work_dir: Path,
+    rng: np.random.Generator,
+    box: np.ndarray,
+    collected: tuple[Any, ...],
+    object_id: int,
+) -> tuple[dict[str, Any], int]:
+    """放置一个组分中的全部对象，返回 (组分摘要, 下一个 object_id)."""
+    base = tool._load_component(spec, work_dir)
+    source_type = tool._detect_source_type(spec)
+    particle_meta = (
+        tool._particle_meta(spec.source) if source_type == "particle" else {}
+    )
+    success_count, fail_count, object_id = _place_count(
+        tool,
+        base,
+        spec.count,
+        args,
+        rng,
+        box,
+        collected,
+        comp_index,
+        source_type,
+        particle_meta,
+        object_id,
+    )
+
+    summary: dict[str, Any] = {
+        "source": spec.source,
+        "source_type": source_type,
+        "requested": spec.count,
+        "placed": success_count,
+        "failed": fail_count,
+    }
+    if particle_meta:
+        summary["particle"] = particle_meta
+    return summary, object_id
+
+
 class PackingTool(HuginnTool):
     """Pack molecules or particles into a box and render previews."""
 
     name = "packing_tool"
     category = "sim"
-    profile = ToolProfile(phases=frozenset({ResearchPhase.PLANNING, ResearchPhase.EXECUTION}))
+    profile = ToolProfile(
+        phases=frozenset({ResearchPhase.PLANNING, ResearchPhase.EXECUTION})
+    )
     description = (
         "Pack molecules or particles into a simulation box and render 3D previews. "
         "Outputs XYZ/PDB/LAMMPS-data and can export a Packmol input file."
@@ -337,64 +469,13 @@ class PackingTool(HuginnTool):
         placed_object_ids: list[int] = []
         object_metadata: dict[int, dict[str, Any]] = {}
         component_summaries: list[dict[str, Any]] = []
+        collected = (placed, placed_object_ids, object_metadata)
         object_id = 0
 
         for comp_index, spec in enumerate(args.components):
-            base = self._load_component(spec, work_dir)
-            base_coords = np.stack([c for _, c in base])
-            base_symbols = [s for s, _ in base]
-            source_type = self._detect_source_type(spec)
-            particle_meta = (
-                self._particle_meta(spec.source) if source_type == "particle" else {}
+            summary, object_id = _pack_component(
+                self, spec, comp_index, args, work_dir, rng, box, collected, object_id
             )
-            success_count = 0
-            fail_count = 0
-
-            for _ in range(spec.count):
-                accepted = False
-                for _trial in range(args.max_trials):
-                    rot = self._random_rotation_matrix(rng)
-                    rotated = (rot @ base_coords.T).T
-                    centroid = rotated.mean(axis=0)
-                    centered = rotated - centroid
-                    low = centered.min(axis=0)
-                    high = centered.max(axis=0)
-                    trans_min = -low
-                    trans_max = box - high
-                    if np.any(trans_min > trans_max):
-                        continue
-                    translation = rng.uniform(trans_min, trans_max)
-                    candidate = centered + translation
-
-                    if not self._check_distance(candidate, placed, args.tolerance):
-                        continue
-
-                    placed.extend(zip(base_symbols, candidate))
-                    placed_object_ids.extend([object_id] * len(base_symbols))
-                    object_metadata[object_id] = {
-                        "component_index": comp_index,
-                        "source_type": source_type,
-                        "symbol": particle_meta.get("symbol", base_symbols[0]),
-                        "radius": particle_meta.get("radius"),
-                        "size": particle_meta.get("size"),
-                    }
-                    object_id += 1
-                    success_count += 1
-                    accepted = True
-                    break
-
-                if not accepted:
-                    fail_count += 1
-
-            summary: dict[str, Any] = {
-                "source": spec.source,
-                "source_type": source_type,
-                "requested": spec.count,
-                "placed": success_count,
-                "failed": fail_count,
-            }
-            if particle_meta:
-                summary["particle"] = particle_meta
             component_summaries.append(summary)
 
         if not placed:
@@ -406,26 +487,21 @@ class PackingTool(HuginnTool):
                 success=False,
             )
 
+        return self._pack_result(args, work_dir, collected, component_summaries, box)
+
+    def _pack_result(
+        self,
+        args: PackingToolInput,
+        work_dir: Path,
+        collected: tuple[Any, ...],
+        component_summaries: list[dict[str, Any]],
+        box: np.ndarray,
+    ) -> ToolResult:
+        placed, placed_object_ids, object_metadata = collected
         objects = self._build_objects(placed, placed_object_ids, object_metadata)
 
         base_path = work_dir / args.output_prefix
-        output_files: dict[str, str] = {}
-
-        structure_path = self._write_structure(
-            base_path, args.output_format, placed, box
-        )
-        output_files["structure"] = str(structure_path)
-
-        if args.mode == "molecules" and args.write_packmol_input:
-            packmol_path = base_path.with_suffix(".inp")
-            self._write_packmol_input_file(packmol_path, args, work_dir)
-            output_files["packmol_input"] = str(packmol_path)
-
-        image_path: str | None = None
-        if args.visualize:
-            image_path = str(base_path.with_suffix(".png"))
-            self._render_image(placed, image_path)
-            output_files["image"] = image_path
+        output_files = self._write_pack_outputs(base_path, args, work_dir, placed, box)
 
         return ToolResult(
             data={
@@ -438,6 +514,33 @@ class PackingTool(HuginnTool):
             },
             success=True,
         )
+
+    def _write_pack_outputs(
+        self,
+        base_path: Path,
+        args: PackingToolInput,
+        work_dir: Path,
+        placed: list[tuple[str, np.ndarray]],
+        box: np.ndarray,
+    ) -> dict[str, str]:
+        output_files: dict[str, str] = {}
+
+        structure_path = self._write_structure(
+            base_path, args.output_format, placed, box
+        )
+        output_files["structure"] = str(structure_path)
+
+        if args.mode == "molecules" and args.write_packmol_input:
+            packmol_path = base_path.with_suffix(".inp")
+            self._write_packmol_input_file(packmol_path, args, work_dir)
+            output_files["packmol_input"] = str(packmol_path)
+
+        if args.visualize:
+            image_path = str(base_path.with_suffix(".png"))
+            self._render_image(placed, image_path)
+            output_files["image"] = image_path
+
+        return output_files
 
     def _particle_meta(self, source: str) -> dict[str, Any]:
         try:

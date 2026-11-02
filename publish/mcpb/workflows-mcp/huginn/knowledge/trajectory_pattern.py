@@ -84,8 +84,10 @@ def _summarize_trajectory(trajectory: dict | None, final_output: str) -> str:
     # phases
     phases = trajectory.get("phases") or trajectory.get("phase_history") or []
     if phases:
-        phase_names = [p.get("name", str(p)) if isinstance(p, dict) else str(p)
-                       for p in phases[:20]]
+        phase_names = [
+            p.get("name", str(p)) if isinstance(p, dict) else str(p)
+            for p in phases[:20]
+        ]
         parts.append(f"Phases: {', '.join(phase_names)}")
     # tool calls
     tc = trajectory.get("tool_calls") or []
@@ -143,7 +145,7 @@ def _parse_pattern_response(resp: str) -> dict | None:
     if start == -1 or end <= start:
         return None
     try:
-        data = json.loads(resp[start:end + 1])
+        data = json.loads(resp[start : end + 1])
     except json.JSONDecodeError:
         logger.debug("best-effort op failed", exc_info=True)
         return None
@@ -161,6 +163,81 @@ def _parse_pattern_response(resp: str) -> dict | None:
         "applicability": str(data.get("applicability", ""))[:200],
     }
     return cleaned
+
+
+def _resolve_pattern_kb(kb: Any) -> Any:
+    """取 KB 实例: 传入优先, 否则懒加载 (auto_ingest._get_kb). 失败返回 None."""
+    if kb is not None:
+        return kb
+    try:
+        from huginn.knowledge.auto_ingest import _get_kb
+
+        return _get_kb()
+    except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
+        return None
+
+
+def _store_pattern(
+    kb: Any,
+    parsed: dict,
+    pattern_text: str,
+    objective: str,
+    run_id: str,
+) -> str | None:
+    """写入 KB, 已存在同 task_pattern 则 +ε 并返回原 doc_id."""
+    try:
+        from datetime import datetime
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # C3: 写入前查 task_pattern 去重. 已存在 → 视为新证据 +ε.
+        task_pattern_key = parsed.get("task_pattern", "")
+        existing_doc_id = _find_pattern_by_task_pattern(kb, task_pattern_key)
+        if existing_doc_id:
+            update_pattern_confidence(kb, existing_doc_id, success=True)
+            logger.info(
+                "trajectory pattern already exists: doc_id=%s, +ε (c=0.5 initial)",
+                existing_doc_id,
+            )
+            return existing_doc_id
+        result = kb.add_text(
+            pattern_text,
+            filename=f"pattern_{run_id or ts}",
+            metadata={
+                "source": "trajectory_pattern",
+                "objective": objective[:200],
+                "run_id": run_id,
+                "task_pattern": parsed.get("task_pattern", ""),
+                "confidence": "0.5",  # C3: 初始 confidence (ChromaDB metadata 是 string)
+            },
+        )
+        doc_id = result.get("doc_id") or None
+        if doc_id:
+            logger.info(
+                "trajectory pattern stored: doc_id=%s, task_pattern=%s, c=0.5",
+                doc_id,
+                parsed.get("task_pattern", "")[:80],
+            )
+        return doc_id
+    except Exception:
+        logger.debug("trajectory pattern KB write failed (non-fatal)", exc_info=True)
+        return None
+
+
+def _extract_pattern_text(resp: str, objective: str) -> tuple[dict, str] | None:
+    """解析 LLM 响应并构建 pattern 文本. 无 pattern 返回 None."""
+    parsed = _parse_pattern_response(resp)
+    if parsed is None:
+        logger.debug("trajectory pattern: parse failed")
+        return None
+    if not parsed:  # 空 dict = LLM 判定无可复用内容
+        logger.debug("trajectory pattern: LLM marked empty, skip")
+        return None
+
+    pattern_text = _build_pattern_text(parsed, objective)
+    if not pattern_text.strip():
+        return None
+    return parsed, pattern_text
 
 
 async def extract_and_store_pattern(
@@ -201,64 +278,18 @@ async def extract_and_store_pattern(
         logger.debug("trajectory pattern LLM call failed (non-fatal)", exc_info=True)
         return None
 
-    parsed = _parse_pattern_response(resp)
-    if parsed is None:
-        logger.debug("trajectory pattern: parse failed")
+    extracted = _extract_pattern_text(resp, objective)
+    if extracted is None:
         return None
-    if not parsed:  # 空 dict = LLM 判定无可复用内容
-        logger.debug("trajectory pattern: LLM marked empty, skip")
-        return None
-
-    pattern_text = _build_pattern_text(parsed, objective)
-    if not pattern_text.strip():
-        return None
+    parsed, pattern_text = extracted
 
     # 写入 KB (复用 auto_ingest 的懒加载单例)
-    if kb is None:
-        try:
-            from huginn.knowledge.auto_ingest import _get_kb
-            kb = _get_kb()
-        except Exception:
-            logger.debug("best-effort op failed", exc_info=True)
-            kb = None
+    kb = _resolve_pattern_kb(kb)
     if kb is None:
         logger.debug("trajectory pattern: KB unavailable, skip")
         return None
 
-    try:
-        from datetime import datetime
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # C3: 写入前查 task_pattern 去重. 已存在 → 视为新证据 +ε.
-        task_pattern_key = parsed.get("task_pattern", "")
-        existing_doc_id = _find_pattern_by_task_pattern(kb, task_pattern_key)
-        if existing_doc_id:
-            update_pattern_confidence(kb, existing_doc_id, success=True)
-            logger.info(
-                "trajectory pattern already exists: doc_id=%s, +ε (c=0.5 initial)",
-                existing_doc_id,
-            )
-            return existing_doc_id
-        result = kb.add_text(
-            pattern_text,
-            filename=f"pattern_{run_id or ts}",
-            metadata={
-                "source": "trajectory_pattern",
-                "objective": objective[:200],
-                "run_id": run_id,
-                "task_pattern": parsed.get("task_pattern", ""),
-                "confidence": "0.5",  # C3: 初始 confidence (ChromaDB metadata 是 string)
-            },
-        )
-        doc_id = result.get("doc_id") or None
-        if doc_id:
-            logger.info(
-                "trajectory pattern stored: doc_id=%s, task_pattern=%s, c=0.5",
-                doc_id, parsed.get("task_pattern", "")[:80],
-            )
-        return doc_id
-    except Exception:
-        logger.debug("trajectory pattern KB write failed (non-fatal)", exc_info=True)
-        return None
+    return _store_pattern(kb, parsed, pattern_text, objective, run_id)
 
 
 # === C3: PM Bayesian confidence 闭环 ===
@@ -268,7 +299,7 @@ async def extract_and_store_pattern(
 # 升级路径: 加 prior (按 task_pattern 类型设不同 c_0).
 
 _C3_ALPHA = 5.0  # 经验权重
-_C3_BETA = 1.0   # 新证据权重
+_C3_BETA = 1.0  # 新证据权重
 # C3: c_min 默认 0.2, 前端 Settings 可调 (HUGINN_PM_C_MIN).
 # ponytail: 模块加载时读一次 env, 运行时改 env 不生效 (需重启). 升级路径: 改成函数读.
 import os as _os_c3  # noqa: E402
@@ -300,22 +331,11 @@ def _find_pattern_by_task_pattern(kb: Any, task_pattern: str) -> str | None:
     return None
 
 
-def update_pattern_confidence(
+def _load_pattern_metadatas(
     kb: Any,
     doc_id: str,
-    success: bool,
-    *,
-    alpha: float = _C3_ALPHA,
-    beta: float = _C3_BETA,
-    c_min: float = _C3_C_MIN,
-) -> float | None:
-    """Bayesian confidence 更新. 复用成功 +ε, 失败 -ε.
-
-    返回更新后的 confidence, 或 None (doc_id 不存在 / 删除).
-    c < c_min → delete_document(doc_id) 并返回 None.
-    """
-    if not doc_id:
-        return None
+) -> tuple[list, list, float] | None:
+    """拉 doc 的 ids/metadatas 与当前 confidence. 失败/不存在返回 None."""
     try:
         data = kb.collection.get(
             where={"doc_id": doc_id},
@@ -333,22 +353,39 @@ def update_pattern_confidence(
         c_old = float(metadatas[0].get("confidence", _C3_C_INIT))
     except (TypeError, ValueError):
         c_old = _C3_C_INIT
-    # Bayesian update: c_new = (c_old·α + success·β) / (α+β)
-    c_new = (c_old * alpha + (1.0 if success else 0.0) * beta) / (alpha + beta)
-    # 低于阈值 → 删除
-    if c_new < c_min:
-        try:
-            kb.delete_document(doc_id)
-        except Exception:
-            logger.debug(
-                "delete low-confidence pattern failed: %s", doc_id, exc_info=True,
-            )
-        logger.info(
-            "pattern %s deleted (c=%.3f < c_min=%.2f)",
-            doc_id, c_new, c_min,
+    return ids, metadatas, c_old
+
+
+def _delete_low_confidence_pattern(
+    kb: Any,
+    doc_id: str,
+    c_new: float,
+    c_min: float,
+) -> None:
+    """低于阈值 → 删除 doc 并记日志."""
+    try:
+        kb.delete_document(doc_id)
+    except Exception:
+        logger.debug(
+            "delete low-confidence pattern failed: %s",
+            doc_id,
+            exc_info=True,
         )
-        return None
-    # 更新所有 chunks 的 confidence metadata
+    logger.info(
+        "pattern %s deleted (c=%.3f < c_min=%.2f)",
+        doc_id,
+        c_new,
+        c_min,
+    )
+
+
+def _update_pattern_metadatas(
+    kb: Any,
+    ids: list,
+    metadatas: list,
+    c_new: float,
+) -> bool:
+    """更新所有 chunks 的 confidence metadata. 失败返回 False."""
     new_metadatas = []
     for meta in metadatas:
         new_meta = dict(meta)
@@ -358,17 +395,54 @@ def update_pattern_confidence(
         kb.collection.update(ids=ids, metadatas=new_metadatas)
     except Exception:
         logger.debug(
-            "update_pattern_confidence KB update failed", exc_info=True,
+            "update_pattern_confidence KB update failed",
+            exc_info=True,
         )
+        return False
+    return True
+
+
+def update_pattern_confidence(
+    kb: Any,
+    doc_id: str,
+    success: bool,
+    *,
+    alpha: float = _C3_ALPHA,
+    beta: float = _C3_BETA,
+    c_min: float = _C3_C_MIN,
+) -> float | None:
+    """Bayesian confidence 更新. 复用成功 +ε, 失败 -ε.
+
+    返回更新后的 confidence, 或 None (doc_id 不存在 / 删除).
+    c < c_min → delete_document(doc_id) 并返回 None.
+    """
+    if not doc_id:
+        return None
+    loaded = _load_pattern_metadatas(kb, doc_id)
+    if loaded is None:
+        return None
+    ids, metadatas, c_old = loaded
+    # Bayesian update: c_new = (c_old·α + success·β) / (α+β)
+    c_new = (c_old * alpha + (1.0 if success else 0.0) * beta) / (alpha + beta)
+    # 低于阈值 → 删除
+    if c_new < c_min:
+        _delete_low_confidence_pattern(kb, doc_id, c_new, c_min)
+        return None
+    # 更新所有 chunks 的 confidence metadata
+    if not _update_pattern_metadatas(kb, ids, metadatas, c_new):
         return None
     logger.info(
         "pattern %s confidence: %.3f → %.3f (success=%s)",
-        doc_id, c_old, c_new, success,
+        doc_id,
+        c_old,
+        c_new,
+        success,
     )
     return c_new
 
 
 # === trajectory_match: line graph + VF2 子图同构 ===
+
 
 def _to_line_graph(tool_seq: list[str]) -> Any:
     """tool_name 序列 → line graph (相邻关系图).
@@ -378,6 +452,7 @@ def _to_line_graph(tool_seq: list[str]) -> Any:
     ponytail: networkx.path_graph 直接用, 节点 label = tool_name.
     """
     import networkx as nx
+
     g = nx.path_graph(len(tool_seq))
     # 节点 label 用 tool_name, 用于 VF2 匹配
     for i, name in enumerate(tool_seq):
@@ -403,6 +478,7 @@ def trajectory_match(
     不引入自定义图算法. 升级: 跨域相似度 (Jaccard on tool_name set).
     """
     import networkx as nx
+
     if not current or not history:
         return None
 
@@ -414,7 +490,8 @@ def trajectory_match(
         hist_g = _to_line_graph(hist_seq)
         # node_match: tool_name 相等
         matcher = nx.algorithms.isomorphism.GraphMatcher(
-            hist_g, cur_g,
+            hist_g,
+            cur_g,
             node_match=lambda a, b: a.get("tool") == b.get("tool"),
         )
         if matcher.subgraph_is_isomorphic():
@@ -440,7 +517,9 @@ if __name__ == "__main__":
     traj = {
         "phases": [{"name": "perceive"}, {"name": "hypothesize"}, {"name": "execute"}],
         "tool_calls": [
-            {"tool": "vasp_run"}, {"tool": "band_structure"}, {"tool": "analysis"},
+            {"tool": "vasp_run"},
+            {"tool": "band_structure"},
+            {"tool": "analysis"},
         ],
     }
     summary = _summarize_trajectory(traj, "final result text")
@@ -501,21 +580,23 @@ if __name__ == "__main__":
     # 3e. 字段长度截断
     long_str = "x" * 500
     p = _parse_pattern_response(
-        f'{{"task_pattern": "{long_str}", "key_steps": ["{long_str}"]}}')
+        f'{{"task_pattern": "{long_str}", "key_steps": ["{long_str}"]}}'
+    )
     assert len(p["task_pattern"]) <= 200
     assert len(p["key_steps"][0]) <= 200
 
     # 3f. 字段数量截断
     many_steps = [f"s{i}" for i in range(20)]
     p = _parse_pattern_response(
-        json.dumps({"task_pattern": "X", "key_steps": many_steps}))
+        json.dumps({"task_pattern": "X", "key_steps": many_steps})
+    )
     assert len(p["key_steps"]) <= 7
 
     # 4. extract_and_store_pattern — 无 LLM 时跳过
     async def _run_no_llm():
         doc_id = await extract_and_store_pattern(
-            objective="test", trajectory=traj, final_output="out",
-            llm_chat_fn=None)
+            objective="test", trajectory=traj, final_output="out", llm_chat_fn=None
+        )
         assert doc_id is None, "no llm → None"
 
     asyncio.run(_run_no_llm())
@@ -526,30 +607,43 @@ if __name__ == "__main__":
 
     async def _run_empty_pattern():
         doc_id = await extract_and_store_pattern(
-            objective="test", trajectory=traj, final_output="out",
-            llm_chat_fn=_empty_llm, kb=object())  # kb 不被调用
+            objective="test",
+            trajectory=traj,
+            final_output="out",
+            llm_chat_fn=_empty_llm,
+            kb=object(),
+        )  # kb 不被调用
         assert doc_id is None, "empty pattern → None"
 
     asyncio.run(_run_empty_pattern())
 
     # 6. extract_and_store_pattern — mock LLM + mock KB
     async def _good_llm(prompt: str) -> str:
-        return ('{"task_pattern": "X", "key_steps": ["a"], "key_decisions": [], '
-                '"pitfalls": [], "applicability": "when X"}')
+        return (
+            '{"task_pattern": "X", "key_steps": ["a"], "key_decisions": [], '
+            '"pitfalls": [], "applicability": "when X"}'
+        )
 
     class _MockKB:
         def __init__(self):
             self.calls = []
+
         def add_text(self, text, filename="", metadata=None):
-            self.calls.append({"text": text, "filename": filename, "metadata": metadata})
+            self.calls.append(
+                {"text": text, "filename": filename, "metadata": metadata}
+            )
             return {"doc_id": "doc_123", "chunks": 2}
 
     async def _run_good():
         mock_kb = _MockKB()
         doc_id = await extract_and_store_pattern(
-            objective="compute band gap", trajectory=traj,
-            final_output="gap=1.1eV", llm_chat_fn=_good_llm, kb=mock_kb,
-            run_id="r1")
+            objective="compute band gap",
+            trajectory=traj,
+            final_output="gap=1.1eV",
+            llm_chat_fn=_good_llm,
+            kb=mock_kb,
+            run_id="r1",
+        )
         assert doc_id == "doc_123"
         assert len(mock_kb.calls) == 1
         call = mock_kb.calls[0]
@@ -567,8 +661,12 @@ if __name__ == "__main__":
     async def _run_llm_raise():
         mock_kb = _MockKB()
         doc_id = await extract_and_store_pattern(
-            objective="test", trajectory=traj, final_output="out",
-            llm_chat_fn=_raise_llm, kb=mock_kb)
+            objective="test",
+            trajectory=traj,
+            final_output="out",
+            llm_chat_fn=_raise_llm,
+            kb=mock_kb,
+        )
         assert doc_id is None
         assert len(mock_kb.calls) == 0, "LLM 失败不应写 KB"
 
@@ -579,8 +677,12 @@ if __name__ == "__main__":
         # kb=None 且 auto_ingest._get_kb 也拿不到 (无 chromadb 环境)
         # 直接传一个 mock None
         doc_id = await extract_and_store_pattern(
-            objective="test", trajectory=traj, final_output="out",
-            llm_chat_fn=_good_llm, kb=None)
+            objective="test",
+            trajectory=traj,
+            final_output="out",
+            llm_chat_fn=_good_llm,
+            kb=None,
+        )
         # 没有 chromadb 环境时 _get_kb 返回 None, 结果 None
         # 如果有 chromadb, 会真的写入 — 这里不强断言, 只看是否崩
         assert doc_id is None or isinstance(doc_id, str)
@@ -594,9 +696,13 @@ if __name__ == "__main__":
     match = trajectory_match(current, history)
     assert match is not None, f"应匹配, got {match}"
     assert match["history_id"] == 0, f"应匹配 hid=0, got {match['history_id']}"
-    assert abs(match["similarity"] - 0.75) < 1e-9, f"sim 应 0.75, got {match['similarity']}"
+    assert abs(match["similarity"] - 0.75) < 1e-9, (
+        f"sim 应 0.75, got {match['similarity']}"
+    )
     assert match["next_step"] == "d", f"next_step 应 d, got {match['next_step']}"
-    print(f"[ok] trajectory_match([a,b,c], history) → hid={match['history_id']}, sim={match['similarity']}, next={match['next_step']}")
+    print(
+        f"[ok] trajectory_match([a,b,c], history) → hid={match['history_id']}, sim={match['similarity']}, next={match['next_step']}"
+    )
 
     # 9b. 当前 [a,b,e] → 匹配 hid=1
     current2 = ["a", "b", "e"]
@@ -618,6 +724,7 @@ if __name__ == "__main__":
     # === C3: PM Bayesian confidence 闭环 (用 mock KB) ===
     class _MockKB:
         """Mock KB 只实现 C3 需要的接口: collection.get/update, delete_document."""
+
         def __init__(self):
             # 存储: {id: {metadata: dict, document: str}}
             self._store: dict[str, dict] = {}
@@ -625,6 +732,7 @@ if __name__ == "__main__":
 
         def add_text(self, text, filename="", metadata=None):
             import uuid
+
             doc_id = uuid.uuid4().hex[:12]
             meta = dict(metadata or {})
             meta["doc_id"] = doc_id
@@ -654,7 +762,8 @@ if __name__ == "__main__":
         def delete_document(self, doc_id):
             # 删除所有 chunks (mock 简化: doc_id 是 metadata.doc_id, 按 metadata 匹配)
             keys_to_del = [
-                k for k, v in self._store.items()
+                k
+                for k, v in self._store.items()
                 if v["metadata"].get("doc_id") == doc_id
             ]
             for k in keys_to_del:
@@ -671,7 +780,7 @@ if __name__ == "__main__":
             "task_pattern": "dft_band_gap",
             "confidence": "0.5",
         },
-        )["doc_id"]
+    )["doc_id"]
     # case C3-B: 复用成功 → +ε
     c1 = update_pattern_confidence(mock_kb, doc_id_a, success=True)
     assert c1 is not None, "success update should return new c"
@@ -700,7 +809,11 @@ if __name__ == "__main__":
     mock_kb2 = _MockKB()
     mock_kb2.add_text(
         "PATTERN 1",
-        metadata={"source": "trajectory_pattern", "task_pattern": "type_X", "confidence": "0.5"},
+        metadata={
+            "source": "trajectory_pattern",
+            "task_pattern": "type_X",
+            "confidence": "0.5",
+        },
     )
     found = _find_pattern_by_task_pattern(mock_kb2, "type_X")
     assert found, "应能找到 task_pattern=type_X"

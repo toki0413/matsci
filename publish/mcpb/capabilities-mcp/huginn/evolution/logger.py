@@ -65,6 +65,37 @@ class ConversationRecord:
     topic_tags: list[str] = field(default_factory=list)
 
 
+def _normalize_result(result: Any | None) -> dict[str, Any]:
+    if isinstance(result, dict):
+        return result
+    if hasattr(result, "model_dump"):
+        return result.model_dump()
+    return {"raw": str(result)}
+
+
+def _session_stats_slot(
+    session_stats: dict[str, dict[str, Any]], session_id: str
+) -> dict[str, Any]:
+    return session_stats.setdefault(
+        session_id,
+        {
+            "total_calls": 0,
+            "success_calls": 0,
+            "failed_calls": 0,
+            "tools_used": set(),
+        },
+    )
+
+
+def _bump_session_stats(stats: dict[str, Any], tool_name: str, success: bool) -> None:
+    stats["total_calls"] += 1
+    if success:
+        stats["success_calls"] += 1
+    else:
+        stats["failed_calls"] += 1
+    stats["tools_used"].add(tool_name)
+
+
 class ExecutionLogger:
     """Persistent execution logger for evolutionary feedback.
 
@@ -76,8 +107,7 @@ class ExecutionLogger:
 
     def __init__(self, persist_dir: str | None = None):
         self.persist_dir = (
-            Path(persist_dir) if persist_dir
-            else get_runtime_home() / "logs"
+            Path(persist_dir) if persist_dir else get_runtime_home() / "logs"
         )
         self.persist_dir.mkdir(parents=True, exist_ok=True)
         self._tool_calls: list[ToolCallRecord] = []
@@ -119,12 +149,7 @@ class ExecutionLogger:
     ) -> None:
         """Log a tool invocation."""
         success = error is None and result is not None
-        if isinstance(result, dict):
-            result_data = result
-        elif hasattr(result, "model_dump"):
-            result_data = result.model_dump()
-        else:
-            result_data = {"raw": str(result)}
+        result_data = _normalize_result(result)
 
         record = ToolCallRecord(
             session_id=session_id,
@@ -143,21 +168,8 @@ class ExecutionLogger:
         self._flush_tool_record(record)
 
         # Update session stats
-        stats = self._session_stats.setdefault(
-            session_id,
-            {
-                "total_calls": 0,
-                "success_calls": 0,
-                "failed_calls": 0,
-                "tools_used": set(),
-            },
-        )
-        stats["total_calls"] += 1
-        if success:
-            stats["success_calls"] += 1
-        else:
-            stats["failed_calls"] += 1
-        stats["tools_used"].add(tool_name)
+        stats = _session_stats_slot(self._session_stats, session_id)
+        _bump_session_stats(stats, tool_name, success)
 
     def log_conversation(
         self,

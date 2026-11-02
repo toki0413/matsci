@@ -40,21 +40,25 @@ logger = logging.getLogger(__name__)
 # Edges we're willing to walk during claim BFS. Deliberately excludes SEQ
 # (reading order, not semantic), CAPTION_OF (already implied via REFERENCES
 # once the caption's mention is resolved) and ADJACENT (purely spatial).
-_BFS_EDGE_TYPES: frozenset[EdgeType] = frozenset({
-    EdgeType.CONTAINS,
-    EdgeType.REFERENCES,
-    EdgeType.EXTRACTED_FROM,
-    EdgeType.SUPPORTS,
-    EdgeType.CONTRADICTS,
-    EdgeType.INCONCLUSIVE,
-})
+_BFS_EDGE_TYPES: frozenset[EdgeType] = frozenset(
+    {
+        EdgeType.CONTAINS,
+        EdgeType.REFERENCES,
+        EdgeType.EXTRACTED_FROM,
+        EdgeType.SUPPORTS,
+        EdgeType.CONTRADICTS,
+        EdgeType.INCONCLUSIVE,
+    }
+)
 
 # Validation edges carry the outcome of checking a claim against data.
-_VALIDATION_EDGE_TYPES: frozenset[EdgeType] = frozenset({
-    EdgeType.SUPPORTS,
-    EdgeType.CONTRADICTS,
-    EdgeType.INCONCLUSIVE,
-})
+_VALIDATION_EDGE_TYPES: frozenset[EdgeType] = frozenset(
+    {
+        EdgeType.SUPPORTS,
+        EdgeType.CONTRADICTS,
+        EdgeType.INCONCLUSIVE,
+    }
+)
 
 
 class InfoPackAssembler:
@@ -175,7 +179,8 @@ class InfoPackAssembler:
     ) -> list[InformationPackage]:
         """Group remaining text blocks by SEQ adjacency."""
         orphans = [
-            e for e in graph.get_elements(ElementType.TEXT)
+            e
+            for e in graph.get_elements(ElementType.TEXT)
             if e.element_id not in visited
         ]
         if not orphans:
@@ -230,8 +235,7 @@ class InfoPackAssembler:
         pkg_ids = set(element_ids)
 
         elements = [
-            self._element_map[eid] for eid in element_ids
-            if eid in self._element_map
+            self._element_map[eid] for eid in element_ids if eid in self._element_map
         ]
         pkg.elements = list(elements)
 
@@ -246,6 +250,21 @@ class InfoPackAssembler:
             and el.metadata.get("parent_id")
         }
 
+        InfoPackAssembler._collect_contents(pkg, elements, figs_with_dp_child)
+
+        # Record validation verdicts for claims in this package. We anchor
+        # on the claim (edge source) so a verdict is reported exactly once,
+        # with the package that owns the claim.
+        InfoPackAssembler._collect_validation_results(pkg, pkg_ids, graph)
+
+        return pkg
+
+    @staticmethod
+    def _collect_contents(
+        pkg: InformationPackage,
+        elements: list[DocumentElement],
+        figs_with_dp_child: set[str],
+    ) -> None:
         for el in elements:
             if el.element_type is ElementType.TEXT:
                 if isinstance(el.content, str) and el.content:
@@ -261,24 +280,27 @@ class InfoPackAssembler:
             elif el.element_type is ElementType.CLAIM and el.claim_data:
                 pkg.claims.append(el.claim_data)
 
-        # Record validation verdicts for claims in this package. We anchor
-        # on the claim (edge source) so a verdict is reported exactly once,
-        # with the package that owns the claim.
+    @staticmethod
+    def _collect_validation_results(
+        pkg: InformationPackage,
+        pkg_ids: set[str],
+        graph: DocumentGraph,
+    ) -> None:
         edges: list[GraphEdge] = graph.get_edges()
         for edge in edges:
             if edge.edge_type not in _VALIDATION_EDGE_TYPES:
                 continue
             if edge.source not in pkg_ids:
                 continue
-            pkg.validation_results.append({
-                "claim_id": edge.source,
-                "target_id": edge.target,
-                "relation": edge.edge_type.value,
-                "confidence": edge.confidence,
-                "metadata": edge.metadata,
-            })
-
-        return pkg
+            pkg.validation_results.append(
+                {
+                    "claim_id": edge.source,
+                    "target_id": edge.target,
+                    "relation": edge.edge_type.value,
+                    "confidence": edge.confidence,
+                    "metadata": edge.metadata,
+                }
+            )
 
     # ------------------------------------------------------------------
     # Summaries
@@ -293,22 +315,12 @@ class InfoPackAssembler:
     def _rule_summary(self, package: InformationPackage) -> str:
         """Fallback summary when no LLM is wired up."""
         if not package.claims:
-            # Plain-text package -- describe the text we have.
-            n = len(package.text_blocks)
-            snippet = package.text_blocks[0][:80].rstrip() if package.text_blocks else ""
-            base = f"Plain-text package of {n} text block(s)"
-            if snippet:
-                base += f": {snippet}..."
-            return base
+            return InfoPackAssembler._plain_text_summary(package)
 
         parts: list[str] = []
 
         # Lead with the claim's conclusion if we can find one.
-        lead = None
-        for c in package.claims:
-            lead = c.get("conclusion") or c.get("statement") or c.get("claim") or c.get("text")
-            if lead:
-                break
+        lead = InfoPackAssembler._leading_claim(package)
         if lead:
             parts.append(str(lead))
 
@@ -316,19 +328,7 @@ class InfoPackAssembler:
             parts.append(f"validated against {len(package.figures)} figure(s)")
 
         if package.validation_results:
-            n_sup = sum(1 for v in package.validation_results
-                        if v.get("relation") == EdgeType.SUPPORTS.value)
-            n_con = sum(1 for v in package.validation_results
-                        if v.get("relation") == EdgeType.CONTRADICTS.value)
-            n_inc = sum(1 for v in package.validation_results
-                        if v.get("relation") == EdgeType.INCONCLUSIVE.value)
-            bits: list[str] = []
-            if n_sup:
-                bits.append(f"{n_sup} supported")
-            if n_con:
-                bits.append(f"{n_con} contradicted")
-            if n_inc:
-                bits.append(f"{n_inc} inconclusive")
+            bits = InfoPackAssembler._validation_bits(package)
             if bits:
                 parts.append(", ".join(bits))
 
@@ -338,6 +338,56 @@ class InfoPackAssembler:
             )
 
         return "; ".join(parts)[:300]
+
+    @staticmethod
+    def _plain_text_summary(package: InformationPackage) -> str:
+        # Plain-text package -- describe the text we have.
+        n = len(package.text_blocks)
+        snippet = package.text_blocks[0][:80].rstrip() if package.text_blocks else ""
+        base = f"Plain-text package of {n} text block(s)"
+        if snippet:
+            base += f": {snippet}..."
+        return base
+
+    @staticmethod
+    def _leading_claim(package: InformationPackage) -> Any:
+        lead = None
+        for c in package.claims:
+            lead = (
+                c.get("conclusion")
+                or c.get("statement")
+                or c.get("claim")
+                or c.get("text")
+            )
+            if lead:
+                break
+        return lead
+
+    @staticmethod
+    def _validation_bits(package: InformationPackage) -> list[str]:
+        n_sup = sum(
+            1
+            for v in package.validation_results
+            if v.get("relation") == EdgeType.SUPPORTS.value
+        )
+        n_con = sum(
+            1
+            for v in package.validation_results
+            if v.get("relation") == EdgeType.CONTRADICTS.value
+        )
+        n_inc = sum(
+            1
+            for v in package.validation_results
+            if v.get("relation") == EdgeType.INCONCLUSIVE.value
+        )
+        bits: list[str] = []
+        if n_sup:
+            bits.append(f"{n_sup} supported")
+        if n_con:
+            bits.append(f"{n_con} contradicted")
+        if n_inc:
+            bits.append(f"{n_inc} inconclusive")
+        return bits
 
     def _llm_summary(self, package: InformationPackage) -> str:
         """Ask the wired-up LLM for a one-line summary."""
@@ -353,7 +403,9 @@ class InfoPackAssembler:
         except Exception:
             # Swallow LLM errors and fall through to the rule-based path --
             # better a mediocre summary than a crashed pipeline.
-            logger.debug("LLM summary failed, falling back to rule-based", exc_info=True)
+            logger.debug(
+                "LLM summary failed, falling back to rule-based", exc_info=True
+            )
         return self._rule_summary(package)
 
     def _build_llm_prompt(self, package: InformationPackage) -> str:

@@ -36,156 +36,176 @@ class DataDictionary:
 
 # Register built-in schemas
 def _register_builtins() -> None:
-    DataDictionary.register(
-        DataSchema(
-            type_name=DataType.CRYSTAL_STRUCTURE,
-            description="Crystal structure data (POSCAR, CIF, XYZ formats)",
-            fields=[
-                DataField("formula", "str", required=True, description="Chemical formula"),
-                DataField(
-                    "lattice_params", "dict", description="a, b, c, alpha, beta, gamma"
-                ),
-                DataField("spacegroup", "str", description="Space group symbol"),
-                DataField("num_atoms", "int", description="Number of atoms"),
-            ],
-            tags=["structure", "crystallography"],
-        )
-    )
-    DataDictionary.register(
-        DataSchema(
-            type_name=DataType.DFT_RESULT,
-            description="DFT calculation results (VASP, QE, CP2K)",
-            fields=[
-                DataField(
-                    "energy", "float", required=True, description="Total energy", unit="eV"
-                ),
-                DataField(
-                    "converged",
-                    "int",
-                    required=True,
-                    description="Convergence flag (0/1)",
-                ),
-                DataField("forces", "array", description="Atomic forces"),
-                DataField(
-                    "band_gap", "float", description="Electronic band gap", unit="eV"
-                ),
-            ],
-            tags=["dft", "electronic_structure"],
-        )
-    )
-    DataDictionary.register(
-        DataSchema(
-            type_name=DataType.MOLECULAR_DYNAMICS,
-            description="Molecular dynamics trajectory and thermodynamic data",
-            fields=[
-                DataField(
-                    "n_frames",
-                    "int",
-                    required=True,
-                    description="Number of trajectory frames",
-                ),
-                DataField(
-                    "n_atoms", "int", required=True, description="Number of atoms"
-                ),
-                DataField(
-                    "temperature",
-                    "array",
-                    description="Temperature time series",
-                    unit="K",
-                ),
-                DataField(
-                    "pressure",
-                    "array",
-                    description="Pressure time series",
-                    unit="bar",
-                ),
-            ],
-            tags=["md", "trajectory"],
-        )
-    )
-    DataDictionary.register(
-        DataSchema(
-            type_name=DataType.POTENTIAL,
-            description="Machine learning potential data",
-            fields=[
-                DataField(
-                    "potential_type",
-                    "str",
-                    required=True,
-                    description="NEP, SNAP, GAP, ACE",
-                ),
-                DataField(
-                    "training_rmse_energy",
-                    "float",
-                    description="Training RMSE for energy",
-                    unit="eV/atom",
-                ),
-                DataField(
-                    "training_rmse_force",
-                    "float",
-                    description="Training RMSE for forces",
-                    unit="eV/A",
-                ),
-            ],
-            tags=["ml", "potential"],
-        )
-    )
-    DataDictionary.register(
-        DataSchema(
-            type_name=DataType.JOB_RECORD,
-            description="HPC job record",
-            fields=[
-                DataField(
-                    "job_id", "str", required=True, description="Job identifier"
-                ),
-                DataField(
-                    "status", "str", required=True, description="Job status"
-                ),
-                DataField(
-                    "walltime_hours", "float", description="Walltime in hours"
-                ),
-            ],
-            tags=["hpc", "job"],
-        )
-    )
-    DataDictionary.register(
-        DataSchema(
-            type_name=DataType.EXPERIMENTAL_DATA,
-            description="Experimental measurement data",
-            fields=[
-                DataField(
-                    "measurement_type",
-                    "str",
-                    required=True,
-                    description="XRD, SEM, TEM, etc.",
-                ),
-                DataField("sample_id", "str", description="Sample identifier"),
-                DataField("data_file", "str", description="Path to data file"),
-            ],
-            tags=["experimental"],
-        )
-    )
-    DataDictionary.register(
-        DataSchema(
-            type_name=DataType.DESCRIPTOR,
-            description="Material descriptors for ML models",
-            fields=[
-                DataField(
-                    "descriptor_name",
-                    "str",
-                    required=True,
-                    description="Descriptor name",
-                ),
-                DataField(
-                    "values", "array", required=True, description="Descriptor values"
-                ),
-                DataField(
-                    "dimension", "int", description="Descriptor dimensionality"
-                ),
-            ],
-            tags=["ml", "descriptor"],
-        )
-    )
+    _register_crystal_structure()
+    _register_dft_result()
+    _register_molecular_dynamics()
+    _register_potential()
+    _register_job_record()
+    _register_experimental_data()
+    _register_descriptor()
 
+def _register_crystal_structure() -> None:
+    DataDictionary.register(
+    DataSchema(
+        type_name=DataType.CRYSTAL_STRUCTURE,
+        description="Crystal structure data (POSCAR, CIF, XYZ formats)",
+        fields=[
+            DataField("formula", "str", required=True, description="Chemical formula"),
+            DataField(
+                "lattice_params", "dict", description="a, b, c, alpha, beta, gamma"
+            ),
+            DataField("spacegroup", "str", description="Space group symbol"),
+            DataField("num_atoms", "int", description="Number of atoms"),
+        ],
+        tags=["structure", "crystallography"],
+    )
+)
+
+def _register_dft_result() -> None:
+    DataDictionary.register(
+    DataSchema(
+        type_name=DataType.DFT_RESULT,
+        description="DFT calculation results (VASP, QE, CP2K)",
+        fields=[
+            DataField(
+                "energy", "float", required=True, description="Total energy", unit="eV"
+            ),
+            DataField(
+                "converged",
+                "int",
+                required=True,
+                description="Convergence flag (0/1)",
+            ),
+            DataField("forces", "array", description="Atomic forces"),
+            DataField(
+                "band_gap", "float", description="Electronic band gap", unit="eV"
+            ),
+        ],
+        tags=["dft", "electronic_structure"],
+    )
+)
+
+def _register_molecular_dynamics() -> None:
+    DataDictionary.register(
+    DataSchema(
+        type_name=DataType.MOLECULAR_DYNAMICS,
+        description="Molecular dynamics trajectory and thermodynamic data",
+        fields=[
+            DataField(
+                "n_frames",
+                "int",
+                required=True,
+                description="Number of trajectory frames",
+            ),
+            DataField(
+                "n_atoms", "int", required=True, description="Number of atoms"
+            ),
+            DataField(
+                "temperature",
+                "array",
+                description="Temperature time series",
+                unit="K",
+            ),
+            DataField(
+                "pressure",
+                "array",
+                description="Pressure time series",
+                unit="bar",
+            ),
+        ],
+        tags=["md", "trajectory"],
+    )
+)
+
+def _register_potential() -> None:
+    DataDictionary.register(
+    DataSchema(
+        type_name=DataType.POTENTIAL,
+        description="Machine learning potential data",
+        fields=[
+            DataField(
+                "potential_type",
+                "str",
+                required=True,
+                description="NEP, SNAP, GAP, ACE",
+            ),
+            DataField(
+                "training_rmse_energy",
+                "float",
+                description="Training RMSE for energy",
+                unit="eV/atom",
+            ),
+            DataField(
+                "training_rmse_force",
+                "float",
+                description="Training RMSE for forces",
+                unit="eV/A",
+            ),
+        ],
+        tags=["ml", "potential"],
+    )
+)
+
+def _register_job_record() -> None:
+    DataDictionary.register(
+    DataSchema(
+        type_name=DataType.JOB_RECORD,
+        description="HPC job record",
+        fields=[
+            DataField(
+                "job_id", "str", required=True, description="Job identifier"
+            ),
+            DataField(
+                "status", "str", required=True, description="Job status"
+            ),
+            DataField(
+                "walltime_hours", "float", description="Walltime in hours"
+            ),
+        ],
+        tags=["hpc", "job"],
+    )
+)
+
+def _register_experimental_data() -> None:
+    DataDictionary.register(
+    DataSchema(
+        type_name=DataType.EXPERIMENTAL_DATA,
+        description="Experimental measurement data",
+        fields=[
+            DataField(
+                "measurement_type",
+                "str",
+                required=True,
+                description="XRD, SEM, TEM, etc.",
+            ),
+            DataField("sample_id", "str", description="Sample identifier"),
+            DataField("data_file", "str", description="Path to data file"),
+        ],
+        tags=["experimental"],
+    )
+)
+
+def _register_descriptor() -> None:
+    DataDictionary.register(
+    DataSchema(
+        type_name=DataType.DESCRIPTOR,
+        description="Material descriptors for ML models",
+        fields=[
+            DataField(
+                "descriptor_name",
+                "str",
+                required=True,
+                description="Descriptor name",
+            ),
+            DataField(
+                "values", "array", required=True, description="Descriptor values"
+            ),
+            DataField(
+                "dimension", "int", description="Descriptor dimensionality"
+            ),
+        ],
+        tags=["ml", "descriptor"],
+    )
+)
 
 _register_builtins()

@@ -25,6 +25,15 @@ def _embedding_model_cached() -> bool:
     return cache_path.exists() and any(cache_path.iterdir())
 
 
+def _apply_metadata_defaults(metadatas: list[dict[str, Any]]) -> None:
+    for meta in metadatas:
+        meta.setdefault("source", "unknown")
+        meta.setdefault(
+            "ingested_at",
+            now_iso(),
+        )
+
+
 class VectorStore:
     """Local vector store for material science documents."""
 
@@ -155,19 +164,13 @@ class VectorStore:
 
         if ids is None:
             ids = [
-                hash_text(f"{doc}:{i}", length=16)
-                for i, doc in enumerate(documents)
+                hash_text(f"{doc}:{i}", length=16) for i, doc in enumerate(documents)
             ]
 
         if metadatas is None:
             metadatas = [{} for _ in documents]
 
-        for meta in metadatas:
-            meta.setdefault("source", "unknown")
-            meta.setdefault(
-                "ingested_at",
-                now_iso(),
-            )
+        _apply_metadata_defaults(metadatas)
 
         # Compute embeddings if not provided
         if embeddings is None:
@@ -193,7 +196,9 @@ class VectorStore:
             try:
                 collection.delete(ids=ids)
             except Exception:  # 防御: 回滚删除失败仅记录不再抛
-                logger.warning("vector_store ingest rollback delete failed", exc_info=True)
+                logger.warning(
+                    "vector_store ingest rollback delete failed", exc_info=True
+                )
             raise e
 
     def _rust_top_k(
@@ -243,92 +248,130 @@ class VectorStore:
         n_results = fetch_k or (top_k * 4)
 
         if query_embedding:
-            # Primary path: use ChromaDB's native HNSW query (O(log N)).
-            # This avoids fetching all embeddings into memory.
-            try:
-                results = collection.query(
-                    query_embeddings=query_embedding,
-                    n_results=n_results,
-                    where=filter_dict,
-                    include=["documents", "metadatas", "distances"],
-                )
-                if results["ids"] and results["ids"][0]:
-                    output = []
-                    for i in range(len(results["ids"][0])):
-                        output.append(
-                            {
-                                "id": results["ids"][0][i],
-                                "document": results["documents"][0][i],
-                                "metadata": results["metadatas"][0][i],
-                                "distance": results["distances"][0][i],
-                            }
-                        )
-                    return output[:top_k]
-            except Exception:  # 防御: 原生查询失败降级全量匹配
-                logger.debug("ChromaDB 原生 query 失败, 降级到全量 top-k", exc_info=True)
+            return VectorStore._search_embeddings(
+                self, collection, query_embedding, top_k, filter_dict, n_results
+            )
 
-            # Fallback: Rust-accelerated exact top-k over all stored embeddings.
-            # Only used when native query fails (e.g., HNSW index not built yet).
-            try:
-                all_data = collection.get(
-                    include=["documents", "metadatas", "embeddings"]
-                )
-                docs = all_data.get("documents") or []
-                metas = all_data.get("metadatas") or [{}] * len(docs)
-                embs = all_data.get("embeddings") or []
+        return VectorStore._search_keyword(self, collection, query, top_k)
 
-                indices = list(range(len(docs)))
-                if filter_dict:
-                    indices = [
-                        i
-                        for i in indices
-                        if self._matches_filter(metas[i], filter_dict)
-                    ]
-                    docs = [docs[i] for i in indices]
-                    metas = [metas[i] for i in indices]
-                    embs = [embs[i] for i in indices]
+    def _search_embeddings(
+        self,
+        collection: Any,
+        query_embedding: list[list[float]],
+        top_k: int,
+        filter_dict: dict[str, Any] | None,
+        n_results: int,
+    ) -> list[dict[str, Any]]:
+        # Primary path: use ChromaDB's native HNSW query (O(log N)).
+        # This avoids fetching all embeddings into memory.
+        try:
+            output = VectorStore._native_query(
+                self, collection, query_embedding, n_results, filter_dict
+            )
+            if output is not None:
+                return output[:top_k]
+        except Exception:  # 防御: 原生查询失败降级全量匹配
+            logger.debug("ChromaDB 原生 query 失败, 降级到全量 top-k", exc_info=True)
 
-                if embs:
-                    ranked = self._rust_top_k(query_embedding[0], embs, n_results)
-                    if ranked is not None:
-                        output = []
-                        for idx, score in ranked:
-                            output.append(
-                                {
-                                    "id": all_data["ids"][indices[idx]],
-                                    "document": docs[idx],
-                                    "metadata": metas[idx],
-                                    "distance": 1.0 - score,
-                                }
-                            )
-                        return output[:top_k]
-            except Exception:  # 防御: 兜底全量匹配失败回退空结果
-                logger.debug("全量 top-k fallback 失败", exc_info=True)
+        # Fallback: Rust-accelerated exact top-k over all stored embeddings.
+        # Only used when native query fails (e.g., HNSW index not built yet).
+        try:
+            output = VectorStore._exact_fallback(
+                self, collection, query_embedding, filter_dict, n_results
+            )
+            if output is not None:
+                return output[:top_k]
+        except Exception:  # 防御: 兜底全量匹配失败回退空结果
+            logger.debug("全量 top-k fallback 失败", exc_info=True)
 
-            return []
+        return []
 
-        else:
-            all_docs = collection.get(include=["documents", "metadatas"])
-            docs = all_docs.get("documents", [])
-            if not docs:
-                return []
-
-            scored = self._keyword_search(query, docs, top_k)
+    def _native_query(
+        self,
+        collection: Any,
+        query_embedding: list[list[float]],
+        n_results: int,
+        filter_dict: dict[str, Any] | None,
+    ) -> list[dict[str, Any]] | None:
+        results = collection.query(
+            query_embeddings=query_embedding,
+            n_results=n_results,
+            where=filter_dict,
+            include=["documents", "metadatas", "distances"],
+        )
+        if results["ids"] and results["ids"][0]:
             output = []
-            for idx, score in scored:
+            for i in range(len(results["ids"][0])):
                 output.append(
                     {
-                        "id": all_docs["ids"][idx],
-                        "document": docs[idx],
-                        "metadata": (
-                            all_docs["metadatas"][idx]
-                            if all_docs.get("metadatas")
-                            else {}
-                        ),
-                        "distance": 1.0 - score,
+                        "id": results["ids"][0][i],
+                        "document": results["documents"][0][i],
+                        "metadata": results["metadatas"][0][i],
+                        "distance": results["distances"][0][i],
                     }
                 )
             return output
+        return None
+
+    def _exact_fallback(
+        self,
+        collection: Any,
+        query_embedding: list[list[float]],
+        filter_dict: dict[str, Any] | None,
+        n_results: int,
+    ) -> list[dict[str, Any]] | None:
+        all_data = collection.get(include=["documents", "metadatas", "embeddings"])
+        docs = all_data.get("documents") or []
+        metas = all_data.get("metadatas") or [{}] * len(docs)
+        embs = all_data.get("embeddings") or []
+
+        indices = list(range(len(docs)))
+        if filter_dict:
+            indices = [
+                i for i in indices if self._matches_filter(metas[i], filter_dict)
+            ]
+            docs = [docs[i] for i in indices]
+            metas = [metas[i] for i in indices]
+            embs = [embs[i] for i in indices]
+
+        if embs:
+            ranked = self._rust_top_k(query_embedding[0], embs, n_results)
+            if ranked is not None:
+                output = []
+                for idx, score in ranked:
+                    output.append(
+                        {
+                            "id": all_data["ids"][indices[idx]],
+                            "document": docs[idx],
+                            "metadata": metas[idx],
+                            "distance": 1.0 - score,
+                        }
+                    )
+                return output
+        return None
+
+    def _search_keyword(
+        self, collection: Any, query: str, top_k: int
+    ) -> list[dict[str, Any]]:
+        all_docs = collection.get(include=["documents", "metadatas"])
+        docs = all_docs.get("documents", [])
+        if not docs:
+            return []
+
+        scored = self._keyword_search(query, docs, top_k)
+        output = []
+        for idx, score in scored:
+            output.append(
+                {
+                    "id": all_docs["ids"][idx],
+                    "document": docs[idx],
+                    "metadata": (
+                        all_docs["metadatas"][idx] if all_docs.get("metadatas") else {}
+                    ),
+                    "distance": 1.0 - score,
+                }
+            )
+        return output
 
     def delete(self, ids: list[str]) -> None:
         collection = self._get_collection()

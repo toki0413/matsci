@@ -45,19 +45,12 @@ class SymPyToLean:
     def _recurse(self, expr: sp.Expr) -> str:
         # 0. Matrix (must come first because Matrix is not an Expr and lacks is_Integer)
         if isinstance(expr, sp.Matrix):
-            rows = expr.tolist()
-            entries = ", ".join(
-                ", ".join(self._recurse(entry) for entry in row) for row in rows
-            )
-            return f"!![{entries}]"
+            return self._matrix_literal(expr)
 
         # 1. Numbers
-        if expr.is_Integer:
-            return str(int(expr))
-        if expr.is_Rational:
-            return f"({expr.p} / {expr.q})"
-        if expr.is_Float:
-            return str(float(expr))
+        number = self._number_literal(expr)
+        if number is not None:
+            return number
 
         # 2. Symbols
         if isinstance(expr, sp.Symbol):
@@ -89,30 +82,54 @@ class SymPyToLean:
 
         # 7. Derivative
         if isinstance(expr, sp.Derivative):
-            f = expr.args[0]
-            vars = expr.args[1:]
-            # deriv (deriv f x) y  for ∂²f/∂x∂y
-            result = self._recurse(f)
-            for v, count in vars:
-                for _ in range(count):
-                    result = f"deriv {result} {self._recurse(v)}"
-            return result
+            return self._derivative(expr)
 
         # 8. Integral (indefinite)
         if isinstance(expr, sp.Integral):
-            integrand, *limits = expr.args
-            result = self._recurse(integrand)
-            for lim in limits:
-                if len(lim) == 1:
-                    var = lim[0]
-                    result = f"∫ {self._recurse(var)}, {result}"
-                elif len(lim) == 3:
-                    var, a, b = lim
-                    result = f"∫ ({self._recurse(a)}) ({self._recurse(b)}) (fun {self._recurse(var)} => {result})"
-            return result
+            return self._integral(expr)
 
         # Fallback
         return f"«{str(expr)}»"
+
+    @staticmethod
+    def _number_literal(expr: sp.Expr) -> str | None:
+        """Render integer / rational / float literals, or None if not numeric."""
+        if expr.is_Integer:
+            return str(int(expr))
+        if expr.is_Rational:
+            return f"({expr.p} / {expr.q})"
+        if expr.is_Float:
+            return str(float(expr))
+        return None
+
+    def _matrix_literal(self, expr: sp.Matrix) -> str:
+        rows = expr.tolist()
+        entries = ", ".join(
+            ", ".join(self._recurse(entry) for entry in row) for row in rows
+        )
+        return f"!![{entries}]"
+
+    def _derivative(self, expr: sp.Derivative) -> str:
+        f = expr.args[0]
+        vars = expr.args[1:]
+        # deriv (deriv f x) y  for ∂²f/∂x∂y
+        result = self._recurse(f)
+        for v, count in vars:
+            for _ in range(count):
+                result = f"deriv {result} {self._recurse(v)}"
+        return result
+
+    def _integral(self, expr: sp.Integral) -> str:
+        integrand, *limits = expr.args
+        result = self._recurse(integrand)
+        for lim in limits:
+            if len(lim) == 1:
+                var = lim[0]
+                result = f"∫ {self._recurse(var)}, {result}"
+            elif len(lim) == 3:
+                var, a, b = lim
+                result = f"∫ ({self._recurse(a)}) ({self._recurse(b)}) (fun {self._recurse(var)} => {result})"
+        return result
 
     def _sanitize_name(self, name: str) -> str:
         """Make a SymPy symbol name valid as a Lean 4 identifier."""

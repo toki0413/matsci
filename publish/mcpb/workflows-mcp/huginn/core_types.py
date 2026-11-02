@@ -43,6 +43,23 @@ class RiskLevel(StrEnum):
     CRITICAL = "critical"
 
 
+class AuthorizationStrength(StrEnum):
+    """授权强度 — 移植自 dsh 的 ``explicit`` / ``inferred`` 两档, 外加 ``ignore``.
+
+    为什么单列: ``PermissionMode`` 只回答"能不能跑", 不回答"谁批的、凭什么".
+    同一个 AUTO, 可能是只读工具的策略推断, 也可能是人点了确认; 审计与后续
+    再验证必须区分, 否则"自动放行"会悄悄获得人类批准才有的效力.
+
+    IGNORE: 未授权 (DENY / 待审批), 不可执行.
+    INFERRED: 策略推断放行 (只读规则 / 信任自适应 / auto_approve_all), 无人类证据.
+    EXPLICIT: 人类显式批准 (交互确认 / 常驻授权), 可跨会话复用.
+    """
+
+    IGNORE = "ignore"
+    INFERRED = "inferred"
+    EXPLICIT = "explicit"
+
+
 class BudgetDecision(Enum):
     ALLOW = "allow"
     WARN = "warn"
@@ -83,6 +100,8 @@ class PermissionResult:
     risk_level: RiskLevel = RiskLevel.LOW
     cost_hours: float | None = None
     matched_rules: list[str] = field(default_factory=list)
+    # 授权强度: 与 mode 正交 (AUTO+INFERRED 是策略推断, AUTO+EXPLICIT 是人批的).
+    strength: AuthorizationStrength = AuthorizationStrength.INFERRED
 
 
 @dataclass

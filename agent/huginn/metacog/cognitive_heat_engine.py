@@ -55,6 +55,39 @@ __all__ = [
 ]
 
 
+def _assess_status(eta, re, kur, t_hot, t_cold, re_crit):
+    warnings: list[str] = []
+    status = "healthy"
+
+    # η 接近 1 + T_hot 高 = 想象力失控 (混沌)
+    if eta > 0.9 and t_hot > 0.7:
+        status = "chaotic"
+        warnings.append(
+            f"η_cog={eta:.2f} 接近 1 + T_hot={t_hot:.2f} 高: "
+            "想象力产熵但 paradigm 秩序度低, 可能空想"
+        )
+    # η 接近 0 + Re_cog 低 = paradigm 太紧 (保守)
+    elif eta < 0.1 and re < re_crit:
+        status = "conservative"
+        warnings.append(
+            f"η_cog={eta:.2f} 低 + Re_cog={re:.2f} 低: paradigm 约束太紧, 想象力被压制"
+        )
+    # η 负 = T_cold > T_hot, validation 比 hypothesis 还有序 (异常)
+    elif eta < 0:
+        status = "stagnant"
+        warnings.append(
+            f"η_cog={eta:.2f} 负: T_cold={t_cold:.2f} > T_hot={t_hot:.2f}, "
+            "validation 提取的有序超过 hypothesis 产熵, 可能停滞"
+        )
+
+    # 间歇性爆发检测
+    if kur > 3.0:
+        warnings.append(
+            f"intermittency kurtosis={kur:.2f} > 3: 想象力间歇性爆发 (burst 模式)"
+        )
+    return status, warnings
+
+
 @dataclass
 class CognitiveHeatEngine:
     """认知热机状态 — 0 维代理量.
@@ -220,36 +253,9 @@ class CognitiveHeatEngine:
             eta = self.eta_cog
             re = self.Re_cog
             kur = self.intermittency_kurtosis()
-            warnings: list[str] = []
-            status = "healthy"
-
-            # η 接近 1 + T_hot 高 = 想象力失控 (混沌)
-            if eta > 0.9 and self.T_hot > 0.7:
-                status = "chaotic"
-                warnings.append(
-                    f"η_cog={eta:.2f} 接近 1 + T_hot={self.T_hot:.2f} 高: "
-                    "想象力产熵但 paradigm 秩序度低, 可能空想"
-                )
-            # η 接近 0 + Re_cog 低 = paradigm 太紧 (保守)
-            elif eta < 0.1 and re < self.Re_crit:
-                status = "conservative"
-                warnings.append(
-                    f"η_cog={eta:.2f} 低 + Re_cog={re:.2f} 低: "
-                    "paradigm 约束太紧, 想象力被压制"
-                )
-            # η 负 = T_cold > T_hot, validation 比 hypothesis 还有序 (异常)
-            elif eta < 0:
-                status = "stagnant"
-                warnings.append(
-                    f"η_cog={eta:.2f} 负: T_cold={self.T_cold:.2f} > T_hot={self.T_hot:.2f}, "
-                    "validation 提取的有序超过 hypothesis 产熵, 可能停滞"
-                )
-
-            # 间歇性爆发检测
-            if kur > 3.0:
-                warnings.append(
-                    f"intermittency kurtosis={kur:.2f} > 3: 想象力间歇性爆发 (burst 模式)"
-                )
+            status, warnings = _assess_status(
+                eta, re, kur, self.T_hot, self.T_cold, self.Re_crit
+            )
 
             return {
                 "eta_cog": round(eta, 3),
@@ -262,7 +268,9 @@ class CognitiveHeatEngine:
                 "nu": round(self.nu, 3),
                 "intermittency_kurtosis": round(kur, 3),
                 "cumulative_work": round(self.cumulative_work, 3),
-                "cumulative_entropy_produced": round(self.cumulative_entropy_produced, 3),
+                "cumulative_entropy_produced": round(
+                    self.cumulative_entropy_produced, 3
+                ),
                 "status": status,
                 "warnings": warnings,
             }
@@ -315,6 +323,7 @@ def get_heat_engine() -> CognitiveHeatEngine:
 
 # ── self-check ────────────────────────────────────────────────
 
+
 def _self_check() -> None:
     """ponytail: 非平凡逻辑留一个 runnable check."""
     eng = CognitiveHeatEngine()
@@ -325,7 +334,9 @@ def _self_check() -> None:
     assert 0.74 < eng.eta_cog < 0.76, f"η_cog 应该 0.75, 实际 {eng.eta_cog}"
 
     # 2. Reynolds 数计算
-    eng.update_kinematics(idea_count=10, stable_principles_count=3, system_prompt_len=2000)
+    eng.update_kinematics(
+        idea_count=10, stable_principles_count=3, system_prompt_len=2000
+    )
     # U=10, L=3, ν=2.0 → Re=15
     assert 14.9 < eng.Re_cog < 15.1, f"Re_cog 应该 15, 实际 {eng.Re_cog}"
 
@@ -354,6 +365,12 @@ def _self_check() -> None:
     h4 = eng4.health_check()
     assert h4["status"] == "conservative", f"应该 conservative, 实际 {h4['status']}"
 
+    _check_intermittency()
+
+    print("CognitiveHeatEngine self-check: 8/8 PASSED")
+
+
+def _check_intermittency() -> None:
     # 7. 间歇性 kurtosis (匀速 → ~0)
     eng5 = CognitiveHeatEngine()
     eng5.idea_history = [5] * 10
@@ -363,8 +380,6 @@ def _self_check() -> None:
     eng6 = CognitiveHeatEngine()
     eng6.idea_history = [0, 0, 0, 0, 0, 0, 0, 0, 0, 10]
     assert eng6.intermittency_kurtosis() > 1.0, "爆发 kurtosis 应该 >1"
-
-    print("CognitiveHeatEngine self-check: 8/8 PASSED")
 
 
 if __name__ == "__main__":

@@ -232,9 +232,7 @@ def test_recover_marks_running_orphaned_and_keeps_queued(tmp_path):
 # ── Test 7: current-mode recover rebuilds concurrent budget ────────────────
 
 
-def test_recover_rebuilds_current_budget(tmp_path):
-    db = tmp_path / "campaigns.sqlite"
-    store = SqliteCampaignStore(db)
+def _seed_current_budget_jobs(store) -> None:
     from huginn.persistence.campaign import JobRecord
 
     # A heavy GPU job was admitted then the process crashed; its remote compute
@@ -261,6 +259,12 @@ def test_recover_rebuilds_current_budget(tmp_path):
             queue_position=0,
         )
     )
+
+
+def test_recover_rebuilds_current_budget(tmp_path):
+    db = tmp_path / "campaigns.sqlite"
+    store = SqliteCampaignStore(db)
+    _seed_current_budget_jobs(store)
 
     s2 = ToolScheduler(
         store=store,

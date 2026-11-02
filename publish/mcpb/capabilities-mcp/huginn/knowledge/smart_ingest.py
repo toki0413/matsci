@@ -26,11 +26,401 @@ _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp"}
 _DATA_SUFFIXES = {".csv", ".json", ".jsonl", ".tsv"}
 _TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".rst", ".log"}
 # 压缩包格式 — 解压后递归摄入每个文件
-_ARCHIVE_SUFFIXES = {".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".gz", ".7z", ".rar"}
+_ARCHIVE_SUFFIXES = {
+    ".zip",
+    ".tar",
+    ".tar.gz",
+    ".tgz",
+    ".tar.bz2",
+    ".tbz2",
+    ".gz",
+    ".7z",
+    ".rar",
+}
 _STRUCTURE_SUFFIXES = {".cif", ".poscar", ".contcar", ".vasp"}
 
 # PDF 文本量低于这个阈值认为是扫描件, 走 OCR
 _PDF_OCR_THRESHOLD = 100
+
+# 压缩包内单文件上限, 防解压炸弹
+_ARCHIVE_MAX_FILE_BYTES = 100 * 1024 * 1024
+
+
+def _archive_error(message: str) -> dict[str, Any]:
+    """压缩包相关的失败结果."""
+    return {"doc_id": "", "smart_ingest": False, "error": message}
+
+
+def _extract_gzip(
+    archive_file: Path, extract_dir: Path, filename: str
+) -> dict[str, Any] | None:
+    """单文件 .gz: 解压成同名去掉 .gz 的文件."""
+    import gzip
+
+    out_name = Path(filename).stem  # remove .gz
+    # 校验解压目标路径仍在 extract_dir 内 (防 ../evil)
+    out_path = (extract_dir / out_name).resolve()
+    try:
+        out_path.relative_to(extract_dir.resolve())
+    except ValueError:
+        return _archive_error(f"unsafe gz output path: {out_name}")
+    with gzip.open(archive_file, "rb") as gz:
+        out_path.write_bytes(gz.read())
+    return None
+
+
+def _extract_7z(archive_file: Path, extract_dir: Path) -> dict[str, Any] | None:
+    """7z 解压 (需要 py7zr)."""
+    try:
+        import py7zr
+    except ImportError:
+        return _archive_error("7z files require py7zr: pip install py7zr")
+    # py7zr ≥0.7 内部用 Path.is_relative_to 拒绝越界路径;
+    # bandit B202 看不到这点, 用 nosec 标记误报.
+    with py7zr.SevenZipFile(archive_file, "r") as sz:
+        sz.extractall(path=extract_dir)  # nosec B202
+    return None
+
+
+def _extract_rar(archive_file: Path, extract_dir: Path) -> dict[str, Any] | None:
+    """rar 解压 (需要 rarfile + unrar)."""
+    try:
+        import rarfile
+    except ImportError:
+        return _archive_error("rar files require rarfile: pip install rarfile")
+    # rarfile 调外部 unrar 二进制解压, unrar 自身会截断绝对路径和 .. 段;
+    # bandit B202 误报, nosec 标记.
+    with rarfile.RarFile(archive_file) as rf:
+        rf.extractall(path=extract_dir)  # nosec B202
+    return None
+
+
+def _dispatch_extract(
+    archive_file: Path, extract_dir: Path, filename: str
+) -> dict[str, Any] | None:
+    """按后缀选择解压方式; 成功返回 None, 失败返回错误结果 dict."""
+    import tarfile
+    import zipfile
+
+    from huginn.utils.archive_safety import safe_archive_extract
+
+    lower = filename.lower()
+    if lower.endswith(".zip"):
+        with zipfile.ZipFile(archive_file, "r") as zf:
+            safe_archive_extract(zf, extract_dir)
+        return None
+    if lower.endswith((".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar")):
+        mode = (
+            "r:gz"
+            if lower.endswith((".tar.gz", ".tgz"))
+            else "r:bz2"
+            if lower.endswith((".tar.bz2", ".tbz2"))
+            else "r:"
+        )
+        with tarfile.open(archive_file, mode) as tf:
+            safe_archive_extract(tf, extract_dir)
+        return None
+    if lower.endswith(".gz"):
+        return _extract_gzip(archive_file, extract_dir, filename)
+    if lower.endswith(".7z"):
+        return _extract_7z(archive_file, extract_dir)
+    if lower.endswith(".rar"):
+        return _extract_rar(archive_file, extract_dir)
+    return _archive_error(f"unsupported archive format: {filename}")
+
+
+def _extract_archive(
+    archive_file: Path, extract_dir: Path, filename: str
+) -> dict[str, Any] | None:
+    """解压归档; 任何异常都收敛成错误结果 dict (成功返回 None)."""
+    try:
+        return _dispatch_extract(archive_file, extract_dir, filename)
+    except Exception as exc:
+        return _archive_error(f"archive extraction failed: {exc}")
+
+
+async def _ingest_archive_files(
+    ingester: Any, extract_dir: Path
+) -> tuple[list[dict[str, Any]], int, int]:
+    """递归摄入解压出来的每个文件, 返回 (结果列表, 文件数, chunk 数)."""
+    results: list[dict[str, Any]] = []
+    total_files = 0
+    total_chunks = 0
+
+    for inner_file in sorted(extract_dir.rglob("*")):
+        if not inner_file.is_file():
+            continue
+        # 跳过隐藏文件和 __MACOSX 等
+        if any(part.startswith(".") or part == "__MACOSX" for part in inner_file.parts):
+            continue
+        try:
+            inner_content = inner_file.read_bytes()
+            # 限制单文件大小防止解压炸弹
+            if len(inner_content) > _ARCHIVE_MAX_FILE_BYTES:
+                logger.warning(
+                    "skip oversized file in archive: %s (%d bytes)",
+                    inner_file.name,
+                    len(inner_content),
+                )
+                continue
+            inner_result = await ingester.ingest(inner_file.name, inner_content)
+            results.append(inner_result)
+            total_files += 1
+            total_chunks += inner_result.get("n_chunks", 0)
+        except Exception as exc:
+            logger.warning("failed to ingest %s from archive: %s", inner_file.name, exc)
+            results.append({"filename": inner_file.name, "error": str(exc)})
+
+    return results, total_files, total_chunks
+
+
+def _aggregate_structure_chunks(
+    chunks: list[Any],
+) -> tuple[list[str], dict[str, Any], str]:
+    """聚合 StructureChunker 输出: (文本列表, structure_info, format)."""
+    all_texts: list[str] = []
+    structure_info: dict[str, Any] = {}
+    fmt = ""
+    for chunk in chunks:
+        all_texts.append(chunk.text if hasattr(chunk, "text") else str(chunk))
+        cmeta = getattr(chunk, "metadata", {}) or {}
+        si = cmeta.get("structure_info")
+        if isinstance(si, dict):
+            structure_info.update(si)
+        if not fmt:
+            fmt = cmeta.get("format", "")
+    return all_texts, structure_info, fmt
+
+
+def _structure_ingest_meta(fmt: str, structure_info: dict[str, Any]) -> dict[str, Any]:
+    """结构文件入库的 extra_metadata."""
+    meta: dict[str, Any] = {
+        "source": "smart_ingest",
+        "file_type": "structure",
+        "element_type": "structure",
+    }
+    if fmt:
+        meta["format"] = fmt
+    if structure_info:
+        meta["structure_info"] = structure_info
+    return meta
+
+
+def _pdf_page_texts(doc: Any) -> list[str]:
+    """逐页抽文本."""
+    text_parts: list[str] = []
+    for page in doc:
+        page_text = page.get_text()
+        if page_text:
+            text_parts.append(page_text)
+    return text_parts
+
+
+def _pdf_ocr_fallback(text_parts: list[str], filename: str, content: bytes) -> None:
+    """文本太少 → 扫描件, 把 OCR 文本插到最前面."""
+    if len("\n".join(text_parts).strip()) >= _PDF_OCR_THRESHOLD:
+        return
+    from huginn.knowledge.ocr_loader import extract_text_with_ocr
+
+    ocr_text = extract_text_with_ocr(filename, content)
+    if ocr_text.strip():
+        text_parts.insert(0, f"[OCR]\n{ocr_text}")
+
+
+def _compressed_page_dir(filename: str) -> tuple[Path, str]:
+    """压缩页存图目录 (跟 runtime home 一致) + 安全文件名."""
+    from huginn.utils.runtime import get_runtime_home
+
+    out_dir = get_runtime_home() / "compressed_pages"
+    safe_name = Path(filename).stem.replace(" ", "_")[:40] or "doc"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir, safe_name
+
+
+def _compressed_page_result(
+    page: Any, page_idx: int, out_dir: Path, safe_name: str
+) -> dict[str, Any] | None:
+    """单页: 判定压缩页 → 整页渲染 PNG → LLM 解读生成 structured 字段."""
+    from huginn.knowledge.ocr_loader import _llm_ocr_image
+
+    page_text = page.get_text() or ""
+    if not SmartIngester._is_visual_compression_page(page_text):
+        return None
+
+    # 整页渲染成 PNG
+    pix = page.get_pixmap(dpi=200)
+    img_bytes = pix.tobytes("png")
+    img_path = out_dir / f"{safe_name}_p{page_idx}.png"
+    img_path.write_bytes(img_bytes)
+
+    # LLM 解读生成 structured markdown
+    import io as _io
+
+    from PIL import Image
+
+    pil_img = Image.open(_io.BytesIO(img_bytes))
+    decoded = _llm_ocr_image(pil_img, hint="compress_page")
+    if not decoded:
+        decoded = f"[压缩页 {page_idx + 1}]\n{page_text[:500]}"
+    return {
+        "page": page_idx,
+        "image_path": str(img_path),
+        "text": decoded,
+        "structured": decoded[:2000],  # 截断, metadata 不宜太大
+    }
+
+
+def _pdf_store_compressed_pages(
+    kb: Any,
+    filename: str,
+    compressed_pages: list[dict[str, Any]],
+    parent_doc_id: str,
+) -> None:
+    """压缩页作为独立 chunk 入库, 带 image_ref + structured metadata."""
+    for cp in compressed_pages:
+        try:
+            kb.add_text(
+                cp["text"],
+                filename=f"{filename}_page{cp['page']}.compressed.md",
+                metadata={
+                    "source": "smart_ingest",
+                    "file_type": "compressed_page",
+                    "image_ref": cp["image_path"],
+                    "parent_doc_id": parent_doc_id,
+                    "structured": cp.get("structured", ""),
+                    "page": cp["page"],
+                },
+            )
+        except Exception:
+            logger.debug("compressed page ingest failed", exc_info=True)
+
+
+def _column_values(data_rows: list[list[str]], col_idx: int) -> list[float]:
+    """取一列前 200 行里能解析成 float 的值."""
+    values: list[float] = []
+    for row in data_rows[:200]:
+        if col_idx < len(row):
+            try:
+                values.append(float(row[col_idx]))
+            except (ValueError, TypeError):
+                logger.debug("best-effort op failed", exc_info=True)
+                continue
+    return values
+
+
+def _csv_dtypes(header: list[str], data_rows: list[list[str]]) -> dict[str, str]:
+    """推断每列类型: 扫前 50 行, 看 int/float/str."""
+    dtypes: dict[str, str] = {}
+    for col_idx, col_name in enumerate(header):
+        dtypes[col_name] = SmartIngester._infer_column_type(
+            data_rows, col_idx, limit=50
+        )
+    return dtypes
+
+
+def _csv_numeric_stats(
+    header: list[str], data_rows: list[list[str]], dtypes: dict[str, str]
+) -> dict[str, Any]:
+    """数值列做简单统计 (min/max/mean)."""
+    stats: dict[str, Any] = {}
+    for col_idx, col_name in enumerate(header):
+        if dtypes[col_name] != "number":
+            continue
+        values = _column_values(data_rows, col_idx)
+        if values:
+            stats[col_name] = {
+                "min": min(values),
+                "max": max(values),
+                "mean": sum(values) / len(values),
+                "count": len(values),
+            }
+    return stats
+
+
+def _csv_summary_lines(
+    data_rows: list[list[str]],
+    columns: list[str],
+    dtypes: dict[str, str],
+    stats: dict[str, Any],
+) -> list[str]:
+    """CSV 摘要行 (markdown 列表)."""
+    summary = [
+        "- 文件类型: CSV",
+        f"- 行数 (不含表头): {len(data_rows)}",
+        f"- 列数: {len(columns)}",
+        f"- 列名: {', '.join(columns)}",
+        f"- 列类型: {dtypes}",
+    ]
+    if stats:
+        summary.append("- 数值统计:")
+        for col, s in stats.items():
+            summary.append(
+                f"  - {col}: min={s['min']:.4g}, max={s['max']:.4g}, "
+                f"mean={s['mean']:.4g} (n={s['count']})"
+            )
+    return summary
+
+
+def _jsonl_records(text: str) -> list[dict]:
+    """逐行解析 JSONL, 跳过空行与坏行."""
+    import json
+
+    records: list[dict] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            logger.debug("best-effort op failed", exc_info=True)
+            continue
+        if isinstance(obj, dict):
+            records.append(obj)
+    return records
+
+
+def _jsonl_columns(records: list[dict]) -> tuple[list[str], dict[str, str]]:
+    """合并所有 key 作为列, 用第一条记录推断类型."""
+    key_set: dict[str, None] = {}
+    for rec in records:
+        for k in rec:
+            key_set.setdefault(k, None)
+    columns = list(key_set.keys())
+    dtypes = {
+        col: SmartIngester._python_type_name(records[0].get(col)) for col in columns
+    }
+    return columns, dtypes
+
+
+def _json_columns(obj: Any) -> tuple[int, list[str], dict[str, str]]:
+    """非 JSONL: 返回 (行数, 列名, 类型)."""
+    if isinstance(obj, list):
+        rows = len(obj)
+        if obj and isinstance(obj[0], dict):
+            columns = list(obj[0].keys())
+            dtypes = {
+                col: SmartIngester._python_type_name(obj[0].get(col)) for col in columns
+            }
+            return rows, columns, dtypes
+        return rows, [], {}
+    if isinstance(obj, dict):
+        columns = list(obj.keys())
+        dtypes = {col: SmartIngester._python_type_name(obj.get(col)) for col in columns}
+        return 1, columns, dtypes
+    return 1, ["value"], {"value": SmartIngester._python_type_name(obj)}
+
+
+def _json_summary_lines(
+    is_jsonl: bool, rows: int, columns: list[str], dtypes: dict[str, str]
+) -> list[str]:
+    """JSON/JSONL 摘要行."""
+    return [
+        f"- 文件类型: {'JSONL' if is_jsonl else 'JSON'}",
+        f"- 记录数: {rows}",
+        f"- 字段: {', '.join(columns) if columns else '(无)'}",
+        f"- 字段类型: {dtypes}",
+    ]
 
 
 class SmartIngester:
@@ -59,7 +449,9 @@ class SmartIngester:
         if lower_name.endswith((".tar.gz", ".tar.bz2")):
             suffix = "." + ".".join(lower_name.rsplit(".", 2)[-2:])
         try:
-            if suffix in _ARCHIVE_SUFFIXES or lower_name.endswith((".tar.gz", ".tar.bz2")):
+            if suffix in _ARCHIVE_SUFFIXES or lower_name.endswith(
+                (".tar.gz", ".tar.bz2")
+            ):
                 return await self.ingest_archive(filename, content)
             if suffix in _IMAGE_SUFFIXES:
                 return await self.ingest_image(filename, content)
@@ -88,14 +480,6 @@ class SmartIngester:
         支持 zip, tar.gz, tar.bz2, tar. 7z/rar 在有对应工具时也支持.
         这是 loop-of-loops: archive → files → each file is its own ingest loop.
         """
-        import tarfile
-        import tempfile
-        import zipfile
-
-        results: list[dict[str, Any]] = []
-        total_files = 0
-        total_chunks = 0
-
         with tempfile.TemporaryDirectory(prefix="huginn_archive_") as tmpdir:
             tmp_path = Path(tmpdir)
             archive_file = tmp_path / filename
@@ -104,79 +488,14 @@ class SmartIngester:
             extract_dir = tmp_path / "extracted"
             extract_dir.mkdir()
 
-            from huginn.utils.archive_safety import safe_archive_extract
-
-            lower = filename.lower()
-            try:
-                if lower.endswith(".zip"):
-                    with zipfile.ZipFile(archive_file, "r") as zf:
-                        safe_archive_extract(zf, extract_dir)
-                elif lower.endswith((".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar")):
-                    mode = "r:gz" if lower.endswith((".tar.gz", ".tgz")) else \
-                           "r:bz2" if lower.endswith((".tar.bz2", ".tbz2")) else "r:"
-                    with tarfile.open(archive_file, mode) as tf:
-                        safe_archive_extract(tf, extract_dir)
-                elif lower.endswith(".gz"):
-                    import gzip
-                    out_name = Path(filename).stem  # remove .gz
-                    # 校验解压目标路径仍在 extract_dir 内 (防 ../evil)
-                    out_path = (extract_dir / out_name).resolve()
-                    try:
-                        out_path.relative_to(extract_dir.resolve())
-                    except ValueError:
-                        return {"doc_id": "", "smart_ingest": False,
-                                "error": f"unsafe gz output path: {out_name}"}
-                    with gzip.open(archive_file, "rb") as gz:
-                        out_path.write_bytes(gz.read())
-                elif lower.endswith(".7z"):
-                    try:
-                        import py7zr
-                        # py7zr ≥0.7 内部用 Path.is_relative_to 拒绝越界路径;
-                        # bandit B202 看不到这点, 用 nosec 标记误报.
-                        with py7zr.SevenZipFile(archive_file, "r") as sz:
-                            sz.extractall(path=extract_dir)  # nosec B202
-                    except ImportError:
-                        return {"doc_id": "", "smart_ingest": False,
-                                "error": "7z files require py7zr: pip install py7zr"}
-                elif lower.endswith(".rar"):
-                    try:
-                        import rarfile
-                        # rarfile 调外部 unrar 二进制解压, unrar 自身会
-                        # 截断绝对路径和 .. 段; bandit B202 误报, nosec 标记.
-                        with rarfile.RarFile(archive_file) as rf:
-                            rf.extractall(path=extract_dir)  # nosec B202
-                    except ImportError:
-                        return {"doc_id": "", "smart_ingest": False,
-                                "error": "rar files require rarfile: pip install rarfile"}
-                else:
-                    return {"doc_id": "", "smart_ingest": False,
-                            "error": f"unsupported archive format: {filename}"}
-            except Exception as exc:
-                return {"doc_id": "", "smart_ingest": False,
-                        "error": f"archive extraction failed: {exc}"}
+            error = _extract_archive(archive_file, extract_dir, filename)
+            if error is not None:
+                return error
 
             # 递归摄入每个文件 — 这就是内层 loop
-            for inner_file in sorted(extract_dir.rglob("*")):
-                if not inner_file.is_file():
-                    continue
-                # 跳过隐藏文件和 __MACOSX 等
-                if any(part.startswith(".") or part == "__MACOSX" for part in inner_file.parts):
-                    continue
-                try:
-                    inner_content = inner_file.read_bytes()
-                    # 限制单文件 100MB 防止解压炸弹
-                    if len(inner_content) > 100 * 1024 * 1024:
-                        logger.warning("skip oversized file in archive: %s (%d bytes)",
-                                       inner_file.name, len(inner_content))
-                        continue
-                    inner_result = await self.ingest(inner_file.name, inner_content)
-                    results.append(inner_result)
-                    total_files += 1
-                    total_chunks += inner_result.get("n_chunks", 0)
-                except Exception as exc:
-                    logger.warning("failed to ingest %s from archive: %s",
-                                   inner_file.name, exc)
-                    results.append({"filename": inner_file.name, "error": str(exc)})
+            results, total_files, total_chunks = await _ingest_archive_files(
+                self, extract_dir
+            )
 
         return {
             "doc_id": f"archive:{filename}",
@@ -196,46 +515,24 @@ class SmartIngester:
         晶格参数、原子坐标, 生成结构化摘要. 这比直接 UTF-8 入库信息密度高."""
         try:
             from huginn.knowledge.chunker import StructureChunker
+
             text = content.decode("utf-8", errors="ignore")
             # 之前是 `StructureChunker.chunk(text, filename=filename)` — 类上未绑定的
-            # async 方法, 没实例化也没 await, 返回 coroutine. coroutine 是 truthy,
-            # `if not chunks` 永远 False, 进 for 循环拿 chunk.text 抛 AttributeError
-            # 被 except 兜底退回 ingest_text, CIF/POSCAR 结构化分块静默失效.
+            # async 方法, 返回 coroutine (truthy), 进 for 循环抛 AttributeError 被
+            # except 兜底退回 ingest_text, CIF/POSCAR 结构化分块静默失效.
             chunks = await StructureChunker().chunk(text, filename=filename)
             if not chunks:
                 # StructureChunker 无法解析, 退回普通文本摄入
                 return await self.ingest_text(filename, content)
 
-            # 把结构化摘要 + 原始文本都入库
-            # 聚合 StructureChunker 抽出的 structure_info (空间群/晶格/原子数),
-            # 之前直接 add_document 会被内部二次分块默默丢掉 — 现在走 extra_metadata 透传
-            all_texts: list[str] = []
-            structure_info: dict[str, Any] = {}
-            fmt = ""
-            for chunk in chunks:
-                all_texts.append(chunk.text if hasattr(chunk, "text") else str(chunk))
-                cmeta = getattr(chunk, "metadata", {}) or {}
-                si = cmeta.get("structure_info")
-                if isinstance(si, dict):
-                    structure_info.update(si)
-                if not fmt:
-                    fmt = cmeta.get("format", "")
-
-            combined = f"# Structure: {filename}\n\n"
-            combined += "\n\n---\n\n".join(all_texts)
-
-            ingest_meta: dict[str, Any] = {
-                "source": "smart_ingest",
-                "file_type": "structure",
-                "element_type": "structure",
-            }
-            if fmt:
-                ingest_meta["format"] = fmt
-            if structure_info:
-                ingest_meta["structure_info"] = structure_info
-
+            # 结构化摘要 + 原始文本都入库; structure_info 走 extra_metadata 透传,
+            # 否则会被 add_document 内部二次分块默默丢掉
+            all_texts, structure_info, fmt = _aggregate_structure_chunks(chunks)
+            combined = f"# Structure: {filename}\n\n" + "\n\n---\n\n".join(all_texts)
             result = self.kb.add_document(
-                filename, combined.encode("utf-8"), extra_metadata=ingest_meta
+                filename,
+                combined.encode("utf-8"),
+                extra_metadata=_structure_ingest_meta(fmt, structure_info),
             )
             result["smart_ingest"] = True
             result["structure_aware"] = True
@@ -324,7 +621,9 @@ class SmartIngester:
             actions.append(("sem_analysis", {}))
         elif any(kw in name_lower for kw in ("tem", "hrtem", "stem")):
             actions.append(("tem_lattice", {}))
-        elif any(kw in name_lower for kw in ("xrd", "plot", "curve", "chart", "spectr")):
+        elif any(
+            kw in name_lower for kw in ("xrd", "plot", "curve", "chart", "spectr")
+        ):
             actions.append(("plot_extract", {}))
         else:
             # 拿不准: 图表提取和 SEM 各试一次, 谁成功用谁
@@ -384,7 +683,9 @@ class SmartIngester:
             lines.append(f"\n## {action}\n")
             try:
                 lines.append("```json")
-                lines.append(json.dumps(data, ensure_ascii=False, indent=2, default=str))
+                lines.append(
+                    json.dumps(data, ensure_ascii=False, indent=2, default=str)
+                )
                 lines.append("```")
             except Exception:
                 lines.append(str(data))
@@ -412,22 +713,10 @@ class SmartIngester:
         doc = None
         try:
             doc = fitz.open(stream=content, filetype="pdf")
-            for page in doc:
-                page_text = page.get_text()
-                if page_text:
-                    text_parts.append(page_text)
-
-            # 文本太少 -> 扫描件, 走 OCR
-            if len("\n".join(text_parts).strip()) < _PDF_OCR_THRESHOLD:
-                from huginn.knowledge.ocr_loader import extract_text_with_ocr
-
-                ocr_text = extract_text_with_ocr(filename, content)
-                if ocr_text.strip():
-                    text_parts.insert(0, f"[OCR]\n{ocr_text}")
-
+            text_parts = _pdf_page_texts(doc)
+            _pdf_ocr_fallback(text_parts, filename, content)
             # 视觉压缩页: 公式/表格密集页整页存图 + LLM 解读
             compressed_pages = await self._compress_visual_pages(doc, filename)
-
             # 提取内嵌图片, 每张跑一次图像摄入 (OCR + CV 分析)
             if self.image_analysis_tool is not None:
                 images_analyzed = await self._extract_and_ingest_pdf_images(doc)
@@ -442,24 +731,9 @@ class SmartIngester:
             filename=f"{filename}.txt",
             metadata={"source": "smart_ingest", "file_type": "pdf"},
         )
-
-        # 压缩页作为独立 chunk 入库, 带 image_ref + structured metadata
-        for cp in compressed_pages:
-            try:
-                self.kb.add_text(
-                    cp["text"],
-                    filename=f"{filename}_page{cp['page']}.compressed.md",
-                    metadata={
-                        "source": "smart_ingest",
-                        "file_type": "compressed_page",
-                        "image_ref": cp["image_path"],
-                        "parent_doc_id": info.get("doc_id", ""),
-                        "structured": cp.get("structured", ""),
-                        "page": cp["page"],
-                    },
-                )
-            except Exception:
-                logger.debug("compressed page ingest failed", exc_info=True)
+        _pdf_store_compressed_pages(
+            self.kb, filename, compressed_pages, info.get("doc_id", "")
+        )
 
         return {
             "doc_id": info.get("doc_id", ""),
@@ -478,7 +752,7 @@ class SmartIngester:
         压缩. LLM 解码生成 structured 字段 (公式/表格/图注), 让检索时既能看图又能读结构.
         ponytail: 只处理识别为压缩页的, 不全页处理. 升级: 所有页都走视觉压缩.
         """
-        from huginn.knowledge.ocr_loader import _llm_ocr_image, llm_vision_available
+        from huginn.knowledge.ocr_loader import llm_vision_available
 
         results: list[dict[str, Any]] = []
         # 双重门控: 构造时显式关闭 或 运行时无多模态 LLM → 跳过整页视觉压缩.
@@ -490,46 +764,17 @@ class SmartIngester:
         except ImportError:
             return results
 
-        # 压缩页存图目录 — 跟 runtime home 一致, 不依赖 SmartIngester 的 workspace 属性
-        try:
-            from huginn.utils.runtime import get_runtime_home
-            out_dir = get_runtime_home() / "compressed_pages"
-        except Exception:
-            out_dir = get_runtime_home() / "compressed_pages"
-        safe_name = Path(filename).stem.replace(" ", "_")[:40] or "doc"
-        out_dir.mkdir(parents=True, exist_ok=True)
-
+        out_dir, safe_name = _compressed_page_dir(filename)
         for page_idx in range(len(doc)):
             try:
-                page = doc[page_idx]
-                page_text = page.get_text() or ""
-
-                if not self._is_visual_compression_page(page_text):
-                    continue
-
-                # 整页渲染成 PNG
-                pix = page.get_pixmap(dpi=200)
-                img_bytes = pix.tobytes("png")
-                img_path = out_dir / f"{safe_name}_p{page_idx}.png"
-                img_path.write_bytes(img_bytes)
-
-                # LLM 解读生成 structured markdown
-                import io as _io
-
-                from PIL import Image
-                pil_img = Image.open(_io.BytesIO(img_bytes))
-                decoded = _llm_ocr_image(pil_img, hint="compress_page")
-                if not decoded:
-                    decoded = f"[压缩页 {page_idx + 1}]\n{page_text[:500]}"
-
-                results.append({
-                    "page": page_idx,
-                    "image_path": str(img_path),
-                    "text": decoded,
-                    "structured": decoded[:2000],  # 截断, metadata 不宜太大
-                })
+                page_result = _compressed_page_result(
+                    doc[page_idx], page_idx, out_dir, safe_name
+                )
             except Exception:
                 logger.debug("compress page %d failed", page_idx, exc_info=True)
+                continue
+            if page_result is not None:
+                results.append(page_result)
         return results
 
     @staticmethod
@@ -627,58 +872,16 @@ class SmartIngester:
         """用 csv 模块统计 CSV 结构, 返回 (行数, 列名, 类型, 统计, 摘要行)."""
         import csv
 
-        reader = csv.reader(io.StringIO(text), delimiter=delimiter)
-        rows_list = list(reader)
+        rows_list = list(csv.reader(io.StringIO(text), delimiter=delimiter))
         if not rows_list:
             return 0, [], {}, {}, ["(空文件)"]
 
         header = rows_list[0]
         data_rows = rows_list[1:]
-        columns = header
-
-        # 推断每列类型: 扫前 50 行, 看 int/float/str
-        dtypes: dict[str, str] = {}
-        for col_idx, col_name in enumerate(header):
-            dtypes[col_name] = SmartIngester._infer_column_type(
-                data_rows, col_idx, limit=50
-            )
-
-        # 数值列做简单统计 (min/max/mean)
-        stats: dict[str, Any] = {}
-        for col_idx, col_name in enumerate(header):
-            if dtypes[col_name] != "number":
-                continue
-            values: list[float] = []
-            for row in data_rows[:200]:
-                if col_idx < len(row):
-                    try:
-                        values.append(float(row[col_idx]))
-                    except (ValueError, TypeError):
-                        logger.debug("best-effort op failed", exc_info=True)
-                        continue
-            if values:
-                stats[col_name] = {
-                    "min": min(values),
-                    "max": max(values),
-                    "mean": sum(values) / len(values),
-                    "count": len(values),
-                }
-
-        summary = [
-            "- 文件类型: CSV",
-            f"- 行数 (不含表头): {len(data_rows)}",
-            f"- 列数: {len(columns)}",
-            f"- 列名: {', '.join(columns)}",
-            f"- 列类型: {dtypes}",
-        ]
-        if stats:
-            summary.append("- 数值统计:")
-            for col, s in stats.items():
-                summary.append(
-                    f"  - {col}: min={s['min']:.4g}, max={s['max']:.4g}, "
-                    f"mean={s['mean']:.4g} (n={s['count']})"
-                )
-        return len(data_rows), columns, dtypes, stats, summary
+        dtypes = _csv_dtypes(header, data_rows)
+        stats = _csv_numeric_stats(header, data_rows, dtypes)
+        summary = _csv_summary_lines(data_rows, header, dtypes, stats)
+        return len(data_rows), header, dtypes, stats, summary
 
     @staticmethod
     def _summarize_json(
@@ -690,66 +893,25 @@ class SmartIngester:
         rows = 0
         columns: list[str] = []
         dtypes: dict[str, str] = {}
-        stats: dict[str, Any] = {}
 
         if is_jsonl:
-            records: list[dict] = []
-            for line in text.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                    if isinstance(obj, dict):
-                        records.append(obj)
-                except json.JSONDecodeError:
-                    logger.debug("best-effort op failed", exc_info=True)
-                    continue
+            records = _jsonl_records(text)
             rows = len(records)
             if records:
-                # 合并所有 key 作为列
-                key_set: dict[str, None] = {}
-                for rec in records:
-                    for k in rec:
-                        key_set.setdefault(k, None)
-                columns = list(key_set.keys())
-                # 取第一条记录推断类型
-                for col in columns:
-                    val = records[0].get(col)
-                    dtypes[col] = SmartIngester._python_type_name(val)
+                columns, dtypes = _jsonl_columns(records)
         else:
             try:
                 obj = json.loads(text)
             except json.JSONDecodeError:
                 return 0, [], {}, {}, ["(无效 JSON)"]
-            if isinstance(obj, list):
-                rows = len(obj)
-                if obj and isinstance(obj[0], dict):
-                    columns = list(obj[0].keys())
-                    for col in columns:
-                        dtypes[col] = SmartIngester._python_type_name(obj[0].get(col))
-            elif isinstance(obj, dict):
-                rows = 1
-                columns = list(obj.keys())
-                for col in columns:
-                    dtypes[col] = SmartIngester._python_type_name(obj.get(col))
-            else:
-                rows = 1
-                columns = ["value"]
-                dtypes["value"] = SmartIngester._python_type_name(obj)
+            rows, columns, dtypes = _json_columns(obj)
 
-        summary = [
-            f"- 文件类型: {'JSONL' if is_jsonl else 'JSON'}",
-            f"- 记录数: {rows}",
-            f"- 字段: {', '.join(columns) if columns else '(无)'}",
-            f"- 字段类型: {dtypes}",
-        ]
+        stats: dict[str, Any] = {}
+        summary = _json_summary_lines(is_jsonl, rows, columns, dtypes)
         return rows, columns, dtypes, stats, summary
 
     @staticmethod
-    def _infer_column_type(
-        rows: list[list[str]], col_idx: int, limit: int = 50
-    ) -> str:
+    def _infer_column_type(rows: list[list[str]], col_idx: int, limit: int = 50) -> str:
         """扫前 limit 行, 判断一列是 number 还是 string."""
         seen_num = 0
         seen_total = 0

@@ -126,6 +126,132 @@ def load_universe(tpr: Path, xtc: Path | None = None, gro: Path | None = None) -
     return universe
 
 
+def _inspect_molecule_rows(
+    molnums: np.ndarray | None,
+    moltypes: np.ndarray | None,
+    names: np.ndarray | None,
+    resnames: np.ndarray | None,
+) -> list[dict[str, Any]]:
+    """按 molnum 一次分组, 生成每个 molecule 的名称与原子数摘要。"""
+
+    molecule_rows: list[dict[str, Any]] = []
+    if molnums is None or moltypes is None:
+        return molecule_rows
+
+    # 一次遍历完成 molnum 分组，避免大量溶剂分子时为每个 molecule 重扫全体系。
+    atom_indices_by_molnum: dict[int, list[int]] = defaultdict(list)
+    for atom_index, molnum_value in enumerate(molnums.tolist()):
+        atom_indices_by_molnum[int(molnum_value)].append(atom_index)
+    for molnum, grouped_indices in atom_indices_by_molnum.items():
+        atom_indices = np.asarray(grouped_indices, dtype=int)
+        molecule_moltypes = stable_unique([str(value) for value in moltypes[atom_indices].tolist()])
+        molecule_rows.append(
+            {
+                "molnum": molnum,
+                "moltype": molecule_moltypes[0] if len(molecule_moltypes) == 1 else molecule_moltypes,
+                "atom_count": int(len(atom_indices)),
+                "resnames": sorted(set(str(value) for value in resnames[atom_indices].tolist())) if resnames is not None else [],
+                "atomnames": sorted(set(str(value) for value in names[atom_indices].tolist())) if names is not None else [],
+            }
+        )
+    return molecule_rows
+
+
+def _inspect_moltype_summary(molecule_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """按 moltype 聚合 molecule 行。"""
+
+    grouped_molecules: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in molecule_rows:
+        grouped_molecules[str(row["moltype"])].append(row)
+
+    moltype_summary: list[dict[str, Any]] = []
+    for moltype in sorted(grouped_molecules):
+        rows = grouped_molecules[moltype]
+        moltype_summary.append(
+            {
+                "moltype": moltype,
+                "molecule_count": len(rows),
+                "atom_count_per_molecule": sorted(set(int(row["atom_count"]) for row in rows)),
+                "resnames": sorted({name for row in rows for name in row["resnames"]}),
+                "atomnames": sorted({name for row in rows for name in row["atomnames"]}),
+            }
+        )
+    return moltype_summary
+
+
+def _inspect_residue_summary(
+    atoms: Any,
+    resnames: np.ndarray | None,
+    names: np.ndarray | None,
+) -> list[dict[str, Any]]:
+    """按 resname 聚合 residue 数与原子名集合。"""
+
+    residue_summary: list[dict[str, Any]] = []
+    for resname in sorted(set(str(value) for value in resnames.tolist())) if resnames is not None else []:
+        selected = atoms[resnames.astype(str) == resname]
+        selected_moltypes = get_atom_attribute(selected, "moltypes")
+        residue_summary.append(
+            {
+                "resname": resname,
+                "residue_count": len(stable_unique([int(value) for value in selected.resindices.tolist()])),
+                "atom_count": int(len(selected)),
+                "moltypes": sorted(set(str(value) for value in selected_moltypes.tolist())) if selected_moltypes is not None else [],
+                "atomnames": sorted(set(str(value) for value in selected.names.tolist())) if names is not None else [],
+            }
+        )
+    return residue_summary
+
+
+def _inspect_atomname_summary(
+    names: np.ndarray | None,
+    resnames: np.ndarray | None,
+    moltypes: np.ndarray | None,
+) -> list[dict[str, Any]]:
+    """按 atomname 聚合出现次数与所属 resname/moltype。"""
+
+    atomname_summary: list[dict[str, Any]] = []
+    for atomname in sorted(set(str(value) for value in names.tolist())) if names is not None else []:
+        mask = names.astype(str) == atomname
+        atomname_summary.append(
+            {
+                "atomname": atomname,
+                "count": int(np.count_nonzero(mask)),
+                "resnames": sorted(set(str(value) for value in resnames[mask].tolist())) if resnames is not None else [],
+                "moltypes": sorted(set(str(value) for value in moltypes[mask].tolist())) if moltypes is not None else [],
+            }
+        )
+    return atomname_summary
+
+
+def _inspect_bonds(universe: Any) -> tuple[int, bool]:
+    """键数与 bonds 拓扑可用性；缺失时静默记为 0/false。"""
+
+    try:
+        return int(len(universe.bonds)), True
+    except Exception:
+        return 0, False
+
+
+def _inspect_coordinates(
+    universe: Any, atoms: Any
+) -> tuple[bool, bool, int | None, str | None]:
+    """当前帧坐标与周期盒可用性；返回 (坐标, 盒, 帧数, 错误信息)。"""
+
+    coordinates_available = False
+    box_available = False
+    frame_count: int | None = None
+    coordinate_error: str | None = None
+    try:
+        frame_count = int(len(universe.trajectory))
+        positions = np.asarray(universe.atoms.positions, dtype=float)
+        coordinates_available = positions.shape == (len(atoms), 3) and bool(np.all(np.isfinite(positions)))
+        dimensions = np.asarray(universe.trajectory.ts.dimensions, dtype=float)
+        box_available = dimensions.shape == (6,) and bool(np.all(np.isfinite(dimensions))) and bool(np.all(dimensions[:3] > 0))
+    except Exception as exc:
+        coordinate_error = str(exc)
+    return coordinates_available, box_available, frame_count, coordinate_error
+
+
 def build_inspection_report(universe: Any, tpr: Path) -> dict[str, Any]:
     """汇总 TPR 中供 Agent 判断中心的候选名称和拓扑能力。
 
@@ -142,87 +268,11 @@ def build_inspection_report(universe: Any, tpr: Path) -> dict[str, Any]:
     names = get_atom_attribute(atoms, "names")
     resnames = get_atom_attribute(atoms, "resnames")
 
-    molecule_rows: list[dict[str, Any]] = []
-    if molnums is not None and moltypes is not None:
-        # 一次遍历完成 molnum 分组，避免大量溶剂分子时为每个 molecule 重扫全体系。
-        atom_indices_by_molnum: dict[int, list[int]] = defaultdict(list)
-        for atom_index, molnum_value in enumerate(molnums.tolist()):
-            atom_indices_by_molnum[int(molnum_value)].append(atom_index)
-        for molnum, grouped_indices in atom_indices_by_molnum.items():
-            atom_indices = np.asarray(grouped_indices, dtype=int)
-            molecule_moltypes = stable_unique([str(value) for value in moltypes[atom_indices].tolist()])
-            molecule_rows.append(
-                {
-                    "molnum": molnum,
-                    "moltype": molecule_moltypes[0] if len(molecule_moltypes) == 1 else molecule_moltypes,
-                    "atom_count": int(len(atom_indices)),
-                    "resnames": sorted(set(str(value) for value in resnames[atom_indices].tolist())) if resnames is not None else [],
-                    "atomnames": sorted(set(str(value) for value in names[atom_indices].tolist())) if names is not None else [],
-                }
-            )
-
-    moltype_summary: list[dict[str, Any]] = []
-    grouped_molecules: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in molecule_rows:
-        moltype = row["moltype"]
-        grouped_molecules[str(moltype)].append(row)
-    for moltype in sorted(grouped_molecules):
-        rows = grouped_molecules[moltype]
-        moltype_summary.append(
-            {
-                "moltype": moltype,
-                "molecule_count": len(rows),
-                "atom_count_per_molecule": sorted(set(int(row["atom_count"]) for row in rows)),
-                "resnames": sorted({name for row in rows for name in row["resnames"]}),
-                "atomnames": sorted({name for row in rows for name in row["atomnames"]}),
-            }
-        )
-
-    residue_summary: list[dict[str, Any]] = []
-    for resname in sorted(set(str(value) for value in resnames.tolist())) if resnames is not None else []:
-        selected = atoms[resnames.astype(str) == resname]
-        selected_moltypes = get_atom_attribute(selected, "moltypes")
-        residue_summary.append(
-            {
-                "resname": resname,
-                "residue_count": len(stable_unique([int(value) for value in selected.resindices.tolist()])),
-                "atom_count": int(len(selected)),
-                "moltypes": sorted(set(str(value) for value in selected_moltypes.tolist())) if selected_moltypes is not None else [],
-                "atomnames": sorted(set(str(value) for value in selected.names.tolist())) if names is not None else [],
-            }
-        )
-
-    atomname_summary: list[dict[str, Any]] = []
-    for atomname in sorted(set(str(value) for value in names.tolist())) if names is not None else []:
-        mask = names.astype(str) == atomname
-        atomname_summary.append(
-            {
-                "atomname": atomname,
-                "count": int(np.count_nonzero(mask)),
-                "resnames": sorted(set(str(value) for value in resnames[mask].tolist())) if resnames is not None else [],
-                "moltypes": sorted(set(str(value) for value in moltypes[mask].tolist())) if moltypes is not None else [],
-            }
-        )
-
-    try:
-        bond_count = int(len(universe.bonds))
-        bonds_available = True
-    except Exception:
-        bond_count = 0
-        bonds_available = False
-
-    coordinates_available = False
-    box_available = False
-    frame_count: int | None = None
-    coordinate_error: str | None = None
-    try:
-        frame_count = int(len(universe.trajectory))
-        positions = np.asarray(universe.atoms.positions, dtype=float)
-        coordinates_available = positions.shape == (len(atoms), 3) and bool(np.all(np.isfinite(positions)))
-        dimensions = np.asarray(universe.trajectory.ts.dimensions, dtype=float)
-        box_available = dimensions.shape == (6,) and bool(np.all(np.isfinite(dimensions))) and bool(np.all(dimensions[:3] > 0))
-    except Exception as exc:
-        coordinate_error = str(exc)
+    molecule_rows = _inspect_molecule_rows(molnums, moltypes, names, resnames)
+    bond_count, bonds_available = _inspect_bonds(universe)
+    coordinates_available, box_available, frame_count, coordinate_error = (
+        _inspect_coordinates(universe, atoms)
+    )
 
     return {
         "schema_version": 1,
@@ -243,10 +293,70 @@ def build_inspection_report(universe: Any, tpr: Path) -> dict[str, Any]:
             "box": box_available,
         },
         "coordinate_error": coordinate_error,
-        "moltypes": moltype_summary,
-        "resnames": residue_summary,
-        "atomnames": atomname_summary,
+        "moltypes": _inspect_moltype_summary(molecule_rows),
+        "resnames": _inspect_residue_summary(atoms, resnames, names),
+        "atomnames": _inspect_atomname_summary(names, resnames, moltypes),
     }
+
+
+def _group_atoms_by_molnum(molnums_int: np.ndarray) -> dict[int, list[int]]:
+    """原子索引按 molnum 分组 (保持原子顺序)。"""
+
+    atom_indices_by_molnum: dict[int, list[int]] = defaultdict(list)
+    for atom_index, molnum_value in enumerate(molnums_int.tolist()):
+        atom_indices_by_molnum[int(molnum_value)].append(atom_index)
+    return atom_indices_by_molnum
+
+
+def _bonds_by_molnum(
+    bond_indices: np.ndarray, molnums_int: np.ndarray
+) -> dict[int, list[tuple[int, int]]]:
+    """只保留分子内成键，并按 molnum 分组。"""
+
+    bonds_by_molnum: dict[int, list[tuple[int, int]]] = defaultdict(list)
+    for left, right in bond_indices.tolist():
+        left_i, right_i = int(left), int(right)
+        if molnums_int[left_i] == molnums_int[right_i]:
+            bonds_by_molnum[int(molnums_int[left_i])].append((left_i, right_i))
+    return bonds_by_molnum
+
+
+def _molecule_traversal_edges(
+    molnum: int,
+    atom_indices: np.ndarray,
+    moltype: str,
+    molecule_bonds: Sequence[tuple[int, int]],
+) -> tuple[tuple[int, int], ...]:
+    """多原子分子的 PBC 展开路径（成键 BFS）；单原子返回空元组。"""
+
+    if len(atom_indices) <= 1:
+        return ()
+
+    atom_set = set(int(value) for value in atom_indices.tolist())
+    adjacency: dict[int, list[int]] = {index: [] for index in atom_set}
+    for left_i, right_i in molecule_bonds:
+        adjacency[left_i].append(right_i)
+        adjacency[right_i].append(left_i)
+
+    traversal_edges: list[tuple[int, int]] = []
+    root = int(atom_indices[0])
+    visited = {root}
+    queue: deque[int] = deque([root])
+    while queue:
+        parent = queue.popleft()
+        for child in sorted(adjacency[parent]):
+            if child in visited:
+                continue
+            visited.add(child)
+            traversal_edges.append((parent, child))
+            queue.append(child)
+    if visited != atom_set:
+        missing = sorted(atom_set - visited)
+        raise ValueError(
+            f"molnum={molnum} ({moltype}) 是多原子分子，但 TPR bonds 不连通；"
+            f"无法可靠恢复 PBC 下的完整分子。未连通原子索引: {missing[:10]}"
+        )
+    return tuple(traversal_edges)
 
 
 def build_molecule_definitions(universe: Any) -> list[MoleculeDefinition]:
@@ -272,14 +382,8 @@ def build_molecule_definitions(universe: Any) -> list[MoleculeDefinition]:
 
     # 原子和键均只分组一次，避免 n_molecules 次全量扫描造成二次复杂度。
     molnums_int = np.asarray(molnums, dtype=int)
-    atom_indices_by_molnum: dict[int, list[int]] = defaultdict(list)
-    for atom_index, molnum_value in enumerate(molnums_int.tolist()):
-        atom_indices_by_molnum[int(molnum_value)].append(atom_index)
-    bonds_by_molnum: dict[int, list[tuple[int, int]]] = defaultdict(list)
-    for left, right in bond_indices.tolist():
-        left_i, right_i = int(left), int(right)
-        if molnums_int[left_i] == molnums_int[right_i]:
-            bonds_by_molnum[int(molnums_int[left_i])].append((left_i, right_i))
+    atom_indices_by_molnum = _group_atoms_by_molnum(molnums_int)
+    bonds_by_molnum = _bonds_by_molnum(bond_indices, molnums_int)
 
     molecule_definitions: list[MoleculeDefinition] = []
     for molnum, grouped_indices in atom_indices_by_molnum.items():
@@ -288,38 +392,17 @@ def build_molecule_definitions(universe: Any) -> list[MoleculeDefinition]:
         if len(molecule_moltypes) != 1:
             raise ValueError(f"molnum={molnum} 对应多个 moltype: {molecule_moltypes}")
 
-        traversal_edges: list[tuple[int, int]] = []
-        if len(atom_indices) > 1:
-            atom_set = set(int(value) for value in atom_indices.tolist())
-            adjacency: dict[int, list[int]] = {index: [] for index in atom_set}
-            for left_i, right_i in bonds_by_molnum.get(molnum, []):
-                adjacency[left_i].append(right_i)
-                adjacency[right_i].append(left_i)
-
-            root = int(atom_indices[0])
-            visited = {root}
-            queue: deque[int] = deque([root])
-            while queue:
-                parent = queue.popleft()
-                for child in sorted(adjacency[parent]):
-                    if child in visited:
-                        continue
-                    visited.add(child)
-                    traversal_edges.append((parent, child))
-                    queue.append(child)
-            if visited != atom_set:
-                missing = sorted(atom_set - visited)
-                raise ValueError(
-                    f"molnum={molnum} ({molecule_moltypes[0]}) 是多原子分子，但 TPR bonds 不连通；"
-                    f"无法可靠恢复 PBC 下的完整分子。未连通原子索引: {missing[:10]}"
-                )
-
         molecule_definitions.append(
             MoleculeDefinition(
                 molnum=molnum,
                 moltype=molecule_moltypes[0],
                 atom_indices=tuple(int(value) for value in atom_indices.tolist()),
-                traversal_edges=tuple(traversal_edges),
+                traversal_edges=_molecule_traversal_edges(
+                    molnum,
+                    atom_indices,
+                    molecule_moltypes[0],
+                    bonds_by_molnum.get(molnum, []),
+                ),
             )
         )
     if not molecule_definitions:
@@ -425,6 +508,89 @@ def choose_frame_indices(total_frames: int, stride: int | None, n_frames: int | 
     return list(range(total_frames))
 
 
+def _rc_atom_centers(selected: Any) -> list[dict[str, Any]]:
+    """atom 模式：逐原子生成中心元数据。"""
+
+    centers: list[dict[str, Any]] = []
+    for atom in selected:
+        centers.append(
+            {
+                "center_id": f"atom:{int(atom.index)}",
+                "atom_index": int(atom.index),
+                "molnum": int(atom.molnum),
+                "moltype": str(atom.moltype),
+                "atomname": str(atom.name),
+                "resname": str(atom.resname),
+            }
+        )
+    return centers
+
+
+def _rc_molecule_centers(
+    selected_molnums: np.ndarray,
+    molecule_by_molnum: dict[int, MoleculeDefinition],
+) -> list[dict[str, Any]]:
+    """molecule 模式：选中原子的 molnum 去重后扩展到完整分子。"""
+
+    centers: list[dict[str, Any]] = []
+    for molnum in stable_unique([int(value) for value in selected_molnums.tolist()]):
+        if molnum not in molecule_by_molnum:
+            raise ValueError(f"center selection 解析到未知 molnum={molnum}。")
+        molecule = molecule_by_molnum[molnum]
+        centers.append(
+            {
+                "center_id": f"molecule:{molnum}",
+                "atom_index": None,
+                "molnum": molnum,
+                "moltype": molecule.moltype,
+                "atomname": None,
+                "resname": None,
+            }
+        )
+    return centers
+
+
+def _rc_resolved_atoms(
+    universe: Any, center_mode: str, selected: Any, centers: Sequence[dict[str, Any]]
+) -> Any:
+    """atom 模式直接复用 selection；molecule 模式回扩到完整分子原子。"""
+
+    if center_mode == "atom":
+        return selected
+    resolved_molnums = {int(center["molnum"]) for center in centers}
+    all_molnums = get_atom_attribute(universe.atoms, "molnums")
+    if all_molnums is None:
+        raise ValueError("无法读取完整 molecule 的 molnum。")
+    resolved_mask = np.asarray([int(value) in resolved_molnums for value in all_molnums], dtype=bool)
+    return universe.atoms[resolved_mask]
+
+
+def _rc_resolution(
+    center_mode: str,
+    center_selection: str,
+    selected: Any,
+    centers: Sequence[dict[str, Any]],
+    resolved_atoms: Any,
+    selected_moltypes: np.ndarray,
+) -> dict[str, Any]:
+    """组装用于 summary 的解析报告。"""
+
+    return {
+        "center_mode": center_mode,
+        "center_selection": center_selection,
+        "selected_atom_count": int(len(selected)),
+        "center_count": len(centers),
+        "selected_moltypes": sorted(set(str(value) for value in selected_moltypes.tolist())),
+        "selected_resnames": sorted(set(str(value) for value in selected.resnames.tolist())),
+        "selected_atomnames": sorted(set(str(value) for value in selected.names.tolist())),
+        "resolved_atom_count": int(len(resolved_atoms)),
+        "actual_moltypes": sorted(set(str(value) for value in resolved_atoms.moltypes.tolist())),
+        "actual_resnames": sorted(set(str(value) for value in resolved_atoms.resnames.tolist())),
+        "actual_atomnames": sorted(set(str(value) for value in resolved_atoms.names.tolist())),
+        "distance_definition": "atom-to-molecule-COG" if center_mode == "atom" else "molecule-COG-to-molecule-COG",
+    }
+
+
 def resolve_centers(
     universe: Any,
     center_mode: str,
@@ -455,60 +621,20 @@ def resolve_centers(
         raise ValueError("中心 selection 的原子缺少 TPR molnum/moltype。")
 
     molecule_by_molnum = {definition.molnum: definition for definition in molecule_definitions}
-    centers: list[dict[str, Any]] = []
     if center_mode == "atom":
-        for atom in selected:
-            atom_molnum = int(atom.molnum)
-            centers.append(
-                {
-                    "center_id": f"atom:{int(atom.index)}",
-                    "atom_index": int(atom.index),
-                    "molnum": atom_molnum,
-                    "moltype": str(atom.moltype),
-                    "atomname": str(atom.name),
-                    "resname": str(atom.resname),
-                }
-            )
+        centers = _rc_atom_centers(selected)
     else:
-        for molnum in stable_unique([int(value) for value in selected_molnums.tolist()]):
-            if molnum not in molecule_by_molnum:
-                raise ValueError(f"center selection 解析到未知 molnum={molnum}。")
-            molecule = molecule_by_molnum[molnum]
-            centers.append(
-                {
-                    "center_id": f"molecule:{molnum}",
-                    "atom_index": None,
-                    "molnum": molnum,
-                    "moltype": molecule.moltype,
-                    "atomname": None,
-                    "resname": None,
-                }
-            )
+        centers = _rc_molecule_centers(selected_molnums, molecule_by_molnum)
 
-    if center_mode == "atom":
-        resolved_atoms = selected
-    else:
-        resolved_molnums = {int(center["molnum"]) for center in centers}
-        all_molnums = get_atom_attribute(universe.atoms, "molnums")
-        if all_molnums is None:
-            raise ValueError("无法读取完整 molecule 的 molnum。")
-        resolved_mask = np.asarray([int(value) in resolved_molnums for value in all_molnums], dtype=bool)
-        resolved_atoms = universe.atoms[resolved_mask]
-
-    resolution = {
-        "center_mode": center_mode,
-        "center_selection": center_selection,
-        "selected_atom_count": int(len(selected)),
-        "center_count": len(centers),
-        "selected_moltypes": sorted(set(str(value) for value in selected_moltypes.tolist())),
-        "selected_resnames": sorted(set(str(value) for value in selected.resnames.tolist())),
-        "selected_atomnames": sorted(set(str(value) for value in selected.names.tolist())),
-        "resolved_atom_count": int(len(resolved_atoms)),
-        "actual_moltypes": sorted(set(str(value) for value in resolved_atoms.moltypes.tolist())),
-        "actual_resnames": sorted(set(str(value) for value in resolved_atoms.resnames.tolist())),
-        "actual_atomnames": sorted(set(str(value) for value in resolved_atoms.names.tolist())),
-        "distance_definition": "atom-to-molecule-COG" if center_mode == "atom" else "molecule-COG-to-molecule-COG",
-    }
+    resolved_atoms = _rc_resolved_atoms(universe, center_mode, selected, centers)
+    resolution = _rc_resolution(
+        center_mode,
+        center_selection,
+        selected,
+        centers,
+        resolved_atoms,
+        selected_moltypes,
+    )
     return centers, resolution
 
 
@@ -555,6 +681,209 @@ def build_distribution(
     return environments, vector_to_id
 
 
+@dataclass(frozen=True)
+class _AnalysisContext:
+    """逐帧统计所需的不可变上下文。
+
+    把 molecule 拓扑、中心、species 顺序与抽帧索引打包，避免长函数逐个透传。
+    """
+
+    universe: Any
+    center_mode: str
+    molecule_definitions: list[MoleculeDefinition]
+    species_order: list[str]
+    centers: list[dict[str, Any]]
+    center_resolution: dict[str, Any]
+    frame_indices: list[int]
+
+
+def _au_context(
+    universe: Any,
+    center_mode: str,
+    center_selection: str,
+    stride: int | None,
+    n_frames: int | None,
+) -> _AnalysisContext:
+    """构建 molecule 拓扑、中心解析与采样索引。"""
+
+    molecule_definitions = build_molecule_definitions(universe)
+    species_order = stable_unique([definition.moltype for definition in molecule_definitions])
+    centers, center_resolution = resolve_centers(
+        universe=universe,
+        center_mode=center_mode,
+        center_selection=center_selection,
+        molecule_definitions=molecule_definitions,
+    )
+    frame_indices = choose_frame_indices(len(universe.trajectory), stride=stride, n_frames=n_frames)
+    return _AnalysisContext(
+        universe=universe,
+        center_mode=center_mode,
+        molecule_definitions=molecule_definitions,
+        species_order=species_order,
+        centers=centers,
+        center_resolution=center_resolution,
+        frame_indices=frame_indices,
+    )
+
+
+def _au_center_positions(
+    context: _AnalysisContext,
+    molecule_cogs: np.ndarray,
+    molnum_to_index: dict[int, int],
+) -> np.ndarray:
+    """按中心模式取当前帧的中心坐标。"""
+
+    if context.center_mode == "atom":
+        return np.asarray(
+            [context.universe.atoms[int(center["atom_index"])].position for center in context.centers],
+            dtype=float,
+        )
+    return np.asarray(
+        [molecule_cogs[molnum_to_index[int(center["molnum"])]] for center in context.centers],
+        dtype=float,
+    )
+
+
+def _au_frame_neighbors(
+    center_positions: np.ndarray,
+    molecule_cogs: np.ndarray,
+    context: _AnalysisContext,
+    cutoff_angstrom: float,
+    dimensions: np.ndarray,
+) -> tuple[list[set[int]], int]:
+    """固定半径稀疏搜索，并把中心自身分子从邻居中排除。"""
+
+    from MDAnalysis.lib.distances import capped_distance
+
+    pairs = capped_distance(
+        center_positions,
+        molecule_cogs,
+        max_cutoff=cutoff_angstrom,
+        box=dimensions,
+        return_distances=False,
+    )
+    neighbor_indices: list[set[int]] = [set() for _ in context.centers]
+    self_pairs_excluded = 0
+    for center_index, molecule_index in np.asarray(pairs, dtype=int).reshape(-1, 2):
+        molecule = context.molecule_definitions[int(molecule_index)]
+        if molecule.molnum == int(context.centers[int(center_index)]["molnum"]):
+            self_pairs_excluded += 1
+            continue
+        neighbor_indices[int(center_index)].add(int(molecule_index))
+    return neighbor_indices, self_pairs_excluded
+
+
+def _au_frame_records(
+    context: _AnalysisContext,
+    neighbor_indices: Sequence[set[int]],
+    timestep: Any,
+    sample_index: int,
+) -> list[dict[str, Any]]:
+    """把一帧的邻居集合展开为逐中心事件记录。"""
+
+    time_ps = float(timestep.time) if timestep.time is not None and math.isfinite(float(timestep.time)) else None
+    records: list[dict[str, Any]] = []
+    for center_index, center in enumerate(context.centers):
+        composition = dict.fromkeys(context.species_order, 0)
+        for molecule_index in sorted(neighbor_indices[center_index]):
+            composition[context.molecule_definitions[molecule_index].moltype] += 1
+        records.append(
+            {
+                "event_id": f"frame:{int(timestep.frame)}__{center['center_id']}",
+                "sample_index": sample_index,
+                "frame_index": int(timestep.frame),
+                "time_ps": time_ps,
+                "center_id": center["center_id"],
+                "center_mode": context.center_mode,
+                "center_atom_index": center["atom_index"],
+                "center_molnum": center["molnum"],
+                "center_moltype": center["moltype"],
+                "center_atomname": center["atomname"],
+                "center_resname": center["resname"],
+                "total_neighbor_molecules": int(sum(composition.values())),
+                "composition": composition,
+            }
+        )
+    return records
+
+
+def _au_collect_records(
+    context: _AnalysisContext, cutoff_angstrom: float
+) -> tuple[list[dict[str, Any]], int]:
+    """逐帧计算 COG、邻居集合与事件记录。"""
+
+    molnum_to_index = {
+        definition.molnum: index for index, definition in enumerate(context.molecule_definitions)
+    }
+    records: list[dict[str, Any]] = []
+    self_pairs_excluded = 0
+    for sample_index, trajectory_frame_index in enumerate(context.frame_indices):
+        timestep = context.universe.trajectory[trajectory_frame_index]
+        dimensions = validate_box_and_cutoff(timestep, cutoff_angstrom)
+        molecule_cogs = calculate_molecule_cogs(
+            context.universe.atoms.positions, dimensions, context.molecule_definitions
+        )
+        center_positions = _au_center_positions(context, molecule_cogs, molnum_to_index)
+        neighbor_indices, excluded = _au_frame_neighbors(
+            center_positions, molecule_cogs, context, cutoff_angstrom, dimensions
+        )
+        self_pairs_excluded += excluded
+        records.extend(_au_frame_records(context, neighbor_indices, timestep, sample_index))
+    return records, self_pairs_excluded
+
+
+def _au_validation(
+    records: Sequence[dict[str, Any]],
+    context: _AnalysisContext,
+    environments: Sequence[dict[str, Any]],
+    self_pairs_excluded: int,
+) -> dict[str, Any]:
+    """检查事件总数与比例和两个内部不变量。"""
+
+    expected_events = len(context.centers) * len(context.frame_indices)
+    fraction_sum = float(sum(environment["fraction"] for environment in environments))
+    validation = {
+        "expected_total_events": expected_events,
+        "actual_total_events": len(records),
+        "total_event_count_matches": len(records) == expected_events,
+        "fraction_sum": fraction_sum,
+        "fraction_sum_is_one": math.isclose(fraction_sum, 1.0, rel_tol=0.0, abs_tol=1e-12),
+        "self_molecule_pairs_excluded": self_pairs_excluded,
+        "neighbor_identity": "TPR molnum",
+        "species_identity": "TPR moltype",
+        "molecule_cog_uses_pbc_bond_reconstruction": True,
+    }
+    if not validation["total_event_count_matches"] or not validation["fraction_sum_is_one"]:
+        raise RuntimeError(f"内部统计不变量失败: {validation}")
+    return validation
+
+
+def _au_result(
+    context: _AnalysisContext,
+    records: list[dict[str, Any]],
+    environments: list[dict[str, Any]],
+    validation: dict[str, Any],
+    stride: int | None,
+    n_frames: int | None,
+) -> dict[str, Any]:
+    """组装 analyze_universe 的返回结构。"""
+
+    return {
+        "records": records,
+        "environments": environments,
+        "species_order": context.species_order,
+        "center_resolution": context.center_resolution,
+        "sampling": {
+            "stored_frame_count": int(len(context.universe.trajectory)),
+            "sampled_frame_count": len(context.frame_indices),
+            "frame_indices": context.frame_indices,
+            "stride": stride if stride is not None else (1 if n_frames is None else None),
+            "n_frames": n_frames,
+        },
+        "validation": validation,
+    }
+
+
 def analyze_universe(
     universe: Any,
     rdf_radius_nm: float,
@@ -572,111 +901,19 @@ def analyze_universe(
     可能报错或边界情况：半径、拓扑、坐标、盒、selection 或多原子分子连通性不合法时抛错。
     """
 
-    from MDAnalysis.lib.distances import capped_distance
-
     if not math.isfinite(rdf_radius_nm) or rdf_radius_nm <= 0:
         raise ValueError("rdf_radius_nm 必须是大于 0 的有限数。")
-    cutoff_angstrom = float(rdf_radius_nm) * 10.0
-    molecule_definitions = build_molecule_definitions(universe)
-    molnum_to_index = {definition.molnum: index for index, definition in enumerate(molecule_definitions)}
-    species_order = stable_unique([definition.moltype for definition in molecule_definitions])
-    centers, center_resolution = resolve_centers(
-        universe=universe,
-        center_mode=center_mode,
-        center_selection=center_selection,
-        molecule_definitions=molecule_definitions,
-    )
-    frame_indices = choose_frame_indices(len(universe.trajectory), stride=stride, n_frames=n_frames)
+    context = _au_context(universe, center_mode, center_selection, stride, n_frames)
 
-    records: list[dict[str, Any]] = []
-    self_pairs_excluded = 0
-    for sample_index, trajectory_frame_index in enumerate(frame_indices):
-        timestep = universe.trajectory[trajectory_frame_index]
-        dimensions = validate_box_and_cutoff(timestep, cutoff_angstrom)
-        molecule_cogs = calculate_molecule_cogs(universe.atoms.positions, dimensions, molecule_definitions)
+    records, self_pairs_excluded = _au_collect_records(context, float(rdf_radius_nm) * 10.0)
 
-        if center_mode == "atom":
-            center_positions = np.asarray(
-                [universe.atoms[int(center["atom_index"])].position for center in centers], dtype=float
-            )
-        else:
-            center_positions = np.asarray(
-                [molecule_cogs[molnum_to_index[int(center["molnum"])]] for center in centers], dtype=float
-            )
-
-        pairs = capped_distance(
-            center_positions,
-            molecule_cogs,
-            max_cutoff=cutoff_angstrom,
-            box=dimensions,
-            return_distances=False,
-        )
-        neighbor_indices: list[set[int]] = [set() for _ in centers]
-        for center_index, molecule_index in np.asarray(pairs, dtype=int).reshape(-1, 2):
-            molecule = molecule_definitions[int(molecule_index)]
-            if molecule.molnum == int(centers[int(center_index)]["molnum"]):
-                self_pairs_excluded += 1
-                continue
-            neighbor_indices[int(center_index)].add(int(molecule_index))
-
-        time_ps = float(timestep.time) if timestep.time is not None and math.isfinite(float(timestep.time)) else None
-        for center_index, center in enumerate(centers):
-            composition = dict.fromkeys(species_order, 0)
-            for molecule_index in sorted(neighbor_indices[center_index]):
-                composition[molecule_definitions[molecule_index].moltype] += 1
-            records.append(
-                {
-                    "event_id": f"frame:{int(timestep.frame)}__{center['center_id']}",
-                    "sample_index": sample_index,
-                    "frame_index": int(timestep.frame),
-                    "time_ps": time_ps,
-                    "center_id": center["center_id"],
-                    "center_mode": center_mode,
-                    "center_atom_index": center["atom_index"],
-                    "center_molnum": center["molnum"],
-                    "center_moltype": center["moltype"],
-                    "center_atomname": center["atomname"],
-                    "center_resname": center["resname"],
-                    "total_neighbor_molecules": int(sum(composition.values())),
-                    "composition": composition,
-                }
-            )
-
-    environments, vector_to_id = build_distribution(records, species_order)
+    environments, vector_to_id = build_distribution(records, context.species_order)
     for record in records:
-        vector = tuple(int(record["composition"][species]) for species in species_order)
+        vector = tuple(int(record["composition"][species]) for species in context.species_order)
         record["environment_type_id"] = vector_to_id[vector]
 
-    expected_events = len(centers) * len(frame_indices)
-    fraction_sum = float(sum(environment["fraction"] for environment in environments))
-    validation = {
-        "expected_total_events": expected_events,
-        "actual_total_events": len(records),
-        "total_event_count_matches": len(records) == expected_events,
-        "fraction_sum": fraction_sum,
-        "fraction_sum_is_one": math.isclose(fraction_sum, 1.0, rel_tol=0.0, abs_tol=1e-12),
-        "self_molecule_pairs_excluded": self_pairs_excluded,
-        "neighbor_identity": "TPR molnum",
-        "species_identity": "TPR moltype",
-        "molecule_cog_uses_pbc_bond_reconstruction": True,
-    }
-    if not validation["total_event_count_matches"] or not validation["fraction_sum_is_one"]:
-        raise RuntimeError(f"内部统计不变量失败: {validation}")
-
-    return {
-        "records": records,
-        "environments": environments,
-        "species_order": species_order,
-        "center_resolution": center_resolution,
-        "sampling": {
-            "stored_frame_count": int(len(universe.trajectory)),
-            "sampled_frame_count": len(frame_indices),
-            "frame_indices": frame_indices,
-            "stride": stride if stride is not None else (1 if n_frames is None else None),
-            "n_frames": n_frames,
-        },
-        "validation": validation,
-    }
+    validation = _au_validation(records, context, environments, self_pairs_excluded)
+    return _au_result(context, records, environments, validation, stride, n_frames)
 
 
 def write_csv_rows(path: Path, fieldnames: Sequence[str], rows: Sequence[dict[str, Any]]) -> None:
@@ -705,6 +942,36 @@ def write_csv_rows(path: Path, fieldnames: Sequence[str], rows: Sequence[dict[st
         writer.writerows(rows)
 
 
+def _bps_metadata(
+    total: int, displayed: int, top: int, aggregated: int, other_count: int, other_fraction: float
+) -> dict[str, Any]:
+    """组装绘图聚合元数据。"""
+
+    return {
+        "total_environment_types": total,
+        "displayed_environment_types": displayed,
+        "top_environment_types_shown": top,
+        "other_environment_types_aggregated": aggregated,
+        "other_count": other_count,
+        "other_fraction": other_fraction,
+    }
+
+
+def _bps_other_entry(
+    other_count: int, total_entries: int, species_order: Sequence[str]
+) -> dict[str, Any]:
+    """构造长尾合并后的 Other 环境条目。"""
+
+    return {
+        "env_id": "Other",
+        "count": other_count,
+        "fraction": float(other_count / total_entries) if total_entries else 0.0,
+        "composition": {},
+        "composition_full": dict.fromkeys(species_order, 0),
+        "display_label": "Other",
+    }
+
+
 def build_plot_summary(summary_payload: dict[str, Any], max_environment_types: int = 12) -> tuple[dict[str, Any], dict[str, Any]]:
     """为高多样性环境构建可读的极坐标绘图摘要。
 
@@ -720,15 +987,8 @@ def build_plot_summary(summary_payload: dict[str, Any], max_environment_types: i
     environments = list(summary_payload.get("environments", []))
     plot_payload = dict(summary_payload)
     if len(environments) <= max_environment_types:
-        plotting_metadata = {
-            "total_environment_types": len(environments),
-            "displayed_environment_types": len(environments),
-            "top_environment_types_shown": len(environments),
-            "other_environment_types_aggregated": 0,
-            "other_count": 0,
-            "other_fraction": 0.0,
-        }
-        return plot_payload, plotting_metadata
+        total = len(environments)
+        return plot_payload, _bps_metadata(total, total, total, 0, 0, 0.0)
 
     top_count = max_environment_types - 1
     retained = [dict(environment) for environment in environments[:top_count]]
@@ -736,26 +996,95 @@ def build_plot_summary(summary_payload: dict[str, Any], max_environment_types: i
     other_count = int(sum(int(environment["count"]) for environment in omitted))
     total_entries = int(summary_payload.get("summary", {}).get("total_entries", 0))
     species_order = [str(value) for value in summary_payload.get("species_order", [])]
-    retained.append(
+    retained.append(_bps_other_entry(other_count, total_entries, species_order))
+    plot_payload["environments"] = retained
+    other_fraction = float(other_count / total_entries) if total_entries else 0.0
+    return plot_payload, _bps_metadata(
+        len(environments), len(retained), top_count, len(omitted), other_count, other_fraction
+    )
+
+
+def _apply_plot_style(plt: Any, dpi: int) -> None:
+    """统一字体、线宽、白底与导出 DPI。"""
+
+    plt.rcParams.update(
         {
-            "env_id": "Other",
-            "count": other_count,
-            "fraction": float(other_count / total_entries) if total_entries else 0.0,
-            "composition": {},
-            "composition_full": dict.fromkeys(species_order, 0),
-            "display_label": "Other",
+            "font.family": "Arial",
+            "font.size": 7,
+            "axes.linewidth": 0.75,
+            "xtick.major.width": 0.75,
+            "ytick.major.width": 0.75,
+            "figure.facecolor": "white",
+            "axes.facecolor": "white",
+            "savefig.facecolor": "white",
+            "savefig.dpi": dpi,
+            "axes.unicode_minus": False,
         }
     )
-    plot_payload["environments"] = retained
-    plotting_metadata = {
-        "total_environment_types": len(environments),
-        "displayed_environment_types": len(retained),
-        "top_environment_types_shown": top_count,
-        "other_environment_types_aggregated": len(omitted),
-        "other_count": other_count,
-        "other_fraction": float(other_count / total_entries) if total_entries else 0.0,
-    }
-    return plot_payload, plotting_metadata
+
+
+def _save_or_show(
+    plt: Any, figure: Any, output: bool, figname: str, dpi: int
+) -> None:
+    """按 output 开关导出 PNG 或交互显示。"""
+
+    if output:
+        output_path = Path(figname)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(output_path, dpi=dpi, bbox_inches="tight")
+        plt.close(figure)
+    else:
+        plt.show()
+
+
+def _psed_labels(
+    environments: Sequence[dict[str, Any]], plotting_metadata: dict[str, Any]
+) -> tuple[list[str], list[float]]:
+    """生成水平条形图的组成标签与百分比。"""
+
+    labels: list[str] = []
+    percentages: list[float] = []
+    for environment in environments:
+        if environment.get("display_label") == "Other":
+            omitted_count = int(plotting_metadata["other_environment_types_aggregated"])
+            label = f"Other ({omitted_count} types)"
+        else:
+            composition = environment.get("composition", {})
+            label = ", ".join(f"{species}={int(count)}" for species, count in composition.items()) or "No neighbors"
+        labels.append(label)
+        percentages.append(100.0 * float(environment["fraction"]))
+    return labels, percentages
+
+
+def _psed_colors(values: np.ndarray, has_other: bool, colormaps: Any) -> list[Any]:
+    """按比例深浅生成 Blues 配色；Other 固定灰色。"""
+
+    if np.allclose(values.max(), values.min()):
+        color_values = np.full(len(values), 0.58)
+    else:
+        color_values = 0.35 + 0.45 * (values - values.min()) / max(values.max() - values.min(), 1e-12)
+    colors = [colormaps.get_cmap("Blues")(value) for value in color_values]
+    if has_other:
+        colors[-1] = (0.72, 0.72, 0.72, 1.0)
+    return colors
+
+
+def _psed_draw(ax: Any, values: np.ndarray, labels: Sequence[str], colors: Sequence[Any]) -> None:
+    """绘制水平条形、轴标签与百分比注记。"""
+
+    y_positions = np.arange(len(values))
+    ax.barh(y_positions, values, color=colors, edgecolor="none", height=0.68)
+    ax.set_yticks(y_positions, labels=labels)
+    ax.invert_yaxis()
+    ax.set_xlabel("Fraction of center–frame events (%)")
+    ax.set_ylabel("Solvation environment")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.tick_params(direction="out", length=2.5, width=0.75)
+    maximum = max(float(np.max(values)), 1.0)
+    ax.set_xlim(0.0, maximum * 1.18)
+    for y_position, value in zip(y_positions, values):
+        ax.text(value + maximum * 0.015, y_position, f"{value:.1f}%", ha="left", va="center")
 
 
 def plot_solvation_environment_distribution(
@@ -782,64 +1111,16 @@ def plot_solvation_environment_distribution(
     if not environments:
         raise ValueError("summary 中没有 environments，无法绘图。")
 
-    plt.rcParams.update(
-        {
-            "font.family": "Arial",
-            "font.size": 7,
-            "axes.linewidth": 0.75,
-            "xtick.major.width": 0.75,
-            "ytick.major.width": 0.75,
-            "figure.facecolor": "white",
-            "axes.facecolor": "white",
-            "savefig.facecolor": "white",
-            "savefig.dpi": 600,
-            "axes.unicode_minus": False,
-        }
-    )
+    _apply_plot_style(plt, dpi=600)
 
-    labels: list[str] = []
-    percentages: list[float] = []
-    for environment in environments:
-        if environment.get("display_label") == "Other":
-            omitted_count = int(plotting_metadata["other_environment_types_aggregated"])
-            label = f"Other ({omitted_count} types)"
-        else:
-            composition = environment.get("composition", {})
-            label = ", ".join(f"{species}={int(count)}" for species, count in composition.items()) or "No neighbors"
-        labels.append(label)
-        percentages.append(100.0 * float(environment["fraction"]))
-
+    labels, percentages = _psed_labels(environments, plotting_metadata)
     values = np.asarray(percentages, dtype=float)
-    if np.allclose(values.max(), values.min()):
-        color_values = np.full(len(values), 0.58)
-    else:
-        color_values = 0.35 + 0.45 * (values - values.min()) / max(values.max() - values.min(), 1e-12)
-    colors = [colormaps.get_cmap("Blues")(value) for value in color_values]
-    if plotting_metadata["other_environment_types_aggregated"]:
-        colors[-1] = (0.72, 0.72, 0.72, 1.0)
+    colors = _psed_colors(values, bool(plotting_metadata["other_environment_types_aggregated"]), colormaps)
 
     fig, ax = plt.subplots(figsize=figsize)
-    y_positions = np.arange(len(environments))
-    ax.barh(y_positions, values, color=colors, edgecolor="none", height=0.68)
-    ax.set_yticks(y_positions, labels=labels)
-    ax.invert_yaxis()
-    ax.set_xlabel("Fraction of center–frame events (%)")
-    ax.set_ylabel("Solvation environment")
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.tick_params(direction="out", length=2.5, width=0.75)
-    maximum = max(float(np.max(values)), 1.0)
-    ax.set_xlim(0.0, maximum * 1.18)
-    for y_position, value in zip(y_positions, values):
-        ax.text(value + maximum * 0.015, y_position, f"{value:.1f}%", ha="left", va="center")
+    _psed_draw(ax, values, labels, colors)
     fig.tight_layout()
-    if output:
-        output_path = Path(figname)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(output_path, dpi=600, bbox_inches="tight")
-        plt.close(fig)
-    else:
-        plt.show()
+    _save_or_show(plt, fig, output=output, figname=figname, dpi=600)
     return plotting_metadata
 
 
@@ -850,6 +1131,81 @@ def format_environment_vector_label(environment: dict[str, Any], species_order: 
         return str(environment["display_label"])
     values = [int(environment.get("composition_full", {}).get(species, 0)) for species in species_order]
     return "-".join(str(value) for value in values)
+
+
+def _pcp_geometry(
+    percentages: np.ndarray, gamma: float
+) -> tuple[np.ndarray, float, np.ndarray, float, float]:
+    """计算扇区角度、宽度、压缩柱高与内半径。"""
+
+    environment_count = len(percentages)
+    angles = np.linspace(0, 2.0 * np.pi, environment_count, endpoint=False)
+    width = 2.0 * np.pi / max(1, environment_count) * 0.88
+    maximum_percentage = max(float(np.max(percentages)), 1e-12)
+    heights = (percentages / maximum_percentage) ** gamma * maximum_percentage
+    inner_radius = 0.60 * maximum_percentage
+    return angles, width, heights, inner_radius, maximum_percentage
+
+
+def _pcp_colors(percentages: np.ndarray, colormaps: Any) -> list[Any]:
+    """按比例深浅生成 Blues 配色。"""
+
+    if np.allclose(percentages.max(), percentages.min()):
+        color_values = np.full(len(percentages), 0.55)
+    else:
+        normalized = (percentages - percentages.min()) / max(percentages.max() - percentages.min(), 1e-12)
+        color_values = 0.35 + 0.45 * normalized
+    return [colormaps.get_cmap("Blues")(value) for value in color_values]
+
+
+def _pcp_draw(
+    axis: Any,
+    angles: np.ndarray,
+    heights: np.ndarray,
+    width: float,
+    inner_radius: float,
+    colors: Sequence[Any],
+    species_order: Sequence[str],
+) -> None:
+    """绘制扇形柱、隐藏刻度与中心 species 标题。"""
+
+    axis.bar(angles, heights, width=width, bottom=inner_radius, color=colors, linewidth=0, edgecolor="none")
+    axis.set_xticks([])
+    axis.set_yticks([])
+    axis.grid(False)
+    axis.spines["polar"].set_visible(False)
+    axis.text(0.0, 0.0, "_".join(species_order), ha="center", va="center")
+
+
+def _pcp_labels(
+    axis: Any,
+    angles: np.ndarray,
+    heights: np.ndarray,
+    labels: Sequence[str],
+    percentages: np.ndarray,
+    inner_radius: float,
+    maximum_percentage: float,
+) -> None:
+    """逐扇区写出组成标签与百分比，按角度翻转保持可读。"""
+
+    label_offset = 0.04 * maximum_percentage
+    for angle, height, label, percentage in zip(angles, heights, labels, percentages):
+        degree = float(np.degrees(angle))
+        rotation = degree - 90.0
+        horizontal_alignment = "left"
+        if 90.0 < degree < 270.0:
+            rotation += 180.0
+            horizontal_alignment = "right"
+        axis.text(
+            angle,
+            inner_radius + height + label_offset,
+            label,
+            rotation=rotation,
+            rotation_mode="anchor",
+            ha=horizontal_alignment,
+            va="center",
+        )
+        axis.text(angle, inner_radius + 0.52 * height, f"{percentage:.1f}%", ha="center", va="center")
 
 
 def plot_coordination_polar_from_summary(
@@ -881,128 +1237,70 @@ def plot_coordination_polar_from_summary(
     percentages = 100.0 * counts / float(total_entries)
     labels = [format_environment_vector_label(environment, species_order) for environment in environments]
 
-    plt.rcParams.update(
-        {
-            "font.family": "Arial",
-            "font.size": 7,
-            "axes.linewidth": 0.75,
-            "xtick.major.width": 0.75,
-            "ytick.major.width": 0.75,
-            "figure.facecolor": "white",
-            "axes.facecolor": "white",
-            "savefig.facecolor": "white",
-            "savefig.dpi": dpi,
-            "axes.unicode_minus": False,
-        }
-    )
+    _apply_plot_style(plt, dpi)
 
-    environment_count = len(environments)
-    angles = np.linspace(0, 2.0 * np.pi, environment_count, endpoint=False)
-    width = 2.0 * np.pi / max(1, environment_count) * 0.88
-    maximum_percentage = max(float(np.max(percentages)), 1e-12)
-    heights = (percentages / maximum_percentage) ** gamma * maximum_percentage
-    inner_radius = 0.60 * maximum_percentage
-
-    if np.allclose(percentages.max(), percentages.min()):
-        color_values = np.full(environment_count, 0.55)
-    else:
-        normalized = (percentages - percentages.min()) / max(percentages.max() - percentages.min(), 1e-12)
-        color_values = 0.35 + 0.45 * normalized
-    colors = [colormaps.get_cmap("Blues")(value) for value in color_values]
+    angles, width, heights, inner_radius, maximum_percentage = _pcp_geometry(percentages, gamma)
+    colors = _pcp_colors(percentages, colormaps)
 
     figure = plt.figure(figsize=figsize)
     axis = figure.add_subplot(111, polar=True)
-    axis.bar(angles, heights, width=width, bottom=inner_radius, color=colors, linewidth=0, edgecolor="none")
-    axis.set_xticks([])
-    axis.set_yticks([])
-    axis.grid(False)
-    axis.spines["polar"].set_visible(False)
-    axis.text(0.0, 0.0, "_".join(species_order), ha="center", va="center")
-
-    label_offset = 0.04 * maximum_percentage
-    for angle, height, label, percentage in zip(angles, heights, labels, percentages):
-        degree = float(np.degrees(angle))
-        rotation = degree - 90.0
-        horizontal_alignment = "left"
-        if 90.0 < degree < 270.0:
-            rotation += 180.0
-            horizontal_alignment = "right"
-        axis.text(
-            angle,
-            inner_radius + height + label_offset,
-            label,
-            rotation=rotation,
-            rotation_mode="anchor",
-            ha=horizontal_alignment,
-            va="center",
-        )
-        axis.text(angle, inner_radius + 0.52 * height, f"{percentage:.1f}%", ha="center", va="center")
-
+    _pcp_draw(axis, angles, heights, width, inner_radius, colors, species_order)
+    _pcp_labels(axis, angles, heights, labels, percentages, inner_radius, maximum_percentage)
     figure.tight_layout()
-    if output:
-        output_path = Path(figname)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        figure.savefig(output_path, dpi=dpi, bbox_inches="tight")
-        plt.close(figure)
-    else:
-        plt.show()
+    _save_or_show(plt, figure, output=output, figname=figname, dpi=dpi)
 
 
-def write_analysis_outputs(
+RECORD_FIELDS: tuple[str, ...] = (
+    "event_id",
+    "sample_index",
+    "frame_index",
+    "time_ps",
+    "center_id",
+    "center_mode",
+    "center_atom_index",
+    "center_molnum",
+    "center_moltype",
+    "center_atomname",
+    "center_resname",
+    "total_neighbor_molecules",
+    "environment_type_id",
+    "composition_json",
+)
+
+DISTRIBUTION_FIELDS: tuple[str, ...] = (
+    "environment_type_id",
+    "count",
+    "fraction",
+    "total_neighbor_molecules",
+    "composition_vector",
+    "composition_json",
+)
+
+
+def _wao_record_rows(
     result: dict[str, Any],
-    output_dir: Path,
-    settings: dict[str, Any],
-    plot: bool,
-) -> dict[str, Path]:
-    """将核心统计结果写为约定 CSV、JSON 和可选 PNG。
+    record_fields: Sequence[str],
+    species_order: Sequence[str],
+    species_columns: Sequence[str],
+) -> list[dict[str, Any]]:
+    """把事件记录展开为 CSV 行（composition_json 与逐 species 计数列）。"""
 
-    功能目的：集中控制输出 schema、编码、文件名和绘图依赖边界。
-    输入参数：analyze_universe 结果、输出目录、已确认 CLI 设置、是否绘图。
-    返回值：逻辑输出名到绝对路径的映射。
-    关键流程：先分配环境 id 后展开 species 列；JSON 使用稳定键结构；仅 plot=true 时导入绘图模块。
-    可能报错或边界情况：输出目录不可写或绘图依赖缺失时抛出明确异常。
-    """
-
-    output_dir = output_dir.expanduser().resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    species_order = [str(value) for value in result["species_order"]]
-    species_columns = [f"count::{species}" for species in species_order]
-
-    record_fields = [
-        "event_id",
-        "sample_index",
-        "frame_index",
-        "time_ps",
-        "center_id",
-        "center_mode",
-        "center_atom_index",
-        "center_molnum",
-        "center_moltype",
-        "center_atomname",
-        "center_resname",
-        "total_neighbor_molecules",
-        "environment_type_id",
-        "composition_json",
-        *species_columns,
-    ]
-    record_rows: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     for record in result["records"]:
         row = {key: record.get(key) for key in record_fields if not key.startswith("count::") and key != "composition_json"}
         row["composition_json"] = json.dumps(record["composition"], ensure_ascii=False, separators=(",", ":"))
         for species, column in zip(species_order, species_columns):
             row[column] = int(record["composition"][species])
-        record_rows.append(row)
+        rows.append(row)
+    return rows
 
-    distribution_fields = [
-        "environment_type_id",
-        "count",
-        "fraction",
-        "total_neighbor_molecules",
-        "composition_vector",
-        "composition_json",
-        *species_columns,
-    ]
-    distribution_rows: list[dict[str, Any]] = []
+
+def _wao_distribution_rows(
+    result: dict[str, Any], species_order: Sequence[str], species_columns: Sequence[str]
+) -> list[dict[str, Any]]:
+    """把环境分布展开为 CSV 行。"""
+
+    rows: list[dict[str, Any]] = []
     for environment in result["environments"]:
         composition = environment["composition_full"]
         row = {
@@ -1015,20 +1313,19 @@ def write_analysis_outputs(
         }
         for species, column in zip(species_order, species_columns):
             row[column] = int(composition[species])
-        distribution_rows.append(row)
+        rows.append(row)
+    return rows
 
-    records_path = output_dir / RECORDS_FILENAME
-    distribution_path = output_dir / DISTRIBUTION_FILENAME
-    summary_path = output_dir / SUMMARY_FILENAME
-    write_csv_rows(records_path, record_fields, record_rows)
-    write_csv_rows(distribution_path, distribution_fields, distribution_rows)
 
-    output_paths: dict[str, Path] = {
-        "records_csv": records_path,
-        "distribution_csv": distribution_path,
-        "summary_json": summary_path,
-    }
-    summary_payload = {
+def _wao_summary_payload(
+    result: dict[str, Any],
+    settings: dict[str, Any],
+    species_order: list[str],
+    output_paths: dict[str, Path],
+) -> dict[str, Any]:
+    """组装 summary JSON 的稳定键结构。"""
+
+    return {
         "schema_version": 1,
         "method": {
             "name": "GROMACS fixed-radius solvation environment",
@@ -1052,33 +1349,83 @@ def write_analysis_outputs(
         "validation": result["validation"],
         "outputs": {key: str(path) for key, path in output_paths.items()},
     }
+
+
+def _wao_plot(
+    summary_payload: dict[str, Any],
+    output_dir: Path,
+    output_paths: dict[str, Path],
+    summary_path: Path,
+) -> None:
+    """写出极坐标图与分布图，并把 PNG 路径回填到 summary。"""
+
+    plot_path = output_dir / PLOT_FILENAME
+    plot_payload, plotting_metadata = build_plot_summary(summary_payload, max_environment_types=12)
+    plot_coordination_polar_from_summary(
+        plot_payload,
+        output=True,
+        figsize=(7.0, 4.6),
+        figname=str(plot_path),
+        dpi=600,
+    )
+    output_paths["plot_png"] = plot_path
+    summary_payload["outputs"]["plot_png"] = str(plot_path)
+    summary_payload["plotting"] = plotting_metadata
+    distribution_plot_path = output_dir / DISTRIBUTION_PLOT_FILENAME
+    plot_solvation_environment_distribution(
+        summary_payload,
+        output=True,
+        figsize=(7.0, 4.6),
+        figname=str(distribution_plot_path),
+        max_environment_types=12,
+    )
+    output_paths["distribution_plot_png"] = distribution_plot_path
+    summary_payload["outputs"]["distribution_plot_png"] = str(distribution_plot_path)
+    summary_path.write_text(json.dumps(summary_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def write_analysis_outputs(
+    result: dict[str, Any],
+    output_dir: Path,
+    settings: dict[str, Any],
+    plot: bool,
+) -> dict[str, Path]:
+    """将核心统计结果写为约定 CSV、JSON 和可选 PNG。
+
+    功能目的：集中控制输出 schema、编码、文件名和绘图依赖边界。
+    输入参数：analyze_universe 结果、输出目录、已确认 CLI 设置、是否绘图。
+    返回值：逻辑输出名到绝对路径的映射。
+    关键流程：先分配环境 id 后展开 species 列；JSON 使用稳定键结构；仅 plot=true 时导入绘图模块。
+    可能报错或边界情况：输出目录不可写或绘图依赖缺失时抛出明确异常。
+    """
+
+    output_dir = output_dir.expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    species_order = [str(value) for value in result["species_order"]]
+    species_columns = [f"count::{species}" for species in species_order]
+    record_fields = [*RECORD_FIELDS, *species_columns]
+    distribution_fields = [*DISTRIBUTION_FIELDS, *species_columns]
+
+    record_rows = _wao_record_rows(result, record_fields, species_order, species_columns)
+    distribution_rows = _wao_distribution_rows(result, species_order, species_columns)
+
+    records_path = output_dir / RECORDS_FILENAME
+    distribution_path = output_dir / DISTRIBUTION_FILENAME
+    summary_path = output_dir / SUMMARY_FILENAME
+    write_csv_rows(records_path, record_fields, record_rows)
+    write_csv_rows(distribution_path, distribution_fields, distribution_rows)
+
+    output_paths: dict[str, Path] = {
+        "records_csv": records_path,
+        "distribution_csv": distribution_path,
+        "summary_json": summary_path,
+    }
+    summary_payload = _wao_summary_payload(result, settings, species_order, output_paths)
     summary_path.write_text(json.dumps(summary_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     if plot:
         try:
-            plot_path = output_dir / PLOT_FILENAME
-            plot_payload, plotting_metadata = build_plot_summary(summary_payload, max_environment_types=12)
-            plot_coordination_polar_from_summary(
-                plot_payload,
-                output=True,
-                figsize=(7.0, 4.6),
-                figname=str(plot_path),
-                dpi=600,
-            )
-            output_paths["plot_png"] = plot_path
-            summary_payload["outputs"]["plot_png"] = str(plot_path)
-            summary_payload["plotting"] = plotting_metadata
-            distribution_plot_path = output_dir / DISTRIBUTION_PLOT_FILENAME
-            plot_solvation_environment_distribution(
-                summary_payload,
-                output=True,
-                figsize=(7.0, 4.6),
-                figname=str(distribution_plot_path),
-                max_environment_types=12,
-            )
-            output_paths["distribution_plot_png"] = distribution_plot_path
-            summary_payload["outputs"]["distribution_plot_png"] = str(distribution_plot_path)
-            summary_path.write_text(json.dumps(summary_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            _wao_plot(summary_payload, output_dir, output_paths, summary_path)
         except ImportError as exc:
             raise RuntimeError(f"绘图依赖不可用；核心 CSV/JSON 已写出，但无法生成 PNG: {exc}") from exc
     return output_paths

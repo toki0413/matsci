@@ -55,7 +55,9 @@ class MultiFidelitySurrogate:
     delta_gp: NumPyGP | None  # 只有两级以上才有
     fitted: bool = False
 
-    def predict(self, X: np.ndarray, level: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+    def predict(
+        self, X: np.ndarray, level: int | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
         """在指定保真级预测. level=None 用最高级."""
         if not self.fitted:
             raise RuntimeError("surrogate 未拟合")
@@ -101,11 +103,19 @@ class MultiFidelityInput(BaseModel):
         )
     )
     name: str | None = Field(default=None, description="register_source: 数据源名称")
-    level: int | None = Field(default=None, description="register_source: 保真等级 (0=最低)")
-    cost: float | None = Field(default=None, description="register_source: 每次评估代价")
-    X: list[list[float]] | None = Field(default=None, description="register_source: 输入点")
+    level: int | None = Field(
+        default=None, description="register_source: 保真等级 (0=最低)"
+    )
+    cost: float | None = Field(
+        default=None, description="register_source: 每次评估代价"
+    )
+    X: list[list[float]] | None = Field(
+        default=None, description="register_source: 输入点"
+    )
     y: list[float] | None = Field(default=None, description="register_source: 输出值")
-    X_new: list[list[float]] | None = Field(default=None, description="propagate: 预测点")
+    X_new: list[list[float]] | None = Field(
+        default=None, description="propagate: 预测点"
+    )
     candidates: list[list[float]] | None = Field(
         default=None, description="select_next: 候选点集"
     )
@@ -137,15 +147,20 @@ class MultiFidelityInput(BaseModel):
         default=None, description="bayesian_calibrate: θ 初始值"
     )
     n_mcmc_samples: int = Field(
-        default=1000, ge=100, le=20000,
+        default=1000,
+        ge=100,
+        le=20000,
         description="bayesian_calibrate: MCMC 采样数 (含 burn-in)",
     )
     n_burnin: int = Field(
-        default=200, ge=0, le=5000,
+        default=200,
+        ge=0,
+        le=5000,
         description="bayesian_calibrate: burn-in 样本数",
     )
     proposal_std: float = Field(
-        default=0.1, gt=0.0,
+        default=0.1,
+        gt=0.0,
         description="bayesian_calibrate: 随机游走 proposal 标准差",
     )
     # nested_doe 专用
@@ -185,6 +200,247 @@ class MultiFidelityInput(BaseModel):
     )
 
 
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+
+def _mcmc_log_likelihood(
+    th: np.ndarray,
+    theta_mid: np.ndarray,
+    rho: float,
+    low_pred_hf: np.ndarray,
+    delta_pred: np.ndarray,
+    y_hf: np.ndarray,
+    sigma_n: float,
+) -> float:
+    """theta 影响: y_lf 尺度因子 (1 + sum(th - theta_mid))."""
+    scale = 1.0 + float(np.sum(th - theta_mid))
+    mu = rho * low_pred_hf * scale + delta_pred
+    resid = y_hf - mu
+    return -0.5 * float(np.sum(resid**2)) / (sigma_n**2)
+
+
+def _mcmc_log_prior(
+    th: np.ndarray, theta_low: np.ndarray, theta_high: np.ndarray
+) -> float:
+    """Uniform 先验: 在 bounds 内 = 0 (log=0), 外 = -inf."""
+    if np.any(th < theta_low) or np.any(th > theta_high):
+        return -np.inf
+    return 0.0
+
+
+def _run_metropolis(
+    theta: np.ndarray,
+    theta_low: np.ndarray,
+    theta_high: np.ndarray,
+    theta_mid: np.ndarray,
+    rho: float,
+    low_pred_hf: np.ndarray,
+    delta_pred: np.ndarray,
+    y_hf: np.ndarray,
+    sigma_n: float,
+    d_theta: int,
+    n_total: int,
+    proposal_std: float,
+    seed: int | None,
+) -> tuple[list[np.ndarray], int]:
+    """Metropolis-Hastings 随机游走, 返回 (samples, n_accept)."""
+
+    def log_posterior(th: np.ndarray) -> float:
+        lp = _mcmc_log_prior(th, theta_low, theta_high)
+        if lp == -np.inf:
+            return -np.inf
+        return lp + _mcmc_log_likelihood(
+            th, theta_mid, rho, low_pred_hf, delta_pred, y_hf, sigma_n
+        )
+
+    # Metropolis-Hastings 随机游走
+    rng = np.random.default_rng(seed if seed is not None else None)
+    current_theta = theta.copy()
+    current_lp = log_posterior(current_theta)
+    samples: list[np.ndarray] = []
+    n_accept = 0
+
+    for _ in range(n_total):
+        proposal = current_theta + rng.normal(0, proposal_std, size=d_theta)
+        proposal_lp = log_posterior(proposal)
+        # 接受率 = min(1, exp(proposal - current))
+        if proposal_lp > -np.inf:
+            log_accept = proposal_lp - current_lp
+            if np.log(rng.uniform()) < log_accept:
+                current_theta = proposal
+                current_lp = proposal_lp
+                n_accept += 1
+        samples.append(current_theta.copy())
+    return samples, n_accept
+
+
+def _latin_hypercube(
+    n_lf: int,
+    dim: int,
+    bounds_low: np.ndarray,
+    bounds_high: np.ndarray,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Latin hypercube sampling for LF."""
+    # 每维分 n_lf 个等概率区间, 每区间抽一个均匀点, 然后逐维打乱
+    X_lf = np.zeros((n_lf, dim))
+    for j in range(dim):
+        # 等概率分箱
+        edges = np.linspace(bounds_low[j], bounds_high[j], n_lf + 1)
+        # 每个箱内均匀采样
+        pts = np.array([rng.uniform(edges[i], edges[i + 1]) for i in range(n_lf)])
+        # 打乱顺序
+        rng.shuffle(pts)
+        X_lf[:, j] = pts
+    return X_lf
+
+
+def _min_pairwise_distance(X: np.ndarray) -> float:
+    """最小点间距, 作为空间填充度指标."""
+    if len(X) < 2:
+        return 0.0
+    from scipy.spatial.distance import pdist
+
+    return float(np.min(pdist(X)))
+
+
+def _control_variate_stats(
+    y_hf: np.ndarray, y_lf: np.ndarray, beta_arg: float | None
+) -> dict[str, Any]:
+    """控制变量方差缩减的统计量与结果字典."""
+    var_hf = float(np.var(y_hf, ddof=1))
+    var_lf = float(np.var(y_lf, ddof=1))
+    cov_hf_lf = float(np.cov(y_hf, y_lf, ddof=1)[0, 1])
+
+    # 最优 beta
+    beta_opt = 0.0 if var_lf < 1e-12 else cov_hf_lf / var_lf
+
+    beta = beta_arg if beta_arg is not None else beta_opt
+
+    # 控制变量估计: y_cv = y_hf - beta * (y_lf - mean(y_lf))
+    # 注意: 如果 y_lf 是已知解析模型, E[y_lf] 是确定的; 如果是采样,
+    # 用样本均值近似. 这里用样本均值.
+    y_cv = y_hf - beta * (y_lf - np.mean(y_lf))
+    var_cv = float(np.var(y_cv, ddof=1))
+
+    reduction_ratio = 1.0 - (var_cv / var_hf) if var_hf > 1e-12 else 0.0
+
+    return {
+        "estimate": float(np.mean(y_cv)),
+        "estimate_hf_only": float(np.mean(y_hf)),
+        "variance_original": var_hf,
+        "variance_reduced": var_cv,
+        "reduction_ratio": round(reduction_ratio, 6),
+        "beta": round(beta, 6),
+        "beta_optimal": round(beta_opt, 6),
+        "cov_hf_lf": round(cov_hf_lf, 6),
+        "n_samples": len(y_hf),
+        "method": "control_variate",
+    }
+
+
+def _calibration_payload(
+    post_burnin: np.ndarray,
+    n_total: int,
+    n_burnin: int,
+    acceptance_rate: float,
+    rho: float,
+    theta_low: np.ndarray,
+    theta_high: np.ndarray,
+) -> dict:
+    """组装 bayesian_calibrate 的结果字典 (后验统计 + 元信息)."""
+    # 后验统计
+    post_mean = post_burnin.mean(axis=0)
+    post_std = post_burnin.std(axis=0)
+    return {
+        "posterior_mean": post_mean.tolist(),
+        "posterior_std": post_std.tolist(),
+        "posterior_samples": post_burnin.tolist(),
+        "n_post_burnin": len(post_burnin),
+        "n_mcmc_total": n_total,
+        "n_burnin": n_burnin,
+        "acceptance_rate": round(acceptance_rate, 4),
+        "rho": rho,
+        "theta_prior_low": theta_low.tolist(),
+        "theta_prior_high": theta_high.tolist(),
+        "method": "kennedy_ohagan_2000_metropolis_hastings",
+    }
+
+
+def _calibrate_posterior(
+    inp: MultiFidelityInput,
+    theta: np.ndarray,
+    theta_low: np.ndarray,
+    theta_high: np.ndarray,
+    y_hf: np.ndarray,
+    d_theta: int,
+    calib: tuple,
+) -> dict:
+    """跑 MH 采样, 返回后验结果字典 (burn-in 后样本 + 统计)."""
+    rho, low_pred_hf, delta_pred, sigma_n, theta_mid = calib
+    n_total = inp.n_mcmc_samples
+    samples, n_accept = _run_metropolis(
+        theta,
+        theta_low,
+        theta_high,
+        theta_mid,
+        rho,
+        low_pred_hf,
+        delta_pred,
+        y_hf,
+        sigma_n,
+        d_theta,
+        n_total,
+        inp.proposal_std,
+        inp.seed,
+    )
+    # burn-in 后的样本
+    post_burnin = np.array(samples[inp.n_burnin :])
+    acceptance_rate = n_accept / n_total
+    return _calibration_payload(
+        post_burnin, n_total, inp.n_burnin, acceptance_rate, rho, theta_low, theta_high
+    )
+
+
+def _fem_validation(surrogate, sol_field: np.ndarray, mesh_data: Any) -> dict:
+    """用已拟合的 surrogate 在 mesh 节点上预测, 算跟神经解的残差."""
+    if surrogate is None or not surrogate.fitted:
+        return {"note": "surrogate 未拟合, 跳过 FEM 校验 (先 fit_surrogate)"}
+    try:
+        nodes = mesh_data.get("nodes", mesh_data)
+        X = np.array(nodes, dtype=float)
+        if X.ndim == 1:
+            X = X.reshape(1, -1)
+        fem_mu, fem_sigma = surrogate.predict(X)
+        # 残差: 神经解 vs FEM 均值 (长度对齐才比)
+        n = min(len(sol_field), len(fem_mu))
+        if n > 0:
+            resid = sol_field[:n] - fem_mu[:n]
+            return {
+                "mu": fem_mu[:n].tolist(),
+                "sigma": fem_sigma[:n].tolist(),
+                "residual_mean": float(np.mean(resid)),
+                "residual_std": float(np.std(resid)),
+                "residual_max": float(np.max(np.abs(resid))),
+            }
+        return {"note": "长度对不齐, 跳过残差"}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def _neural_degraded(surrogate, reason: str, backend: str | None = None) -> ToolResult:
+    """neural 不可用时的降级返回, 让上层走纯 FEM."""
+    data: dict[str, Any] = {
+        "neural_estimate": None,
+        "degraded": True,
+        "reason": reason,
+    }
+    if backend is not None:
+        data["backend"] = backend
+    data["fem_available"] = surrogate is not None and surrogate.fitted
+    return ToolResult(data=data, success=True)
+
+
 # ── tool ─────────────────────────────────────────────────────────────────────
 
 
@@ -201,7 +457,9 @@ class MultiFidelityTool(HuginnTool):
     read_only = True
     profile = ToolProfile(
         cost_tier="light",
-        phases=frozenset({ResearchPhase.PLANNING, ResearchPhase.VALIDATION, ResearchPhase.OPEN}),
+        phases=frozenset(
+            {ResearchPhase.PLANNING, ResearchPhase.VALIDATION, ResearchPhase.OPEN}
+        ),
     )
 
     def __init__(self) -> None:
@@ -231,19 +489,29 @@ class MultiFidelityTool(HuginnTool):
                 return self._variance_reduction(input_data)
             if input_data.action == "neural_proxy":
                 return self._neural_proxy(input_data)
-            return ToolResult(data=None, success=False, error=f"未知 action: {input_data.action}")
+            return ToolResult(
+                data=None, success=False, error=f"未知 action: {input_data.action}"
+            )
         except Exception as exc:
-            return ToolResult(data=None, success=False, error=f"MultiFidelityTool failed: {exc}")
+            return ToolResult(
+                data=None, success=False, error=f"MultiFidelityTool failed: {exc}"
+            )
 
     # ── actions ──────────────────────────────────────────────────────
 
     def _register_source(self, inp: MultiFidelityInput) -> ToolResult:
         if not inp.name:
-            return ToolResult(data=None, success=False, error="register_source 需要 name")
+            return ToolResult(
+                data=None, success=False, error="register_source 需要 name"
+            )
         if inp.level is None:
-            return ToolResult(data=None, success=False, error="register_source 需要 level")
+            return ToolResult(
+                data=None, success=False, error="register_source 需要 level"
+            )
         if inp.X is None or inp.y is None:
-            return ToolResult(data=None, success=False, error="register_source 需要 X 和 y")
+            return ToolResult(
+                data=None, success=False, error="register_source 需要 X 和 y"
+            )
         if len(inp.X) != len(inp.y):
             return ToolResult(data=None, success=False, error="X 和 y 长度不一致")
         if len(inp.X) == 0:
@@ -324,7 +592,9 @@ class MultiFidelityTool(HuginnTool):
 
     def _propagate(self, inp: MultiFidelityInput) -> ToolResult:
         if self._surrogate is None or not self._surrogate.fitted:
-            return ToolResult(data=None, success=False, error="未拟合 surrogate, 先调 fit_surrogate")
+            return ToolResult(
+                data=None, success=False, error="未拟合 surrogate, 先调 fit_surrogate"
+            )
         if not inp.X_new:
             return ToolResult(data=None, success=False, error="propagate 需要 X_new")
         X = np.array(inp.X_new, dtype=float)
@@ -342,9 +612,13 @@ class MultiFidelityTool(HuginnTool):
 
     def _select_next(self, inp: MultiFidelityInput) -> ToolResult:
         if self._surrogate is None or not self._surrogate.fitted:
-            return ToolResult(data=None, success=False, error="未拟合 surrogate, 先调 fit_surrogate")
+            return ToolResult(
+                data=None, success=False, error="未拟合 surrogate, 先调 fit_surrogate"
+            )
         if not inp.candidates:
-            return ToolResult(data=None, success=False, error="select_next 需要 candidates")
+            return ToolResult(
+                data=None, success=False, error="select_next 需要 candidates"
+            )
         candidates = np.array(inp.candidates, dtype=float)
         if candidates.ndim == 1:
             candidates = candidates.reshape(1, -1)
@@ -360,16 +634,18 @@ class MultiFidelityTool(HuginnTool):
             for src in self._surrogate.sources:
                 cost = max(src.cost, 1e-8)
                 acq = ei / cost
-                results.append({
-                    "candidate_idx": i,
-                    "fidelity": src.name,
-                    "level": src.level,
-                    "cost": src.cost,
-                    "ei": float(ei),
-                    "acquisition": float(acq),
-                    "mu": float(mu[i]),
-                    "sigma": float(sigma[i]),
-                })
+                results.append(
+                    {
+                        "candidate_idx": i,
+                        "fidelity": src.name,
+                        "level": src.level,
+                        "cost": src.cost,
+                        "ei": float(ei),
+                        "acquisition": float(acq),
+                        "mu": float(mu[i]),
+                        "sigma": float(sigma[i]),
+                    }
+                )
         # 按 acquisition 降序排, 选 top-n
         results.sort(key=lambda r: r["acquisition"], reverse=True)
         selected = results[: inp.n_select]
@@ -383,7 +659,9 @@ class MultiFidelityTool(HuginnTool):
         )
 
     @staticmethod
-    def _expected_improvement(mu: float, sigma: float, best: float, maximize: bool) -> float:
+    def _expected_improvement(
+        mu: float, sigma: float, best: float, maximize: bool
+    ) -> float:
         """标准 EI. sigma=0 时返回 0."""
         if sigma < 1e-10:
             return 0.0
@@ -395,21 +673,8 @@ class MultiFidelityTool(HuginnTool):
 
     # ── paper-level deepening (E3) ──────────────────────────────────
 
-    def _bayesian_calibrate(self, inp: MultiFidelityInput) -> ToolResult:
-        """Kennedy-O'Hagan 2000 Bayesian model calibration.
-
-        模型: y_hf(x) = rho * y_lf(x, theta) + delta(x) + eps
-        - delta(x) ~ GP(0, K_delta), 用残差 GP 拟合
-        - theta ~ Uniform(theta_low, theta_high) 先验
-        - rho: 固定 (从数据估计), 不参与 MCMC
-        - eps ~ N(0, sigma_n^2)
-
-        MCMC: Metropolis-Hastings 随机游走采样 theta 后验.
-        log p(theta | data) ∝ log p(data | theta) + log p(theta)
-        似然 = N(y_hf | rho * y_lf(X_hf, theta) + delta_pred(X_hf), sigma_n^2 I)
-
-        返回: posterior samples (post-burnin), posterior mean/std, acceptance rate.
-        """
+    def _calibration_inputs(self, inp: MultiFidelityInput):
+        """校验 calibration 输入并准备数组/theta, 失败时返回失败的 ToolResult."""
         if not inp.X_hf or not inp.y_hf or not inp.X_lf or not inp.y_lf:
             return ToolResult(
                 data=None,
@@ -437,7 +702,12 @@ class MultiFidelityTool(HuginnTool):
             if inp.theta_init
             else 0.5 * (theta_low + theta_high)
         )
+        return X_hf, y_hf, X_lf, y_lf, theta_low, theta_high, theta, d_theta
 
+    def _calibration_surrogate(
+        self, inp: MultiFidelityInput, X_hf, y_hf, X_lf, y_lf, theta_low, theta_high
+    ):
+        """拟合低保真 GP + 残差 GP, 返回 (rho, low_pred_hf, delta_pred, sigma_n, theta_mid)."""
         # 简化版: theta 通过尺度因子影响 y_lf 预测, 而非完整 Kennedy-O'Hagan 的 theta-dependent 仿真器
 
         # 拟合低保真 GP
@@ -469,68 +739,36 @@ class MultiFidelityTool(HuginnTool):
         theta_mid = 0.5 * (theta_low + theta_high)
         delta_pred, _ = delta_gp.predict(X_hf)
         sigma_n = max(inp.sigma_n, 1e-6)
+        return rho, low_pred_hf, delta_pred, sigma_n, theta_mid
 
-        def log_likelihood(th: np.ndarray) -> float:
-            # theta 影响: y_lf 尺度因子 (1 + sum(th - theta_mid))
-            scale = 1.0 + float(np.sum(th - theta_mid))
-            mu = rho * low_pred_hf * scale + delta_pred
-            resid = y_hf - mu
-            return -0.5 * float(np.sum(resid**2)) / (sigma_n**2)
+    def _bayesian_calibrate(self, inp: MultiFidelityInput) -> ToolResult:
+        """Kennedy-O'Hagan 2000 Bayesian model calibration.
 
-        def log_prior(th: np.ndarray) -> float:
-            # Uniform 先验: 在 bounds 内 = 0 (log=0), 外 = -inf
-            if np.any(th < theta_low) or np.any(th > theta_high):
-                return -np.inf
-            return 0.0
+        模型: y_hf(x) = rho * y_lf(x, theta) + delta(x) + eps
+        - delta(x) ~ GP(0, K_delta), 用残差 GP 拟合
+        - theta ~ Uniform(theta_low, theta_high) 先验
+        - rho: 固定 (从数据估计), 不参与 MCMC
+        - eps ~ N(0, sigma_n^2)
 
-        def log_posterior(th: np.ndarray) -> float:
-            lp = log_prior(th)
-            if lp == -np.inf:
-                return -np.inf
-            return lp + log_likelihood(th)
+        MCMC: Metropolis-Hastings 随机游走采样 theta 后验.
+        log p(theta | data) ∝ log p(data | theta) + log p(theta)
+        似然 = N(y_hf | rho * y_lf(X_hf, theta) + delta_pred(X_hf), sigma_n^2 I)
 
-        # Metropolis-Hastings 随机游走
-        rng = np.random.default_rng(inp.seed if inp.seed is not None else None)
-        current_theta = theta.copy()
-        current_lp = log_posterior(current_theta)
-        samples: list[np.ndarray] = []
-        n_accept = 0
-        n_total = inp.n_mcmc_samples
+        返回: posterior samples (post-burnin), posterior mean/std, acceptance rate.
+        """
+        prepared = MultiFidelityTool._calibration_inputs(self, inp)
+        if isinstance(prepared, ToolResult):
+            return prepared
+        X_hf, y_hf, X_lf, y_lf, theta_low, theta_high, theta, d_theta = prepared
 
-        for _ in range(n_total):
-            proposal = current_theta + rng.normal(0, inp.proposal_std, size=d_theta)
-            proposal_lp = log_posterior(proposal)
-            # 接受率 = min(1, exp(proposal - current))
-            if proposal_lp > -np.inf:
-                log_accept = proposal_lp - current_lp
-                if np.log(rng.uniform()) < log_accept:
-                    current_theta = proposal
-                    current_lp = proposal_lp
-                    n_accept += 1
-            samples.append(current_theta.copy())
-
-        # burn-in 后的样本
-        post_burnin = np.array(samples[inp.n_burnin:])
-        acceptance_rate = n_accept / n_total
-
-        # 后验统计
-        post_mean = post_burnin.mean(axis=0)
-        post_std = post_burnin.std(axis=0)
+        calib = MultiFidelityTool._calibration_surrogate(
+            self, inp, X_hf, y_hf, X_lf, y_lf, theta_low, theta_high
+        )
 
         return ToolResult(
-            data={
-                "posterior_mean": post_mean.tolist(),
-                "posterior_std": post_std.tolist(),
-                "posterior_samples": post_burnin.tolist(),
-                "n_post_burnin": len(post_burnin),
-                "n_mcmc_total": n_total,
-                "n_burnin": inp.n_burnin,
-                "acceptance_rate": round(acceptance_rate, 4),
-                "rho": rho,
-                "theta_prior_low": theta_low.tolist(),
-                "theta_prior_high": theta_high.tolist(),
-                "method": "kennedy_ohagan_2000_metropolis_hastings",
-            },
+            data=_calibrate_posterior(
+                inp, theta, theta_low, theta_high, y_hf, d_theta, calib
+            ),
             success=True,
         )
 
@@ -548,7 +786,7 @@ class MultiFidelityTool(HuginnTool):
             return ToolResult(
                 data=None,
                 success=False,
-                error=f"n_hf ({inp.n_hf}) 不能大于 n_lf ({inp.n_lf})"
+                error=f"n_hf ({inp.n_hf}) 不能大于 n_lf ({inp.n_lf})",
             )
 
         rng = np.random.default_rng(inp.seed)
@@ -556,35 +794,17 @@ class MultiFidelityTool(HuginnTool):
         bounds_high = np.array(inp.bounds_high or [1.0] * inp.dim, dtype=float)
         if len(bounds_low) != inp.dim or len(bounds_high) != inp.dim:
             return ToolResult(
-                data=None,
-                success=False,
-                error=f"bounds 长度应等于 dim={inp.dim}"
+                data=None, success=False, error=f"bounds 长度应等于 dim={inp.dim}"
             )
 
         # Latin hypercube sampling for LF
         # 每维分 n_lf 个等概率区间, 每区间抽一个均匀点, 然后逐维打乱
-        X_lf = np.zeros((inp.n_lf, inp.dim))
-        for j in range(inp.dim):
-            # 等概率分箱
-            edges = np.linspace(bounds_low[j], bounds_high[j], inp.n_lf + 1)
-            # 每个箱内均匀采样
-            pts = np.array([
-                rng.uniform(edges[i], edges[i + 1]) for i in range(inp.n_lf)
-            ])
-            # 打乱顺序
-            rng.shuffle(pts)
-            X_lf[:, j] = pts
+        X_lf = _latin_hypercube(inp.n_lf, inp.dim, bounds_low, bounds_high, rng)
 
         # 嵌套: HF 取 LF 的前 n_hf 个点 (Qian 2009 nested design)
-        X_hf = X_lf[:inp.n_hf].copy()
+        X_hf = X_lf[: inp.n_hf].copy()
 
         # 计算 min-distance 作为空间填充度指标
-        def min_dist(X: np.ndarray) -> float:
-            if len(X) < 2:
-                return 0.0
-            from scipy.spatial.distance import pdist
-            return float(np.min(pdist(X)))
-
         return ToolResult(
             data={
                 "X_hf": X_hf.tolist(),
@@ -593,8 +813,8 @@ class MultiFidelityTool(HuginnTool):
                 "n_lf": inp.n_lf,
                 "dim": inp.dim,
                 "nested": True,
-                "hf_min_distance": round(min_dist(X_hf), 6),
-                "lf_min_distance": round(min_dist(X_lf), 6),
+                "hf_min_distance": round(_min_pairwise_distance(X_hf), 6),
+                "lf_min_distance": round(_min_pairwise_distance(X_lf), 6),
                 "method": "nested_latin_hypercube_qian_2009",
             },
             success=True,
@@ -637,39 +857,18 @@ class MultiFidelityTool(HuginnTool):
                 error="至少需要 2 个样本才能算方差",
             )
 
-        var_hf = float(np.var(y_hf, ddof=1))
-        var_lf = float(np.var(y_lf, ddof=1))
-        cov_hf_lf = float(np.cov(y_hf, y_lf, ddof=1)[0, 1])
-
-        # 最优 beta
-        beta_opt = 0.0 if var_lf < 1e-12 else cov_hf_lf / var_lf
-
-        beta = inp.beta if inp.beta is not None else beta_opt
-
-        # 控制变量估计: y_cv = y_hf - beta * (y_lf - mean(y_lf))
-        # 注意: 如果 y_lf 是已知解析模型, E[y_lf] 是确定的; 如果是采样,
-        # 用样本均值近似. 这里用样本均值.
-        y_cv = y_hf - beta * (y_lf - np.mean(y_lf))
-        var_cv = float(np.var(y_cv, ddof=1))
-
-        reduction_ratio = 1.0 - (var_cv / var_hf) if var_hf > 1e-12 else 0.0
-
         return ToolResult(
-            data={
-                "estimate": float(np.mean(y_cv)),
-                "estimate_hf_only": float(np.mean(y_hf)),
-                "variance_original": var_hf,
-                "variance_reduced": var_cv,
-                "reduction_ratio": round(reduction_ratio, 6),
-                "beta": round(beta, 6),
-                "beta_optimal": round(beta_opt, 6),
-                "cov_hf_lf": round(cov_hf_lf, 6),
-                "n_samples": len(y_hf),
-                "method": "control_variate",
-            },
+            data=_control_variate_stats(y_hf, y_lf, inp.beta),
             success=True,
         )
 
+    def _ensure_proxy(self, model_path: str | None) -> NeuralPDEProxy:
+        # 延迟构造 proxy, 第一次用才建
+        if self._proxy is None:
+            self._proxy = NeuralPDEProxy()
+        if model_path:
+            self._proxy.load_model(model_path)
+        return self._proxy
 
     def _neural_proxy(self, inp: MultiFidelityInput) -> ToolResult:
         """Transolver 神经 PDE 快速预估 + FEM 校验.
@@ -686,41 +885,16 @@ class MultiFidelityTool(HuginnTool):
                 error="neural_proxy 需要 mesh_data 和 boundary_conditions",
             )
 
-        # 延迟构造 proxy, 第一次用才建
-        if self._proxy is None:
-            self._proxy = NeuralPDEProxy()
-
-        proxy = self._proxy
-        if inp.model_path:
-            proxy.load_model(inp.model_path)
+        proxy = MultiFidelityTool._ensure_proxy(self, inp.model_path)
 
         if not proxy.available():
             # 降级: 没装 torch/transolver, 直接提示用 FEM
-            return ToolResult(
-                data={
-                    "neural_estimate": None,
-                    "degraded": True,
-                    "reason": proxy.status(),
-                    "fem_available": self._surrogate is not None
-                    and self._surrogate.fitted,
-                },
-                success=True,
-            )
+            return _neural_degraded(self._surrogate, proxy.status())
 
         # 神经快速预估
         sol = proxy.predict(inp.mesh_data, inp.boundary_conditions)
         if not sol.available:
-            return ToolResult(
-                data={
-                    "neural_estimate": None,
-                    "degraded": True,
-                    "reason": sol.reason,
-                    "backend": sol.backend,
-                    "fem_available": self._surrogate is not None
-                    and self._surrogate.fitted,
-                },
-                success=True,
-            )
+            return _neural_degraded(self._surrogate, sol.reason, sol.backend)
 
         result: dict[str, Any] = {
             "neural_estimate": {
@@ -731,33 +905,10 @@ class MultiFidelityTool(HuginnTool):
             "degraded": False,
         }
 
-        # FEM 校验: 用已拟合的 surrogate 在 mesh 节点上预测, 算跟神经解的残差
-        if self._surrogate is not None and self._surrogate.fitted:
-            try:
-                nodes = inp.mesh_data.get("nodes", inp.mesh_data)
-                X = np.array(nodes, dtype=float)
-                if X.ndim == 1:
-                    X = X.reshape(1, -1)
-                fem_mu, fem_sigma = self._surrogate.predict(X)
-                # 残差: 神经解 vs FEM 均值 (长度对齐才比)
-                n = min(len(sol.field), len(fem_mu))
-                if n > 0:
-                    resid = sol.field[:n] - fem_mu[:n]
-                    result["fem_validation"] = {
-                        "mu": fem_mu[:n].tolist(),
-                        "sigma": fem_sigma[:n].tolist(),
-                        "residual_mean": float(np.mean(resid)),
-                        "residual_std": float(np.std(resid)),
-                        "residual_max": float(np.max(np.abs(resid))),
-                    }
-                else:
-                    result["fem_validation"] = {"note": "长度对不齐, 跳过残差"}
-            except Exception as exc:
-                result["fem_validation"] = {"error": str(exc)}
-        else:
-            result["fem_validation"] = {
-                "note": "surrogate 未拟合, 跳过 FEM 校验 (先 fit_surrogate)"
-            }
+        # FEM 校验
+        result["fem_validation"] = _fem_validation(
+            self._surrogate, sol.field, inp.mesh_data
+        )
 
         return ToolResult(data=result, success=True)
 

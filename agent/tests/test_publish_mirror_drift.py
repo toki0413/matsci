@@ -1,3 +1,4 @@
+# governance-gate
 """publish/mcpb 打包镜像的漂移棘轮 (only-shrink).
 
 ``publish/mcpb/{capabilities,workflows}-mcp/`` 各自内嵌一份 ``huginn`` 源码副本.
@@ -28,6 +29,7 @@ import mcpb_vendor  # noqa: E402
 _GOV = REPO_ROOT / "agent" / "huginn" / "cli" / "governance_audit.py"
 _ga_spec = importlib.util.spec_from_file_location("governance_audit", _GOV)
 _ga = importlib.util.module_from_spec(_ga_spec)
+sys.modules[_ga_spec.name] = _ga  # dataclass 需在 sys.modules 里解析模块 (py3.14)
 _ga_spec.loader.exec_module(_ga)
 
 # only-shrink 预算 (已跑 scripts/mcpb_vendor.py --write 收敛至 0). 不得上调.
@@ -51,6 +53,31 @@ def test_publish_mirror_drift_only_shrinks():
             f"[{bundle}] 镜像与源内容不同的文件从 {MAX_DIFFERING} 涨到 "
             f"{len(rep.differing)} —— 镜像在继续腐烂. 示例: {rep.differing[:8]}"
         )
+
+
+def test_bundle_manifest_covers_all_bundles():
+    """白名单与 bundle 清单双向一致: 新增 bundle 必须登记允许内容."""
+    assert set(mcpb_vendor.BUNDLES) == set(mcpb_vendor.BUNDLE_MANIFEST)
+
+
+def test_bundle_contents_match_manifest():
+    """不变量: bundle 顶层每个条目都在白名单内 (新增未登记文件即红)."""
+    for bundle in mcpb_vendor.BUNDLES:
+        assert mcpb_vendor.manifest_violations(bundle) == [], (
+            f"[{bundle}] 顶层出现未登记条目: "
+            f"{mcpb_vendor.manifest_violations(bundle)} —— 若确需随包发布, "
+            "在 scripts/mcpb_vendor.py 的 BUNDLE_MANIFEST 显式登记"
+        )
+
+
+def test_manifest_primitive_detects_unlisted_entry(tmp_path: Path):
+    """自检: 未登记条目会被报出 (防白名单门自己失效)."""
+    (tmp_path / "huginn").mkdir()
+    (tmp_path / "manifest.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "stray.log").write_text("x", encoding="utf-8")
+    assert mcpb_vendor.manifest_violations("capabilities-mcp", root=tmp_path) == [
+        "stray.log"
+    ]
 
 
 def test_hash_tree_primitive(tmp_path: Path):

@@ -39,12 +39,17 @@ def _check_thread_owner(thread_id: str, request: Request) -> dict[str, Any] | No
             return {"success": False, "error": "thread not found"}
         owner = thread.get("user_id")
         if owner and owner != user_id:
-            return {"success": False, "error": "forbidden: thread belongs to another user"}
+            return {
+                "success": False,
+                "error": "forbidden: thread belongs to another user",
+            }
     return None
 
 
 @router.get("/threads")
-async def list_threads(request: Request, include_archived: bool = False) -> dict[str, Any]:
+async def list_threads(
+    request: Request, include_archived: bool = False
+) -> dict[str, Any]:
     """List known conversation threads."""
     user_id = _current_user_id(request)
     with _state_lock:
@@ -56,7 +61,9 @@ async def list_threads(request: Request, include_archived: bool = False) -> dict
     # Filter to the caller's own threads in multi-tenant mode. Dev/shared
     # sessions see everything for backward compat.
     if user_id not in ("dev", "shared", None):
-        threads = [t for t in threads if not t.get("user_id") or t.get("user_id") == user_id]
+        threads = [
+            t for t in threads if not t.get("user_id") or t.get("user_id") == user_id
+        ]
     if not include_archived:
         threads = [t for t in threads if not t.get("archived", False)]
     return {
@@ -200,6 +207,7 @@ async def get_thread_state(thread_id: str, request: Request) -> dict[str, Any]:
         return err
     try:
         from huginn.memory.task_state import get_tracker
+
         state = get_tracker().get(thread_id)
         return {
             "thread_id": thread_id,
@@ -217,7 +225,9 @@ async def get_thread_state(thread_id: str, request: Request) -> dict[str, Any]:
 
 
 @router.patch("/threads/{thread_id}")
-async def rename_thread(thread_id: str, params: dict[str, Any], request: Request) -> dict[str, Any]:
+async def rename_thread(
+    thread_id: str, params: dict[str, Any], request: Request
+) -> dict[str, Any]:
     """Rename a thread."""
     err = _check_thread_owner(thread_id, request)
     if err:
@@ -268,7 +278,9 @@ async def unarchive_thread(thread_id: str, request: Request) -> dict[str, Any]:
 
 
 @router.post("/threads/{thread_id}/fork")
-async def fork_thread(thread_id: str, request: Request, params: dict[str, Any] | None = None) -> dict[str, Any]:
+async def fork_thread(
+    thread_id: str, request: Request, params: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Fork the conversation tree from the current position (or a given node)."""
     err = _check_thread_owner(thread_id, request)
     if err:
@@ -304,7 +316,9 @@ async def list_branches(thread_id: str, request: Request) -> dict[str, Any]:
 
 
 @router.post("/threads/{thread_id}/switch-branch")
-async def switch_branch(thread_id: str, params: dict[str, Any], request: Request) -> dict[str, Any]:
+async def switch_branch(
+    thread_id: str, params: dict[str, Any], request: Request
+) -> dict[str, Any]:
     """Switch the active conversation path to end at the given node."""
     err = _check_thread_owner(thread_id, request)
     if err:
@@ -397,6 +411,105 @@ async def event_path(thread_id: str, request: Request) -> dict[str, Any]:
         return {"thread_id": thread_id, "leaf_id": None, "path": []}
 
 
+async def _load_compact_state(
+    thread_id: str,
+) -> tuple[Any, Any, dict[str, Any], list[Any]]:
+    """读取 checkpointer 里的会话状态 (graph 不可用时 graph 为 None)."""
+    agent = await get_agent()
+    graph = agent.build_graph()
+    if graph is None:
+        return agent, None, {}, []
+    config = {"configurable": {"thread_id": thread_id}}
+    snapshot = graph.get_state(config)
+    raw_msgs = snapshot.values.get("messages", []) if snapshot else []
+    return agent, graph, config, raw_msgs
+
+
+async def _summarize_thread(agent: Any, raw_msgs: list[Any]) -> tuple[list[Any], str]:
+    """把超预算的旧消息交给 LLM 折叠成一条摘要."""
+    from huginn.utils.context import summarize_compact_messages
+
+    # 预算复用运行时配置; 摘要模型走与运行时相同的便宜模型分诊.
+    budget = getattr(agent, "context_budget_tokens", 0) or 0
+    summarizer = agent._make_summarizer()
+    existing = (
+        agent._build_compact_summary()
+        if hasattr(agent, "_build_compact_summary")
+        else ""
+    )
+    return await summarize_compact_messages(
+        raw_msgs,
+        budget,
+        summarizer=summarizer,
+        existing_summary=existing,
+    )
+
+
+def _compaction_drop_ids(raw_msgs: list[Any], compacted: list[Any]) -> list[Any]:
+    """计算被折叠掉的旧消息 id."""
+    keep_ids = {m.id for m in compacted if getattr(m, "id", None)}
+    return [m.id for m in raw_msgs if getattr(m, "id", None) and m.id not in keep_ids]
+
+
+async def _remove_from_checkpointer(
+    graph: Any, config: dict[str, Any], drop_ids: list[Any], remove_message: Any
+) -> int:
+    """用 LangGraph 官方 RemoveMessage + update_state 真删 checkpointer 历史."""
+    if not (drop_ids and graph is not None):
+        return 0
+    import asyncio
+
+    try:
+        removals = [remove_message(id=mid) for mid in drop_ids]
+        await asyncio.to_thread(graph.update_state, config, {"messages": removals})
+        return len(drop_ids)
+    except Exception:
+        logger.warning("checkpointer remove failed (compact endpoint)", exc_info=True)
+        return 0
+
+
+def _store_conversation_summary(agent: Any, summary_text: str) -> None:
+    """摘要进会话摘要侧, 下轮自动注入 system prompt."""
+    if not summary_text:
+        return
+    try:
+        base = getattr(agent, "_conversation_summary", "") or ""
+        agent._conversation_summary = (
+            f"{base}\n{summary_text}".strip() if base else summary_text
+        )
+    except Exception:
+        logger.debug("store conversation summary failed", exc_info=True)
+
+
+def _record_compaction_event(thread_id: str, summary_text: str) -> None:
+    """事件源记录一条 compaction divider, 让前端块模型渲染成 ── compacted ──."""
+    try:
+        from huginn.events.session_writer import record_compaction
+
+        record_compaction(thread_id, summary_text or "")
+    except Exception:
+        logger.debug("record_compaction skipped", exc_info=True)
+
+
+def _compact_result(
+    thread_id: str,
+    raw_msgs: list[Any],
+    compacted: list[Any],
+    removed: int,
+    summary_text: str,
+) -> dict[str, Any]:
+    """压缩接口的响应体."""
+    return {
+        "success": True,
+        "thread_id": thread_id,
+        "summarized": len(raw_msgs) - len(compacted),
+        "removed_from_checkpointer": removed,
+        "before": len(raw_msgs),
+        "after": len(compacted),
+        "summary": summary_text or "",
+    }
+
+
 @router.post("/threads/{thread_id}/compact")
 async def compact_thread(thread_id: str, request: Request) -> dict[str, Any]:
     """手动触发一次长会话智能压缩 (对标 Codex /compact).
@@ -411,86 +524,34 @@ async def compact_thread(thread_id: str, request: Request) -> dict[str, Any]:
     if err:
         return err
 
-    import asyncio
-
     from langchain_core.messages import RemoveMessage
 
-    from huginn.utils.context import summarize_compact_messages
-
     try:
-        agent = await get_agent()
-        graph = agent.build_graph()
-        if graph is None:
-            return {"success": False, "error": "graph unavailable"}
-        config = {"configurable": {"thread_id": thread_id}}
-        snapshot = graph.get_state(config)
-        raw_msgs = snapshot.values.get("messages", []) if snapshot else []
+        agent, graph, config, raw_msgs = await _load_compact_state(thread_id)
     except Exception:
-        logger.debug("compact failed to load thread state for %s", thread_id, exc_info=True)
+        logger.debug(
+            "compact failed to load thread state for %s", thread_id, exc_info=True
+        )
         return {"success": False, "error": "failed to load thread state"}
+
+    if graph is None:
+        return {"success": False, "error": "graph unavailable"}
 
     # 太短没有压缩价值, 直接跳过 (与 _sliding_window_compact 同阈值).
     if len(raw_msgs) < 10:
         return {"success": True, "thread_id": thread_id, "summarized": 0}
 
-    # 预算复用运行时配置; 摘要模型走与运行时相同的便宜模型分诊.
-    budget = getattr(agent, "context_budget_tokens", 0) or 0
-    summarizer = agent._make_summarizer()
-    existing = agent._build_compact_summary() if hasattr(agent, "_build_compact_summary") else ""
-
     try:
-        compacted, summary_text = await summarize_compact_messages(
-            raw_msgs,
-            budget,
-            summarizer=summarizer,
-            existing_summary=existing,
-        )
+        compacted, summary_text = await _summarize_thread(agent, raw_msgs)
     except Exception:
         logger.debug("summarize_compact_messages failed", exc_info=True)
         return {"success": False, "error": "compaction failed"}
 
-    # 计算被折叠掉的旧消息 id, 用 LangGraph 官方 RemoveMessage + update_state
-    # 真删 checkpointer 历史 (与运行时 G34 同一套, 避免 checkpoint 无限膨胀).
-    keep_ids = {
-        m.id for m in compacted if getattr(m, "id", None)
-    }
-    drop_ids = [
-        m.id for m in raw_msgs
-        if getattr(m, "id", None) and m.id not in keep_ids
-    ]
-    removed = 0
-    if drop_ids and graph is not None:
-        try:
-            removals = [RemoveMessage(id=mid) for mid in drop_ids]
-            await asyncio.to_thread(graph.update_state, config, {"messages": removals})
-            removed = len(drop_ids)
-        except Exception:
-            logger.warning("checkpointer remove failed (compact endpoint)", exc_info=True)
+    drop_ids = _compaction_drop_ids(raw_msgs, compacted)
+    removed = await _remove_from_checkpointer(graph, config, drop_ids, RemoveMessage)
 
-    # 摘要进会话摘要侧, 下轮自动注入 system prompt.
-    if summary_text:
-        try:
-            base = getattr(agent, "_conversation_summary", "") or ""
-            agent._conversation_summary = (
-                f"{base}\n{summary_text}".strip() if base else summary_text
-            )
-        except Exception:
-            logger.debug("store conversation summary failed", exc_info=True)
-
-    # 事件源记录一条 compaction divider, 让前端块模型渲染成 ── compacted ──.
-    try:
-        from huginn.events.session_writer import record_compaction
-        record_compaction(thread_id, summary_text or "")
-    except Exception:
-        logger.debug("record_compaction skipped", exc_info=True)
+    _store_conversation_summary(agent, summary_text)
+    _record_compaction_event(thread_id, summary_text)
 
     touch_thread(thread_id)
-    return {
-        "success": True,
-        "thread_id": thread_id,
-        "summarized": len(raw_msgs) - len(compacted),
-        "removed_from_checkpointer": removed,
-        "before": len(raw_msgs),
-        "after": len(compacted),
-        "summary": summary_text or "",
-    }
+    return _compact_result(thread_id, raw_msgs, compacted, removed, summary_text)

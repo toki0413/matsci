@@ -112,6 +112,141 @@ async def hpc_test_connection(params: dict[str, Any]) -> dict[str, Any]:
         return {"success": False, "error": "Connection failed (see server logs)"}
 
 
+def _generate_and_submit(
+    cfg,
+    command: str,
+    params: dict[str, Any],
+    priority: str,
+    depends_on,
+    dependency_type,
+    array_spec,
+):
+    with HPCClient(cfg) as client:
+        script = client.generate_job_script(
+            command=command,
+            job_name=params.get("job_name", "huginn_job"),
+            walltime=params.get("walltime", "01:00:00"),
+            nodes=params.get("nodes", 1),
+            ntasks_per_node=params.get("ntasks_per_node", 4),
+            queue=params.get("queue"),
+            modules=params.get("modules", []),
+            env_vars=params.get("env_vars", {}),
+            priority=priority,
+            depends_on=depends_on,
+            dependency_type=dependency_type,
+            array_spec=array_spec,
+        )
+        return client.submit_job(script, job_name=params.get("job_name", "huginn_job"))
+
+
+def _persist_job(
+    cfg,
+    command: str,
+    params: dict[str, Any],
+    cid,
+    priority: str,
+    depends_on,
+    dependency_type,
+    array_spec,
+    walltime_estimate,
+    job_id,
+) -> str:
+    """落 job store, 返回 local_id."""
+    # Persist to the job store so we can list/cancel/refresh later
+    from huginn.execution.remote_job_store import RemoteJobRecord, RemoteJobStore
+
+    workspace = Path(os.environ.get("HUGINN_WORKSPACE", "."))
+    store = RemoteJobStore(workspace=workspace)
+    local_id = str(uuid.uuid4())[:8]
+    record = RemoteJobRecord(
+        local_id=local_id,
+        scheduler_id=str(job_id),
+        command=shlex.split(command),
+        cwd=cfg.remote_work_dir,
+        credential_id=cid,
+        queue=params.get("queue"),
+        status="PENDING",
+        submitted_at=time.time(),
+        priority=priority,
+        depends_on=list(depends_on),
+        dependency_type=dependency_type,
+        array_spec=array_spec,
+        walltime_estimate=walltime_estimate,
+    )
+    store.add_or_update(record)
+    return local_id
+
+
+def _prepare_hpc_submit(params: dict[str, Any]):
+    """Rate limit + command/config 校验.
+
+    返回 (ok, payload): ok=True 时 payload=(cfg, command, cid);
+    ok=False 时 payload 是可直接返回的响应.
+    """
+    if not _check_hpc_rate_limit():
+        return False, JSONResponse(
+            status_code=429,
+            content={
+                "success": False,
+                "error": "Rate limit exceeded: max 10 HPC submissions per minute",
+            },
+        )
+
+    command = params.get("command", "")
+    if not isinstance(command, str) or not command.strip():
+        return False, {
+            "success": False,
+            "error": "command is required and must be a non-empty string",
+        }
+
+    cfg, err = _resolve_hpc_config(params)
+    if err or cfg is None:
+        return False, {"success": False, "error": err or "无法解析 HPC 配置"}
+
+    if not cfg.host or not cfg.username:
+        return False, {"success": False, "error": "host and username are required"}
+
+    return True, (cfg, command, params.get("credential_id"))
+
+
+def _submit_remote_job(
+    cfg,
+    command: str,
+    params: dict[str, Any],
+    cid,
+    priority: str,
+    depends_on,
+    dependency_type,
+    array_spec,
+    walltime_estimate,
+) -> dict[str, Any]:
+    """生成脚本 → 提交 → 落 job store; 返回成功响应体 (异常向上抛)."""
+    job_id = _generate_and_submit(
+        cfg, command, params, priority, depends_on, dependency_type, array_spec
+    )
+    local_id = _persist_job(
+        cfg,
+        command,
+        params,
+        cid,
+        priority,
+        depends_on,
+        dependency_type,
+        array_spec,
+        walltime_estimate,
+        job_id,
+    )
+
+    return {
+        "success": True,
+        "job_id": job_id,
+        "local_id": local_id,
+        "host": cfg.host,
+        "priority": priority,
+        "array_spec": array_spec,
+    }
+
+
 @router.post("/hpc/submit")
 async def hpc_submit(params: dict[str, Any]) -> dict[str, Any]:
     """Submit a job to remote HPC.
@@ -119,24 +254,10 @@ async def hpc_submit(params: dict[str, Any]) -> dict[str, Any]:
     支持增强的队列参数: priority / depends_on / dependency_type /
     array_spec / walltime_estimate, 老的调用不传这些字段照常工作。
     """
-    if not _check_hpc_rate_limit():
-        return JSONResponse(
-            status_code=429,
-            content={"success": False, "error": "Rate limit exceeded: max 10 HPC submissions per minute"},
-        )
-
-    command = params.get("command", "")
-    if not isinstance(command, str) or not command.strip():
-        return {"success": False, "error": "command is required and must be a non-empty string"}
-
-    cfg, err = _resolve_hpc_config(params)
-    if err or cfg is None:
-        return {"success": False, "error": err or "无法解析 HPC 配置"}
-
-    if not cfg.host or not cfg.username:
-        return {"success": False, "error": "host and username are required"}
-
-    cid = params.get("credential_id")
+    ok, payload = _prepare_hpc_submit(params)
+    if not ok:
+        return payload
+    cfg, command, cid = payload
 
     # 取队列增强参数, 没传就用默认值
     priority = params.get("priority", "normal")
@@ -150,56 +271,17 @@ async def hpc_submit(params: dict[str, Any]) -> dict[str, Any]:
         return {"success": False, "error": f"无效的优先级: {priority}"}
 
     try:
-        with HPCClient(cfg) as client:
-            script = client.generate_job_script(
-                command=command,
-                job_name=params.get("job_name", "huginn_job"),
-                walltime=params.get("walltime", "01:00:00"),
-                nodes=params.get("nodes", 1),
-                ntasks_per_node=params.get("ntasks_per_node", 4),
-                queue=params.get("queue"),
-                modules=params.get("modules", []),
-                env_vars=params.get("env_vars", {}),
-                priority=priority,
-                depends_on=depends_on,
-                dependency_type=dependency_type,
-                array_spec=array_spec,
-            )
-            job_id = client.submit_job(
-                script, job_name=params.get("job_name", "huginn_job")
-            )
-
-        # Persist to the job store so we can list/cancel/refresh later
-        from huginn.execution.remote_job_store import RemoteJobRecord, RemoteJobStore
-
-        workspace = Path(os.environ.get("HUGINN_WORKSPACE", "."))
-        store = RemoteJobStore(workspace=workspace)
-        local_id = str(uuid.uuid4())[:8]
-        record = RemoteJobRecord(
-            local_id=local_id,
-            scheduler_id=str(job_id),
-            command=shlex.split(command),
-            cwd=cfg.remote_work_dir,
-            credential_id=cid,
-            queue=params.get("queue"),
-            status="PENDING",
-            submitted_at=time.time(),
-            priority=priority,
-            depends_on=list(depends_on),
-            dependency_type=dependency_type,
-            array_spec=array_spec,
-            walltime_estimate=walltime_estimate,
+        return _submit_remote_job(
+            cfg,
+            command,
+            params,
+            cid,
+            priority,
+            depends_on,
+            dependency_type,
+            array_spec,
+            walltime_estimate,
         )
-        store.add_or_update(record)
-
-        return {
-            "success": True,
-            "job_id": job_id,
-            "local_id": local_id,
-            "host": cfg.host,
-            "priority": priority,
-            "array_spec": array_spec,
-        }
     except ValueError as e:
         return {"success": False, "error": f"Invalid input: {e}"}
     except Exception as e:
@@ -257,7 +339,7 @@ async def hpc_estimate_walltime(params: dict[str, Any]) -> dict[str, Any]:
 
     # 节点数越多, 单作业分摊的时间略降; 这里简单按 1/sqrt(n) 缩放
     if nodes > 1:
-        estimate_hours = estimate_hours / (nodes ** 0.5)
+        estimate_hours = estimate_hours / (nodes**0.5)
 
     total_cores = nodes * ntasks
     # 转成 HH:MM:SS
@@ -296,9 +378,7 @@ async def hpc_job_dependencies(local_id: str) -> dict[str, Any]:
     return {
         "success": True,
         "job": record.to_dict(),
-        "depends_on": [
-            {"scheduler_id": sid} for sid in record.depends_on
-        ],
+        "depends_on": [{"scheduler_id": sid} for sid in record.depends_on],
         "dependents": dependents,
     }
 
@@ -357,10 +437,12 @@ async def hpc_refresh_job(
 
     # Prefer the credential_id stored on the record; fall back to inline params
     params = params or {}
-    cfg, err = _resolve_hpc_config({
-        "credential_id": record.credential_id or params.get("credential_id"),
-        **params,
-    })
+    cfg, err = _resolve_hpc_config(
+        {
+            "credential_id": record.credential_id or params.get("credential_id"),
+            **params,
+        }
+    )
     if err or cfg is None:
         return {"success": False, "error": err or "cannot resolve HPC config"}
 
@@ -389,10 +471,12 @@ async def hpc_cancel_job(
         return {"success": False, "error": f"job '{local_id}' not found"}
 
     params = params or {}
-    cfg, err = _resolve_hpc_config({
-        "credential_id": record.credential_id or params.get("credential_id"),
-        **params,
-    })
+    cfg, err = _resolve_hpc_config(
+        {
+            "credential_id": record.credential_id or params.get("credential_id"),
+            **params,
+        }
+    )
     if err or cfg is None:
         return {"success": False, "error": err or "cannot resolve HPC config"}
 
@@ -467,131 +551,18 @@ async def hpc_job_output_stream(websocket: WebSocket, local_id: str):
     if identity is None:
         return
 
-    store = _get_store()
-    record = store.get(local_id)
-    if record is None:
-        await websocket.send_json({"type": "error", "error": f"job '{local_id}' not found"})
-        await websocket.close()
+    access = await _resolve_output_stream_access(websocket, local_id)
+    if access is None:
         get_tracker().release(identity)
         return
 
-    cfg, err = _resolve_hpc_config({"credential_id": record.credential_id})
-    if err or cfg is None:
-        await websocket.send_json({"type": "error", "error": "无法解析 HPC 配置"})
-        await websocket.close()
-        get_tracker().release(identity)
-        return
+    record, cfg = access
+    output_file = _job_output_path(
+        cfg.scheduler, record.scheduler_id, cfg.remote_work_dir
+    )
 
-    output_file = _job_output_path(cfg.scheduler, record.scheduler_id, cfg.remote_work_dir)
-
-    # 把阻塞的 SSH tail 放到线程里跑, 主协程负责转发
     try:
-        await websocket.send_json({
-            "type": "info",
-            "job_id": record.scheduler_id,
-            "local_id": local_id,
-            "output_file": output_file,
-            "status": record.status,
-        })
-
-        # 用一个队列衔接线程 (读 SSH) 和协程 (写 WebSocket)
-        line_queue: asyncio.Queue = asyncio.Queue()
-        # 在协程里拿到事件循环引用, 传给线程用; 线程里直接 get_event_loop 会炸
-        loop = asyncio.get_running_loop()
-
-        def _tail_thread():
-            """在线程里连 SSH, tail -f 输出文件, 每行塞进队列。"""
-            # G33: 之前 exec_command 的 channel 不显式 close, 三重泄漏:
-            #   1) 本地 channel 对象不释放
-            #   2) 远端 tail -f 进程不退出 (靠 channel close 发 SIGHUP)
-            #   3) 主协程 WebSocket 断开后线程还在阻塞 readline
-            # 现在 channel 拿到后用 try/finally 兜底关, 事件循环关了就 break.
-            chan = None
-            try:
-                with HPCClient(cfg) as client:
-                    # 先确认文件在不在, 不在就等它出现
-                    stdout, stderr, rc = client._exec(
-                        ["test", "-f", output_file, "&&", "echo", "EXISTS"]
-                    )
-                    if "EXISTS" not in stdout:
-                        # 文件还没生成, 轮询等
-                        for _ in range(60):
-                            time.sleep(2)
-                            stdout, _, _ = client._exec(
-                                ["test", "-f", output_file, "&&", "echo", "EXISTS"]
-                            )
-                            if "EXISTS" in stdout:
-                                break
-                        else:
-                            asyncio.run_coroutine_threadsafe(
-                                line_queue.put(("error", "输出文件未生成, 等待超时")),
-                                loop,
-                            )
-                            return
-
-                    # tail -f 实时跟, 用 exec_command 的 stdout 流式读
-                    client._ensure_connected()
-                    cmd = f"tail -n +1 -f {shlex.quote(output_file)}"
-                    _, stdout, _ = client._ssh.exec_command(cmd, get_pty=False)
-                    chan = stdout.channel if hasattr(stdout, "channel") else None
-
-                    for raw_line in iter(stdout.readline, None):
-                        if raw_line == "" or raw_line is None:
-                            break
-                        try:
-                            asyncio.run_coroutine_threadsafe(
-                                line_queue.put(("line", raw_line)), loop
-                            )
-                        except RuntimeError:
-                            logger.debug("best-effort op failed", exc_info=True)
-                            break  # 事件循环已关
-            except Exception as exc:
-                with contextlib.suppress(RuntimeError):
-                    asyncio.run_coroutine_threadsafe(
-                        line_queue.put(("error", str(exc))), loop
-                    )
-            finally:
-                # G33: 显式关 channel, 触发远端 tail -f 收 SIGHUP 退出
-                if chan is not None:
-                    with contextlib.suppress(Exception):
-                        chan.close()
-
-        tail_thread = threading.Thread(target=_tail_thread, daemon=True)
-        tail_thread.start()
-
-        # 主协程: 从队列取行, 推给 WebSocket
-        terminal_states = ("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT")
-        idle_count = 0
-        while True:
-            try:
-                # 1 秒超时, 没数据就检查作业状态
-                kind, content = await asyncio.wait_for(line_queue.get(), timeout=1.0)
-                idle_count = 0
-                if kind == "line":
-                    await websocket.send_json({"type": "output", "line": content})
-                elif kind == "error":
-                    await websocket.send_json({"type": "error", "error": content})
-                    break
-            except TimeoutError:
-                idle_count += 1
-                # 每隔 ~15 秒轮一次作业状态, 看是不是结束了
-                if idle_count % 15 == 0:
-                    try:
-                        with HPCClient(cfg) as client:
-                            status = client.poll_status(record.scheduler_id)
-                        await websocket.send_json({
-                            "type": "status",
-                            "state": status.state,
-                            "exit_code": status.exit_code,
-                        })
-                        if status.state in terminal_states:
-                            await websocket.send_json({"type": "done"})
-                            break
-                    except Exception:
-                        logger.debug("轮询作业状态失败", exc_info=True)
-            except WebSocketDisconnect:
-                logger.debug("best-effort op failed", exc_info=True)
-                break
+        await _stream_job_output(websocket, local_id, record, cfg, output_file)
     except WebSocketDisconnect:
         logger.debug("best-effort op failed", exc_info=True)
     except Exception as exc:
@@ -606,3 +577,200 @@ async def hpc_job_output_stream(websocket: WebSocket, local_id: str):
         except Exception:
             logger.debug("websocket.close 收尾失败", exc_info=True)
         get_tracker().release(identity)
+
+
+async def _send_stream_error(websocket: WebSocket, error: str) -> None:
+    """推送 error 帧并关闭连接 (tracker 释放由调用方负责)。"""
+    await websocket.send_json({"type": "error", "error": error})
+    await websocket.close()
+
+
+async def _resolve_output_stream_access(
+    websocket: WebSocket, local_id: str
+) -> tuple[Any, HPCConfig] | None:
+    """校验作业存在性与 HPC 配置; 失败时已推送错误帧并关闭连接。"""
+    store = _get_store()
+    record = store.get(local_id)
+    if record is None:
+        await _send_stream_error(websocket, f"job '{local_id}' not found")
+        return None
+
+    cfg, err = _resolve_hpc_config({"credential_id": record.credential_id})
+    if err or cfg is None:
+        await _send_stream_error(websocket, "无法解析 HPC 配置")
+        return None
+    return record, cfg
+
+
+async def _stream_job_output(
+    websocket: WebSocket,
+    local_id: str,
+    record: Any,
+    cfg: HPCConfig,
+    output_file: str,
+) -> None:
+    """推送 info 帧, 启动 SSH tail 线程, 并在主协程转发队列内容。"""
+    await websocket.send_json(
+        {
+            "type": "info",
+            "job_id": record.scheduler_id,
+            "local_id": local_id,
+            "output_file": output_file,
+            "status": record.status,
+        }
+    )
+
+    # 用一个队列衔接线程 (读 SSH) 和协程 (写 WebSocket)
+    line_queue: asyncio.Queue = asyncio.Queue()
+    # 在协程里拿到事件循环引用, 传给线程用; 线程里直接 get_event_loop 会炸
+    loop = asyncio.get_running_loop()
+
+    tail_thread = threading.Thread(
+        target=_tail_output_in_thread,
+        args=(cfg, output_file, line_queue, loop),
+        daemon=True,
+    )
+    tail_thread.start()
+
+    await _forward_output_queue(websocket, line_queue, cfg, record)
+
+
+def _tail_output_in_thread(
+    cfg: HPCConfig,
+    output_file: str,
+    line_queue: asyncio.Queue,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """在线程里连 SSH, tail -f 输出文件, 每行塞进队列。"""
+    # G33: 之前 exec_command 的 channel 不显式 close, 三重泄漏:
+    #   1) 本地 channel 对象不释放
+    #   2) 远端 tail -f 进程不退出 (靠 channel close 发 SIGHUP)
+    #   3) 主协程 WebSocket 断开后线程还在阻塞 readline
+    # 现在 channel 拿到后用 try/finally 兜底关, 事件循环关了就 break.
+    chan = None
+    try:
+        with HPCClient(cfg) as client:
+            if not _wait_for_output_file(client, output_file, line_queue, loop):
+                return
+            chan = _stream_tail_lines(client, output_file, line_queue, loop)
+    except Exception as exc:
+        with contextlib.suppress(RuntimeError):
+            asyncio.run_coroutine_threadsafe(line_queue.put(("error", str(exc))), loop)
+    finally:
+        # G33: 显式关 channel, 触发远端 tail -f 收 SIGHUP 退出
+        if chan is not None:
+            with contextlib.suppress(Exception):
+                chan.close()
+
+
+def _wait_for_output_file(
+    client: HPCClient,
+    output_file: str,
+    line_queue: asyncio.Queue,
+    loop: asyncio.AbstractEventLoop,
+) -> bool:
+    """确认输出文件已生成; 未生成则轮询最多 120 秒, 超时推 error 并返回 False。"""
+    stdout, _, _ = client._exec(["test", "-f", output_file, "&&", "echo", "EXISTS"])
+    if "EXISTS" in stdout:
+        return True
+
+    for _ in range(60):
+        time.sleep(2)
+        stdout, _, _ = client._exec(["test", "-f", output_file, "&&", "echo", "EXISTS"])
+        if "EXISTS" in stdout:
+            return True
+
+    asyncio.run_coroutine_threadsafe(
+        line_queue.put(("error", "输出文件未生成, 等待超时")), loop
+    )
+    return False
+
+
+def _stream_tail_lines(
+    client: HPCClient,
+    output_file: str,
+    line_queue: asyncio.Queue,
+    loop: asyncio.AbstractEventLoop,
+) -> Any:
+    """tail -f 输出文件并逐行塞队列; 返回 channel 供调用方关闭。"""
+    client._ensure_connected()
+    cmd = f"tail -n +1 -f {shlex.quote(output_file)}"
+    _, stdout, _ = client._ssh.exec_command(cmd, get_pty=False)
+    chan = stdout.channel if hasattr(stdout, "channel") else None
+
+    for raw_line in iter(stdout.readline, None):
+        if raw_line == "" or raw_line is None:
+            break
+        try:
+            asyncio.run_coroutine_threadsafe(line_queue.put(("line", raw_line)), loop)
+        except RuntimeError:
+            logger.debug("best-effort op failed", exc_info=True)
+            break  # 事件循环已关
+    return chan
+
+
+async def _forward_output_queue(
+    websocket: WebSocket,
+    line_queue: asyncio.Queue,
+    cfg: HPCConfig,
+    record: Any,
+) -> None:
+    """主协程: 从队列取行推给 WebSocket, 空闲时轮询作业状态。"""
+    terminal_states = ("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT")
+    idle_count = 0
+    while True:
+        try:
+            # 1 秒超时, 没数据就检查作业状态
+            kind, content = await asyncio.wait_for(line_queue.get(), timeout=1.0)
+            idle_count = 0
+            if not await _send_queue_message(websocket, kind, content):
+                break
+        except TimeoutError:
+            idle_count += 1
+            # 每隔 ~15 秒轮一次作业状态, 看是不是结束了
+            if idle_count % 15 == 0 and await _poll_job_status(
+                websocket, cfg, record, terminal_states
+            ):
+                break
+            continue
+        except WebSocketDisconnect:
+            logger.debug("best-effort op failed", exc_info=True)
+            break
+
+
+async def _send_queue_message(websocket: WebSocket, kind: str, content: Any) -> bool:
+    """转发一条队列消息; 返回 True 表示应继续流。"""
+    if kind == "line":
+        await websocket.send_json({"type": "output", "line": content})
+        return True
+    if kind == "error":
+        await websocket.send_json({"type": "error", "error": content})
+        return False
+    return True
+
+
+async def _poll_job_status(
+    websocket: WebSocket,
+    cfg: HPCConfig,
+    record: Any,
+    terminal_states: tuple[str, ...],
+) -> bool:
+    """轮询作业状态并推送; 返回 True 表示已到终态, 调用方应结束流。"""
+    try:
+        with HPCClient(cfg) as client:
+            status = client.poll_status(record.scheduler_id)
+        await websocket.send_json(
+            {
+                "type": "status",
+                "state": status.state,
+                "exit_code": status.exit_code,
+            }
+        )
+    except Exception:
+        logger.debug("轮询作业状态失败", exc_info=True)
+        return False
+
+    if status.state in terminal_states:
+        await websocket.send_json({"type": "done"})
+        return True
+    return False

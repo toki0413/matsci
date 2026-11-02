@@ -34,6 +34,9 @@ updates:
     #
     # 3. setuptools (PYSEC-2026-3447 / GHSA-h35f-9h28-mq5c): 被 fairchem-core 2.x
     #    硬约束 setuptools<81.0.0 锁死在 80.10.2, 无法升级到 fix 版本 83.0.0.
+    #    另有 GHSA-xmj3-9gf7-h52w (fix 84.1.0): 仅 Windows legacy wheel 的
+    #    install_as_egg 路径可写出 destination_eggdir 之外, Linux/macOS 不受影响,
+    #    且同样被 setuptools<81.0.0 硬约束锁死, 一并归入本 ignore 条目.
     #
     # 4. lightning (PYSEC-2026-3624 / GHSA-w37p-236h-pfx3 / CVE-2026-44484):
     #    PyPI 供应链投毒, 受影响的是 2.6.2/2.6.3 两个已下架的版本. 经 nougat-ocr

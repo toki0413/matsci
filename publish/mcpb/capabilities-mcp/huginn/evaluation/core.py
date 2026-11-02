@@ -224,7 +224,7 @@ def method_todim(
 
     # Vectorized pairwise comparison via broadcasting: shape (n, n, m)
     diff = Xn[:, np.newaxis, :] - Xn[np.newaxis, :, :]  # (n, n, m)
-    W_b = W[np.newaxis, np.newaxis, :]                   # (1, 1, m)
+    W_b = W[np.newaxis, np.newaxis, :]  # (1, 1, m)
 
     # Gain (diff > 0) and loss (diff < 0) terms
     gain = np.where(diff > 0, np.sqrt(W_b * np.maximum(diff, 0) / w_ref), 0.0)
@@ -330,6 +330,41 @@ def method_grey(
 # ── Combinations ───────────────────────────────────────────────
 
 
+def _resolve_weights(
+    matrix: np.ndarray,
+    weight_method: str,
+    ahp_matrix: np.ndarray | None,
+    criteria: list[str],
+) -> tuple[np.ndarray, dict[str, float]]:
+    """Compute weights array plus the criteria-keyed mapping."""
+    weights_arr = compute_weights(matrix, weight_method, ahp_matrix)
+    weights = {c: float(w) for c, w in zip(criteria, weights_arr)}
+    return weights_arr, weights
+
+
+def _build_evaluation_result(
+    alternatives: list[str],
+    scores_arr: np.ndarray,
+    weights: dict[str, float],
+    weight_method: str,
+    eval_method: str,
+) -> EvaluationResult:
+    """Assemble the ranking + labelled result object."""
+    scores = {a: float(s) for a, s in zip(alternatives, scores_arr)}
+    ranking = [a for a, _ in sorted(scores.items(), key=lambda x: -x[1])]
+
+    method_label = (
+        f"{weight_method}-{eval_method}" if weight_method != "equal" else eval_method
+    )
+
+    return EvaluationResult(
+        method=method_label,
+        weights=weights,
+        scores=scores,
+        ranking=ranking,
+    )
+
+
 def evaluate(
     alternatives: list[str],
     criteria: list[str],
@@ -367,29 +402,82 @@ def evaluate(
     eval_kwargs = eval_kwargs or {}
 
     # Compute weights
-    weights_arr = compute_weights(matrix, weight_method, ahp_matrix)
-    weights = {c: float(w) for c, w in zip(criteria, weights_arr)}
+    weights_arr, weights = _resolve_weights(matrix, weight_method, ahp_matrix, criteria)
 
     # Evaluate
     method_fn = globals()[f"method_{eval_method}"]
     scores_arr = method_fn(matrix, weights_arr, directions, **eval_kwargs)
 
-    scores = {a: float(s) for a, s in zip(alternatives, scores_arr)}
-    ranking = [a for a, _ in sorted(scores.items(), key=lambda x: -x[1])]
-
-    method_label = (
-        f"{weight_method}-{eval_method}" if weight_method != "equal" else eval_method
-    )
-
-    return EvaluationResult(
-        method=method_label,
-        weights=weights,
-        scores=scores,
-        ranking=ranking,
+    return _build_evaluation_result(
+        alternatives, scores_arr, weights, weight_method, eval_method
     )
 
 
 # ── Sensitivity Analysis ───────────────────────────────────────
+
+
+def _random_weight_trials(
+    method_fn,
+    matrix: np.ndarray,
+    directions: list[Literal["max", "min"]],
+    eval_kwargs: dict,
+    base_weights: np.ndarray,
+    alternatives: list[str],
+    n_trials: int,
+    m: int,
+    perturbation: float,
+) -> tuple[list[np.ndarray], dict[str, int]]:
+    """Run trials with perturbed weights; return rankings and #1 counts."""
+    rankings = []
+    top_counts = dict.fromkeys(alternatives, 0)
+
+    rng = np.random.default_rng(42)
+    for _ in range(n_trials):
+        # Perturb weights
+        noise = rng.uniform(1 - perturbation, 1 + perturbation, size=m)
+        w = base_weights * noise
+        w = w / w.sum()
+
+        scores = method_fn(matrix, w, directions, **eval_kwargs)
+        trial_ranking = np.argsort(-scores)
+        rankings.append(trial_ranking)
+        top_counts[alternatives[trial_ranking[0]]] += 1
+    return rankings, top_counts
+
+
+def _rank_stability(
+    rankings: list[np.ndarray],
+    base_ranking: np.ndarray,
+    n: int,
+    n_trials: int,
+) -> float:
+    """Stability: average Spearman correlation."""
+    corr_sum = 0.0
+    for trial_rank in rankings:
+        # Compute rank correlation (simplified)
+        ranks_base = np.argsort(base_ranking)
+        ranks_trial = np.argsort(trial_rank)
+        # Spearman: 1 - 6*sum(d^2)/(n*(n^2-1))
+        d = ranks_base - ranks_trial
+        rho = 1.0 - 6.0 * np.sum(d**2) / (n * (n**2 - 1))
+        corr_sum += rho
+
+    return corr_sum / n_trials
+
+
+def _sensitivity_report(
+    alternatives: list[str],
+    base_ranking: np.ndarray,
+    stability: float,
+    n_trials: int,
+    top_counts: dict[str, int],
+) -> dict:
+    return {
+        "original_ranking": [alternatives[i] for i in base_ranking],
+        "stability_score": float(stability),
+        "n_trials": n_trials,
+        "top_frequency": {a: c / n_trials for a, c in top_counts.items()},
+    }
 
 
 def sensitivity_random_weights(
@@ -423,37 +511,21 @@ def sensitivity_random_weights(
     base_ranking = np.argsort(-base_scores)
 
     # Run trials with perturbed weights
-    rankings = []
-    top_counts = dict.fromkeys(alternatives, 0)
-
-    rng = np.random.default_rng(42)
-    for _ in range(n_trials):
-        # Perturb weights
-        noise = rng.uniform(1 - perturbation, 1 + perturbation, size=m)
-        w = base_weights * noise
-        w = w / w.sum()
-
-        scores = method_fn(matrix, w, directions, **eval_kwargs)
-        trial_ranking = np.argsort(-scores)
-        rankings.append(trial_ranking)
-        top_counts[alternatives[trial_ranking[0]]] += 1
+    rankings, top_counts = _random_weight_trials(
+        method_fn,
+        matrix,
+        directions,
+        eval_kwargs,
+        base_weights,
+        alternatives,
+        n_trials,
+        m,
+        perturbation,
+    )
 
     # Stability: average Spearman correlation
-    corr_sum = 0.0
-    for trial_rank in rankings:
-        # Compute rank correlation (simplified)
-        ranks_base = np.argsort(base_ranking)
-        ranks_trial = np.argsort(trial_rank)
-        # Spearman: 1 - 6*sum(d^2)/(n*(n^2-1))
-        d = ranks_base - ranks_trial
-        rho = 1.0 - 6.0 * np.sum(d**2) / (n * (n**2 - 1))
-        corr_sum += rho
+    stability = _rank_stability(rankings, base_ranking, n, n_trials)
 
-    stability = corr_sum / n_trials
-
-    return {
-        "original_ranking": [alternatives[i] for i in base_ranking],
-        "stability_score": float(stability),
-        "n_trials": n_trials,
-        "top_frequency": {a: c / n_trials for a, c in top_counts.items()},
-    }
+    return _sensitivity_report(
+        alternatives, base_ranking, stability, n_trials, top_counts
+    )

@@ -27,7 +27,6 @@ Cost tier is "none" (not a CPU/GPU-heavy simulation) — gated by phase
 
 from __future__ import annotations
 
-import asyncio
 import ipaddress
 import json
 import logging
@@ -43,6 +42,8 @@ from pydantic import BaseModel, Field
 
 from huginn.core_types import ToolContext, ToolResult
 from huginn.phases import ResearchPhase
+from huginn.tools._embed import lazy_embed_fn
+from huginn.tools._llm import invoke_llm_text
 from huginn.tools._offline import web_search_disabled
 from huginn.tools.base import HuginnTool
 from huginn.tools.profile import ToolProfile
@@ -57,18 +58,69 @@ _AGENTIC_DISABLED_HINT = (
 
 # 停用词: 英文常见词 + 中文单字虚词. 多字中文停用词单独放一组, 抽词前先删.
 _STOP_WORDS: set[str] = {
-    "the", "a", "an", "is", "are", "was", "were", "be", "been", "of", "in",
-    "on", "for", "to", "and", "or", "not", "with", "by", "how", "what",
-    "when", "why", "which", "that", "this", "from", "as", "at", "it",
-    "again", "more", "also", "just", "very", "much", "many", "some",
-    "的", "了", "是", "在", "和", "与", "及", "或", "请",
+    "the",
+    "a",
+    "an",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "of",
+    "in",
+    "on",
+    "for",
+    "to",
+    "and",
+    "or",
+    "not",
+    "with",
+    "by",
+    "how",
+    "what",
+    "when",
+    "why",
+    "which",
+    "that",
+    "this",
+    "from",
+    "as",
+    "at",
+    "it",
+    "again",
+    "more",
+    "also",
+    "just",
+    "very",
+    "much",
+    "many",
+    "some",
+    "的",
+    "了",
+    "是",
+    "在",
+    "和",
+    "与",
+    "及",
+    "或",
+    "请",
 }
 _CN_MULTI_STOP: set[str] = {
-    "如何", "什么", "为什么", "怎么", "哪些", "哪个", "帮我", "请问",
+    "如何",
+    "什么",
+    "为什么",
+    "怎么",
+    "哪些",
+    "哪个",
+    "帮我",
+    "请问",
 }
 
 # HTML 标签清洗: 去掉 script/style 整块, 再剥所有标签, 压空白
-_SCRIPT_STYLE_RE = re.compile(r"<(script|style|noscript)[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE)
+_SCRIPT_STYLE_RE = re.compile(
+    r"<(script|style|noscript)[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE
+)
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
 
@@ -129,31 +181,6 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
-def _lazy_embed_fn() -> Callable[[list[str]], list[list[float]]] | None:
-    """复用 RAG 的 embedding 模型 (chroma DefaultEF ONNX), 未缓存则 None.
-
-    语义打分是可选增强 (P1-6): embedding 模型没下载时安静降级为关键词打分,
-    不阻塞抓取/抽取流程. 与 ``VectorStore._compute_embeddings`` 同一事实来源.
-    """
-    try:
-        from huginn.rag.vector_store import _embedding_model_cached
-
-        if not _embedding_model_cached():
-            return None
-        from chromadb.utils.embedding_functions import DefaultEF
-
-        ef = DefaultEF()
-        _ = ef(["probe"])  # 触发加载, 失败会抛异常
-
-        def embed(texts: list[str]) -> list[list[float]]:
-            return ef(texts)
-
-        return embed
-    except Exception:
-        logger.debug("semantic embed unavailable, keyword scoring only", exc_info=True)
-        return None
-
-
 def _extract_relevant(
     text: str,
     question: str,
@@ -183,16 +210,18 @@ def _extract_relevant(
             relevant.sort(key=lambda x: x[1], reverse=True)
             return [s for s, _ in relevant[:max_passages]]
         except Exception:
-            logger.debug("semantic passage scoring failed, fallback to keyword", exc_info=True)
-    scored = [
-        (s, _score_passage(s, kws)) for s in sentences
-    ]
+            logger.debug(
+                "semantic passage scoring failed, fallback to keyword", exc_info=True
+            )
+    scored = [(s, _score_passage(s, kws)) for s in sentences]
     relevant = [(s, sc) for s, sc in scored if sc >= min_score]
     relevant.sort(key=lambda x: x[1], reverse=True)
     return [s for s, _ in relevant[:max_passages]]
 
 
-def _derive_followups(findings: list[dict[str, Any]], question: str, max_n: int = 3) -> list[str]:
+def _derive_followups(
+    findings: list[dict[str, Any]], question: str, max_n: int = 3
+) -> list[str]:
     """从已有发现里派生下一跳的查询. 用 title 里的关键词 + 原问题重组.
 
     简单策略: 收集所有 title, 抽关键词, 跟原问题关键词拼出新 query.
@@ -231,6 +260,44 @@ def _host_of(url: str) -> str:
         return ""
 
 
+def _scan_evidence(
+    findings: list[dict[str, Any]], kws: list[str]
+) -> tuple[set[str], int]:
+    domains: set[str] = set()
+    n_kw_hits = 0
+    for f in findings:
+        dom = _host_of(f.get("url", ""))
+        if dom:
+            domains.add(dom)
+        for p in f.get("passages", []):
+            if any(k.lower() in (p or "").lower() for k in kws):
+                n_kw_hits += 1
+                break
+    return domains, n_kw_hits
+
+
+def _coverage_gaps(
+    n: int,
+    domains: set[str],
+    kws: list[str],
+    n_kw_hits: int,
+    min_sources: int,
+    min_passages_hits: int,
+) -> list[str]:
+    gaps: list[str] = []
+    if n == 0:
+        gaps.append("no evidence found")
+    else:
+        if len(domains) < min_sources:
+            gaps.append(
+                f"few independent sources ({len(domains)} domain{'s' if len(domains) != 1 else ''}, "
+                f"need >= {min_sources})"
+            )
+        if kws and n_kw_hits < min_passages_hits:
+            gaps.append("no passage matched the question keywords")
+    return gaps
+
+
 def _critique(
     findings: list[dict[str, Any]],
     question: str,
@@ -254,28 +321,8 @@ def _critique(
     """
     n = len(findings)
     kws = _keywords(question)
-    domains: set[str] = set()
-    n_kw_hits = 0
-    for f in findings:
-        dom = _host_of(f.get("url", ""))
-        if dom:
-            domains.add(dom)
-        for p in f.get("passages", []):
-            if any(k.lower() in (p or "").lower() for k in kws):
-                n_kw_hits += 1
-                break
-
-    gaps: list[str] = []
-    if n == 0:
-        gaps.append("no evidence found")
-    else:
-        if len(domains) < min_sources:
-            gaps.append(
-                f"few independent sources ({len(domains)} domain{'s' if len(domains) != 1 else ''}, "
-                f"need >= {min_sources})"
-            )
-        if kws and n_kw_hits < min_passages_hits:
-            gaps.append("no passage matched the question keywords")
+    domains, n_kw_hits = _scan_evidence(findings, kws)
+    gaps = _coverage_gaps(n, domains, kws, n_kw_hits, min_sources, min_passages_hits)
 
     return {
         "n_findings": n,
@@ -354,7 +401,12 @@ def _is_safe_url(url: str) -> bool:
         try:
             ip = socket.getaddrinfo(hostname, None)[0][4][0]
             ip_obj = ipaddress.ip_address(ip)
-            if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_reserved:
+            if (
+                ip_obj.is_private
+                or ip_obj.is_loopback
+                or ip_obj.is_link_local
+                or ip_obj.is_reserved
+            ):
                 return False
         except (socket.gaierror, ValueError):
             logger.debug("best-effort op failed", exc_info=True)
@@ -371,7 +423,9 @@ class AgenticSearchInput(BaseModel):
         description='"research" = multi-hop; "quick" = single search, snippets only.',
     )
     question: str = Field(..., description="Research question to investigate.")
-    max_hops: int = Field(default=2, ge=1, le=4, description="Max search hops (research only).")
+    max_hops: int = Field(
+        default=2, ge=1, le=4, description="Max search hops (research only)."
+    )
     max_results_per_hop: int = Field(
         default=3, ge=1, le=8, description="Results to fetch per hop."
     )
@@ -381,15 +435,17 @@ class AgenticSearchInput(BaseModel):
     use_llm: bool = Field(
         default=False,
         description="True=用 LLM 做回答综合与下一跳查询派生 (失败自动降级为启发式). "
-                    "False=纯启发式 (确定性/可复现, 测试友好).",
+        "False=纯启发式 (确定性/可复现, 测试友好).",
     )
     use_refine: bool = Field(
         default=False,
         description="True=检索后做 critique→refine 闭环: 评估证据覆盖度, "
-                    "发现缺口则补一轮定向检索再综合. False=直接综合 (更快, 测试友好).",
+        "发现缺口则补一轮定向检索再综合. False=直接综合 (更快, 测试友好).",
     )
     max_refine_queries: int = Field(
-        default=3, ge=1, le=5,
+        default=3,
+        ge=1,
+        le=5,
         description="refine 那轮最多派生几个补齐缺口的定向查询.",
     )
     # 逐断言 provenance: 是否给每条 finding 分配稳定 fid, 并在结果里带
@@ -397,7 +453,7 @@ class AgenticSearchInput(BaseModel):
     provenance: bool = Field(
         default=True,
         description="True=结果带逐断言溯源索引 (fid -> 来源url/title/passages), "
-                    "综合回答里的 [n] 引用可据此追溯到具体来源.",
+        "综合回答里的 [n] 引用可据此追溯到具体来源.",
     )
 
 
@@ -435,7 +491,9 @@ class AgenticSearchTool(HuginnTool):
 
     # ── defaults: real network backends ───────────────────────────────
 
-    async def _default_search(self, query: str, max_results: int) -> list[dict[str, Any]]:
+    async def _default_search(
+        self, query: str, max_results: int
+    ) -> list[dict[str, Any]]:
         from huginn.tools.web_search_tool import WebSearchTool
 
         ws = WebSearchTool()
@@ -478,19 +536,6 @@ class AgenticSearchTool(HuginnTool):
         config = getattr(context, "config", None)
         return get_model(config=config, temperature=0.2, max_tokens=2000)
 
-    async def _llm_invoke(self, model: Any, system_prompt: str, user_prompt: str) -> str:
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
-        if hasattr(model, "ainvoke"):
-            response = await model.ainvoke(messages)
-        else:
-            response = await asyncio.to_thread(model.invoke, messages)
-        content = response.content if hasattr(response, "content") else str(response)
-        if not isinstance(content, str):
-            content = json.dumps(content, ensure_ascii=False)
-        return content
-
     async def _llm_synthesize(
         self, findings: list[dict[str, Any]], question: str, context: ToolContext | None
     ) -> str:
@@ -514,14 +559,17 @@ class AgenticSearchTool(HuginnTool):
                 "\n## 结论\n- ...\n引用只允许用证据里的 [编号], 不要编造来源."
             )
             user_p = f"研究问题: {question}\n\n证据列表:\n{evidence}"
-            content = await self._llm_invoke(model, sys_p, user_p)
+            content = await invoke_llm_text(model, sys_p, user_p)
             return (content or "").strip() or _synthesize(findings, question)
         except Exception as exc:
             logger.debug("llm synthesize failed, fallback to concatenation: %s", exc)
             return _synthesize(findings, question)
 
     async def _llm_derive_followups(
-        self, findings: list[dict[str, Any]], question: str, max_n: int,
+        self,
+        findings: list[dict[str, Any]],
+        question: str,
+        max_n: int,
         context: ToolContext | None,
     ) -> list[str]:
         """LLM 决定下一跳查什么. 失败/空结果降级回关键词派生."""
@@ -543,9 +591,13 @@ class AgenticSearchTool(HuginnTool):
                 f'只输出 JSON: {{"queries": ["q1", "q2"]}}'
             )
             user_p = f"原问题: {question}\n\n已有发现:\n{titles}"
-            content = await self._llm_invoke(model, sys_p, user_p)
+            content = await invoke_llm_text(model, sys_p, user_p)
             parsed = _parse_json_text(content)
-            queries = [q for q in (parsed.get("queries", []) if parsed else []) if isinstance(q, str) and q.strip()]
+            queries = [
+                q
+                for q in (parsed.get("queries", []) if parsed else [])
+                if isinstance(q, str) and q.strip()
+            ]
             if queries:
                 return queries[:max_n]
         except Exception as exc:
@@ -553,8 +605,11 @@ class AgenticSearchTool(HuginnTool):
         return _derive_followups(findings, question, max_n)
 
     async def _synthesize_answer(
-        self, findings: list[dict[str, Any]], question: str,
-        inp: AgenticSearchInput, context: ToolContext | None,
+        self,
+        findings: list[dict[str, Any]],
+        question: str,
+        inp: AgenticSearchInput,
+        context: ToolContext | None,
     ) -> str:
         """回答综合: 注入的 synthesizer > use_llm 的 LLM 综合 > 启发式拼接."""
         if self._synthesizer is not None:
@@ -564,8 +619,12 @@ class AgenticSearchTool(HuginnTool):
         return _synthesize(findings, question)
 
     async def _derive_next_queries(
-        self, findings: list[dict[str, Any]], question: str, max_n: int,
-        inp: AgenticSearchInput, context: ToolContext | None,
+        self,
+        findings: list[dict[str, Any]],
+        question: str,
+        max_n: int,
+        inp: AgenticSearchInput,
+        context: ToolContext | None,
     ) -> list[str]:
         """下一跳查询派生: 注入的 followup_deriver > use_llm 的 LLM 派生 > 关键词派生."""
         if self._followup_deriver is not None:
@@ -632,7 +691,7 @@ class AgenticSearchTool(HuginnTool):
         queries: list[str] = [inp.question]
         # P1-6: 懒加载语义 embedding (模型未缓存则为 None)
         if self._embed is None:
-            self._embed = _lazy_embed_fn()
+            self._embed = lazy_embed_fn()
 
         # L3: 深度检索闭环 = plan→retrieve→critique→refine (+ 可选再 retrieve)
         for hop in range(inp.max_hops):
@@ -649,19 +708,9 @@ class AgenticSearchTool(HuginnTool):
 
         # critique: 评估证据覆盖度 (够不够 / 有没有缺口)
         critique = _critique(findings, inp.question)
-        n_refine = 0
-        # refine 闭环: 有缺口且允许 refine 时, 补一轮定向检索, 再 re-critique
-        if inp.use_refine and findings and not critique["coverage_ok"]:
-            rq = _refine_queries(findings, critique, inp.question, inp.max_refine_queries)
-            if rq:
-                refine_hit = await self._retrieve_round(
-                    rq, inp, visited, inp.max_hops, inp.question
-                )
-                if refine_hit:
-                    findings.extend(refine_hit)
-                    n_refine = 1
-                    # re-critique: 看补齐后是否达标
-                    critique = _critique(findings, inp.question)
+        n_refine, critique = await AgenticSearchTool._refine_round(
+            self, findings, critique, inp, visited
+        )
 
         answer = await self._synthesize_answer(findings, inp.question, inp, context)
         data: dict[str, Any] = {
@@ -678,6 +727,30 @@ class AgenticSearchTool(HuginnTool):
         if inp.provenance:
             data["provenance"] = _build_provenance(findings)
         return ToolResult(data=data, success=True)
+
+    async def _refine_round(
+        self,
+        findings: list[dict[str, Any]],
+        critique: dict[str, Any],
+        inp: AgenticSearchInput,
+        visited: set[str],
+    ) -> tuple[int, dict[str, Any]]:
+        """refine 闭环: 有缺口且允许 refine 时, 补一轮定向检索, 再 re-critique."""
+        n_refine = 0
+        if inp.use_refine and findings and not critique["coverage_ok"]:
+            rq = _refine_queries(
+                findings, critique, inp.question, inp.max_refine_queries
+            )
+            if rq:
+                refine_hit = await self._retrieve_round(
+                    rq, inp, visited, inp.max_hops, inp.question
+                )
+                if refine_hit:
+                    findings.extend(refine_hit)
+                    n_refine = 1
+                    # re-critique: 看补齐后是否达标
+                    critique = _critique(findings, inp.question)
+        return n_refine, critique
 
     async def _retrieve_round(
         self,
@@ -699,23 +772,24 @@ class AgenticSearchTool(HuginnTool):
                 content = await self._fetch(url, inp.max_content_chars)
                 passages = (
                     _extract_relevant(content, question, embed=self._embed)
-                    if content else
-                    ([r.get("snippet", "")] if r.get("snippet") else [])
+                    if content
+                    else ([r.get("snippet", "")] if r.get("snippet") else [])
                 )
                 if not passages:
                     continue
-                round_findings.append({
-                    "url": url,
-                    "title": r.get("title", ""),
-                    "passages": passages,
-                    "hop": hop,
-                })
+                round_findings.append(
+                    {
+                        "url": url,
+                        "title": r.get("title", ""),
+                        "passages": passages,
+                        "hop": hop,
+                    }
+                )
         return round_findings
 
 
 def _parse_json_text(text: str) -> dict[str, Any] | None:
     """容错 JSON 解析 (容忍 ```json 代码块 / 首尾花括号外噪声)."""
-    import json
 
     text = text.strip()
     if text.startswith("```"):
@@ -732,7 +806,7 @@ def _parse_json_text(text: str) -> dict[str, Any] | None:
         end = text.rfind("}")
         if start != -1 and end != -1 and end > start:
             try:
-                return json.loads(text[start: end + 1])
+                return json.loads(text[start : end + 1])
             except Exception:
                 return None
         return None

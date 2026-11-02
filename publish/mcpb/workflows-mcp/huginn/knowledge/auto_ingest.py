@@ -257,6 +257,56 @@ def _build_knowledge_text(tool_name: str, tool_input: dict, tool_output: Any) ->
 # ── 核心类 ───────────────────────────────────────────────────────
 
 
+def _add_calculation_to_kb(kb: Any, tool_name: str, text: str) -> str | None:
+    """KB 直接写入, 立即可检索. 返回 doc_id 或 None."""
+    from datetime import datetime
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    try:
+        result = kb.add_text(
+            text,
+            filename=f"calc_{tool_name}_{ts}",
+            metadata={
+                "source": "auto_ingest",
+                "tool_name": tool_name,
+            },
+        )
+        return result.get("doc_id") or None
+    except Exception:
+        logger.debug("kb.add_text 失败 (非致命)", exc_info=True)
+        return None
+
+
+def _record_success_pattern(
+    distiller: Any, tool_name: str, text: str, provenance_entry: Any
+) -> None:
+    """distiller 记一条 success_pattern (已存在则跳过)."""
+    try:
+        from huginn.evolution.knowledge_distiller import DistilledKnowledge
+
+        kid = f"succ_{tool_name}_{hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()[:8]}"
+        # 已存在就跳过, 避免重复写入
+        if not any(k.knowledge_id == kid for k in distiller.knowledge_base):
+            evidence = (
+                [provenance_entry.file_path]
+                if provenance_entry is not None
+                else ["unknown"]
+            )
+            dk = DistilledKnowledge(
+                knowledge_id=kid,
+                content=text,
+                source_type="success_pattern",
+                source_evidence=evidence,
+                confidence=0.7,
+                category=f"calculation_{tool_name}",
+                tags=["success", "pattern", tool_name],
+            )
+            distiller.knowledge_base.append(dk)
+            distiller._save()
+    except Exception:
+        logger.debug("distiller 记录失败 (非致命)", exc_info=True)
+
+
 class CalculationToKnowledge:
     """把工具计算结果转成知识, 摄入 KB 和 distiller."""
 
@@ -298,54 +348,70 @@ class CalculationToKnowledge:
         # 1) KB 直接写入, 立即可检索
         kb = self._get_kb(workspace)
         if kb is not None:
-            from datetime import datetime
-
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            try:
-                result = kb.add_text(
-                    text,
-                    filename=f"calc_{tool_name}_{ts}",
-                    metadata={
-                        "source": "auto_ingest",
-                        "tool_name": tool_name,
-                    },
-                )
-                doc_id = result.get("doc_id") or None
-            except Exception:
-                logger.debug("kb.add_text 失败 (非致命)", exc_info=True)
+            doc_id = _add_calculation_to_kb(kb, tool_name, text)
 
         # 2) distiller 也记一条 success_pattern
         distiller = self._get_distiller()
         if distiller is not None:
-            try:
-                from huginn.evolution.knowledge_distiller import DistilledKnowledge
-
-                kid = f"succ_{tool_name}_{hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()[:8]}"
-                # 已存在就跳过, 避免重复写入
-                if not any(k.knowledge_id == kid for k in distiller.knowledge_base):
-                    evidence = (
-                        [provenance_entry.file_path]
-                        if provenance_entry is not None
-                        else ["unknown"]
-                    )
-                    dk = DistilledKnowledge(
-                        knowledge_id=kid,
-                        content=text,
-                        source_type="success_pattern",
-                        source_evidence=evidence,
-                        confidence=0.7,
-                        category=f"calculation_{tool_name}",
-                        tags=["success", "pattern", tool_name],
-                    )
-                    distiller.knowledge_base.append(dk)
-                    distiller._save()
-            except Exception:
-                logger.debug("distiller 记录失败 (非致命)", exc_info=True)
+            _record_success_pattern(distiller, tool_name, text, provenance_entry)
 
         return doc_id
 
 
 # ── Hook 失败 → 知识蒸馏 ─────────────────────────────────────────
+
+
+def _distill_error_lesson(
+    distiller: Any,
+    tool_name: str,
+    block_reason: str,
+    software: str,
+    calc_type: str,
+    metadata: dict,
+    tool_input: dict,
+) -> None:
+    """调 distiller.distill_error_lessons 记一条 error_lesson."""
+    try:
+        distiller.distill_error_lessons(
+            [
+                {
+                    "tool_name": tool_name,
+                    "error_message": block_reason,
+                    "software": software,
+                    "calculation_type": calc_type,
+                    "session_id": metadata.get("thread_id", "unknown"),
+                    "tool_input": tool_input,
+                }
+            ]
+        )
+    except Exception:
+        logger.debug("distill_error_lessons 失败 (非致命)", exc_info=True)
+
+
+def _write_error_lesson_to_kb(
+    kb: Any, tool_name: str, params: str, block_reason: str
+) -> None:
+    """KB 直接写入 ERROR LESSON, 立即可检索."""
+    suggested_fix = _extract_suggestion(block_reason)
+    lesson_text = (
+        f"ERROR LESSON: {tool_name} with {params} failed: "
+        f"{block_reason}. Suggested fix: {suggested_fix}"
+    )
+    try:
+        from datetime import datetime
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        kb.add_text(
+            lesson_text,
+            filename=f"error_lesson_{tool_name}_{ts}",
+            metadata={
+                "source": "hook_failure",
+                "tool_name": tool_name,
+                "block_reason": block_reason[:200],
+            },
+        )
+    except Exception:
+        logger.debug("kb.add_text 写 ERROR LESSON 失败 (非致命)", exc_info=True)
 
 
 def distill_hook_failure(
@@ -368,45 +434,20 @@ def distill_hook_failure(
     # 1) distiller 蒸馏 error_lesson
     distiller = _get_distiller()
     if distiller is not None:
-        try:
-            distiller.distill_error_lessons(
-                [
-                    {
-                        "tool_name": tool_name,
-                        "error_message": block_reason,
-                        "software": software,
-                        "calculation_type": calc_type,
-                        "session_id": metadata.get("thread_id", "unknown"),
-                        "tool_input": tool_input,
-                    }
-                ]
-            )
-        except Exception:
-            logger.debug("distill_error_lessons 失败 (非致命)", exc_info=True)
+        _distill_error_lesson(
+            distiller,
+            tool_name,
+            block_reason,
+            software,
+            calc_type,
+            metadata,
+            tool_input,
+        )
 
     # 2) KB 直接写入 ERROR LESSON, 立即可检索
     kb = _get_kb(workspace)
     if kb is not None:
-        suggested_fix = _extract_suggestion(block_reason)
-        lesson_text = (
-            f"ERROR LESSON: {tool_name} with {params} failed: "
-            f"{block_reason}. Suggested fix: {suggested_fix}"
-        )
-        try:
-            from datetime import datetime
-
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            kb.add_text(
-                lesson_text,
-                filename=f"error_lesson_{tool_name}_{ts}",
-                metadata={
-                    "source": "hook_failure",
-                    "tool_name": tool_name,
-                    "block_reason": block_reason[:200],
-                },
-            )
-        except Exception:
-            logger.debug("kb.add_text 写 ERROR LESSON 失败 (非致命)", exc_info=True)
+        _write_error_lesson_to_kb(kb, tool_name, params, block_reason)
 
 
 # ── 模块级单例 (钩子用) ──────────────────────────────────────────
@@ -430,6 +471,46 @@ def _get_ingester() -> CalculationToKnowledge:
 # chromadb collection.add, 绕过 add_text 的二次分块.
 
 
+def _iter_sobko_chunks(chunks_file: Any, limit: int | None):
+    """逐行解析 chunks.jsonl, yield (行号, chunk); 空行/坏行跳过."""
+    import json as _json
+
+    with chunks_file.open("r", encoding="utf-8") as f:
+        for i, line in enumerate(f):
+            if limit is not None and i >= limit:
+                break
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                yield i, _json.loads(line)
+            except _json.JSONDecodeError:
+                logger.debug("best-effort op failed", exc_info=True)
+                continue
+
+
+def _ingest_sobko_chunk(kb: Any, chunk: dict, text: str, i: int) -> int:
+    """入库单个 Sobko chunk, 成功返回 1, 否则 0."""
+    source_id = chunk.get("source_id") or chunk.get("source") or f"sobko_{i}"
+    chunk_id = chunk.get("chunk_id") or chunk.get("id") or f"chunk_{i}"
+    try:
+        result = kb.add_text(
+            text,
+            filename=f"sobko_{source_id}_{chunk_id}",
+            metadata={
+                "source": "sobko_kb",
+                "source_id": source_id,
+                "chunk_id": chunk_id,
+                "section": chunk.get("section", ""),
+            },
+        )
+        if result.get("chunks", 0) > 0:
+            return 1
+    except Exception:
+        logger.debug("Sobko chunk %s 入库失败 (非致命)", chunk_id, exc_info=True)
+    return 0
+
+
 def ingest_sobko_chunks(
     sobko_root: str,
     *,
@@ -449,7 +530,6 @@ def ingest_sobko_chunks(
     Returns:
         成功入库的 chunk 数.
     """
-    import json as _json
     from pathlib import Path as _Path
 
     sobko_root_path = _Path(sobko_root)
@@ -465,43 +545,14 @@ def ingest_sobko_chunks(
         return 0
 
     ingested = 0
-    with chunks_file.open("r", encoding="utf-8") as f:
-        for i, line in enumerate(f):
-            if limit is not None and i >= limit:
-                break
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                chunk = _json.loads(line)
-            except _json.JSONDecodeError:
-                logger.debug("best-effort op failed", exc_info=True)
-                continue
-            # Sobko chunk 字段: chunk_id / source_id / text / section / page ...
-            text = chunk.get("text") or chunk.get("content") or ""
-            if not text.strip():
-                continue
-            source_id = chunk.get("source_id") or chunk.get("source") or f"sobko_{i}"
-            chunk_id = chunk.get("chunk_id") or chunk.get("id") or f"chunk_{i}"
-            try:
-                result = kb.add_text(
-                    text,
-                    filename=f"sobko_{source_id}_{chunk_id}",
-                    metadata={
-                        "source": "sobko_kb",
-                        "source_id": source_id,
-                        "chunk_id": chunk_id,
-                        "section": chunk.get("section", ""),
-                    },
-                )
-                if result.get("chunks", 0) > 0:
-                    ingested += 1
-            except Exception:
-                logger.debug(
-                    "Sobko chunk %s 入库失败 (非致命)", chunk_id, exc_info=True
-                )
-            if batch_log_every and (i + 1) % batch_log_every == 0:
-                logger.info("Sobko 蒸馏进度: %d chunks 处理, %d 成功", i + 1, ingested)
+    for i, chunk in _iter_sobko_chunks(chunks_file, limit):
+        # Sobko chunk 字段: chunk_id / source_id / text / section / page ...
+        text = chunk.get("text") or chunk.get("content") or ""
+        if not text.strip():
+            continue
+        ingested += _ingest_sobko_chunk(kb, chunk, text, i)
+        if batch_log_every and (i + 1) % batch_log_every == 0:
+            logger.info("Sobko 蒸馏进度: %d chunks 处理, %d 成功", i + 1, ingested)
     return ingested
 
 
@@ -570,8 +621,12 @@ def _spawn_semantic_distill(
             # to_thread 里没有 running loop, semantic_distiller 走同步 invoke,
             # 避免在事件循环内 _invoke_llm 的 run_coroutine_threadsafe 自锁.
             await asyncio.to_thread(
-                distill_semantic_text, text, source=source, source_url=source_url,
-                source_type=source_type, domain_hint=domain_hint,
+                distill_semantic_text,
+                text,
+                source=source,
+                source_url=source_url,
+                source_type=source_type,
+                domain_hint=domain_hint,
             )
         finally:
             _pending_sem.discard(current)
@@ -580,20 +635,46 @@ def _spawn_semantic_distill(
     _pending_sem.add(current)
 
 
+def _successful_tool_result(ctx: HookContext) -> dict | None:
+    """成功调用才返回 result dict, 否则 None."""
+    # 被 hook block 的走 hook_failure_hook
+    if ctx.metadata.get("blocked_by_hook"):
+        return None
+    # 工具抛异常或返回 error 的不算成功
+    if ctx.error is not None:
+        return None
+    result = ctx.result if isinstance(ctx.result, dict) else {}
+    if result.get("error"):
+        return None
+    return result
+
+
+def _visual_primitives_of(result: dict) -> str | None:
+    """取 result 里的 _visual_primitives (兼容嵌一层 result).
+
+    G4: 把 visual_primitives 单独 ingest 到 KB, 让视觉经验能被 RAG 召回.
+    visual_hook 给 result 塞 _visual_primitives 字段, 之前只流向 memory/KG,
+    不进 RAG KB → 这里补上. 非 block, 失败只 debug.
+    """
+    _vis = result.get("_visual_primitives") if isinstance(result, dict) else None
+    if not _vis:
+        _res_inner = result.get("result") if isinstance(result, dict) else None
+        _vis = (
+            _res_inner.get("_visual_primitives")
+            if isinstance(_res_inner, dict)
+            else None
+        )
+    return _vis
+
+
 async def calculation_ingest_hook(ctx: HookContext) -> HookContext | None:
     """成功路径: 工具通过 hook 检查后, 把计算结果摄入知识库. 不 block.
 
     只处理成功的调用: 没被 hook block, 没抛异常, 结果里也没 error.
     """
     try:
-        # 被 hook block 的走 hook_failure_hook
-        if ctx.metadata.get("blocked_by_hook"):
-            return None
-        # 工具抛异常或返回 error 的不算成功
-        if ctx.error is not None:
-            return None
-        result = ctx.result if isinstance(ctx.result, dict) else {}
-        if result.get("error"):
+        result = _successful_tool_result(ctx)
+        if result is None:
             return None
 
         tool_input = ctx.args if isinstance(ctx.args, dict) else {}
@@ -613,17 +694,7 @@ async def calculation_ingest_hook(ctx: HookContext) -> HookContext | None:
                 domain_hint=_infer_software(ctx.tool_name),
             )
 
-        # G4: 把 visual_primitives 单独 ingest 到 KB, 让视觉经验能被 RAG 召回.
-        # visual_hook 给 result 塞 _visual_primitives 字段, 之前只流向 memory/KG,
-        # 不进 RAG KB → 这里补上. 非 block, 失败只 debug.
-        _vis = result.get("_visual_primitives") if isinstance(result, dict) else None
-        if not _vis:
-            _res_inner = result.get("result") if isinstance(result, dict) else None
-            _vis = (
-                _res_inner.get("_visual_primitives")
-                if isinstance(_res_inner, dict)
-                else None
-            )
+        _vis = _visual_primitives_of(result)
         if _vis and isinstance(_vis, str) and _vis.strip():
             ingest_visual_primitives(
                 ctx.tool_name, _vis, tool_input, workspace=workspace

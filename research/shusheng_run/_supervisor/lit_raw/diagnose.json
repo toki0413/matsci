@@ -1,0 +1,429 @@
+[
+  {
+    "row": 2,
+    "material": "MgH2 (pristine)",
+    "ea": "189",
+    "status": "fetch_error",
+    "detail": "HTTP Error 403: Forbidden"
+  },
+  {
+    "row": 3,
+    "material": "MgH2-1 wt% Ti3C2Tx",
+    "ea": "145",
+    "status": "fetch_error",
+    "detail": "HTTP Error 403: Forbidden"
+  },
+  {
+    "row": 4,
+    "material": "MgH2-3 wt% Ti3C2Tx",
+    "ea": "70",
+    "status": "fetch_error",
+    "detail": "HTTP Error 403: Forbidden"
+  },
+  {
+    "row": 5,
+    "material": "MgH2-6 wt% Ti3C2Tx",
+    "ea": "67",
+    "status": "fetch_error",
+    "detail": "HTTP Error 403: Forbidden"
+  },
+  {
+    "row": 6,
+    "material": "MgH2 (milled)",
+    "ea": "133",
+    "status": "absent",
+    "cov": 0.055,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10053828/",
+    "num": false
+  },
+  {
+    "row": 7,
+    "material": "MgH2-10 wt% Ni0.6Zn0.4O",
+    "ea": "97",
+    "status": "absent",
+    "cov": 0.055,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10053828/",
+    "num": false
+  },
+  {
+    "row": 8,
+    "material": "Mg-5Ni (hydrogenated)",
+    "ea": "210",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://www.ebi.ac.uk/europepmc/webservices/rest/PMC9693504/fullTextXML",
+    "num": true
+  },
+  {
+    "row": 9,
+    "material": "Mg-5Ni (hydrogenated)",
+    "ea": "206",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://www.mdpi.com/2072-666X/13/11/1809",
+    "num": true
+  },
+  {
+    "row": 10,
+    "material": "Mg-5Ni (hydrided)",
+    "ea": "174",
+    "status": "fetch_error",
+    "detail": "HTTP Error 403: Forbidden"
+  },
+  {
+    "row": 11,
+    "material": "MgH2 (pristine)",
+    "ea": "121",
+    "status": "fetch_error",
+    "detail": "HTTP Error 403: Forbidden"
+  },
+  {
+    "row": 12,
+    "material": "MgH2 + 7.5 wt% Ti3CN",
+    "ea": "80",
+    "status": "fetch_error",
+    "detail": "HTTP Error 403: Forbidden"
+  },
+  {
+    "row": 13,
+    "material": "MgH2 (as-milled)",
+    "ea": "153.09",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://www.ebi.ac.uk/europepmc/webservices/rest/PMC8541418/fullTextXML",
+    "num": true
+  },
+  {
+    "row": 14,
+    "material": "MgH2-6 wt% ML-Ti3C2",
+    "ea": "99.11",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://www.mdpi.com/2072-666X/12/10/1190",
+    "num": true
+  },
+  {
+    "row": 15,
+    "material": "MgH2 (pure)",
+    "ea": "161",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10856060/",
+    "num": true
+  },
+  {
+    "row": 16,
+    "material": "MgH2-EEWAl (10 wt%)",
+    "ea": "109",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10856060/",
+    "num": true
+  },
+  {
+    "row": 17,
+    "material": "AZ31-0 WP",
+    "ea": "123.25",
+    "status": "absent",
+    "cov": 0.034,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12156327/",
+    "num": false
+  },
+  {
+    "row": 18,
+    "material": "AZ31-4 WP",
+    "ea": "109.06",
+    "status": "absent",
+    "cov": 0.034,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12156327/",
+    "num": false
+  },
+  {
+    "row": 19,
+    "material": "AZ31-8 WP",
+    "ea": "104.58",
+    "status": "absent",
+    "cov": 0.034,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12156327/",
+    "num": false
+  },
+  {
+    "row": 20,
+    "material": "MgH2 + 5 wt% V",
+    "ea": "78",
+    "status": "absent",
+    "cov": 0.056,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10419626/",
+    "num": false
+  },
+  {
+    "row": 21,
+    "material": "MgH2 (pure)",
+    "ea": "154.9",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9317334/",
+    "num": true
+  },
+  {
+    "row": 22,
+    "material": "MgH2 + 10 wt% K2MoO4 (MK10)",
+    "ea": "128.36",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9317334/",
+    "num": true
+  },
+  {
+    "row": 23,
+    "material": "MgH2 (pure)",
+    "ea": "70.6",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9317334/",
+    "num": true
+  },
+  {
+    "row": 24,
+    "material": "MgH2 + 10 wt% K2MoO4 (MK10)",
+    "ea": "55.8",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9317334/",
+    "num": true
+  },
+  {
+    "row": 25,
+    "material": "MgH2 + 10 wt% LaCoO3",
+    "ea": "90",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10057918/",
+    "num": true
+  },
+  {
+    "row": 26,
+    "material": "MgH2 (pure)",
+    "ea": "132.19",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11096980/",
+    "num": true
+  },
+  {
+    "row": 27,
+    "material": "MgH2 + 10 wt% Ni/NiO",
+    "ea": "87.21",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11096980/",
+    "num": true
+  },
+  {
+    "row": 28,
+    "material": "MgH2 (pure)",
+    "ea": "68.36",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11096980/",
+    "num": true
+  },
+  {
+    "row": 29,
+    "material": "MgH2 + 10 wt% Ni/NiO",
+    "ea": "34.84",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11096980/",
+    "num": true
+  },
+  {
+    "row": 30,
+    "material": "MgH2 (as-milled)",
+    "ea": "135.0",
+    "status": "absent",
+    "cov": 0.065,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9457766/",
+    "num": false
+  },
+  {
+    "row": 31,
+    "material": "MgH2 + 10 wt% CoTiO3",
+    "ea": "104.6",
+    "status": "absent",
+    "cov": 0.065,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9457766/",
+    "num": false
+  },
+  {
+    "row": 32,
+    "material": "Mg-VCl3 (cryo-milled)",
+    "ea": "123.11",
+    "status": "absent",
+    "cov": 0.064,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10058655/",
+    "num": false
+  },
+  {
+    "row": 33,
+    "material": "Mg-VCl3 (cryo-milled)",
+    "ea": "63.8",
+    "status": "absent",
+    "cov": 0.058,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10058655/",
+    "num": false
+  },
+  {
+    "row": 34,
+    "material": "MgH2 (milled)",
+    "ea": "156.55",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11289713/",
+    "num": true
+  },
+  {
+    "row": 35,
+    "material": "MgH2-5 wt% BaCrO4",
+    "ea": "106.75",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11289713/",
+    "num": true
+  },
+  {
+    "row": 36,
+    "material": "MgH2 (as-milled)",
+    "ea": "161.1",
+    "status": "absent",
+    "cov": 0.055,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10025938/",
+    "num": false
+  },
+  {
+    "row": 37,
+    "material": "MgH2-CCPA (in situ amorphous carbon)",
+    "ea": "77.5",
+    "status": "absent",
+    "cov": 0.055,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10025938/",
+    "num": false
+  },
+  {
+    "row": 38,
+    "material": "MgH2-CCPA (in situ amorphous carbon)",
+    "ea": "57.9",
+    "status": "absent",
+    "cov": 0.027,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10025938/",
+    "num": false
+  },
+  {
+    "row": 39,
+    "material": "Mg-25Ni",
+    "ea": "56.74",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12400306/",
+    "num": true
+  },
+  {
+    "row": 40,
+    "material": "Mg-33Ni",
+    "ea": "61.25",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12400306/",
+    "num": true
+  },
+  {
+    "row": 41,
+    "material": "MgH2@Nb2C",
+    "ea": "111.49",
+    "status": "absent",
+    "cov": 0.04,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9532614/",
+    "num": false
+  },
+  {
+    "row": 42,
+    "material": "MgH2@Ti2C",
+    "ea": "86.48",
+    "status": "absent",
+    "cov": 0.04,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9532614/",
+    "num": false
+  },
+  {
+    "row": 43,
+    "material": "MgH2@graphene",
+    "ea": "123.98",
+    "status": "absent",
+    "cov": 0.04,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9532614/",
+    "num": false
+  },
+  {
+    "row": 44,
+    "material": "Mg-Ni/HCS (hard-carbon-sphere-wrapped Ni)",
+    "ea": "65.9",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9084346/",
+    "num": true
+  },
+  {
+    "row": 45,
+    "material": "MgH2 (commercial)",
+    "ea": "133.5",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9084346/",
+    "num": true
+  },
+  {
+    "row": 46,
+    "material": "MgH2-Na3AlH6 composite",
+    "ea": "140",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC8320109/",
+    "num": true
+  },
+  {
+    "row": 47,
+    "material": "MgH2-Na3AlH6 + 10 wt% FeCl3",
+    "ea": "128",
+    "status": "exact",
+    "cov": 1.0,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC8320109/",
+    "num": true
+  },
+  {
+    "row": 48,
+    "material": "MgH2-BM (pristine, ball-milled)",
+    "ea": "137.4",
+    "status": "absent",
+    "cov": 0.071,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11231122/",
+    "num": false
+  },
+  {
+    "row": 49,
+    "material": "MgH2-10 wt% H-V2O5",
+    "ea": "113.8",
+    "status": "absent",
+    "cov": 0.071,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11231122/",
+    "num": false
+  },
+  {
+    "row": 50,
+    "material": "MgH2-10 wt% H-V2O5",
+    "ea": "84.55",
+    "status": "absent",
+    "cov": 0.1,
+    "src": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11231122/",
+    "num": false
+  }
+]

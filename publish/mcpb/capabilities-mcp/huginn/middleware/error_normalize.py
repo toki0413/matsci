@@ -37,7 +37,11 @@ def _is_legacy_error(body: dict[str, Any]) -> bool:
         return False  # already unified
     if "error" in body and isinstance(body["error"], str):
         return True
-    return bool(body.get("success") is False and "error" in body and isinstance(body["error"], str))
+    return bool(
+        body.get("success") is False
+        and "error" in body
+        and isinstance(body["error"], str)
+    )
 
 
 def _normalize_error_body(
@@ -90,27 +94,15 @@ class ErrorNormalizeMiddleware(BaseHTTPMiddleware):
         if status_code < 400 and status_code != 200:
             return response
 
-        try:
-            body_bytes = b"".join([chunk async for chunk in response.body_iterator])
-            import json
-
-            body = json.loads(body_bytes)
-        except Exception:
+        parsed = await ErrorNormalizeMiddleware._read_json(response)
+        if parsed is None:
             return response  # not JSON or parse error, leave as-is
+        body_bytes, body = parsed
 
         if not isinstance(body, dict) or not _is_legacy_error(body):
             # body_iterator was consumed above — must rebuild so the
             # downstream middleware gets the actual bytes, not an empty stream
-            return Response(
-                content=body_bytes,
-                status_code=response.status_code,
-                headers={
-                    k: v
-                    for k, v in response.headers.items()
-                    if k.lower() != "content-length"
-                },
-                media_type=response.media_type,
-            )
+            return ErrorNormalizeMiddleware._rebuild(response, body_bytes)
 
         # For 200 responses, only normalize if success=false. The body was
         # consumed above, so returning the original response here would send
@@ -118,16 +110,7 @@ class ErrorNormalizeMiddleware(BaseHTTPMiddleware):
         # dict first, so the header is right but the bytes are gone). Rebuild
         # the response with the preserved bytes instead.
         if status_code == 200 and body.get("success") is not False:
-            return Response(
-                content=body_bytes,
-                status_code=response.status_code,
-                headers={
-                    k: v
-                    for k, v in response.headers.items()
-                    if k.lower() != "content-length"
-                },
-                media_type=response.media_type,
-            )
+            return ErrorNormalizeMiddleware._rebuild(response, body_bytes)
 
         request_id = getattr(request.state, "request_id", "unknown")
         normalized = _normalize_error_body(body, request_id, status_code)
@@ -144,6 +127,32 @@ class ErrorNormalizeMiddleware(BaseHTTPMiddleware):
                 for k, v in response.headers.items()
                 if k.lower() not in ("content-length", "content-type")
             },
+        )
+
+    @staticmethod
+    async def _read_json(response: Any) -> tuple[bytes, Any] | None:
+        """Read and parse the response body; None if not JSON / parse error."""
+        try:
+            body_bytes = b"".join([chunk async for chunk in response.body_iterator])
+            import json
+
+            body = json.loads(body_bytes)
+        except Exception:
+            return None  # not JSON or parse error, leave as-is
+        return body_bytes, body
+
+    @staticmethod
+    def _rebuild(response: Any, body_bytes: bytes) -> Response:
+        """Rebuild the response from already-consumed bytes."""
+        return Response(
+            content=body_bytes,
+            status_code=response.status_code,
+            headers={
+                k: v
+                for k, v in response.headers.items()
+                if k.lower() != "content-length"
+            },
+            media_type=response.media_type,
         )
 
 

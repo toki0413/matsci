@@ -20,6 +20,7 @@ DFT 带隙 / MD 扩散 / 紧束缚费米速度 / HEA 力学 / 热电 / 拓扑 / 
 ceiling: 10 题自制无法覆盖 90 题真实论文; evaluator 数值判分不如 NatureBench 的
         evaluation/ 脚本严格; best_score 是进程内状态, 跨 session 不持久.
 """
+
 from __future__ import annotations
 
 import math
@@ -67,7 +68,8 @@ def _extract_sci(text: str, prefix_regex: str) -> float | None:
     # 兼容 "1.2×10⁻¹²" / "1.2e-12"
     m = re.search(
         prefix_regex + r"\s*(\d+\.?\d*)\s*[×x*]\s*10\^?([-+]?\d+)",
-        text, re.IGNORECASE,
+        text,
+        re.IGNORECASE,
     )
     if m:
         try:
@@ -75,6 +77,50 @@ def _extract_sci(text: str, prefix_regex: str) -> float | None:
         except ValueError:
             pass
     return None
+
+
+def _fallback_number(
+    output: str, sota: float, tol: float, log_space: bool
+) -> float | None:
+    """退而求其次: 找所有数字, 看有没有接近 SOTA."""
+    nums = [float(x) for x in re.findall(_SCINUM_RE, output)]
+    close = []
+    for n in nums:
+        if log_space and n > 0 and sota > 0:
+            if abs(math.log10(n) - math.log10(sota)) <= tol * 2:
+                close.append(n)
+        elif _num_close(n, sota, tol * 2):
+            close.append(n)
+    return close[0] if close else None
+
+
+def _score_distance(
+    val: float, sota: float, tol: float, unit: str, log_space: bool
+) -> tuple[bool, str, float]:
+    """按距离做三段容差判分 (log_space=False 时线性, True 时对数)."""
+    # 计算距离
+    if log_space:
+        if val <= 0 or sota <= 0:
+            dist = float("inf")
+        else:
+            dist = abs(math.log10(val) - math.log10(sota))
+    else:
+        dist = abs(val - sota)
+
+    # 三段容差判分
+    if dist <= tol:
+        score = 1.0
+        passed = True
+        msg = f"val={val} {unit} (达到 SOTA ~{sota}±{tol})"
+    elif dist <= tol * 2:
+        score = 0.5
+        passed = False
+        msg = f"val={val} {unit}, 接近 SOTA ~{sota}"
+    else:
+        score = 0.3
+        passed = False
+        msg = f"val={val} {unit}, 期望 ~{sota} (±{tol})"
+    return passed, msg, score
 
 
 def _make_best_score_eval(
@@ -101,44 +147,14 @@ def _make_best_score_eval(
         val = _extract_sci(output, key_hint) or _extract_number(output, key_hint)
         if val is None:
             # 退而求其次: 找所有数字, 看有没有接近 SOTA
-            nums = [float(x) for x in re.findall(_SCINUM_RE, output)]
-            close = []
-            for n in nums:
-                if log_space and n > 0 and sota > 0:
-                    if abs(math.log10(n) - math.log10(sota)) <= tol * 2:
-                        close.append(n)
-                elif _num_close(n, sota, tol * 2):
-                    close.append(n)
-            if close:
-                val = close[0]
-            else:
+            val = _fallback_number(output, sota, tol, log_space)
+            if val is None:
                 return False, f"未找到 {unit} 数值 (~{sota})", 0.0
 
         state["n_calls"] += 1
         prev_best = state["best"]
 
-        # 计算距离
-        if log_space:
-            if val <= 0 or sota <= 0:
-                dist = float("inf")
-            else:
-                dist = abs(math.log10(val) - math.log10(sota))
-        else:
-            dist = abs(val - sota)
-
-        # 三段容差判分
-        if dist <= tol:
-            score = 1.0
-            passed = True
-            msg = f"val={val} {unit} (达到 SOTA ~{sota}±{tol})"
-        elif dist <= tol * 2:
-            score = 0.5
-            passed = False
-            msg = f"val={val} {unit}, 接近 SOTA ~{sota}"
-        else:
-            score = 0.3
-            passed = False
-            msg = f"val={val} {unit}, 期望 ~{sota} (±{tol})"
+        passed, msg, score = _score_distance(val, sota, tol, unit, log_space)
 
         # best_score: 取最高 score
         if prev_best is None or score > prev_best[1]:
@@ -155,63 +171,83 @@ def _make_best_score_eval(
 # (NatureBench eval_service.py 的 ScoreTracker 也是进程级单例)
 
 _eval_perovskite_gap = _make_best_score_eval(
-    sota=1.55, tol=0.1, unit="eV",
+    sota=1.55,
+    tol=0.1,
+    unit="eV",
     key_hint=r"(?:Eg|带隙|band.?gap)",
 )
 """CH3NH3PbI3 钙钛矿带隙 ~1.55 eV (Nature 2014 perovskite solar cell)."""
 
 _eval_mos2_gap = _make_best_score_eval(
-    sota=1.8, tol=0.1, unit="eV",
+    sota=1.8,
+    tol=0.1,
+    unit="eV",
     key_hint=r"(?:Eg|带隙|band.?gap)",
 )
 """单层 MoS2 直接带隙 ~1.8 eV (Nature 2018 TMD)."""
 
 _eval_li_diffusion = _make_best_score_eval(
-    sota=1e-12, tol=0.5, unit="m²/s",
+    sota=1e-12,
+    tol=0.5,
+    unit="m²/s",
     key_hint=r"(?:D|扩散|diffusion)",
     log_space=True,
 )
 """LiCoO2 锂离子扩散系数 D ~ 1e-12 m²/s (Nature Materials 2017)."""
 
 _eval_graphene_fermi = _make_best_score_eval(
-    sota=1e6, tol=0.3, unit="m/s",
+    sota=1e6,
+    tol=0.3,
+    unit="m/s",
     key_hint=r"(?:vF|费米速度|Fermi\s*velocity)",
     log_space=True,
 )
 """石墨烯费米速度 vF ~ 1e6 m/s (Nature Physics 2019)."""
 
 _eval_heas_strength = _make_best_score_eval(
-    sota=1.0, tol=0.1, unit="GPa",
+    sota=1.0,
+    tol=0.1,
+    unit="GPa",
     key_hint=r"(?:σ|sigma|屈服|yield|strength)",
 )
 """CrMnFeCoNi 高熵合金屈服强度 σ_y ~ 1.0 GPa (Nature 2020)."""
 
 _eval_snse_zt = _make_best_score_eval(
-    sota=2.6, tol=0.3, unit="",
+    sota=2.6,
+    tol=0.3,
+    unit="",
     key_hint=r"(?:ZT|优值|figure.?of.?merit)",
 )
 """SnSe 热电优值 ZT ~ 2.6 (Nature Materials 2016)."""
 
 _eval_bi2se3_dirac = _make_best_score_eval(
-    sota=-0.35, tol=0.1, unit="eV",
+    sota=-0.35,
+    tol=0.1,
+    unit="eV",
     key_hint=r"(?:Dirac|狄拉克)",
 )
 """Bi2Se3 拓扑绝缘体 Dirac point 能量 ~ -0.35 eV (Nature 2017)."""
 
 _eval_mof_co2 = _make_best_score_eval(
-    sota=3.0, tol=0.3, unit="mmol/g",
+    sota=3.0,
+    tol=0.3,
+    unit="mmol/g",
     key_hint=r"(?:CO2|二氧化碳|吸附|adsorption)",
 )
 """MOF CO2 吸附量 ~ 3.0 mmol/g (Nature 2019)."""
 
 _eval_h3s_tc = _make_best_score_eval(
-    sota=203.0, tol=10.0, unit="K",
+    sota=203.0,
+    tol=10.0,
+    unit="K",
     key_hint=r"(?:Tc|Tc|临界温度|critical)",
 )
 """H3S 超导临界温度 Tc ~ 203 K (Nature Physics 2015)."""
 
 _eval_li10gep2s12 = _make_best_score_eval(
-    sota=1e-2, tol=0.5, unit="S/cm",
+    sota=1e-2,
+    tol=0.5,
+    unit="S/cm",
     key_hint=r"(?:σ|sigma|电导率|conductivity)",
     log_space=True,
 )
@@ -219,6 +255,167 @@ _eval_li10gep2s12 = _make_best_score_eval(
 
 
 # ── 构造 BenchmarkTask 列表 ────────────────────────────────────
+
+# ── 单题构造 (build_naturebench_tasks 的组成单元) ──────────────
+
+
+def _nb_task_perovskite_gap() -> BenchmarkTask:
+    return BenchmarkTask(
+        id="nb-perovskite-gap",
+        category="naturebench",
+        prompt=(
+            "Nature 2014 论文报道了 CH3NH3PbI3 钙钛矿太阳能电池效率突破 15%, "
+            "其带隙 Eg ≈ 1.55 eV。请用第一性原理方法计算 CH3NH3PbI3 的带隙 (eV), "
+            "并对比论文 SOTA。"
+        ),
+        evaluator=_eval_perovskite_gap,
+        tags=["naturebench", "dft", "electronic", "perovskite"],
+        requires_api_key=True,
+        reference="Eg ≈ 1.55 eV (Nature 2014 perovskite solar cell)",
+    )
+
+
+def _nb_task_mos2_gap() -> BenchmarkTask:
+    return BenchmarkTask(
+        id="nb-mos2-gap",
+        category="naturebench",
+        prompt=(
+            "Nature 2018 论文报道了单层 MoS2 从间接带隙转为直接带隙 (~1.8 eV), "
+            "用于光电器件。请用 DFT 计算单层 MoS2 的带隙 (eV), 对比论文 SOTA。"
+        ),
+        evaluator=_eval_mos2_gap,
+        tags=["naturebench", "dft", "2d", "tmd"],
+        requires_api_key=True,
+        reference="Eg ≈ 1.8 eV (Nature 2018 MoS2 TMD)",
+    )
+
+
+def _nb_task_li_diffusion() -> BenchmarkTask:
+    return BenchmarkTask(
+        id="nb-li-diffusion",
+        category="naturebench",
+        prompt=(
+            "Nature Materials 2017 论文测量了 LiCoO2 中锂离子扩散系数 "
+            "D ≈ 1×10⁻¹² m²/s。请用分子动力学或 NEB 方法计算 LiCoO2 的锂离子 "
+            "扩散系数 (m²/s), 对比论文 SOTA。"
+        ),
+        evaluator=_eval_li_diffusion,
+        tags=["naturebench", "md", "diffusion", "battery"],
+        requires_api_key=True,
+        reference="D ≈ 1e-12 m²/s (Nature Materials 2017)",
+    )
+
+
+def _nb_task_graphene_fermi() -> BenchmarkTask:
+    return BenchmarkTask(
+        id="nb-graphene-fermi",
+        category="naturebench",
+        prompt=(
+            "Nature Physics 2019 论文测量了石墨烯费米速度 vF ≈ 1×10⁶ m/s。"
+            "请用紧束缚或 DFT 计算石墨烯的费米速度 (m/s), 对比论文 SOTA。"
+        ),
+        evaluator=_eval_graphene_fermi,
+        tags=["naturebench", "tight_binding", "electronic", "2d"],
+        requires_api_key=True,
+        reference="vF ≈ 1e6 m/s (Nature Physics 2019 graphene)",
+    )
+
+
+def _nb_task_heas_strength() -> BenchmarkTask:
+    return BenchmarkTask(
+        id="nb-heas-strength",
+        category="naturebench",
+        prompt=(
+            "Nature 2020 论文报道了 CrMnFeCoNi 高熵合金在低温下屈服强度 "
+            "σ_y ≈ 1.0 GPa。请用分子动力学计算 CrMnFeCoNi 在 77K 的屈服强度 "
+            "(GPa), 对比论文 SOTA。"
+        ),
+        evaluator=_eval_heas_strength,
+        tags=["naturebench", "md", "mechanical", "hea"],
+        requires_api_key=True,
+        reference="σ_y ≈ 1.0 GPa (Nature 2020 CrMnFeCoNi HEA)",
+    )
+
+
+def _nb_task_snse_zt() -> BenchmarkTask:
+    return BenchmarkTask(
+        id="nb-snse-zt",
+        category="naturebench",
+        prompt=(
+            "Nature Materials 2016 论文报道了 SnSe 单晶在 923K 时热电优值 "
+            "ZT ≈ 2.6, 创历史新高。请用玻尔兹曼输运方程计算 SnSe 的 ZT, "
+            "对比论文 SOTA。"
+        ),
+        evaluator=_eval_snse_zt,
+        tags=["naturebench", "transport", "thermoelectric"],
+        requires_api_key=True,
+        reference="ZT ≈ 2.6 (Nature Materials 2016 SnSe)",
+    )
+
+
+def _nb_task_bi2se3_dirac() -> BenchmarkTask:
+    return BenchmarkTask(
+        id="nb-bi2se3-dirac",
+        category="naturebench",
+        prompt=(
+            "Nature 2017 论文用 ARPES 测得 Bi2Se3 拓扑绝缘体 Dirac point "
+            "位于费米面以下 ~-0.35 eV。请用 DFT 计算 Bi2Se3 的 Dirac point "
+            "能量 (eV), 对比论文 SOTA。"
+        ),
+        evaluator=_eval_bi2se3_dirac,
+        tags=["naturebench", "dft", "topological", "surface_state"],
+        requires_api_key=True,
+        reference="Dirac point ≈ -0.35 eV (Nature 2017 Bi2Se3)",
+    )
+
+
+def _nb_task_mof_co2() -> BenchmarkTask:
+    return BenchmarkTask(
+        id="nb-mof-co2",
+        category="naturebench",
+        prompt=(
+            "Nature 2019 论文报道了某 MOF 在 298K/1bar 下 CO2 吸附量 "
+            "~3.0 mmol/g。请用 GCMC 或 DFT 计算该 MOF 的 CO2 吸附量 "
+            "(mmol/g), 对比论文 SOTA。"
+        ),
+        evaluator=_eval_mof_co2,
+        tags=["naturebench", "gcmc", "porous", "adsorption"],
+        requires_api_key=True,
+        reference="~3.0 mmol/g (Nature 2019 MOF CO2 capture)",
+    )
+
+
+def _nb_task_h3s_tc() -> BenchmarkTask:
+    return BenchmarkTask(
+        id="nb-h3s-tc",
+        category="naturebench",
+        prompt=(
+            "Nature Physics 2015 论文报道了 H3S 在 155 GPa 下超导临界温度 "
+            "Tc ≈ 203 K, 创高压超导纪录。请用 DFT + 声子谱计算 H3S 的 Tc (K), "
+            "对比论文 SOTA。"
+        ),
+        evaluator=_eval_h3s_tc,
+        tags=["naturebench", "dft", "phonon", "superconductivity"],
+        requires_api_key=True,
+        reference="Tc ≈ 203 K (Nature Physics 2015 H3S)",
+    )
+
+
+def _nb_task_li10gep2s12() -> BenchmarkTask:
+    return BenchmarkTask(
+        id="nb-li10gep2s12",
+        category="naturebench",
+        prompt=(
+            "Nature 2021 论文报道了 Li10GeP2S12 固态电解质室温离子电导率 "
+            "σ ≈ 1×10⁻² S/cm。请用 AIMD 计算 Li10GeP2S12 的离子电导率 "
+            "(S/cm), 对比论文 SOTA。"
+        ),
+        evaluator=_eval_li10gep2s12,
+        tags=["naturebench", "aimd", "battery", "ionic"],
+        requires_api_key=True,
+        reference="σ ≈ 1e-2 S/cm (Nature 2021 LGPS)",
+    )
+
 
 def build_naturebench_tasks() -> list[BenchmarkTask]:
     """NatureBench-mini: 10 题 Nature 系论文复现.
@@ -231,144 +428,24 @@ def build_naturebench_tasks() -> list[BenchmarkTask]:
     这里只做数值判分, 职责单一.
     """
     return [
-        BenchmarkTask(
-            id="nb-perovskite-gap",
-            category="naturebench",
-            prompt=(
-                "Nature 2014 论文报道了 CH3NH3PbI3 钙钛矿太阳能电池效率突破 15%, "
-                "其带隙 Eg ≈ 1.55 eV。请用第一性原理方法计算 CH3NH3PbI3 的带隙 (eV), "
-                "并对比论文 SOTA。"
-            ),
-            evaluator=_eval_perovskite_gap,
-            tags=["naturebench", "dft", "electronic", "perovskite"],
-            requires_api_key=True,
-            reference="Eg ≈ 1.55 eV (Nature 2014 perovskite solar cell)",
-        ),
-        BenchmarkTask(
-            id="nb-mos2-gap",
-            category="naturebench",
-            prompt=(
-                "Nature 2018 论文报道了单层 MoS2 从间接带隙转为直接带隙 (~1.8 eV), "
-                "用于光电器件。请用 DFT 计算单层 MoS2 的带隙 (eV), 对比论文 SOTA。"
-            ),
-            evaluator=_eval_mos2_gap,
-            tags=["naturebench", "dft", "2d", "tmd"],
-            requires_api_key=True,
-            reference="Eg ≈ 1.8 eV (Nature 2018 MoS2 TMD)",
-        ),
-        BenchmarkTask(
-            id="nb-li-diffusion",
-            category="naturebench",
-            prompt=(
-                "Nature Materials 2017 论文测量了 LiCoO2 中锂离子扩散系数 "
-                "D ≈ 1×10⁻¹² m²/s。请用分子动力学或 NEB 方法计算 LiCoO2 的锂离子 "
-                "扩散系数 (m²/s), 对比论文 SOTA。"
-            ),
-            evaluator=_eval_li_diffusion,
-            tags=["naturebench", "md", "diffusion", "battery"],
-            requires_api_key=True,
-            reference="D ≈ 1e-12 m²/s (Nature Materials 2017)",
-        ),
-        BenchmarkTask(
-            id="nb-graphene-fermi",
-            category="naturebench",
-            prompt=(
-                "Nature Physics 2019 论文测量了石墨烯费米速度 vF ≈ 1×10⁶ m/s。"
-                "请用紧束缚或 DFT 计算石墨烯的费米速度 (m/s), 对比论文 SOTA。"
-            ),
-            evaluator=_eval_graphene_fermi,
-            tags=["naturebench", "tight_binding", "electronic", "2d"],
-            requires_api_key=True,
-            reference="vF ≈ 1e6 m/s (Nature Physics 2019 graphene)",
-        ),
-        BenchmarkTask(
-            id="nb-heas-strength",
-            category="naturebench",
-            prompt=(
-                "Nature 2020 论文报道了 CrMnFeCoNi 高熵合金在低温下屈服强度 "
-                "σ_y ≈ 1.0 GPa。请用分子动力学计算 CrMnFeCoNi 在 77K 的屈服强度 "
-                "(GPa), 对比论文 SOTA。"
-            ),
-            evaluator=_eval_heas_strength,
-            tags=["naturebench", "md", "mechanical", "hea"],
-            requires_api_key=True,
-            reference="σ_y ≈ 1.0 GPa (Nature 2020 CrMnFeCoNi HEA)",
-        ),
-        BenchmarkTask(
-            id="nb-snse-zt",
-            category="naturebench",
-            prompt=(
-                "Nature Materials 2016 论文报道了 SnSe 单晶在 923K 时热电优值 "
-                "ZT ≈ 2.6, 创历史新高。请用玻尔兹曼输运方程计算 SnSe 的 ZT, "
-                "对比论文 SOTA。"
-            ),
-            evaluator=_eval_snse_zt,
-            tags=["naturebench", "transport", "thermoelectric"],
-            requires_api_key=True,
-            reference="ZT ≈ 2.6 (Nature Materials 2016 SnSe)",
-        ),
-        BenchmarkTask(
-            id="nb-bi2se3-dirac",
-            category="naturebench",
-            prompt=(
-                "Nature 2017 论文用 ARPES 测得 Bi2Se3 拓扑绝缘体 Dirac point "
-                "位于费米面以下 ~-0.35 eV。请用 DFT 计算 Bi2Se3 的 Dirac point "
-                "能量 (eV), 对比论文 SOTA。"
-            ),
-            evaluator=_eval_bi2se3_dirac,
-            tags=["naturebench", "dft", "topological", "surface_state"],
-            requires_api_key=True,
-            reference="Dirac point ≈ -0.35 eV (Nature 2017 Bi2Se3)",
-        ),
-        BenchmarkTask(
-            id="nb-mof-co2",
-            category="naturebench",
-            prompt=(
-                "Nature 2019 论文报道了某 MOF 在 298K/1bar 下 CO2 吸附量 "
-                "~3.0 mmol/g。请用 GCMC 或 DFT 计算该 MOF 的 CO2 吸附量 "
-                "(mmol/g), 对比论文 SOTA。"
-            ),
-            evaluator=_eval_mof_co2,
-            tags=["naturebench", "gcmc", "porous", "adsorption"],
-            requires_api_key=True,
-            reference="~3.0 mmol/g (Nature 2019 MOF CO2 capture)",
-        ),
-        BenchmarkTask(
-            id="nb-h3s-tc",
-            category="naturebench",
-            prompt=(
-                "Nature Physics 2015 论文报道了 H3S 在 155 GPa 下超导临界温度 "
-                "Tc ≈ 203 K, 创高压超导纪录。请用 DFT + 声子谱计算 H3S 的 Tc (K), "
-                "对比论文 SOTA。"
-            ),
-            evaluator=_eval_h3s_tc,
-            tags=["naturebench", "dft", "phonon", "superconductivity"],
-            requires_api_key=True,
-            reference="Tc ≈ 203 K (Nature Physics 2015 H3S)",
-        ),
-        BenchmarkTask(
-            id="nb-li10gep2s12",
-            category="naturebench",
-            prompt=(
-                "Nature 2021 论文报道了 Li10GeP2S12 固态电解质室温离子电导率 "
-                "σ ≈ 1×10⁻² S/cm。请用 AIMD 计算 Li10GeP2S12 的离子电导率 "
-                "(S/cm), 对比论文 SOTA。"
-            ),
-            evaluator=_eval_li10gep2s12,
-            tags=["naturebench", "aimd", "battery", "ionic"],
-            requires_api_key=True,
-            reference="σ ≈ 1e-2 S/cm (Nature 2021 LGPS)",
-        ),
+        _nb_task_perovskite_gap(),
+        _nb_task_mos2_gap(),
+        _nb_task_li_diffusion(),
+        _nb_task_graphene_fermi(),
+        _nb_task_heas_strength(),
+        _nb_task_snse_zt(),
+        _nb_task_bi2se3_dirac(),
+        _nb_task_mof_co2(),
+        _nb_task_h3s_tc(),
+        _nb_task_li10gep2s12(),
     ]
 
 
 # ── self-check ─────────────────────────────────────────────────
 
-def _selfcheck() -> None:
-    """验证 10 题: 正确答案 pass, 错误答案 fail, best_score 跟踪."""
-    tasks = build_naturebench_tasks()
-    assert len(tasks) == 10, f"expected 10 naturebench tasks, got {len(tasks)}"
 
+def _selfcheck_tasks_1(tasks: list[BenchmarkTask]) -> None:
+    """T1-T5: 正确答案 pass, 错误答案 fail."""
     # T1 Perovskite Eg: 正确 ~1.55
     t1 = tasks[0]
     r = t1.evaluate("钙钛矿带隙 Eg = 1.55 eV")
@@ -401,6 +478,9 @@ def _selfcheck() -> None:
     r = t5.evaluate("σ = 0.3 GPa")
     assert not r.passed, "T5 wrong should fail"
 
+
+def _selfcheck_tasks_2(tasks: list[BenchmarkTask]) -> None:
+    """T6-T10: 正确答案 pass, 错误答案 fail."""
     # T6 SnSe ZT: ~2.6
     t6 = tasks[5]
     r = t6.evaluate("ZT = 2.6")
@@ -430,9 +510,14 @@ def _selfcheck() -> None:
     r = t10.evaluate("电导率 σ = 1.0e-2 S/cm")
     assert r.passed, f"T10 correct should pass: {r.reason}"
 
+
+def _selfcheck_best_score() -> None:
+    """best_score 跟踪测试."""
     # best_score 跟踪测试: 用独立实例避免模块级单例污染
     ev = _make_best_score_eval(
-        sota=1.55, tol=0.1, unit="eV",
+        sota=1.55,
+        tol=0.1,
+        unit="eV",
         key_hint=r"(?:Eg|带隙|band.?gap)",
     )
     ev("Eg = 1.55 eV")  # 1.0
@@ -442,6 +527,16 @@ def _selfcheck() -> None:
     # best 保留 score=1.0 那次 (1.55, 1.0)
     assert state["best"][0] == 1.55, f"best val should be 1.55, got {state['best'][0]}"
     assert state["best"][1] == 1.0, f"best score should be 1.0, got {state['best'][1]}"
+
+
+def _selfcheck() -> None:
+    """验证 10 题: 正确答案 pass, 错误答案 fail, best_score 跟踪."""
+    tasks = build_naturebench_tasks()
+    assert len(tasks) == 10, f"expected 10 naturebench tasks, got {len(tasks)}"
+
+    _selfcheck_tasks_1(tasks)
+    _selfcheck_tasks_2(tasks)
+    _selfcheck_best_score()
 
     print(f"PASS: naturebench ({len(tasks)} tasks, best_score tracking verified)")
 

@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # Prompt / 输出面「声明 vs 生效」缺口 — 系统修复 Spec
 
 > Status: ACTIVE (as-built, 详见 §14)

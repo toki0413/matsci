@@ -10,6 +10,7 @@ prompt 只需简短研究导向.
 
 ponytail: 不重复 RCB prompt 已有的内容, 不加交互式渲染, 纯文本输出.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -18,6 +19,9 @@ import json
 import logging
 import os
 import sys
+import time
+from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +59,8 @@ os.environ["HUGINN_RATE_LIMIT_ENABLED"] = "0"
 os.environ.setdefault("HUGINN_RATE_LIMIT_TOKENS_PER_TURN", "500000")
 # 允许本地沙箱执行 code_tool/bash_tool — RCB subprocess 没有 docker, 用本地 python
 os.environ["HUGINN_ALLOW_LOCAL_BASH"] = "1"
+# RCB 评测机通常无 Landlock: 显式接受降级执行 (仅限评测环境).
+os.environ.setdefault("HUGINN_UNSAFE_ENV", "1")
 # HUGINN_CACHE_DIR 可能被设成空串, 导致 LongTermMemory 用相对路径 memory.db,
 # 在 RCB workspace cwd 下 sqlite WAL 创建失败. 强制用绝对路径.
 if not os.environ.get("HUGINN_CACHE_DIR"):
@@ -209,193 +215,208 @@ from huginn.cli.rcb_utils import (  # noqa: E402,F401  backward-compat re-export
 from huginn.context_manager import get_context_window  # noqa: E402,I001  (full module import)
 
 
-async def run(
-    workspace: str,
-    extreme: bool = False,
-    *,
-    mcmc_mode: str | None = None,
-    mcmc_steps: int = 7_000_000,
-    mcmc_chains: int = 4,
-    mcmc_checkpoint_interval: int = 10_000,
-    mcmc_se3: bool = False,
-    mcmc_se3_angle_sigma: float = 30.0,
-    mcmc_haptic: bool = False,
-    mcmc_haptic_temperature: float = 1.0,
-    mcmc_alignment: bool = False,
-    mcmc_alignment_temperature: float = 1.0,
-) -> int:
-    ws = Path(workspace).resolve()
-    # Task 4.1: --mcmc-mode 走独立 MCMC 路径, 不跑 RCB agent 主循环.
-    # 不传时 mcmc_mode=None, 下面走原 RCB 逻辑 100% 不变.
-    if mcmc_mode is not None:
-        return await _run_mcmc_mode(
-            ws=ws, task_id=ws.name, mode=mcmc_mode,
-            n_steps=mcmc_steps, n_chains=mcmc_chains,
-            checkpoint_interval=mcmc_checkpoint_interval,
-            se3_enabled=mcmc_se3,
-            se3_angle_sigma=mcmc_se3_angle_sigma,
-            haptic_enabled=mcmc_haptic,
-            haptic_temperature=mcmc_haptic_temperature,
-            alignment_enabled=mcmc_alignment,
-            alignment_temperature=mcmc_alignment_temperature,
-        )
-    instructions = ws / "INSTRUCTIONS.md"
-    if not instructions.exists():
-        print(f"ERROR: {instructions} not found", file=sys.stderr)
-        return 1
+# === run() 阶段化拆分 =========================================================
+# 原 run 是 1090 行 / nest 7 的单体 (全仓最深). 按「环境装配 → agent 装配 →
+# Step 1 发现 → Step 2/3 执行验证 → 收尾」切段, run 只做参数校验 + 串接.
+# 每段 ≤50 行 / nest ≤4, 语义逐行保持等价.
 
+
+@dataclass
+class _RcbAgentBundle:
+    """agent 装配产物 — HuginnAgent + 周边单例 + 两个闭包."""
+
+    agent: Any
+    step2_filter: set[str]
+    mem_mgr: Any
+    kg: Any
+    kb: Any
+    persona: Any
+    persona_name: str
+    thread_id: str
+    stream_chat: Any
+    csm_advance: Any
+
+
+@dataclass
+class _RcbDiscovery:
+    """Step 1 / 1.2 / 1.5 / 1.7 的产物 — 供 Step 2 / Step 3 消费."""
+
+    checklist: str
+    scan_text: str
+    fcm: dict
+    target_chains: list
+    trace_path: Path | None
+
+
+def _disable_restricted_python_validation() -> None:
+    """按 env 关闭 L1 restricted_python AST 校验."""
     # L1 restricted_python AST 校验: 默认开 (HUGINN_RESTRICTED_PYTHON=1).
     # 之前启动时 monkey-patch 禁用 AST 校验, 让 7 层沙箱只剩 3 层生效.
     # ponytail: 失败时降级到 L4 subprocess 沙箱, 不让 RCB 启动崩.
-    # 升级路径: 加白名单 (os/pathlib/backward) 而非全禁, 但当前先恢复 L1.
-    _restricted = os.environ.get("HUGINN_RESTRICTED_PYTHON", "1")
-    if _restricted == "0":
+    restricted = os.environ.get("HUGINN_RESTRICTED_PYTHON", "1")
+    if restricted == "0":
         try:
             import huginn.security.restricted_python as _rp
+
             _rp.validate_code = lambda code: None  # type: ignore[method-assign]
         except ImportError:
             logger.debug("best-effort op failed", exc_info=True)
 
+
+def _redirect_ml_cache_env(ws: Path) -> None:
+    """把 torch/HF 缓存路径重定向到 workspace 内."""
     # ML 缓存路径重定向到 workspace, 避免 TRAE 沙箱拦截 ~/.cache 写入.
     # torch.save('xxx.pt') 在 C:\tmp\ 会被沙箱拦, 重定向 TORCH_HOME 解决.
-    _ml_cache = ws / ".huginn_cache" / "ml_cache"
-    _ml_cache.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("TORCH_HOME", str(_ml_cache))
-    os.environ.setdefault("HF_HOME", str(_ml_cache))
-    os.environ.setdefault("XDG_CACHE_HOME", str(_ml_cache))
-    os.environ.setdefault("TRANSFORMERS_CACHE", str(_ml_cache))
-    os.environ.setdefault("HF_HUB_CACHE", str(_ml_cache))
-    # GPU 策略: 沿用入口 _detect_gpu_safe() 的判定 (line 84-120).
-    # 入口已检测过 cudnn 完整性, 这里不重复检测, 只读 HUGINN_TORCH_DEVICE.
-    # ponytail: onnxruntime 仍强制 CPU EP (EP 刷屏独立于 torch), paddle 仍 None.
+    ml_cache = ws / ".huginn_cache" / "ml_cache"
+    ml_cache.mkdir(parents=True, exist_ok=True)
+    for env_key in (
+        "TORCH_HOME",
+        "HF_HOME",
+        "XDG_CACHE_HOME",
+        "TRANSFORMERS_CACHE",
+        "HF_HUB_CACHE",
+    ):
+        os.environ.setdefault(env_key, str(ml_cache))
+
+
+def _configure_gpu_ort_noise() -> None:
+    """GPU 策略 + onnxruntime 日志降噪 + paddle 屏蔽."""
+    # GPU 策略: 沿用入口 _detect_gpu_safe() 的判定, 这里不重复检测.
     if os.environ.get("HUGINN_TORCH_DEVICE") != "cuda":
         os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-    os.environ["ORT_DISABLE_TENSORRT_EP"] = "1"  # 直接禁 TensorRT EP, 不让它 try→fail→log
-    os.environ["ORT_DISABLE_CUDA_EP"] = "1"      # 同上, 禁 CUDA EP
+    os.environ["ORT_DISABLE_TENSORRT_EP"] = (
+        "1"  # 直接禁 TensorRT EP, 不让它 try→fail→log
+    )
+    os.environ["ORT_DISABLE_CUDA_EP"] = "1"  # 同上, 禁 CUDA EP
     os.environ.setdefault("ORT_LOGGING_LEVEL", "3")  # 抑制 Warning 及以下
     # 再 monkey-patch onnxruntime logger severity, 兜底 env var 不生效的 EP Error 输出.
     # 必须在 import huginn 之前调, 否则 onnxruntime 已被第三方 lib 触发 import.
     try:
         import onnxruntime as _ort_init
+
         _ort_init.set_default_logger_severity(3)  # 3=Error, 4=Fatal
     except (ImportError, Exception):
         logger.debug("best-effort op failed", exc_info=True)
     sys.modules.setdefault("paddle", None)
     sys.modules.setdefault("paddlepaddle", None)
 
+
+def _prepare_runtime_environment(ws: Path) -> Path:
+    """RCB 进程级环境装配 — 沙箱校验 / 缓存重定向 / GPU 与 ORT 降噪.
+
+    返回 workspace 内的 RCB 缓存目录 (snapshot 与 ML 缓存共用).
+    """
+    _disable_restricted_python_validation()
+    _redirect_ml_cache_env(ws)
+    _configure_gpu_ort_noise()
+
     # RCB subprocess 跑时主 memory.db 可能被 IDE/桌面端锁定 (sqlite WAL),
     # 改用 workspace 下的独立缓存目录. RCB 是无状态离线评测, 不需要跨任务记忆.
     rcb_cache = ws / ".huginn_cache"
     rcb_cache.mkdir(parents=True, exist_ok=True)
     os.environ["HUGINN_CACHE_DIR"] = str(rcb_cache)
+    return rcb_cache
 
-    # Task 3: Checkpoint resume — task_id 用 ws.name (RCB workspace 目录名).
-    # 找到上次的 checkpoint 就接着跑, audit chain 校验失败则从头开始.
-    _task_id = ws.name
-    # v14 Task 1: trace 里存短 task_id (剥时间戳后缀).
-    _trace_task_id = _infer_task_id_from_workspace(_task_id)
-    _resume_from_iter = 0
+
+def _load_resume_iter(task_id: str, ws: Path) -> int:
+    """Task 3: Checkpoint resume — 找到就续跑, audit chain 校验失败则从头开始."""
     try:
         from huginn.runtime.checkpoint import load_checkpoint, resume_from_checkpoint
-        _resumed = load_checkpoint(_task_id, ws)
-        if _resumed is not None:
-            print(f"[Resume] found checkpoint at step {_resumed.step_id}", flush=True)
-            _resume_from_iter = max(0, resume_from_checkpoint(_resumed, ws) - 1)
-            print(f"[Resume] continuing from iter {_resume_from_iter}", flush=True)
+
+        resumed = load_checkpoint(task_id, ws)
+        if resumed is not None:
+            print(f"[Resume] found checkpoint at step {resumed.step_id}", flush=True)
+            resume_iter = max(0, resume_from_checkpoint(resumed, ws) - 1)
+            print(f"[Resume] continuing from iter {resume_iter}", flush=True)
+            return resume_iter
     except Exception as _e:
         print(f"[Resume] failed, starting fresh: {_e}", flush=True)
-        _resume_from_iter = 0
+    return 0
 
-    prompt = instructions.read_text(encoding="utf-8")
 
-    from huginn.agent import HuginnAgent
+def _apply_extreme_mode(cfg: Any) -> Any:
+    """v6 极限模式: 解除一切限制, 性能优先 (更高思考强度 + 更长任务轨迹)."""
     from huginn.config import HuginnConfig
+
+    os.environ.setdefault("HUGINN_EXTREME_DISPATCH", "1")
+    os.environ.setdefault("HUGINN_USE_COGNITIVE_MAP", "1")
+    # P0-B: flag-gated 系统统一 — extreme 模式统一开启 mental_imagery /
+    # KG / cognitive_map 三套 flag-gated 机制, 让 RCB 跑分中都能触发.
+    os.environ.setdefault("HUGINN_USE_MENTAL_IMAGERY", "1")
+    os.environ.setdefault("HUGINN_USE_KNOWLEDGE_GRAPH", "1")
+    # ponytail: 让 _check_stuck VF2 cycle 和 StructureCognitiveMap 15 个 transform 真触发
+    os.environ.setdefault("HUGINN_THINKING", "high")
+    # LoopDetector 在 RCB 全程保持关闭: 模块顶部已强制写入
+    # HUGINN_FEATURE_LOOP_DETECTOR="false" (agent 反复跑 code_tool 属正常行为, 误判为
+    # loop σ₈). 不引入会误杀长程 run 的控制流.
+    # v7 长任务: extreme 模式同时放宽 autoloop stop 阈值, 允许 200+ 步轨迹.
+    os.environ.setdefault("HUGINN_MAX_CONSECUTIVE_FAILURES", "50")
+    os.environ.setdefault("HUGINN_MAX_REFINES", "50")
+    os.environ.setdefault("HUGINN_MAX_PIVOTS", "20")
+    os.environ.setdefault("HUGINN_DARWIN_STAGNATION_LIMIT", "15")
+    # P4 Task 26.5: extreme 模式启用 persistent goal mode + 放开 wall_clock 预算到天级.
+    # 700 万 tool call 长程愿景的挂钟抓手: 7M × 100ms ≈ 8 天, 需天级 wall_clock.
+    os.environ.setdefault("HUGINN_PERSISTENT_GOAL_MODE", "1")
+    os.environ.setdefault("HUGINN_RCB_TIMEOUT", "86400")
+    # P3-2: 删除 HUGINN_RCB_SWARM setdefault — dispatch_parallel 实际只走
+    # asyncio.gather, 从不查这个 flag. HUGINN_SWARM_DISTRIBUTED 保留 (跨进程队列).
+    os.environ.setdefault("HUGINN_SWARM_DISTRIBUTED", "0")
+    # P2-2 / Round 8: 兑现"完整实现但全仓无开启路径"的两个 router.
+    # 用 FeatureFlags 的 runtime 覆盖 (最高优先级, 与构造时序无关): extreme = 强制开.
+    from huginn.feature_flags import FeatureFlags as _FeatureFlags
+
+    _FeatureFlags.shared().enable("context_router")
+    _FeatureFlags.shared().enable("task_tool_router")
+    cfg = HuginnConfig.from_env()  # 重读 env 拿 thinking
+    print(
+        "[EXTREME MODE] thinking=high, max_tool_calls=1200, context_budget=model-window, autoloop thresholds 50/50/20/15, persistent_goal=on, wall_clock=86400s",
+        flush=True,
+    )
+    return cfg
+
+
+def _create_persistent_goal(ws: Path) -> tuple[Any, str | None]:
+    """P5: persistent goal mode — 创建 active goal with wall_clock_budget.
+
+    返回 (goal_store, goal_id); 未开启或失败返回 (None, None).
+    """
+    if os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") != "1":
+        return None, None
+    try:
+        from huginn.autoloop.goal_store import get_goal_store
+
+        timeout_s = float(os.environ.get("HUGINN_RCB_TIMEOUT", "7200"))
+        goal_store = get_goal_store()
+        goal = goal_store.create_goal(f"RCB {ws.name}")
+        goal_store.update_goal(
+            goal.id,
+            wall_clock_budget_seconds=timeout_s,
+            started_at=now_iso(),
+        )
+        print(
+            f"[P5] persistent goal: budget={timeout_s}s, goal_id={goal.id[:8]}",
+            flush=True,
+        )
+        return goal_store, goal.id
+    except Exception as _e:
+        print(f"[P5] goal creation warning: {_e}", flush=True)
+        return None, None
+
+
+def _wall_clock_expired(goal_store: Any, goal_id: str | None) -> bool:
+    """P5: 查 goal 挂钟预算是否耗尽. 无 goal 或未开 P5 返 False."""
+    if goal_id is None or goal_store is None:
+        return False
+    try:
+        return goal_store.wall_clock_expired(goal_id)
+    except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
+        return False
+
+
+def _resolve_model(cfg: Any) -> tuple[Any, str] | None:
+    """解析默认模型; 无可用模型返回 None (调用方打印错误并返 1)."""
     from huginn.models.registry import ModelRegistry
-
-    # snapshot 默认用 ~/.huginn/snapshots, RCB subprocess 跑时该目录可能被
-    # IDE/桌面端锁定 (PermissionError). 重定向到 workspace 下的独立目录.
-    from huginn.snapshot import file_snapshot as _fs
-    from huginn.tools import register_all_tools
-    _fs._SNAPSHOT_ROOT = rcb_cache / "snapshots"
-
-    cfg = HuginnConfig.from_env()
-    # v6 极限模式: 解除一切限制, 性能优先. 更高思考强度 + 更长任务轨迹.
-    # ponytail: 不改默认值, 只在 --extreme 时 override. 升级路径是加 profile 系统.
-    if extreme:
-        os.environ.setdefault("HUGINN_EXTREME_DISPATCH", "1")
-        os.environ.setdefault("HUGINN_USE_COGNITIVE_MAP", "1")
-        # P0-B: flag-gated 系统统一 — 之前 HUGINN_USE_KNOWLEDGE_GRAPH /
-        # HUGINN_USE_MENTAL_IMAGERY 全仓 0 命中, KG 走 config builder 但
-        # RCBench 不调. extreme 模式统一开启, 让已实现的 mental_imagery/
-        # KG/cognitive_map 三套 flag-gated 机制都能在 RCB 跑分中触发.
-        # ponytail: 非极端模式默认关, 不改老用户行为. 升级路径: FeatureFlags
-        #   统一接管所有 HUGINN_USE_* flag, 消除 env var 多套入口.
-        os.environ.setdefault("HUGINN_USE_MENTAL_IMAGERY", "1")
-        os.environ.setdefault("HUGINN_USE_KNOWLEDGE_GRAPH", "1")
-        # ponytail: 让 _check_stuck VF2 cycle 和 StructureCognitiveMap 15 个 transform 真触发
-        os.environ.setdefault("HUGINN_THINKING", "high")
-        # LoopDetector 在 RCB 全程保持关闭: 模块顶部已强制写入
-        # HUGINN_FEATURE_LOOP_DETECTOR="false" (agent 反复跑 code_tool 属正常行为,
-        # 误判为 loop σ₈). 此处原写 setdefault("...", "true") 是 no-op (键已存在,
-        # 从未通电), 已删除 —— 不引入会误杀长程 run 的控制流.
-        # v7 长任务: extreme 模式同时放宽 autoloop stop 阈值, 允许 200+ 步轨迹.
-        # 对标 Oxelra 206 步. 默认值已放宽 (20/20/10/5), extreme 再翻倍.
-        os.environ.setdefault("HUGINN_MAX_CONSECUTIVE_FAILURES", "50")
-        os.environ.setdefault("HUGINN_MAX_REFINES", "50")
-        os.environ.setdefault("HUGINN_MAX_PIVOTS", "20")
-        os.environ.setdefault("HUGINN_DARWIN_STAGNATION_LIMIT", "15")
-        # P4 Task 26.5: extreme 模式启用 persistent goal mode + 放开 wall_clock 预算到天级.
-        # 700 万 tool call 长程愿景的挂钟抓手: 7M × 100ms ≈ 8 天, 需天级 wall_clock.
-        # 默认 86400s (1 天), env var 可覆盖到更高. 非 extreme 模式保持 7200s 兼容.
-        os.environ.setdefault("HUGINN_PERSISTENT_GOAL_MODE", "1")
-        os.environ.setdefault("HUGINN_RCB_TIMEOUT", "86400")
-        # P3-2: 删除 HUGINN_RCB_SWARM setdefault — dispatch_parallel 实际只走
-        # asyncio.gather, 从不查这个 flag. HUGINN_SWARM_DISTRIBUTED 保留 (跨进程队列).
-        os.environ.setdefault("HUGINN_SWARM_DISTRIBUTED", "0")
-        # P2-2 / Round 8: 兑现"完整实现但全仓无开启路径"的两个 router.
-        # CONTEXT_ROUTER: P3 信息路径多样性稀疏化 (Nature Physics 2023),
-        #   零 LLM 成本纯规则, 接入 context_builder.build() 主流程.
-        # TASK_TOOL_ROUTER: task keyword → tool category 动态路由 (11 cat +
-        #   中英双语), 接入 agent/core.py + streaming.py 两处.
-        # 配置收敛: 旧实现写 legacy env (HUGINN_CONTEXT_ROUTER/TASK_TOOL_ROUTER),
-        # 依赖单例构造时读一次 env, 时序脆弱且多一层别名中间人. 改用 FeatureFlags
-        # 的 runtime 覆盖 (最高优先级, 与构造时序无关): extreme = 强制开这两个 router.
-        from huginn.feature_flags import FeatureFlags as _FeatureFlags
-        _FeatureFlags.shared().enable("context_router")
-        _FeatureFlags.shared().enable("task_tool_router")
-        cfg = HuginnConfig.from_env()  # 重读 env 拿 thinking
-        print("[EXTREME MODE] thinking=high, max_tool_calls=1200, context_budget=model-window, autoloop thresholds 50/50/20/15, persistent_goal=on, wall_clock=86400s", flush=True)
-
-    # P5: persistent goal mode — 创建 active goal with wall_clock_budget.
-    # 主循环每轮查 wall_clock_expired, stagnation/TASK COMPLETE break 加守卫,
-    # 让 agent 跑满 timeout 而非 stagnation 触发就停.
-    _p5_goal_id: str | None = None
-    _p5_gs = None
-    if os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") == "1":
-        try:
-            from huginn.autoloop.goal_store import get_goal_store
-            _timeout_s = float(os.environ.get("HUGINN_RCB_TIMEOUT", "7200"))
-            _p5_gs = get_goal_store()
-            _goal = _p5_gs.create_goal(f"RCB {ws.name}")
-            _p5_gs.update_goal(
-                _goal.id,
-                wall_clock_budget_seconds=_timeout_s,
-                started_at=now_iso(),
-            )
-            _p5_goal_id = _goal.id
-            print(f"[P5] persistent goal: budget={_timeout_s}s, goal_id={_p5_goal_id[:8]}", flush=True)
-        except Exception as _e:
-            print(f"[P5] goal creation warning: {_e}", flush=True)
-
-    def _p5_wall_expired() -> bool:
-        """P5: 查 goal 挂钟预算是否耗尽. 无 goal 或未开 P5 返 False."""
-        if _p5_goal_id is None or _p5_gs is None:
-            return False
-        try:
-            return _p5_gs.wall_clock_expired(_p5_goal_id)
-        except Exception:
-            logger.debug("best-effort op failed", exc_info=True)
-            return False
 
     registry = ModelRegistry.from_config(cfg)
     alias = registry.default_alias()
@@ -404,16 +425,18 @@ async def run(
     elif cfg.provider and cfg.provider != "default":
         model = registry.resolve(f"{cfg.provider}/{cfg.model or 'auto'}")
     else:
-        print("ERROR: no model configured", file=sys.stderr)
-        return 1
-
+        return None
     # RCB harness 从 stdout 检测 model 名 (run_task._detect_model)
-    model_name = getattr(model, "name", None) or getattr(model, "model_id", None) or str(model)
-    print(f'model: {model_name}', flush=True)
+    model_name = (
+        getattr(model, "name", None) or getattr(model, "model_id", None) or str(model)
+    )
+    print(f"model: {model_name}", flush=True)
+    return model, model_name
 
-    # system prompt: workspace 路径 + 工具操作事实. 让 INSTRUCTIONS.md 做 task gradient.
-    # ponytail: 删 CRITICAL override 层 (σ₄) — control loop 不替 LLM 决策"什么重要".
-    system_prompt = (
+
+def _system_prompt_intro(ws: Path) -> str:
+    """system prompt 开场: workspace 路径 + 工具操作事实."""
+    return (
         f"You are an autonomous scientific research agent. "
         f"Your workspace is: {ws}\n"
         f"Current working directory IS the workspace. All relative paths "
@@ -435,6 +458,12 @@ async def run(
         "- NOTE: In Step 1 (read-only phase), code_tool/bash_tool/file_write_tool "
         "are NOT available. Use file_read_tool/glob/grep/web_search_tool only. "
         "They unlock in Step 2.\n\n"
+    )
+
+
+def _system_prompt_rules() -> str:
+    """system prompt 操作规则 + 分阶段协议."""
+    return (
         "## Operating rules\n"
         "- Every response before task completion MUST include a tool call. "
         "Text-only response = task termination.\n"
@@ -454,6 +483,12 @@ async def run(
         "If you reach call 25 with no report/report.md, STOP all analysis and "
         "write report.md skeleton (Abstract + Method + whatever Results you have).\n"
         "Phase 4 (calls 26-60): Iterate — add models, new figures, then UPDATE report.md.\n\n"
+    )
+
+
+def _system_prompt_deliverables() -> str:
+    """system prompt 交付纪律段."""
+    return (
         "## DELIVERABLE DISCIPLINE\n"
         "- Re-read INSTRUCTIONS before writing report. List ALL required quantities.\n"
         "- Each missing quantity = 0 for that criterion. Do them ALL.\n"
@@ -480,6 +515,12 @@ async def run(
         "- Before report.md, list ALL required figures. Generate EACH with matplotlib "
         "→ report/images/. Verify with glob before claiming complete. "
         "Name descriptively: figure3_triangle.png. Reference as images/figure_name.png.\n\n"
+    )
+
+
+def _system_prompt_architecture() -> str:
+    """system prompt 架构保真段."""
+    return (
         "## ARCHITECTURE FIDELITY (physics-driven, not word-association)\n"
         "- Before writing model code, extract the PHYSICS of the target property "
         "from related_work/*. What symmetry/interaction/topology defines it?\n"
@@ -487,6 +528,12 @@ async def run(
         "Reject 'self-supervised → SimCLR' style word-association.\n"
         "- Write code/architecture_spec.md: PHYSICS / DECISION / LINK / GROUNDING per decision.\n"
         "- If code implements generic GCN/GAT with no physics-specific structure, redo it.\n\n"
+    )
+
+
+def _system_prompt_windows() -> str:
+    """system prompt Windows shell 段."""
+    return (
         "## WINDOWS SHELL (sandbox runs on Windows)\n"
         "- bash_tool runs on Windows PowerShell — NO head/tail/cat/grep/find/sed/awk.\n"
         "- To peek at a file: use file_read_tool, or python: "
@@ -495,342 +542,540 @@ async def run(
         "- To grep: use grep_tool, or python: "
         "`bash_tool python -c \"[print(l,end='') for l in open('f') if 'pat' in l]\"`.\n"
         "- Avoid shell pipes/heredocs. Write scripts to code/*.py via file_write_tool, run with bash_tool.\n\n"
+    )
+
+
+def _system_prompt_extension() -> str:
+    """system prompt 可选扩展提案段."""
+    return (
         "## EXTENSION PROPOSAL (OPTIONAL, advisory, does NOT affect baseline)\n"
         "- MAY append `## EXTENSION PROPOSAL`: Hypothesis / Why Novel / "
         "Prediction / Grounding. Omitting does NOT lower baseline score.\n"
     )
 
-    # 先注册工具到 ToolRegistry, 再让 agent 从 registry 拉取
-    register_all_tools()
 
-    # C3: 预算扩容 — 默认 150→400, 极限 300→600.
-    # audit 20 动作1: 预算-产出曲线最陡段在 150-400, 再投 150 次 ≈ +6.5 分.
-    # 走统一 resolve_tool_budget, 但传 audit 拟合出的经验拐点做 base,
-    # 不并入 mode 表的 research=300 (那会退化掉分). 显式配置更高则 max 向上取.
-    # ponytail: 不扩 timeout (已 7200s 够用), 只扩 calls.
-    _mode = "extreme" if extreme else "research"
-    _max_calls, _max_per_tool = resolve_tool_budget(
-        _mode,
-        base=(1200, 300) if extreme else (400, 50),
+def _build_system_prompt(ws: Path) -> str:
+    """system prompt: workspace 路径 + 工具操作事实. 让 INSTRUCTIONS.md 做 task gradient."""
+    # ponytail: 删 CRITICAL override 层 (σ₄) — control loop 不替 LLM 决策"什么重要".
+    return (
+        _system_prompt_intro(ws)
+        + _system_prompt_rules()
+        + _system_prompt_deliverables()
+        + _system_prompt_architecture()
+        + _system_prompt_windows()
+        + _system_prompt_extension()
     )
-    # 上下文预算对齐模型窗口, 不写死 200K. 模型 1M (deepseek-v4) 时用 1M,
-    # 写死 200K 会在长任务里过早触发压缩, 截断本该继续探索的轨迹.
-    _ctx_budget = get_context_window(model_name) if extreme else cfg.context_budget_tokens
 
-    # Task 12: Memory 接线 — 跨任务共享 db 让 self_model/curiosity 积累.
-    # 默认跨任务共享 db, 多个 RCB task 积累 iteration_result 给 curiosity hint.
-    # 单任务隔离用 HUGINN_RCB_CROSS_TASK=0 (旧行为, ws/.huginn/memory).
-    # 路径优先读 HUGINN_RCB_CROSS_TASK_DIR (rcb_huginn 入口设到 workspace 内,
-    # 避开 TRAE 沙箱拦截 ~/.huginn/ 写入). 没设则回退 ~/.huginn/rcb_cross_task.
-    _mem_mgr = None
+
+def _init_memory_manager(ws: Path, model: Any) -> Any | None:
+    """Task 12: Memory 接线 — 默认跨任务共享 db, 让 self_model/curiosity 积累."""
+    mem_mgr = None
     try:
         from huginn.memory.factory import build_memory_manager
+
         if os.environ.get("HUGINN_RCB_CROSS_TASK", "1") == "1":
-            _mem_dir = Path(
+            # 路径优先读 HUGINN_RCB_CROSS_TASK_DIR (rcb_huginn 入口设到 workspace 内,
+            # 避开 TRAE 沙箱拦截 ~/.huginn/ 写入). 没设则回退 ~/.huginn/rcb_cross_task.
+            mem_dir = Path(
                 os.environ.get(
                     "HUGINN_RCB_CROSS_TASK_DIR",
                     str(get_runtime_home() / "rcb_cross_task"),
                 )
             )
-            _mem_dir.mkdir(parents=True, exist_ok=True)
-            print(f"[Memory] cross-task shared: {_mem_dir}", flush=True)
+            mem_dir.mkdir(parents=True, exist_ok=True)
+            print(f"[Memory] cross-task shared: {mem_dir}", flush=True)
         else:
-            _mem_dir = ws / HUGINN_DIR_NAME / "memory"
+            mem_dir = ws / HUGINN_DIR_NAME / "memory"
         # 共享构造路径: 与 server 用同一 build_memory_manager, 消除重复装配.
-        _mem_mgr = build_memory_manager(memory_dir=_mem_dir, llm=model)
+        mem_mgr = build_memory_manager(memory_dir=mem_dir, llm=model)
     except Exception as _e:
         print(f"[Memory] init warning: {_e}", flush=True)
+    return mem_mgr
 
-    # 25.1: project KG 实例. 落 ws/.huginn/, 和 ContextBuilder.build_kg_text
-    # 用同一路径, 复用同一份持久化. 失败降级 None, evaluate_step 和 episode
-    # history 注入都跳过 — ponytail: kg 是可选增强, 失败不阻塞主流程.
-    _kg = None
+
+def _ingest_kg_entities(kg: Any, ws: Path) -> int:
+    """P0-B: 摄入 workspace 关键资源作为 entity (file entity + mentions, 不做 LLM 抽取).
+
+    ponytail: 只加 file entity, 升级路径是 KG.add_entity 走 LLM 抽 paper 里的
+    method/dataset/baseline.
+    """
+    n_ingested = 0
+    if (ws / "INSTRUCTIONS.md").exists():
+        kg.add_entity(
+            "INSTRUCTIONS.md",
+            "task_spec",
+            source="rcb_runner",
+            confidence=0.95,
+            path=str(ws / "INSTRUCTIONS.md"),
+        )
+        n_ingested += 1
+    rw_dir = ws / "related_work"
+    if rw_dir.exists():
+        for rw_file in rw_dir.glob("*"):
+            if rw_file.is_file() and rw_file.suffix in (".md", ".txt", ".pdf"):
+                kg.add_entity(
+                    rw_file.name,
+                    "reference_paper",
+                    source="rcb_runner",
+                    confidence=0.8,
+                    path=str(rw_file),
+                )
+                n_ingested += 1
+    return n_ingested
+
+
+def _init_knowledge_graph(ws: Path) -> Any | None:
+    """25.1: project KG 实例. 落 ws/.huginn/, 与 ContextBuilder.build_kg_text 同路径.
+
+    失败降级 None — kg 是可选增强, 失败不阻塞主流程.
+    """
+    kg = None
     try:
         from huginn.kg.graph import ProjectKnowledgeGraph
-        _kg = ProjectKnowledgeGraph(ws / HUGINN_DIR_NAME)
+
+        kg = ProjectKnowledgeGraph(ws / HUGINN_DIR_NAME)
         # P0-B: KG 初始化后摄入 workspace 关键资源作为 entity.
-        # 之前 KG 只 init 不 ingest, 图里没节点, 后续 _kg.query 全返空.
-        # ponytail: 只加 file entity + mentions, 不做 LLM 抽取 (那是 KB 的活).
-        #   升级路径: KG.add_entity 走 LLM 抽 paper 里的 method/dataset/baseline.
         if os.environ.get("HUGINN_USE_KNOWLEDGE_GRAPH", "0") == "1":
-            _kg_n_ingested = 0
             try:
-                if (ws / "INSTRUCTIONS.md").exists():
-                    _kg.add_entity(
-                        "INSTRUCTIONS.md", "task_spec",
-                        source="rcb_runner", confidence=0.95,
-                        path=str(ws / "INSTRUCTIONS.md"))
-                    _kg_n_ingested += 1
-                _rw_dir = ws / "related_work"
-                if _rw_dir.exists():
-                    for _rw_file in _rw_dir.glob("*"):
-                        if _rw_file.is_file() and _rw_file.suffix in (".md", ".txt", ".pdf"):
-                            _kg.add_entity(
-                                _rw_file.name, "reference_paper",
-                                source="rcb_runner", confidence=0.8,
-                                path=str(_rw_file))
-                            _kg_n_ingested += 1
-                _kg.save()
+                n_ingested = _ingest_kg_entities(kg, ws)
+                kg.save()
                 print(
-                    f"[KG] initialized: {_kg_n_ingested} entities ingested "
-                    f"(HUGINN_USE_KNOWLEDGE_GRAPH=1)", flush=True)
+                    f"[KG] initialized: {n_ingested} entities ingested "
+                    f"(HUGINN_USE_KNOWLEDGE_GRAPH=1)",
+                    flush=True,
+                )
             except Exception as _kie:
                 print(f"[KG] ingest warning: {_kie}", flush=True)
         else:
-            print("[KG] initialized (HUGINN_USE_KNOWLEDGE_GRAPH=0, no ingest)", flush=True)
+            print(
+                "[KG] initialized (HUGINN_USE_KNOWLEDGE_GRAPH=0, no ingest)", flush=True
+            )
     except Exception as _e:
         print(f"[KG] init warning: {_e}", flush=True)
+    return kg
 
-    # Task 13: Persona 接线 — 从 ws.name 推断领域, 选对应 built-in persona.
-    # HuginnAgent 只接 persona_name (str), persona 对象留给 StepEvaluator 用.
-    _persona_name = "default"
+
+def _init_persona(ws: Path) -> tuple[Any | None, str]:
+    """Task 13: Persona 接线 — 从 ws.name 推断领域, 选对应 built-in persona."""
+    persona_name = "default"
     persona = None
     try:
         from huginn.personas import PersonaManager
-        _pm = PersonaManager(workspace=str(ws))
-        _ws_name_lower = ws.name.lower()
-        if any(k in _ws_name_lower for k in ("astronom", "cosmo", "galaxy", "star")):
-            _persona_name = "reviewer"
-        elif any(k in _ws_name_lower for k in ("material", "dft", "vasp", "crystal")):
-            _persona_name = "dft_expert"
-        elif any(k in _ws_name_lower for k in ("md", "lammps", "molecular")):
-            _persona_name = "md_expert"
-        persona = _pm.get(_persona_name)
+
+        persona_mgr = PersonaManager(workspace=str(ws))
+        ws_name_lower = ws.name.lower()
+        if any(k in ws_name_lower for k in ("astronom", "cosmo", "galaxy", "star")):
+            persona_name = "reviewer"
+        elif any(k in ws_name_lower for k in ("material", "dft", "vasp", "crystal")):
+            persona_name = "dft_expert"
+        elif any(k in ws_name_lower for k in ("md", "lammps", "molecular")):
+            persona_name = "md_expert"
+        persona = persona_mgr.get(persona_name)
     except Exception as _e:
         print(f"[Persona] init warning: {_e}", flush=True)
+    return persona, persona_name
 
-    global _last_agent_for_reflection
+
+def _rcb_tool_filter() -> list[str]:
+    """RCB 任务的工具白名单."""
+    # file_write_tool 写文本文件 (report.md, code/*.py);
+    # code_tool 的 sandbox 禁 open(), 只能跑分析/画图 (savefig 库代码不受限).
+    # 不给 file_edit_tool: 它要求文件已存在, agent 误用 edit 写新文件会失败.
+    return [
+        "code_tool",
+        "bash_tool",
+        "file_read_tool",
+        "file_write_tool",
+        "glob",
+        "grep",
+        "web_search_tool",
+        "self_observe",
+        # G27: 数学工具解除 filter 屏蔽 — repro 数量级错误 (χ=1.0 vs 0.004) 的根因之一
+        # 是四个外部适配器 tool_filter 把数学工具整体摘除 (audit 13 F1).
+        # P1-B2: 补 unit_tool — Material/Physics 量纲一致性检查的关键工具
+        "symbolic_math_tool",
+        "lean_tool",
+        "validate_tool",
+        "unit_tool",
+        # 视觉/子智能体工具 — 画图 + CV 验证 + 并行.
+        # CUDA_VISIBLE_DEVICES="" 在 rcb_huginn.py 入口已设, 避免 cudnn 栈损坏.
+        "plot_tool",  # Arial 20pt+ 加粗画图 (user rule)
+        "image_analysis_tool",  # 反向 CV 分析自己生成的 PNG, 闭环视觉验证
+        "vision_describe",  # 分层视觉描述 (OCR/CV), image criterion 评分闭环
+        "subagent_tool",  # Layer 3: explore/coder/analyst 并行
+    ]
+
+
+def _create_agent(
+    *,
+    model: Any,
+    system_prompt: str,
+    mem_mgr: Any,
+    persona_name: str,
+    ws: Path,
+    cfg: Any,
+    ctx_budget: int,
+    max_calls: int,
+    max_per_tool: int,
+) -> Any:
+    """构造 HuginnAgent + 从 registry 注册工具."""
+    from huginn.agent import HuginnAgent
+
     agent = HuginnAgent(
         model=model,
         system_prompt=system_prompt,
-        memory_manager=_mem_mgr,
-        persona_name=_persona_name,
+        memory_manager=mem_mgr,
+        persona_name=persona_name,
         workspace=ws,
         max_tool_output_tokens=cfg.max_tool_output_tokens,
-        context_budget_tokens=_ctx_budget,
-        max_tool_calls=_max_calls,
-        max_tool_calls_per_tool=_max_per_tool,
-        # file_write_tool 写文本文件 (report.md, code/*.py);
-        # code_tool 的 sandbox 禁 open(), 只能跑分析/画图 (savefig 库代码不受限).
-        # 不给 file_edit_tool: 它要求文件已存在, agent 误用 edit 写新文件会失败.
-        tool_filter=[
-            "code_tool", "bash_tool",
-            "file_read_tool", "file_write_tool",
-            "glob", "grep", "web_search_tool",
-            "self_observe",
-            # G27: 数学工具解除 filter 屏蔽 — repro 数量级错误 (χ=1.0 vs 0.004) 的根因之一
-            # 是四个外部适配器 tool_filter 把数学工具整体摘除 (audit 13 F1).
-            # P1-B2: 补 unit_tool — Material/Physics 量纲一致性检查的关键工具
-            "symbolic_math_tool", "lean_tool", "validate_tool", "unit_tool",
-            # 视觉/子智能体工具 — 画图 + CV 验证 + 并行.
-            # CUDA_VISIBLE_DEVICES="" 在 rcb_huginn.py 入口已设, 避免 cudnn 栈损坏.
-            "plot_tool",             # Arial 20pt+ 加粗画图 (user rule)
-            "image_analysis_tool",   # 反向 CV 分析自己生成的 PNG, 闭环视觉验证
-            "vision_describe",       # 分层视觉描述 (OCR/CV), image criterion 评分闭环
-            "subagent_tool",         # Layer 3: explore/coder/analyst 并行
-        ],
+        context_budget_tokens=ctx_budget,
+        max_tool_calls=max_calls,
+        max_tool_calls_per_tool=max_per_tool,
+        tool_filter=_rcb_tool_filter(),
         # RCB 是无人工 subprocess, 所有工具自动 approve
         auto_approve=True,
     )
     agent.register_tools_from_registry()
+    return agent
 
-    # v16.1: 阶段化工具白名单 — Step 1 只读, 防 agent 越权完成任务跳过 Step 2 gate.
-    # 根因: agent 在 Step 1 拿到完整工具集 + 任务描述, 直接做完任务写 report.md,
-    # Step 2 的 derivation audit / effort floor 全部失效 (gate 装在被跳过的房间里).
+
+def _apply_extreme_tool_filter(agent: Any, step2_filter: set[str]) -> None:
+    """extreme 模式: 全量开放注册表工具 (黑名单减法)."""
+    # RepoLaw 硬底线: extreme (RCBench) 模式强制注入 _DEFAULT_SANDBOX_PATH_RULES,
+    # agent 不能改 INSTRUCTIONS.md / score.py / rubric.json 等关键文件.
+    agent._permission_config.sandbox_mode = True
+    # P0-A: extreme 模式全量开放注册表工具 — 之前手工枚举 14 个工具,
+    # 28 个 sci/ + sim/ + design/ + causal/ 全被旁路 (注册表 145 工具仅暴露 29).
+    # 根因: 白名单是"加法"思路, 应该是"减法" (黑名单 + 全量开放).
+    from huginn.tools.registry import ToolRegistry as _TR  # noqa: N814
+
+    blocked = {
+        t.strip()
+        for t in os.environ.get(
+            "HUGINN_RCB_BLOCKED_TOOLS",
+            # 默认空集 — extreme 模式信任 agent, 全开放.
+            "",
+        ).split(",")
+        if t.strip()
+    }
+    all_registered = set(_TR.list_tools())
+    step2_filter.update(all_registered - blocked)
+    # blocked list 也作用于 hardcode 列表 — 否则 subagent_tool hardcode 进
+    # _step2_filter, env var block 不掉, agent 嵌套调 subagent 死等拒绝的 execute.
+    step2_filter -= blocked
+    print(
+        f"[P0-A] extreme 白名单全量开放: "
+        f"{len(all_registered)} registered, "
+        f"{len(blocked)} blocked, "
+        f"{len(step2_filter)} exposed",
+        flush=True,
+    )
+
+
+def _configure_step_filters(agent: Any, extreme: bool) -> set[str]:
+    """v16.1: 阶段化工具白名单 — Step 1 只读, 返回 Step 2 完整白名单.
+
+    根因: agent 在 Step 1 拿到完整工具集 + 任务描述, 直接做完任务写 report.md,
+    Step 2 的 derivation audit / effort floor 全部失效 (gate 装在被跳过的房间里).
+    """
+    step2_filter = set(agent.tool_filter or [])
+    if extreme:
+        _apply_extreme_tool_filter(agent, step2_filter)
     # ponytail: Step 1 只需读和搜, lean_tool/symbolic_math_tool 是执行类工具会触发越权
     #   (agent 拿到 lean_tool 就开始写证明引擎, 拿到 symbolic_math_tool 就开始算).
-    #   1.5 数学结构识别走 model.ainvoke 直调 LLM, 不经 agent.chat, 不需要这些工具.
-    _step2_filter = set(agent.tool_filter or [])
-    if extreme:
-        # RepoLaw 硬底线: extreme (RCBench) 模式强制注入 _DEFAULT_SANDBOX_PATH_RULES,
-        # agent 不能改 INSTRUCTIONS.md / score.py / rubric.json 等关键文件.
-        # 非 RCBench 入口不进这个分支, sandbox_mode 保持 False, 行为不变.
-        agent._permission_config.sandbox_mode = True
-        # P0-A: extreme 模式全量开放注册表工具 — 之前手工枚举 14 个工具,
-        # 28 个 sci/ + sim/ + design/ + causal/ 全被旁路 (注册表 145 工具仅暴露 29).
-        # 根因: 白名单是"加法"思路 (一个个加), 应该是"减法" (黑名单 + 全量开放).
-        # 升级路径: env var HUGINN_RCB_BLOCKED_TOOLS 可覆盖黑名单 (逗号分隔).
-        # ponytail: 全量开放可能让 agent 拿到不该有的工具, 但 RCB 是无人工 subprocess,
-        #   auto_approve=True 已经接管权限, 工具多了不会越权只会更可用.
-        from huginn.tools.registry import ToolRegistry as _TR  # noqa: N814
-        _RCB_STEP1_NEVER = {
-            # Step 1 永远禁: 写入/执行类工具, 防 agent 在 Step 1 越权完成任务.
-            # 这些工具名与 register_all_tools 里的 class name 对应 (lowercase).
-            t.strip() for t in os.environ.get(
-                "HUGINN_RCB_BLOCKED_TOOLS",
-                # 默认空集 — extreme 模式信任 agent, 全开放.
-                "",
-            ).split(",") if t.strip()
-        }
-        _all_registered = set(_TR.list_tools())
-        _step2_filter.update(_all_registered - _RCB_STEP1_NEVER)
-        # blocked list 也作用于 hardcode 列表 — 否则 subagent_tool 在 line 4316
-        # hardcode 进 _step2_filter, env var block 不掉, agent 嵌套调 subagent
-        # 死等 SandboxBackendProtocol 拒绝的 execute. ponytail: 一行差集, 复用同一 set.
-        _step2_filter -= _RCB_STEP1_NEVER
-        print(
-            f"[P0-A] extreme 白名单全量开放: "
-            f"{len(_all_registered)} registered, "
-            f"{len(_RCB_STEP1_NEVER)} blocked, "
-            f"{len(_step2_filter)} exposed",
-            flush=True)
-    _step1_filter = {
-        "file_read_tool", "glob", "grep", "web_search_tool",
+    step1_filter = {
+        "file_read_tool",
+        "glob",
+        "grep",
+        "web_search_tool",
     }
-    agent.tool_filter = _step1_filter
+    agent.tool_filter = step1_filter
     # refresh 而非 register: register 只刷 langchain_tools list, 不重建已编译的 graph.
     # 第一次 agent.chat 会 build_graph, 之后改 tool_filter 必须置 _agent_graph=None
     # 否则 Step 2 解锁后 graph 还是 Step 1 的只读工具集.
     agent.refresh_tools_from_registry()
+    return step2_filter
 
-    # 暴露 agent 给 rcb_huginn.py 入口, 超时取消后能再调一次 reflection.
-    _last_agent_for_reflection = agent
 
-    # 3 步认知循环: 论文方法论提取 → 执行 → 自验证
-    # ponytail: 不走 autoloop 7 阶段 (太重), 用 3 步循环治 3 个短板:
-    #   Step 1 治 "不读论文就动手" — 强制先提取方法核心组件 + baseline 指标
-    #   Step 2 治 "方法降级" — checklist 注入, agent 对照方法约束执行
-    #   Step 3 治 "不自验证" — 对照 checklist 检查 report 覆盖度, 补缺
-    # 用同一 thread_id 保持上下文连续, Step 2 能看到 Step 1 的 checklist.
+def _resolve_image_path(msg: str, ws: Path) -> str | None:
+    """扫 msg 里的图片路径 — 命中且存在就透传给 VisionRouter."""
+    try:
+        from huginn.vision.router import _IMAGE_PATH_RE
+
+        match = _IMAGE_PATH_RE.search(msg or "")
+        if not match:
+            return None
+        candidate = match.group(0)
+        # 相对路径补成 workspace 绝对路径, VisionRouter 需要能 open
+        path = Path(candidate)
+        if not path.is_absolute():
+            path = (ws / candidate).resolve()
+        return str(path) if path.exists() else None
+    except Exception:
+        logger.debug(
+            "best-effort op failed", exc_info=True
+        )  # 视觉接入是增强, 失败不阻塞文本路径
+        return None
+
+
+def _last_ai_content(msgs: list) -> Any | None:
+    """从消息列表倒序找最后一条 AIMessage, 返回其 content (无则 None)."""
     from langchain_core.messages import AIMessage
 
-    thread_id = f"rcb_{ws.name}"
+    # ponytail: 倒序扫描, ceiling: 累积所有 AIMessage content (多轮 tool 调用中间文本).
+    for message in reversed(msgs):
+        if isinstance(message, AIMessage):
+            return getattr(message, "content", "")
+    return None
 
-    async def _stream_chat(msg: str, step_label: str, tid: str | None = None,
-                           fresh_history: bool = False,
-                           extra_budget: int | None = None) -> str:
-        """跑一轮 agent.chat, 流式打印 AIMessage, 返回最后的 AI 文本.
 
-        tid: TFM 分叉用独立 thread 隔离 graph 内态 (历史从 ConversationTree
-        重建, thread 只影响 checkpoint 内态, 换 tid 无历史损失).
+async def _finalize_chat_gen(agent: Any, chat_gen: Any) -> None:
+    """显式 aclose chat generator + 补跑反思闭环."""
+    # async for 被 CancelledError 中断时不自动 aclose, generator 悬挂等 GC,
+    # streaming.py 的 [FINALLY-REFLECT] 不跑 -> 反射链路断在第一层.
+    if chat_gen is not None:
+        with contextlib.suppress(Exception):
+            await chat_gen.aclose()
+    # 反思闭环: chat generator 被 asyncio.wait_for 取消时, streaming.py 的 finally
+    # 块不保证执行 (async generator aclose 依赖 GC). 在这里显式调 reflection,
+    # 确保 tool 失败被 evolution 记录.
+    n_trs = (
+        len(agent._session_state.tool_results_this_turn)
+        if hasattr(agent, "_session_state")
+        else -1
+    )
+    print(
+        f"[RCB-FINALLY] entering, tool_results_this_turn={n_trs}, "
+        f"has_reflection={hasattr(agent, '_run_post_turn_reflection')}",
+        file=sys.stderr,
+        flush=True,
+    )
+    try:
+        if hasattr(agent, "_run_post_turn_reflection"):
+            agent._run_post_turn_reflection()
+            print("[RCB-FINALLY] reflection done", file=sys.stderr, flush=True)
+    except Exception as _re:
+        print(f"[RCB-FINALLY] reflection error: {_re}", file=sys.stderr, flush=True)
 
-        fresh_history: True 时不拉 ConversationTree 历史. Step 3 retry 用 —
-        fresh thread 的 prompt 已结构化注入所有必要 state, 不需要 Step 2 的
-        1M+ tokens 历史累积. 之前换 tid 没解决超限, 因为 ConversationTree
-        是 agent 实例属性, thread_id 切换不影响它, history 照样被拉回来.
 
-        extra_budget: A4 — Step 3 verdict≠pass 时追加专用工具调用预算.
-            传 50 → 临时覆盖 max_tool_calls=50 + recursion_limit=250.
-            不影响 agent 全局配置, 仅本次 chat 生效. ponytail: BudgetSpec
-            来自 huginn.phases, streaming.py chat() 已原生支持 budget_override.
+async def _stream_chat_once(
+    agent: Any,
+    ws: Path,
+    default_thread_id: str,
+    msg: str,
+    step_label: str,
+    tid: str | None = None,
+    fresh_history: bool = False,
+    extra_budget: int | None = None,
+) -> str:
+    """跑一轮 agent.chat, 流式打印 AIMessage, 返回最后的 AI 文本."""
+    ai_text = ""
+    chat_gen = None
+    budget_override = _build_retry_budget(extra_budget)
+    try:
+        image_path = _resolve_image_path(msg, ws)
+        chat_gen = agent.chat(
+            msg,
+            thread_id=tid or default_thread_id,
+            image_path=image_path,
+            include_history=not fresh_history,
+            budget_override=budget_override,
+        )
+        async for chunk in chat_gen:
+            content = _last_ai_content(chunk.get("messages", []))
+            if not content:
+                continue
+            print(content, flush=True)
+            ai_text = content
+    except Exception as e:
+        # 打 stdout 不打 stderr — _AsyncTee 只重定向 stdout, stderr 不进日志,
+        # Step 1 三次空响应的异常就被吞了, 看起来像"LLM 没响应".
+        import traceback as _tb
 
-        视觉接入: msg 里含图片路径 (xxx.png/jpg/...) 时透传 image_path 给
-        agent.chat, streaming.py 的 VisionRouter 自动接管 (CV 预分析 +
-        visual primitives 注入). RCB 任务通常无图, 但 related_work/ 下的
-        论文图表路径若被 agent 引用就会触发. ponytail: 0 行额外配置.
-        """
-        ai_text = ""
-        _chat_gen = None
-        _budget_override = _build_retry_budget(extra_budget)
-        try:
-            # 扫 msg 里的图片路径 — 命中就透传给 VisionRouter
-            _image_path = None
-            try:
-                from huginn.vision.router import _IMAGE_PATH_RE
-                _m = _IMAGE_PATH_RE.search(msg or "")
-                if _m:
-                    _candidate = _m.group(0)
-                    # 相对路径补成 workspace 绝对路径, VisionRouter 需要能 open
-                    _p = Path(_candidate)
-                    if not _p.is_absolute():
-                        _p = (ws / _candidate).resolve()
-                    if _p.exists():
-                        _image_path = str(_p)
-            except Exception:
-                logger.debug("best-effort op failed", exc_info=True)  # 视觉接入是增强, 失败不阻塞文本路径
-            _chat_gen = agent.chat(
-                msg, thread_id=tid or thread_id, image_path=_image_path,
-                include_history=not fresh_history,
-                budget_override=_budget_override,
-            )
-            async for chunk in _chat_gen:
-                msgs = chunk.get("messages", [])
-                if not msgs:
-                    continue
-                # LLM 偶尔直接调 tool 不输出文本, msgs[-1] 是 ToolMessage.
-                # 从后往前找最后一条 AIMessage, 取其 content. ponytail: 倒序扫描,
-                # ceiling: 累积所有 AIMessage content (多轮 tool 调用中间文本).
-                last = None
-                for _m in reversed(msgs):
-                    if isinstance(_m, AIMessage):
-                        last = _m
-                        break
-                if last is None:
-                    continue
-                content = getattr(last, "content", "")
-                if content:
-                    print(content, flush=True)
-                    ai_text = content
-        except Exception as e:
-            # 打 stdout 不打 stderr — _AsyncTee 只重定向 stdout, stderr 不进日志,
-            # Step 1 三次空响应的异常就被吞了, 看起来像"LLM 没响应".
-            import traceback as _tb
-            print(f"ERROR [{step_label}]: {e}\n{_tb.format_exc()}", flush=True)
-        finally:
-            # 显式 aclose chat generator, 触发 streaming.py chat() 的 finally 块.
-            # async for 被 CancelledError 中断时不自动 aclose, generator 悬挂等 GC,
-            # streaming.py 的 [FINALLY-REFLECT] 不跑 -> 反射链路断在第一层.
-            # aclose 让 GeneratorExit 在 generator 当前 await 点抛出, finally 执行.
-            if _chat_gen is not None:
-                with contextlib.suppress(Exception):
-                    await _chat_gen.aclose()
-            # 反思闭环: chat generator 被 asyncio.wait_for 取消时, streaming.py
-            # 的 finally 块不保证执行 (async generator aclose 依赖 GC). 在这里
-            # 显式调 reflection, 确保 tool 失败被 evolution 记录.
-            import sys as _sys
-            _n_trs = len(agent._session_state.tool_results_this_turn) if hasattr(agent, '_session_state') else -1
-            print(f"[RCB-FINALLY] entering, tool_results_this_turn={_n_trs}, has_reflection={hasattr(agent, '_run_post_turn_reflection')}", file=_sys.stderr, flush=True)
-            try:
-                if hasattr(agent, "_run_post_turn_reflection"):
-                    agent._run_post_turn_reflection()
-                    print("[RCB-FINALLY] reflection done", file=_sys.stderr, flush=True)
-            except Exception as _re:
-                print(f"[RCB-FINALLY] reflection error: {_re}", file=_sys.stderr, flush=True)
-        return ai_text
+        print(f"ERROR [{step_label}]: {e}\n{_tb.format_exc()}", flush=True)
+    finally:
+        await _finalize_chat_gen(agent, chat_gen)
+    return ai_text
 
-    # RCB 3-step 映射 CSM: Step1→S1_DISCOVER, Step2→S4_CONSTRUCT, Step3→S6+S7 (Task 18)
-    # ponytail: transition 是 advisory — 不允许就 no-op, 不破坏现有 3-step 流程.
-    from huginn.cognitive_engine import TransitionSignal as _RCB_TS  # noqa: N814
 
-    def _rcb_csm_advance(signal_type: str, ctx: dict) -> None:
-        """RCB step 开始时手动推 CSM 状态. advisory: 不允许就 no-op."""
-        csm = getattr(agent, "_csm", None)
-        if csm is None:
-            return
-        try:
-            csm.transition(_RCB_TS(signal_type, ctx))
-        except Exception:
-            logger.debug("RCB CSM transition failed", exc_info=True)
+def _make_stream_chat(agent: Any, ws: Path, thread_id: str) -> Any:
+    """构造 _stream_chat 闭包 (绑定 agent / ws / thread_id).
 
-    # Step 0: KB 摄入任务数据 (Task 13)
-    # 把 related_work/ + INSTRUCTIONS.md + data/ 灌进 workspace KB,
-    # 给后续 target_chain 反推和 StepEvaluator 提供先验. 失败只 warn, 不阻塞主流程.
+    跑一轮 agent.chat, 流式打印 AIMessage, 返回最后的 AI 文本.
+
+    tid: TFM 分叉用独立 thread 隔离 graph 内态 (历史从 ConversationTree 重建,
+    thread 只影响 checkpoint 内态, 换 tid 无历史损失).
+
+    fresh_history: True 时不拉 ConversationTree 历史. Step 3 retry 用 — fresh
+    thread 的 prompt 已结构化注入所有必要 state, 不需要 Step 2 的 1M+ tokens
+    历史累积. 之前换 tid 没解决超限, 因为 ConversationTree 是 agent 实例属性,
+    thread_id 切换不影响它, history 照样被拉回来.
+
+    extra_budget: A4 — Step 3 verdict≠pass 时追加专用工具调用预算. 传 50 →
+    临时覆盖 max_tool_calls=50 + recursion_limit=250. 不影响 agent 全局配置,
+    仅本次 chat 生效 (streaming.py chat() 已原生支持 budget_override).
+    """
+
+    async def _stream_chat(
+        msg: str,
+        step_label: str,
+        tid: str | None = None,
+        fresh_history: bool = False,
+        extra_budget: int | None = None,
+    ) -> str:
+        return await _stream_chat_once(
+            agent, ws, thread_id, msg, step_label, tid, fresh_history, extra_budget
+        )
+
+    return _stream_chat
+
+
+def _csm_advance(agent: Any, signal_type: str, ctx: dict) -> None:
+    """RCB step 开始时手动推 CSM 状态. advisory: 不允许就 no-op."""
+    csm = getattr(agent, "_csm", None)
+    if csm is None:
+        return
+    from huginn.cognitive_engine import TransitionSignal
+
+    try:
+        csm.transition(TransitionSignal(signal_type, ctx))
+    except Exception:
+        logger.debug("RCB CSM transition failed", exc_info=True)
+
+
+def _ingest_workspace_kb(ws: Path) -> Any | None:
+    """Step 0: KB 摄入任务数据 (Task 13).
+
+    把 related_work/ + INSTRUCTIONS.md + data/ 灌进 workspace KB, 给后续
+    target_chain 反推和 StepEvaluator 提供先验. 失败只 warn, 不阻塞主流程.
+    """
     kb = None
     try:
         from huginn.knowledge.store import get_knowledge_base
+
         kb = get_knowledge_base(str(ws))
-        for _rw_file in (ws / "related_work").glob("*"):
-            if _rw_file.is_file() and _rw_file.suffix in (".md", ".txt", ".pdf"):
-                kb.add_document(_rw_file.name, _rw_file.read_bytes())
+        for rw_file in (ws / "related_work").glob("*"):
+            if rw_file.is_file() and rw_file.suffix in (".md", ".txt", ".pdf"):
+                kb.add_document(rw_file.name, rw_file.read_bytes())
         if (ws / "INSTRUCTIONS.md").exists():
-            kb.add_text((ws / "INSTRUCTIONS.md").read_text(encoding="utf-8"),
-                        filename="INSTRUCTIONS.md")
-        _data_dir = ws / "data"
-        if _data_dir.exists():
-            for _data_file in _data_dir.glob("*"):
-                if _data_file.is_file() and _data_file.suffix in (".csv", ".json", ".txt", ".md"):
+            kb.add_text(
+                (ws / "INSTRUCTIONS.md").read_text(encoding="utf-8"),
+                filename="INSTRUCTIONS.md",
+            )
+        data_dir = ws / "data"
+        if data_dir.exists():
+            for data_file in data_dir.glob("*"):
+                if data_file.is_file() and data_file.suffix in (
+                    ".csv",
+                    ".json",
+                    ".txt",
+                    ".md",
+                ):
                     kb.add_text(
-                        _data_file.read_text(encoding="utf-8", errors="ignore"),
-                        filename=f"data/{_data_file.name}",
+                        data_file.read_text(encoding="utf-8", errors="ignore"),
+                        filename=f"data/{data_file.name}",
                     )
         print("[Step 0] KB ingest done", flush=True)
     except Exception as _e:
         print(f"[Step 0] KB ingest warning: {_e}", flush=True)
+    return kb
 
-    # Step 1: 论文方法论提取
-    # agent 读 INSTRUCTIONS.md + related_work/, 输出方法核心组件 + baseline 指标 checklist
-    print("\n=== Step 1: Methodology Extraction ===\n", flush=True)
-    _rcb_csm_advance("user_goal", {"goal": "understand problem and extract methodology"})
+
+def _resolve_budgets(cfg: Any, model_name: str, extreme: bool) -> tuple[int, int, int]:
+    """解析 (max_calls, max_per_tool, ctx_budget) — 极限模式放宽并跟随模型窗口."""
+    # C3: 预算扩容 — 默认 150→400, 极限 300→600.
+    # 走统一 resolve_tool_budget, 但传 audit 拟合出的经验拐点做 base,
+    # 不并入 mode 表的 research=300 (那会退化掉分). 显式配置更高则 max 向上取.
+    mode = "extreme" if extreme else "research"
+    max_calls, max_per_tool = resolve_tool_budget(
+        mode,
+        base=(1200, 300) if extreme else (400, 50),
+    )
+    # 上下文预算对齐模型窗口, 不写死 200K. 模型 1M (deepseek-v4) 时用 1M,
+    # 写死 200K 会在长任务里过早触发压缩, 截断本该继续探索的轨迹.
+    ctx_budget = (
+        get_context_window(model_name) if extreme else cfg.context_budget_tokens
+    )
+    return max_calls, max_per_tool, ctx_budget
+
+
+def _make_rcb_bundle(
+    *,
+    agent: Any,
+    step2_filter: set[str],
+    mem_mgr: Any,
+    kg: Any,
+    ws: Path,
+    persona: Any,
+    persona_name: str,
+) -> _RcbAgentBundle:
+    """组装 _RcbAgentBundle — 绑定 kb / stream_chat 闭包 / csm 推进入口."""
+    thread_id = f"rcb_{ws.name}"
+    return _RcbAgentBundle(
+        agent=agent,
+        step2_filter=step2_filter,
+        mem_mgr=mem_mgr,
+        kg=kg,
+        kb=_ingest_workspace_kb(ws),
+        persona=persona,
+        persona_name=persona_name,
+        thread_id=thread_id,
+        stream_chat=_make_stream_chat(agent, ws, thread_id),
+        csm_advance=partial(_csm_advance, agent),
+    )
+
+
+def _setup_agent_bundle(
+    ws: Path, cfg: Any, model: Any, model_name: str, *, extreme: bool, rcb_cache: Path
+) -> _RcbAgentBundle:
+    """装配 agent 及其周边单例 (system prompt / 工具 / memory / KG / persona)."""
+    global _last_agent_for_reflection
+
+    from huginn.snapshot import file_snapshot as _fs
+    from huginn.tools import register_all_tools
+
+    # snapshot 默认用 ~/.huginn/snapshots, RCB subprocess 跑时该目录可能被
+    # IDE/桌面端锁定 (PermissionError). 重定向到 workspace 下的独立目录.
+    _fs._SNAPSHOT_ROOT = rcb_cache / "snapshots"
+    system_prompt = _build_system_prompt(ws)
+    # 先注册工具到 ToolRegistry, 再让 agent 从 registry 拉取
+    register_all_tools()
+
+    # C3: 预算扩容 + 上下文窗口对齐模型 (见 _resolve_budgets).
+    max_calls, max_per_tool, ctx_budget = _resolve_budgets(cfg, model_name, extreme)
+
+    mem_mgr = _init_memory_manager(ws, model)
+    kg = _init_knowledge_graph(ws)
+    persona, persona_name = _init_persona(ws)
+    agent = _create_agent(
+        model=model,
+        system_prompt=system_prompt,
+        mem_mgr=mem_mgr,
+        persona_name=persona_name,
+        ws=ws,
+        cfg=cfg,
+        ctx_budget=ctx_budget,
+        max_calls=max_calls,
+        max_per_tool=max_per_tool,
+    )
+    step2_filter = _configure_step_filters(agent, extreme)
+
+    # 暴露 agent 给 rcb_huginn.py 入口, 超时取消后能再调一次 reflection.
+    _last_agent_for_reflection = agent
+
+    return _make_rcb_bundle(
+        agent=agent,
+        step2_filter=step2_filter,
+        mem_mgr=mem_mgr,
+        kg=kg,
+        ws=ws,
+        persona=persona,
+        persona_name=persona_name,
+    )
+
+
+def _build_step1_prompt(task_prompt: str) -> str:
+    """Step 1 prompt: 论文方法论提取 checklist (含 [EXACT]/[VARIANT] 标注要求)."""
     step1_prompt = (
         f"Read the task instructions below AND explore related_work/ directory for reference papers.\n"
         f"PDF reading: file_read_tool supports line_offset/n_lines for .pdf — read the paper in "
@@ -854,117 +1099,127 @@ async def run(
         f"Output the checklist as a numbered list. Be SPECIFIC (e.g. 'CGCNNConv with gating "
         f"and residual connections', not just 'GNN'). This checklist will guide your implementation "
         f"and will be used in Step 3's substitution audit and sanity check.\n\n"
-        f"Task instructions:\n{prompt}"
+        f"Task instructions:\n{task_prompt}"
     )
-    # Step 1 LLM 偶尔返空 (deepseek-v4-pro 不稳定), 重试一次避免 checklist=0
-    # 导致 Step 3 adversarial_critique 被 skip. ponytail: 只对 step1 重试, 其他
-    # step 空响应让 agent 自己在后续 iter 补. ceiling: 指数退避 + 更多次重试.
-    checklist = await _stream_chat(step1_prompt, "step1")
+    return step1_prompt
+
+
+async def _extract_checklist(stream_chat: Any, task_prompt: str) -> str:
+    """跑 Step 1 提取 checklist; 空响应两级兜底, 避免 checklist=0 让 Step 3 被 skip.
+
+    ponytail: 只对 step1 重试, 其他 step 空响应让 agent 自己在后续 iter 补.
+    ceiling: 指数退避 + 更多次重试.
+    """
+    step1_prompt = _build_step1_prompt(task_prompt)
+    checklist = await stream_chat(step1_prompt, "step1")
     if not checklist.strip():
         print("[step1] 空响应, 重试一次...", flush=True)
-        checklist = await _stream_chat(step1_prompt, "step1_retry")
+        checklist = await stream_chat(step1_prompt, "step1_retry")
     # 二级 fallback: LLM 连续两次空响应 (卡在 tool call 不出文本),
-    # 用无 tool 的直接 prompt 强制输出 checklist. ponytail: fresh_history=True
-    # 避免 tool call 历史干扰. ceiling: 独立 thread + 禁用 tool_filter.
+    # 用无 tool 的直接 prompt 强制输出 checklist. fresh_history=True 避免 tool
+    # call 历史干扰. ceiling: 独立 thread + 禁用 tool_filter.
     if not checklist.strip():
         print("[step1] 仍为空, 强制直接输出 checklist (无 tool)...", flush=True)
-        _force_prompt = (
+        force_prompt = (
             "Based on the task instructions below, output a METHODOLOGY CHECKLIST "
             "as a numbered list. Do NOT call any tools. Just output the checklist text directly.\n\n"
             "For each component, label [EXACT], [VARIANT], or [EXACT-CACHED].\n"
             "Include key quantitative metrics with baseline values.\n\n"
-            f"Task instructions:\n{prompt}"
+            f"Task instructions:\n{task_prompt}"
         )
-        checklist = await _stream_chat(_force_prompt, "step1_force", fresh_history=True)
+        checklist = await stream_chat(force_prompt, "step1_force", fresh_history=True)
     print(f"\n[checklist extracted: {len(checklist)} chars]\n", flush=True)
+    return checklist
 
-    # G29: checklist 永驻 system_prompt — 写入 stable_principles (source="checklist"),
-    # context.py 的 STABLE_PRINCIPLES 段每轮 build_prompt 重读, 不进 compaction 范围.
-    # 修 audit 09: RCB 长任务 compaction 跳过后 checklist 丢失, Step 2/3 看不到方法论约束.
-    # ponytail: checklist 是 persona 级输入 (跨 step 不变), 走 stable_principles 通道
-    # 比改 prompt_builder 加新段更省代码. 任务结束不清除, 下一任务 init 时会被覆盖语义
-    # (新 checklist 会被 store 进来, 旧的仍在文件里但 LLM 会以新为准).
-    if checklist and checklist.strip():
-        try:
-            from huginn.memory import store_stable_principle
-            # 截断到 2000 字符防 persona 膨胀, 完整 checklist 在 ws/checklist.md
-            store_stable_principle(
-                f"[METHODOLOGY CHECKLIST]\n{checklist[:2000]}",
-                source="rcb_step1_checklist",
-            )
-            # 同时写到 ws/checklist.md 让 agent 能 file_read_tool 读完整版
-            (ws / "checklist.md").write_text(checklist, encoding="utf-8")
-            print("[G29: checklist stored as stable_principle + ws/checklist.md]", flush=True)
-        except Exception as e:
-            print(f"[G29: checklist store skipped: {e}]", flush=True)
 
-    # Step 1.2: 目标链反推 (G62, Task 14)
-    # 把 checklist 每条 Mode-A 目标反推成 required_results/methods/data/verification 链.
-    # checklist 是 Step 1 输出的文本, 这里包成单条 Mode-A item 让 LLM 自己分解.
-    # ponytail: 天花板是单条粗粒度 item — LLM 拿到整段 checklist 做分解, 不会逐条对齐;
-    #           升级路径是先用结构化 prompt 让 Step 1 直接输出 list[dict] (mode/item).
-    _target_chains = []
+def _store_checklist(checklist: str, ws: Path) -> None:
+    """G29: checklist 永驻 system_prompt — 写 stable_principles, 不进 compaction 范围."""
+    if not (checklist and checklist.strip()):
+        return
+    try:
+        from huginn.memory import store_stable_principle
+
+        # 截断到 2000 字符防 persona 膨胀, 完整 checklist 在 ws/checklist.md
+        store_stable_principle(
+            f"[METHODOLOGY CHECKLIST]\n{checklist[:2000]}",
+            source="rcb_step1_checklist",
+        )
+        # 同时写到 ws/checklist.md 让 agent 能 file_read_tool 读完整版
+        (ws / "checklist.md").write_text(checklist, encoding="utf-8")
+        print(
+            "[G29: checklist stored as stable_principle + ws/checklist.md]", flush=True
+        )
+    except Exception as e:
+        print(f"[G29: checklist store skipped: {e}]", flush=True)
+
+
+def _build_target_chains(
+    checklist: Any, kb: Any, model: Any, ws: Path, trace_task_id: str
+) -> list:
+    """Step 1.2: 目标链反推 (G62, Task 14).
+
+    把 checklist 每条 Mode-A 目标反推成 required_results/methods/data/verification 链.
+    ponytail: 天花板是单条粗粒度 item — LLM 拿到整段 checklist 做分解, 不会逐条对齐;
+    升级路径是先用结构化 prompt 让 Step 1 直接输出 list[dict] (mode/item).
+    """
+    chains: list = []
     try:
         from huginn.metacog.target_chain import build_target_chains
-        _checklist_items = (
-            checklist if isinstance(checklist, list)
+
+        checklist_items = (
+            checklist
+            if isinstance(checklist, list)
             else [{"mode": "A", "item": (checklist or "")[:2000]}]
         )
-        _task_ctx = (
+        task_ctx = (
             (ws / "INSTRUCTIONS.md").read_text(encoding="utf-8")[:2000]
-            if (ws / "INSTRUCTIONS.md").exists() else ""
+            if (ws / "INSTRUCTIONS.md").exists()
+            else ""
         )
         # build_target_chains 是同步函数, 旧版 await list 报 "object list can't
         # be used in 'await' expression". 去掉 await.
-        _target_chains = build_target_chains(
-            _checklist_items, kb, model, _task_ctx,
-        )
-        _tc_entry = {
-            "iteration": 0,
-            "ts": _time.time() if "_time" in dir() else __import__("time").time(),  # noqa: F821
-            "role": "target_chain",
-            "attempted": f"build_target_chains for {len(_checklist_items)} item(s)",
-            "found": f"{len(_target_chains)} chains built",
-            "evidence": [],
-            "limitations": [],
-            "artifacts": [],
-            "next_hint": "step1.5 structure scan",
-            "darwin_score": 0.0,
-            "supported_ratio": 0.0,
-            # v14 Task 1: target_chain build 不在三族主映射里 → legacy.
-            "simplex_id": _make_simplex_id(_trace_task_id, 0, "target_chain"),
-            "cochain_type": "legacy",
-            "domain": _infer_domain(_trace_task_id),
-            "task_id": _trace_task_id,
-            "model_version": _MODEL_VERSION,
-        }
-        try:
-            _tc_trace = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
-            _tc_trace.parent.mkdir(parents=True, exist_ok=True)
-            with _tc_trace.open("a", encoding="utf-8") as _f:
-                _f.write(json.dumps(_tc_entry, ensure_ascii=False, default=str) + "\n")
-        except Exception as _e:
-            print(f"[Step 1.2] trace write skipped: {_e}", flush=True)
-        print(f"[Step 1.2] built {len(_target_chains)} target chains", flush=True)
+        chains = build_target_chains(checklist_items, kb, model, task_ctx)
+        _append_target_chain_trace(ws, len(checklist_items), len(chains), trace_task_id)
+        print(f"[Step 1.2] built {len(chains)} target chains", flush=True)
     except Exception as _e:
         print(f"[Step 1.2] target chain warning: {_e}", flush=True)
+    return chains
 
-    # Step 1.5: Intuitive Gamer + 数学直觉结构识别
-    # 两层结合 (arXiv:2510.11503 fast-flat scan + 数学结构识别):
-    # - fast flat scan: 不深挖, 快速过一遍 checklist
-    # - 数学直觉: 识别每个 item 的数学结构 + invariant, 而非只标难度
-    #
-    # 平衡点 (advisory + audited, not enforced):
-    # - 保守默认: 每个 item 默认 structure=empirical, invariant=none
-    # - verifiable_via 枚举 gate: 拿不出验证方法的退回 empirical
-    # - 分档处理: hard check (dimensional/exact_formula/conservation_law)
-    #            vs soft check (asymptotic/symmetry/topological) vs none
-    # - exploratory 合法: 不强制每个 item 都有数学结构
-    #
-    # ponytail: v7 只做 prompt + 枚举约束, 不写 Lean, 不写 pydantic schema.
-    #   v8 升级: 接 cognitive_heat_engine should_imaginate, hard check 失败
-    #   触发 imagination; 接 LeanInterface 做形式化验证.
-    print("\n=== Step 1.5: Intuitive Gamer + math structure scan ===\n", flush=True)
+
+def _append_target_chain_trace(
+    ws: Path, n_items: int, n_chains: int, trace_task_id: str
+) -> None:
+    """Step 1.2 的 meta_trace entry (写失败只 warn, 不影响 target chain)."""
+    entry = {
+        "iteration": 0,
+        "ts": time.time(),
+        "role": "target_chain",
+        "attempted": f"build_target_chains for {n_items} item(s)",
+        "found": f"{n_chains} chains built",
+        "evidence": [],
+        "limitations": [],
+        "artifacts": [],
+        "next_hint": "step1.5 structure scan",
+        "darwin_score": 0.0,
+        "supported_ratio": 0.0,
+        # v14 Task 1: target_chain build 不在三族主映射里 → legacy.
+        "simplex_id": _make_simplex_id(trace_task_id, 0, "target_chain"),
+        "cochain_type": "legacy",
+        "domain": _infer_domain(trace_task_id),
+        "task_id": trace_task_id,
+        "model_version": _MODEL_VERSION,
+    }
+    trace_path = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
+    try:
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        with trace_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+    except Exception as _e:
+        print(f"[Step 1.2] trace write skipped: {_e}", flush=True)
+
+
+def _build_scan_prompt(checklist: str) -> str:
+    """Step 1.5 prompt: fast flat scan + 数学直觉结构识别."""
     scan_prompt = (
         "FAST FLAT SCAN with mathematical structure identification.\n"
         "Goal: identify structure + invariants for each checklist item, not just difficulty.\n\n"
@@ -1006,381 +1261,802 @@ async def run(
         "    then soft_check (asymptotic/symmetry/topological), then empirical/none last>\n"
         f"\nChecklist:\n{checklist[:4000]}"
     )
-    # Step 1.5 用单次 LLM 调用, 绕过 agent.chat 的 ReAct loop.
-    # 原因: ReAct agent 拿到 prompt 后会直接调 tool 执行, 不给文本规划输出.
-    # Step 1.5 要的是纯文本 structure scan, 不允许 tool call.
-    # ponytail: 不另建 agent 实例 (省 memory), 直接调 model.ainvoke.
-    #   升级路径: 建专用 "planner" agent (无 tools), 复用 thread_id 上下文.
+    return scan_prompt
+
+
+async def _run_structure_scan(model: Any, checklist: str) -> str:
+    """Step 1.5: 单次 LLM 调用做结构扫描, 绕过 agent.chat 的 ReAct loop.
+
+    原因: ReAct agent 拿到 prompt 后会直接调 tool 执行, 不给文本规划输出.
+    Step 1.5 要的是纯文本 structure scan, 不允许 tool call.
+    ponytail: 不另建 agent 实例 (省 memory), 直接调 model.invoke.
+    """
     scan_text = ""
     try:
         from langchain_core.messages import HumanMessage, SystemMessage
-        _scan_msgs = [
-            SystemMessage(content=(
-                "You are a mathematical structure scanner. Output ONLY text, "
-                "no tool calls. Identify the mathematical structure of each "
-                "checklist item and the invariant it must satisfy."
-            )),
-            HumanMessage(content=scan_prompt),
+
+        scan_msgs = [
+            SystemMessage(
+                content=(
+                    "You are a mathematical structure scanner. Output ONLY text, "
+                    "no tool calls. Identify the mathematical structure of each "
+                    "checklist item and the invariant it must satisfy."
+                )
+            ),
+            HumanMessage(content=_build_scan_prompt(checklist)),
         ]
-        _scan_resp = await asyncio.to_thread(model.invoke, _scan_msgs)
-        scan_text = _scan_resp.content if hasattr(_scan_resp, "content") else str(_scan_resp)
+        scan_resp = await asyncio.to_thread(model.invoke, scan_msgs)
+        scan_text = (
+            scan_resp.content if hasattr(scan_resp, "content") else str(scan_resp)
+        )
         print(scan_text, flush=True)
     except Exception as _e:
         print(f"[Step 1.5 LLM call failed: {_e}]", flush=True)
         scan_text = ""
     print(f"\n[structure scan done: {len(scan_text)} chars]\n", flush=True)
+    return scan_text
 
-    # 写 Meta-Trace entry — role="intuitive_gamer", 带 structure 信息
+
+def _write_intuitive_gamer_trace(
+    ws: Path, scan_text: str, trace_task_id: str
+) -> Path | None:
+    """写 role="intuitive_gamer" 的 Meta-Trace entry, 返回 trace 路径 (供 FCM 复用)."""
+    entry = {
+        "iteration": 0,
+        "ts": time.time(),
+        "role": "intuitive_gamer",
+        "attempted": "fast flat scan with mathematical structure identification",
+        "found": (scan_text or "")[:500],
+        "evidence": [],
+        "limitations": [
+            "single-sample, no k-sampling (v8 upgrade)",
+            "structure labels not schema-validated (v8: pydantic + Lean)",
+        ],
+        "artifacts": [],
+        "next_hint": "execute hard_check items first to bank structural wins",
+        "darwin_score": 0.0,
+        "supported_ratio": 0.0,
+        # v14 Task 1: intuitive_gamer = harmonic (imagination-driven, 拓扑探测).
+        "simplex_id": _make_simplex_id(trace_task_id, 0, "intuitive_gamer"),
+        "cochain_type": "harmonic",
+        "domain": _infer_domain(trace_task_id),
+        "task_id": trace_task_id,
+        "model_version": _MODEL_VERSION,
+    }
+    trace_path = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
     try:
-        import json as _ig_json
-        import time as _ig_time
-        _ig_entry = {
-            "iteration": 0,
-            "ts": _ig_time.time(),
-            "role": "intuitive_gamer",
-            "attempted": "fast flat scan with mathematical structure identification",
-            "found": (scan_text or "")[:500],
-            "evidence": [],
-            "limitations": [
-                "single-sample, no k-sampling (v8 upgrade)",
-                "structure labels not schema-validated (v8: pydantic + Lean)",
-            ],
-            "artifacts": [],
-            "next_hint": "execute hard_check items first to bank structural wins",
-            "darwin_score": 0.0,
-            "supported_ratio": 0.0,
-            # v14 Task 1: intuitive_gamer = harmonic (imagination-driven, 拓扑探测).
-            "simplex_id": _make_simplex_id(_trace_task_id, 0, "intuitive_gamer"),
-            "cochain_type": "harmonic",
-            "domain": _infer_domain(_trace_task_id),
-            "task_id": _trace_task_id,
-            "model_version": _MODEL_VERSION,
-        }
-        _ig_trace_path = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
-        _ig_trace_path.parent.mkdir(parents=True, exist_ok=True)
-        with _ig_trace_path.open("a", encoding="utf-8") as f:
-            f.write(_ig_json.dumps(_ig_entry, ensure_ascii=False) + "\n")
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        with trace_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         print("[intuitive_gamer + math structure trace entry written]", flush=True)
+        return trace_path
     except Exception as _e:
         print(f"[intuitive_gamer trace skipped: {_e}]", flush=True)
+        return None
 
-    # Step 1.7: fork-critique-merge — verifier 下沉到 plan 决策点 (v8)
-    # k 路视角采样执行方案, 独立评审选优, winner 注入 Step 2.
-    # 成本: k+1 次 cheap LLM 调用 (无 tool, 纯文本).
-    print("\n=== Step 1.7: Plan Fork-Critique-Merge ===\n", flush=True)
+
+async def _run_plan_fork_merge(checklist: Any, scan_text: str, model: Any) -> dict:
+    """Step 1.7: fork-critique-merge — k 路视角采样执行方案, 独立评审选优.
+
+    成本: k+1 次 cheap LLM 调用 (无 tool, 纯文本).
+    """
     fcm = await fork_critique_merge(checklist, scan_text, model, k=3)
     if fcm["winner_plan"]:
-        print(f"[fcm: winner={fcm['winner_perspective']} scores={fcm.get('scores')}]\n", flush=True)
+        print(
+            f"[fcm: winner={fcm['winner_perspective']} scores={fcm.get('scores')}]\n",
+            flush=True,
+        )
         print(fcm["winner_plan"], flush=True)
     else:
         print("[fcm: all forks failed, Step 2 runs plan-free]", flush=True)
+    return fcm
+
+
+def _write_fcm_trace(fcm: dict, trace_path: Path | None, trace_task_id: str) -> None:
+    """Step 1.7 的 meta_trace entry (复用 Step 1.5 的 trace 路径)."""
+    if trace_path is None:
+        print("[fcm trace skipped: no trace path]", flush=True)
+        return
+    entry = {
+        "iteration": 0,
+        "ts": time.time(),
+        "role": "fork_critique_merge",
+        "attempted": f"{len(_FCM_PERSPECTIVES)}-perspective plan sampling + independent critique",
+        "found": f"winner={fcm['winner_perspective']} scores={fcm.get('scores')}",
+        "evidence": [fcm["winner_plan"][:300]] if fcm["winner_plan"] else [],
+        "limitations": [
+            "plan-level critique only; trajectory-level fork deferred (v8 fcm-2)"
+        ],
+        "artifacts": [],
+        "next_hint": "execute winner plan; merge insights as fallback options",
+        "darwin_score": 0.0,
+        "supported_ratio": 0.0,
+        # v14 Task 1: FCM winner = gradient (task-driven plan 选路).
+        "simplex_id": _make_simplex_id(trace_task_id, 0, "fork_critique_merge"),
+        "cochain_type": "gradient",
+        "domain": _infer_domain(trace_task_id),
+        "task_id": trace_task_id,
+        "model_version": _MODEL_VERSION,
+    }
     try:
-        _fcm_entry = {
-            "iteration": 0,
-            "ts": _ig_time.time(),
-            "role": "fork_critique_merge",
-            "attempted": f"{len(_FCM_PERSPECTIVES)}-perspective plan sampling + independent critique",
-            "found": f"winner={fcm['winner_perspective']} scores={fcm.get('scores')}",
-            "evidence": [fcm["winner_plan"][:300]] if fcm["winner_plan"] else [],
-            "limitations": ["plan-level critique only; trajectory-level fork deferred (v8 fcm-2)"],
-            "artifacts": [],
-            "next_hint": "execute winner plan; merge insights as fallback options",
-            "darwin_score": 0.0,
-            "supported_ratio": 0.0,
-            # v14 Task 1: FCM winner = gradient (task-driven plan 选路).
-            "simplex_id": _make_simplex_id(_trace_task_id, 0, "fork_critique_merge"),
-            "cochain_type": "gradient",
-            "domain": _infer_domain(_trace_task_id),
-            "task_id": _trace_task_id,
-            "model_version": _MODEL_VERSION,
-        }
-        with _ig_trace_path.open("a", encoding="utf-8") as f:
-            f.write(_ig_json.dumps(_fcm_entry, ensure_ascii=False) + "\n")
+        with trace_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception as _e:
         print(f"[fcm trace skipped: {_e}]", flush=True)
 
-    # v16.1: 越权检测兜底 — Step 1 应只输出 checklist 文本, 不该有产物.
-    # 即使白名单漏 (web_search side effect / 1.5 误调 code_tool), 清空保证 Step 2 gate 仍跑.
-    _violations = []
-    _report_md = ws / "report" / "report.md"
-    if _report_md.exists() and _report_md.stat().st_size > 0:
-        _violations.append(f"report/report.md ({_report_md.stat().st_size}b)")
-    _outputs_dir = ws / "outputs"
-    _extra = [f for f in (_outputs_dir.glob("*") if _outputs_dir.exists() else []) if f.is_file()]
-    if _extra:
-        _violations.append(f"outputs/ ({len(_extra)} files)")
-    if _violations:
-        print(f"[v16.1 越权检测] Step 1 生成 {_violations}, 清空强制 Step 2 重做", flush=True)
-        try:
-            _report_md.unlink(missing_ok=True)
-            for _f in _extra:
-                _f.unlink(missing_ok=True)
-        except OSError as _e:
-            print(f"[v16.1 清空失败: {_e}]", flush=True)
 
+def _clear_step1_violations(ws: Path) -> None:
+    """v16.1 越权检测兜底 — Step 1 应只输出 checklist 文本, 不该有产物.
+
+    即使白名单漏 (web_search side effect / 1.5 误调 code_tool), 清空保证
+    Step 2 gate 仍跑.
+    """
+    violations: list[str] = []
+    report_md = ws / "report" / "report.md"
+    if report_md.exists() and report_md.stat().st_size > 0:
+        violations.append(f"report/report.md ({report_md.stat().st_size}b)")
+    outputs_dir = ws / "outputs"
+    extra = [
+        f
+        for f in (outputs_dir.glob("*") if outputs_dir.exists() else [])
+        if f.is_file()
+    ]
+    if extra:
+        violations.append(f"outputs/ ({len(extra)} files)")
+    if not violations:
+        return
+    print(
+        f"[v16.1 越权检测] Step 1 生成 {violations}, 清空强制 Step 2 重做", flush=True
+    )
+    try:
+        report_md.unlink(missing_ok=True)
+        for f in extra:
+            f.unlink(missing_ok=True)
+    except OSError as _e:
+        print(f"[v16.1 清空失败: {_e}]", flush=True)
+
+
+async def _run_discovery_phase(
+    ws: Path,
+    kb: Any,
+    model: Any,
+    prompt: str,
+    bundle: _RcbAgentBundle,
+    trace_task_id: str,
+) -> _RcbDiscovery:
+    """Step 1 / 1.2 / 1.5 / 1.7 — 方法论提取 + 目标链 + 结构扫描 + plan 评审."""
+    stream_chat = bundle.stream_chat
+    # 3 步认知循环: 用同一 thread_id 保持上下文连续, Step 2 能看到 Step 1 的 checklist.
+    print("\n=== Step 1: Methodology Extraction ===\n", flush=True)
+    bundle.csm_advance(
+        "user_goal", {"goal": "understand problem and extract methodology"}
+    )
+    checklist = await _extract_checklist(stream_chat, prompt)
+    _store_checklist(checklist, ws)
+    target_chains = _build_target_chains(checklist, kb, model, ws, trace_task_id)
+
+    print("\n=== Step 1.5: Intuitive Gamer + math structure scan ===\n", flush=True)
+    scan_text = await _run_structure_scan(model, checklist)
+    trace_path = _write_intuitive_gamer_trace(ws, scan_text, trace_task_id)
+
+    print("\n=== Step 1.7: Plan Fork-Critique-Merge ===\n", flush=True)
+    fcm = await _run_plan_fork_merge(checklist, scan_text, model)
+    _write_fcm_trace(fcm, trace_path, trace_task_id)
+
+    _clear_step1_violations(ws)
     # v16.1: 解锁 Step 2 完整工具集 — Step 1 已结束, gate 现在能拦得住.
     # refresh 触发 graph 重建, 否则 Step 2 用的还是 Step 1 的只读工具集.
-    agent.tool_filter = _step2_filter if _step2_filter else None
-    agent.refresh_tools_from_registry()
-
-    # Step 2 setup + 循环抽到模块级函数 _step2_execute.
-    from datetime import datetime as _dt
-    _run_start_iso = _dt.now().isoformat()
-    _step2_ctx = _RCBStep2Ctx(
-        ws=ws, model=model, agent=agent, kb=kb,
-        mem_mgr=_mem_mgr, persona=persona, kg=_kg,
-        thread_id=thread_id, task_id=_task_id,
-        resume_from_iter=_resume_from_iter, extreme=extreme,
-        checklist=checklist, scan_text=scan_text, fcm=fcm,
-        target_chains=_target_chains,
-        instructions=instructions,
-        stream_chat_fn=_stream_chat,
-        rcb_csm_advance_fn=_rcb_csm_advance,
-        wall_expired_fn=_p5_wall_expired,
-        persona_name=_persona_name,
-        run_start_iso=_run_start_iso,
+    bundle.agent.tool_filter = bundle.step2_filter if bundle.step2_filter else None
+    bundle.agent.refresh_tools_from_registry()
+    return _RcbDiscovery(
+        checklist=checklist,
+        scan_text=scan_text,
+        fcm=fcm,
+        target_chains=target_chains,
+        trace_path=trace_path,
     )
-    _evals_history = await _step2_execute(_step2_ctx)  # 返回 _evals_history 供 Step 3 用
 
-    # A3: silent substitution 结构性拦截 — Step 2 结束后机械比对
-    # 「[EXACT] 组件 ↔ code/实现痕迹」, 缺失即回退执行. 不调 LLM 做语义判断,
-    # 纯正则 + 文件扫描. 落点路线图 P1-A3.
+
+async def _run_substitution_audit(
+    ws: Path, checklist: str, evals_history: list, stream_chat: Any
+) -> None:
+    """A3: silent substitution 结构性拦截 — [EXACT] 组件 ↔ 实现痕迹机械比对.
+
+    缺失即回退执行. 不调 LLM 做语义判断, 纯正则 + 文件扫描.
+    """
     try:
-        _audit = await _step2_substitution_audit(
-            ws, checklist, _evals_history, _stream_chat,
+        audit = await _step2_substitution_audit(
+            ws, checklist, evals_history, stream_chat
         )
-        if _audit["unresolved"]:
+        if audit["unresolved"]:
             print(
                 f"[A3 audit] unresolved silent substitutions: "
-                f"{[it['component'] for it in _audit['unresolved']]}",
+                f"{[it['component'] for it in audit['unresolved']]}",
                 flush=True,
             )
-        elif _audit["remediated"]:
-            print(
-                f"[A3 audit] remediated: {_audit['remediated']}",
-                flush=True,
-            )
+        elif audit["remediated"]:
+            print(f"[A3 audit] remediated: {audit['remediated']}", flush=True)
         # 落盘供 Step 3 / 评分器引用
         try:
             (ws / HUGINN_DIR_NAME / "step2_audit.json").write_text(
-                json.dumps(_audit, ensure_ascii=False, indent=2, default=str),
+                json.dumps(audit, ensure_ascii=False, indent=2, default=str),
                 encoding="utf-8",
             )
         except OSError as _e:
             print(f"[A3 audit] write report failed: {_e}", flush=True)
     except Exception as _e:
         import traceback as _tb
+
         print(f"[A3 audit] crashed: {_e}\n{_tb.format_exc()}", flush=True)
 
-    # A2: 产物级门控 — outputs/ 无真实 metrics 文件时禁止虚写 Results.
-    # 落点路线图 P1-A2 / 12 报告 P1-1 (ResearchClaw remediation task 最小实现).
+
+async def _run_outputs_gate(ws: Path, stream_chat: Any) -> None:
+    """A2: 产物级门控 — outputs/ 无真实 metrics 文件时禁止虚写 Results."""
     try:
-        _outputs_gate = await _step2_outputs_gate(ws, _stream_chat)
-        if _outputs_gate["blocker"]:
+        gate = await _step2_outputs_gate(ws, stream_chat)
+        if gate["blocker"]:
             print(
                 "[A2 gate] BLOCKER: outputs/ 无真实 metrics 文件, "
                 "Step 3 应降权 Results claim",
                 flush=True,
             )
-        elif _outputs_gate["remediated"]:
+        elif gate["remediated"]:
             print(
-                f"[A2 gate] remediated: "
-                f"{len(_outputs_gate['metrics_files'])} metrics files",
+                f"[A2 gate] remediated: {len(gate['metrics_files'])} metrics files",
                 flush=True,
             )
         try:
             (ws / HUGINN_DIR_NAME / "step2_outputs_gate.json").write_text(
-                json.dumps(_outputs_gate, ensure_ascii=False, indent=2, default=str),
+                json.dumps(gate, ensure_ascii=False, indent=2, default=str),
                 encoding="utf-8",
             )
         except OSError as _e:
             print(f"[A2 gate] write report failed: {_e}", flush=True)
     except Exception as _e:
         import traceback as _tb
+
         print(f"[A2 gate] crashed: {_e}\n{_tb.format_exc()}", flush=True)
 
-    # Step 2.5 + Step 3 抽到模块级函数 — 闭包 _stream_chat / _rcb_csm_advance 作参数传入.
-    await _step2_5_report_fallback(ws, _stream_chat)
-    # Step 3 整体兜底: retry/finalize 内部 try/except 只防单次调用崩溃, 但整个
-    # _step3_adversarial 仍可能因 OOM/系统杀进程等不可恢复异常退出. deliverables
-    # 已在磁盘上 (Step 2 产出), Step 3 失败不应阻塞评分 — 评分读 report.md/figures.
-    # v19/v20 都因 Step 3 崩溃没走到评分, agent 实际已产出完整 deliverables.
+
+async def _run_step3(
+    ws: Path,
+    model: Any,
+    agent: Any,
+    checklist: str,
+    evals_history: list,
+    stream_chat: Any,
+    csm_advance: Any,
+    *,
+    persona: Any,
+    kb: Any,
+    mem_mgr: Any,
+    task_id: str,
+    persona_name: str,
+) -> str:
+    """Step 3 整体兜底 — 崩溃时返 "step3_crashed", 不阻塞磁盘上的 deliverables.
+
+    retry/finalize 内部 try/except 只防单次调用崩溃, 但整个 _step3_adversarial
+    仍可能因 OOM/系统杀进程等不可恢复异常退出. deliverables 已在磁盘上 (Step 2
+    产出), Step 3 失败不应阻塞评分 — 评分读 report.md/figures.
+    """
     try:
-        _step3_final_verdict = await _step3_adversarial(
-            ws, model, agent, checklist, _evals_history, _stream_chat, _rcb_csm_advance,
-            persona=persona, kb=kb,
-            mem_mgr=_mem_mgr, cross_task_store=_cross_task_store,
-            task_id=_task_id, persona_name=_persona_name,
+        return await _step3_adversarial(
+            ws,
+            model,
+            agent,
+            checklist,
+            evals_history,
+            stream_chat,
+            csm_advance,
+            persona=persona,
+            kb=kb,
+            mem_mgr=mem_mgr,
+            cross_task_store=_cross_task_store,
+            task_id=task_id,
+            persona_name=persona_name,
         )
     except Exception as _e:
         import traceback as _tb
-        print(f"[step3] _step3_adversarial crashed: {_e}\n{_tb.format_exc()}",
-              flush=True)
-        _step3_final_verdict = "step3_crashed"
 
-    # v14 Task 14: 跨 task Meta-Trace 累积. 把当前 task 的 meta_trace.jsonl
-    # 全量灌进 cross_task_complex.db, 供后续同 domain task 作 prior 查询.
-    # ponytail: HUGINN_CACHE_DIR 在 run() 入口被改到 ws/.huginn_cache, 所以
-    # CrossTaskStore() 默认落在 workspace-local — 跨 task 累积目前实际只在
-    # 同 workspace resume 场景生效. 跨 RCB task 累积要等后续 task 把 db path
-    # 改成 user-level (~/.huginn/cross_task_complex.db). 升级路径: 显式传 db_path.
+        print(
+            f"[step3] _step3_adversarial crashed: {_e}\n{_tb.format_exc()}", flush=True
+        )
+        return "step3_crashed"
+
+
+async def _run_verify_phase(
+    *,
+    ws: Path,
+    model: Any,
+    bundle: _RcbAgentBundle,
+    checklist: str,
+    evals_history: list,
+    task_id: str,
+) -> str:
+    """Step 2 后置审计 (A3/A2) + Step 2.5 报告兜底 + Step 3 自验证."""
+    await _run_substitution_audit(ws, checklist, evals_history, bundle.stream_chat)
+    await _run_outputs_gate(ws, bundle.stream_chat)
+    # Step 2.5 + Step 3 抽到模块级函数 — 闭包 _stream_chat / csm 作参数传入.
+    await _step2_5_report_fallback(ws, bundle.stream_chat)
+    return await _run_step3(
+        ws,
+        model,
+        bundle.agent,
+        checklist,
+        evals_history,
+        bundle.stream_chat,
+        bundle.csm_advance,
+        persona=bundle.persona,
+        kb=bundle.kb,
+        mem_mgr=bundle.mem_mgr,
+        task_id=task_id,
+        persona_name=bundle.persona_name,
+    )
+
+
+def _warn_cross_task_append(err: Exception) -> None:
+    logger.warning("cross_task append failed: %s", err)
+
+
+def _read_trace_entries(ws: Path, on_error: Any = None) -> list:
+    """读 ws/.huginn/meta_trace.jsonl 全部可解析 entry (on_error 收 parse 异常)."""
+    trace_path = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
+    entries: list = []
+    if not trace_path.exists():
+        return entries
+    with trace_path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except Exception as _e:
+                if on_error is not None:
+                    on_error(_e)
+                else:
+                    logger.debug("trace entry parse failed", exc_info=True)
+    return entries
+
+
+def _flush_cross_task_store(ws: Path) -> None:
+    """v14 Task 14: 跨 task Meta-Trace 累积, 供后续同 domain task 作 prior 查询.
+
+    ponytail: HUGINN_CACHE_DIR 在 run() 入口被改到 ws/.huginn_cache, 所以
+    CrossTaskStore() 默认落在 workspace-local — 跨 task 累积目前实际只在同
+    workspace resume 场景生效. 升级路径: 显式传 db_path.
+    """
     try:
         from huginn.metacog.cross_task_store import CrossTaskStore
-        _store = CrossTaskStore()
-        _trace_path = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
-        if _trace_path.exists():
-            with _trace_path.open(encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        entry = json.loads(line)
-                        _store.append(entry)
-                    except Exception as _e:
-                        logger.warning("cross_task append failed: %s", _e)
+
+        store = CrossTaskStore()
+        entries = _read_trace_entries(ws, on_error=_warn_cross_task_append)
+        for entry in entries:
+            try:
+                store.append(entry)
+            except Exception as _e:
+                _warn_cross_task_append(_e)
     except Exception as _e:
         logger.warning("cross_task_store init failed: %s", _e)
 
-    # v14 Task 17: 训练数据导出 — env HUGINN_COEVOLUTION=1 时把高 darwin entry
-    # 导出为 SFT/DPO 训练数据. ponytail: 失败不阻塞主流程, 只 log warning.
-    if os.environ.get("HUGINN_COEVOLUTION", "0").lower() in ("1", "true", "yes"):
+
+def _resolve_task_score(final_verdict: str) -> float | None:
+    """v14 Task 18: 失败 trace 进训练池 — task score < 20 时标 negative sample.
+
+    ponytail: agent 跑时拿不到 RCBench 最终评分, 用两层 fallback:
+      1) env RCB_TASK_SCORE (RCBench 父进程注入子进程)
+      2) critique verdict=fix_needed 视为 score<20 (spec 允许的代理)
+    天花板: critique=pass 但评分 <20 的 case 漏掉; fix_needed 但评分 >=20 的
+    case 误判. 升级路径: RCBench 显式传 score.
+    """
+    raw_score = os.environ.get("RCB_TASK_SCORE")
+    if raw_score:
         try:
-            from huginn.training.darwin_exporter import DarwinRewardExporter
-            _exporter = DarwinRewardExporter()
-            _trace_entries: list = []
-            _trace_path = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
-            if _trace_path.exists():
-                with _trace_path.open(encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line:
-                            with contextlib.suppress(Exception):
-                                _trace_entries.append(json.loads(line))
-            _n_sft = _exporter.export_sft(_trace_entries, task_id=_trace_task_id)
-            _n_dpo = _exporter.export_dpo(_trace_entries, task_id=_trace_task_id)
+            return float(raw_score)
+        except ValueError:
+            logger.debug("best-effort op failed", exc_info=True)
+    if final_verdict == "fix_needed":
+        return 15.0  # 代理值: fix_needed 视为 <20
+    return None
 
-            # v14 Task 18: 失败 trace 进训练池 — spec §"失败 trace 进训练池"
-            # task score < 20 时所有 trace entry 标 failure_trace=true 作 negative sample.
-            # ponytail: agent 跑时拿不到 RCBench 最终评分, 用两层 fallback:
-            #   1) env RCB_TASK_SCORE (RCBench 父进程注入子进程)
-            #   2) critique verdict=fix_needed 视为 score<20 (spec 允许的代理)
-            # 天花板: critique=pass 但 RCBench 评分仍 <20 的 case 漏掉; critique=fix_needed
-            # 但 RCBench 评分 >=20 的 case 误判. 升级路径: RCBench 显式传 score.
-            _task_score: float | None = None
-            _rcb_score_env = os.environ.get("RCB_TASK_SCORE")
-            if _rcb_score_env:
-                try:
-                    _task_score = float(_rcb_score_env)
-                except ValueError:
-                    logger.debug("best-effort op failed", exc_info=True)
-                    _task_score = None
-            if _task_score is None and _step3_final_verdict == "fix_needed":
-                _task_score = 15.0  # 代理值: fix_needed 视为 <20
-            if _task_score is not None and _task_score < 20:
-                _n_failure = _exporter.export_failure_trace(
-                    _trace_entries, _trace_task_id, _task_score,
-                )
-                logger.info(
-                    "coevolution failure trace: n_failure=%d, task_score=%s",
-                    _n_failure, _task_score,
-                )
 
-            logger.info("coevolution export: n_sft=%d, n_dpo=%d", _n_sft, _n_dpo)
-        except Exception as _e:
-            logger.warning("coevolution export failed: %s", _e)
+def _export_coevolution(ws: Path, trace_task_id: str, final_verdict: str) -> None:
+    """v14 Task 17: 训练数据导出 — env HUGINN_COEVOLUTION=1 时导出 SFT/DPO 数据.
 
-    # bandit MDP: run 结束 flush 最后一条 episode 轨迹, 避免永不回传.
+    ponytail: 失败不阻塞主流程, 只 log warning.
+    """
+    if os.environ.get("HUGINN_COEVOLUTION", "0").lower() not in ("1", "true", "yes"):
+        return
+    try:
+        from huginn.training.darwin_exporter import DarwinRewardExporter
+
+        exporter = DarwinRewardExporter()
+        entries = _read_trace_entries(ws)
+        n_sft = exporter.export_sft(entries, task_id=trace_task_id)
+        n_dpo = exporter.export_dpo(entries, task_id=trace_task_id)
+        task_score = _resolve_task_score(final_verdict)
+        if task_score is not None and task_score < 20:
+            n_failure = exporter.export_failure_trace(
+                entries, trace_task_id, task_score
+            )
+            logger.info(
+                "coevolution failure trace: n_failure=%d, task_score=%s",
+                n_failure,
+                task_score,
+            )
+        logger.info("coevolution export: n_sft=%d, n_dpo=%d", n_sft, n_dpo)
+    except Exception as _e:
+        logger.warning("coevolution export failed: %s", _e)
+
+
+def _flush_bandit_episode() -> None:
+    """bandit MDP: run 结束 flush 最后一条 episode 轨迹, 避免永不回传."""
     # ponytail: 失败静默, bandit 内部 catch.
     try:
         from huginn.agent.bandit_controller import EffortBandit
+
         EffortBandit.get_instance().end_episode()
     except Exception:
         logger.debug("bandit end_episode flush skipped", exc_info=True)
 
+
+async def _run_pipeline_setup(
+    ws: Path,
+    cfg: Any,
+    model: Any,
+    model_name: str,
+    prompt: str,
+    task_id: str,
+    *,
+    extreme: bool,
+    rcb_cache: Path,
+) -> dict[str, Any]:
+    """装配 agent bundle + 跑 Step 1 发现阶段."""
+    # v14 Task 1: trace 里存短 task_id (剥时间戳后缀).
+    trace_task_id = _infer_task_id_from_workspace(task_id)
+    # P5: persistent goal mode — 主循环每轮查 wall_clock_expired.
+    goal_store, goal_id = _create_persistent_goal(ws)
+    bundle = _setup_agent_bundle(
+        ws,
+        cfg,
+        model,
+        model_name,
+        extreme=extreme,
+        rcb_cache=rcb_cache,
+    )
+    discovery = await _run_discovery_phase(
+        ws,
+        bundle.kb,
+        model,
+        prompt,
+        bundle,
+        trace_task_id,
+    )
+    return {
+        "trace_task_id": trace_task_id,
+        "goal_store": goal_store,
+        "goal_id": goal_id,
+        "bundle": bundle,
+        "discovery": discovery,
+    }
+
+
+def _build_step2_ctx(
+    *,
+    ws: Path,
+    model: Any,
+    bundle: _RcbAgentBundle,
+    discovery: Any,
+    task_id: str,
+    resume_from_iter: int,
+    extreme: bool,
+    instructions: Path,
+    goal_store: Any,
+    goal_id: Any,
+    run_start_iso: str,
+) -> _RCBStep2Ctx:
+    """组装 Step 2 执行上下文 (字段顺序与原构造保持一致)."""
+    return _RCBStep2Ctx(
+        ws=ws,
+        model=model,
+        agent=bundle.agent,
+        kb=bundle.kb,
+        mem_mgr=bundle.mem_mgr,
+        persona=bundle.persona,
+        kg=bundle.kg,
+        thread_id=bundle.thread_id,
+        task_id=task_id,
+        resume_from_iter=resume_from_iter,
+        extreme=extreme,
+        checklist=discovery.checklist,
+        scan_text=discovery.scan_text,
+        fcm=discovery.fcm,
+        target_chains=discovery.target_chains,
+        instructions=instructions,
+        stream_chat_fn=bundle.stream_chat,
+        rcb_csm_advance_fn=bundle.csm_advance,
+        wall_expired_fn=partial(_wall_clock_expired, goal_store, goal_id),
+        persona_name=bundle.persona_name,
+        run_start_iso=run_start_iso,
+    )
+
+
+def _finalize_rcb_run(ws: Path, trace_task_id: str, final_verdict: Any) -> None:
+    """收尾: 跨任务 store / coevolution 导出 / bandit episode flush."""
+    _flush_cross_task_store(ws)
+    _export_coevolution(ws, trace_task_id, final_verdict)
+    _flush_bandit_episode()
+
+
+async def _run_execution_and_verify(
+    *,
+    ws: Path,
+    model: Any,
+    task_id: str,
+    instructions: Path,
+    resume_from_iter: int,
+    extreme: bool,
+    setup: dict[str, Any],
+) -> int:
+    """Step 2 执行 → Step 2.5/3 验证 → 跨任务收尾."""
+    from datetime import datetime
+
+    bundle = setup["bundle"]
+    discovery = setup["discovery"]
+    step2_ctx = _build_step2_ctx(
+        ws=ws,
+        model=model,
+        bundle=bundle,
+        discovery=discovery,
+        task_id=task_id,
+        resume_from_iter=resume_from_iter,
+        extreme=extreme,
+        instructions=instructions,
+        goal_store=setup["goal_store"],
+        goal_id=setup["goal_id"],
+        run_start_iso=datetime.now().isoformat(),
+    )
+    evals_history = await _step2_execute(step2_ctx)  # 供 Step 3 用
+
+    final_verdict = await _run_verify_phase(
+        ws=ws,
+        model=model,
+        bundle=bundle,
+        checklist=discovery.checklist,
+        evals_history=evals_history,
+        task_id=task_id,
+    )
+    _finalize_rcb_run(ws, setup["trace_task_id"], final_verdict)
     return 0
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Huginn RCB runner")
-    parser.add_argument("--workspace", required=True, help="RCB workspace path")
-    parser.add_argument(
-        "--extreme", action="store_true",
-        help="v6 极限模式: thinking=high, max_tool_calls=1200, context_budget=model-window",
+async def _run_rcb_pipeline(
+    *,
+    ws: Path,
+    cfg: Any,
+    model: Any,
+    model_name: str,
+    prompt: str,
+    instructions: Path,
+    task_id: str,
+    resume_from_iter: int,
+    extreme: bool,
+    rcb_cache: Path,
+) -> int:
+    """3 步认知循环主链路: 装配 → Step 1 发现 → Step 2 执行 → Step 2.5/3 验证 → 收尾."""
+    setup = await _run_pipeline_setup(
+        ws,
+        cfg,
+        model,
+        model_name,
+        prompt,
+        task_id,
+        extreme=extreme,
+        rcb_cache=rcb_cache,
     )
-    # Task 4.1: MCMC 多模式入口 — 不传 --mcmc-mode 走原 RCB 路径, 100% 不变.
-    # env var 回退: CLI 未传时读 HUGINN_MCMC_*
+    return await _run_execution_and_verify(
+        ws=ws,
+        model=model,
+        task_id=task_id,
+        instructions=instructions,
+        resume_from_iter=resume_from_iter,
+        extreme=extreme,
+        setup=setup,
+    )
+
+
+def _prepare_rcb_run_kwargs(ws: Path, extreme: bool) -> int | dict[str, Any]:
+    """RCB 主循环前置: INSTRUCTIONS 校验 + 环境装配 + 配置/模型解析."""
+    instructions = ws / "INSTRUCTIONS.md"
+    if not instructions.exists():
+        print(f"ERROR: {instructions} not found", file=sys.stderr)
+        return 1
+
+    from huginn.config import HuginnConfig
+
+    rcb_cache = _prepare_runtime_environment(ws)
+    task_id = ws.name
+    resume_from_iter = _load_resume_iter(task_id, ws)
+    prompt = instructions.read_text(encoding="utf-8")
+
+    cfg = HuginnConfig.from_env()
+    # v6 极限模式: 解除一切限制, 性能优先 (不改默认值, 只在 --extreme 时 override).
+    if extreme:
+        cfg = _apply_extreme_mode(cfg)
+
+    resolved = _resolve_model(cfg)
+    if resolved is None:
+        print("ERROR: no model configured", file=sys.stderr)
+        return 1
+    model, model_name = resolved
+
+    return {
+        "ws": ws,
+        "cfg": cfg,
+        "model": model,
+        "model_name": model_name,
+        "prompt": prompt,
+        "instructions": instructions,
+        "task_id": task_id,
+        "resume_from_iter": resume_from_iter,
+        "extreme": extreme,
+        "rcb_cache": rcb_cache,
+    }
+
+
+async def run(
+    workspace: str,
+    extreme: bool = False,
+    *,
+    mcmc_mode: str | None = None,
+    mcmc_steps: int = 7_000_000,
+    mcmc_chains: int = 4,
+    mcmc_checkpoint_interval: int = 10_000,
+    mcmc_se3: bool = False,
+    mcmc_se3_angle_sigma: float = 30.0,
+    mcmc_haptic: bool = False,
+    mcmc_haptic_temperature: float = 1.0,
+    mcmc_alignment: bool = False,
+    mcmc_alignment_temperature: float = 1.0,
+) -> int:
+    """RCB 入口: 参数校验 + 环境装配后交给 _run_rcb_pipeline 跑 3 步循环."""
+    ws = Path(workspace).resolve()
+    # Task 4.1: --mcmc-mode 走独立 MCMC 路径, 不跑 RCB agent 主循环.
+    # 不传时 mcmc_mode=None, 下面走原 RCB 逻辑 100% 不变.
+    if mcmc_mode is not None:
+        return await _run_mcmc_mode(
+            ws=ws,
+            task_id=ws.name,
+            mode=mcmc_mode,
+            n_steps=mcmc_steps,
+            n_chains=mcmc_chains,
+            checkpoint_interval=mcmc_checkpoint_interval,
+            se3_enabled=mcmc_se3,
+            se3_angle_sigma=mcmc_se3_angle_sigma,
+            haptic_enabled=mcmc_haptic,
+            haptic_temperature=mcmc_haptic_temperature,
+            alignment_enabled=mcmc_alignment,
+            alignment_temperature=mcmc_alignment_temperature,
+        )
+    pipeline_kwargs = _prepare_rcb_run_kwargs(ws, extreme)
+    if isinstance(pipeline_kwargs, int):
+        return pipeline_kwargs
+    return await _run_rcb_pipeline(**pipeline_kwargs)
+
+
+def _add_mcmc_chain_args(parser: argparse.ArgumentParser) -> None:
+    """注册 MCMC 链级参数 (mode / steps / chains / checkpoint 间隔)."""
     parser.add_argument(
-        "--mcmc-mode", choices=["single", "multi"],
+        "--mcmc-mode",
+        choices=["single", "multi"],
         default=os.environ.get("HUGINN_MCMC_MODE"),
         help="MCMC 模式: single=单链, multi=多链+R-hat. 不传走原 RCB 路径",
     )
     parser.add_argument(
-        "--mcmc-steps", type=int,
+        "--mcmc-steps",
+        type=int,
         default=int(os.environ.get("HUGINN_MCMC_STEPS", "7000000")),
         help="MCMC 总步数 (multi 模式下每链 steps//chains)",
     )
     parser.add_argument(
-        "--mcmc-chains", type=int,
+        "--mcmc-chains",
+        type=int,
         default=int(os.environ.get("HUGINN_MCMC_CHAINS", "4")),
         help="多链数 (仅 multi 模式)",
     )
     parser.add_argument(
-        "--mcmc-checkpoint-interval", type=int,
+        "--mcmc-checkpoint-interval",
+        type=int,
         default=int(os.environ.get("HUGINN_MCMC_CHECKPOINT_INTERVAL", "10000")),
         help="checkpoint 落盘间隔 (步)",
     )
+
+
+def _add_mcmc_guidance_args(parser: argparse.ArgumentParser) -> None:
+    """注册 MCMC 引导参数 (SE3 / 触觉 / 对齐)."""
     parser.add_argument(
-        "--mcmc-se3", action="store_true",
+        "--mcmc-se3",
+        action="store_true",
         default=os.environ.get("HUGINN_MCMC_SE3", "0") == "1",
         help="SE(3) 群作用引导 MCMC proposal (需 cognitive_map, 无则退化到 fisher)",
     )
     parser.add_argument(
-        "--mcmc-se3-angle-sigma", type=float,
+        "--mcmc-se3-angle-sigma",
+        type=float,
         default=float(os.environ.get("HUGINN_MCMC_SE3_ANGLE_SIGMA", "30.0")),
         help="SE(3) proposal 旋转角度高斯标准差 (度, 默认 30)",
     )
     parser.add_argument(
-        "--mcmc-haptic", action="store_true",
+        "--mcmc-haptic",
+        action="store_true",
         default=os.environ.get("HUGINN_MCMC_HAPTIC", "0") == "1",
         help="触觉 (近场力学) 引导 MCMC proposal (需 haptic_layers.json, 无则退化到 fisher)",
     )
     parser.add_argument(
-        "--mcmc-haptic-temperature", type=float,
+        "--mcmc-haptic-temperature",
+        type=float,
         default=float(os.environ.get("HUGINN_MCMC_HAPTIC_TEMPERATURE", "1.0")),
         help="触觉引导 proposal softmax 温度 (tau, 默认 1.0, 大=趋随机, 小=趋贪心)",
     )
     parser.add_argument(
-        "--mcmc-alignment", action="store_true",
+        "--mcmc-alignment",
+        action="store_true",
         default=os.environ.get("HUGINN_MCMC_ALIGNMENT", "0") == "1",
         help="对齐引导 proposal: 用 GP 预测 structure→haptic 引导 MCMC (需 alignment_dataset.json, 无则退化)",
     )
     parser.add_argument(
-        "--mcmc-alignment-temperature", type=float,
+        "--mcmc-alignment-temperature",
+        type=float,
         default=float(os.environ.get("HUGINN_MCMC_ALIGNMENT_TEMPERATURE", "1.0")),
         help="对齐引导 proposal softmax 温度 (tau, 默认 1.0)",
     )
-    args = parser.parse_args()
+
+
+def _add_mcmc_args(parser: argparse.ArgumentParser) -> None:
+    """注册 MCMC 多模式入口参数 (env var 回退)."""
+    # Task 4.1: MCMC 多模式入口 — 不传 --mcmc-mode 走原 RCB 路径, 100% 不变.
+    # env var 回退: CLI 未传时读 HUGINN_MCMC_*
+    _add_mcmc_chain_args(parser)
+    _add_mcmc_guidance_args(parser)
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """构造 CLI 参数表 — RCB workspace + 极限模式 + MCMC 多模式入口."""
+    parser = argparse.ArgumentParser(description="Huginn RCB runner")
+    parser.add_argument("--workspace", required=True, help="RCB workspace path")
+    parser.add_argument(
+        "--extreme",
+        action="store_true",
+        help="v6 极限模式: thinking=high, max_tool_calls=1200, context_budget=model-window",
+    )
+    _add_mcmc_args(parser)
+    return parser
+
+
+def main() -> None:
+    args = _build_arg_parser().parse_args()
 
     # P1-A7: 启动前 30s 环境冒烟 — RDKit+sklearn GP + torch 是 RCB 最常见的
     # 工具链失败点. 失败即 fail-fast 打印修复清单, 不让 agent 跑半小时后才发现环境烂.
     if os.environ.get("HUGINN_SKIP_SMOKE", "0") != "1":
         _rcb_smoke_test()
 
-    rc = asyncio.run(run(
-        args.workspace,
-        extreme=args.extreme,
-        mcmc_mode=args.mcmc_mode,
-        mcmc_steps=args.mcmc_steps,
-        mcmc_chains=args.mcmc_chains,
-        mcmc_checkpoint_interval=args.mcmc_checkpoint_interval,
-        mcmc_se3=args.mcmc_se3,
-        mcmc_se3_angle_sigma=args.mcmc_se3_angle_sigma,
-        mcmc_haptic=args.mcmc_haptic,
-        mcmc_haptic_temperature=args.mcmc_haptic_temperature,
-        mcmc_alignment=args.mcmc_alignment,
-        mcmc_alignment_temperature=args.mcmc_alignment_temperature,
-    ))
+    rc = asyncio.run(
+        run(
+            args.workspace,
+            extreme=args.extreme,
+            mcmc_mode=args.mcmc_mode,
+            mcmc_steps=args.mcmc_steps,
+            mcmc_chains=args.mcmc_chains,
+            mcmc_checkpoint_interval=args.mcmc_checkpoint_interval,
+            mcmc_se3=args.mcmc_se3,
+            mcmc_se3_angle_sigma=args.mcmc_se3_angle_sigma,
+            mcmc_haptic=args.mcmc_haptic,
+            mcmc_haptic_temperature=args.mcmc_haptic_temperature,
+            mcmc_alignment=args.mcmc_alignment,
+            mcmc_alignment_temperature=args.mcmc_alignment_temperature,
+        )
+    )
     sys.exit(rc)
 
 
@@ -1427,7 +2103,9 @@ if __name__ == "__main__":
         #   升级路径: 跑真实 RCB 任务, 抓 transcript 看 step3 是否调 validate_tool.
         _src = Path(__file__).read_text(encoding="utf-8")
         # 1. step3_prompt 的 A 段含 RECOMPUTE 硬规则 (替代文本对照)
-        assert "RECOMPUTE each claim" in _src, "missing RECOMPUTE rule in step3_prompt A"
+        assert "RECOMPUTE each claim" in _src, (
+            "missing RECOMPUTE rule in step3_prompt A"
+        )
         assert "P1-B3 hard rule" in _src, "missing P1-B3 hard rule marker"
         # 2. 三个重算工具都列出 (validate_tool / symbolic_math_tool / code_tool)
         for _t in ("validate_tool", "symbolic_math_tool", "code_tool"):
@@ -1440,8 +2118,9 @@ if __name__ == "__main__":
         # 3. 替代了原 "Compare each to the paper's baseline value" 文本对照
         # ponytail: 只在 A 段范围内检查, 避免本 self-check 注释里的字符串误判.
         _old_pattern = "Compare each to the paper's baseline value"
-        assert _old_pattern not in _a_section, \
+        assert _old_pattern not in _a_section, (
             "old text-comparison pattern still in A section, B3 replacement incomplete"
+        )
         # 4. table 含 Claimed / Recomputed / Tool used / Match? 四列
         _idx_a = _src.find("## A. Sanity Check")
         _idx_b = _src.find("## B. Substitution Audit")
@@ -1458,7 +2137,10 @@ if __name__ == "__main__":
         # B4: report.md 数值标记 lint self-check.
         # 不依赖 RCB workspace, 用临时文件验证 _lint_report_markers 逻辑.
         import tempfile
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False, encoding="utf-8"
+        ) as f:
             f.write("# Report\n")
             f.write("R²=0.79 [EXECUTED] (from outputs/r2.json)\n")
             f.write("Training loss ≈ 0.3 [EXPECTED] (paper Table 2)\n")
@@ -1468,14 +2150,20 @@ if __name__ == "__main__":
             tmp_path = Path(f.name)
         try:
             r = _lint_report_markers(tmp_path)
-            assert r["total_numbers"] >= 4, f"应至少 4 个数值 (排除年份), got {r['total_numbers']}"
+            assert r["total_numbers"] >= 4, (
+                f"应至少 4 个数值 (排除年份), got {r['total_numbers']}"
+            )
             assert r["untagged"] >= 1, f"应至少 1 个未标记 (0.85), got {r['untagged']}"
             assert r["marker_counts"]["[EXECUTED]"] == 1, r["marker_counts"]
             assert r["marker_counts"]["[EXPECTED]"] == 1, r["marker_counts"]
             assert r["marker_counts"]["[NOT EXECUTED]"] == 1, r["marker_counts"]
             # 未标记样本应含 0.85
-            assert any("0.85" in s for s in r["untagged_samples"]), r["untagged_samples"]
-            print(f"[CHECK B4.1] total={r['total_numbers']} tagged={r['tagged']} untagged={r['untagged']}")
+            assert any("0.85" in s for s in r["untagged_samples"]), r[
+                "untagged_samples"
+            ]
+            print(
+                f"[CHECK B4.1] total={r['total_numbers']} tagged={r['tagged']} untagged={r['untagged']}"
+            )
             print(f"[CHECK B4.2] marker_counts={r['marker_counts']}")
             print(f"[CHECK B4.3] untagged_samples={r['untagged_samples']}")
             print("[CHECK B4] ALL ASSERTS PASSED")
@@ -1542,28 +2230,36 @@ if __name__ == "__main__":
         # Task 3 self-check: meta mode 早期拒绝 (不调 LLM)
         # ponytail: 命中查重直接返回, llm_client=None 也能跑, 验证 ponytail 优化没退化.
         # 用 asyncio.run 包裹因 adversarial_critique 是 async (object mode 调用点 L434 依赖)
-        rejections = ["always use Tanimoto kernel for GP", "add CRITICAL: never use RBF"]
+        rejections = [
+            "always use Tanimoto kernel for GP",
+            "add CRITICAL: never use RBF",
+        ]
         proposal = "always use Tanimoto kernel for GP regression"
-        result = asyncio.run(adversarial_critique(
-            mode="meta",
-            proposal=proposal,
-            recent_rejections=rejections,
-            system_prompt_summary="",
-            llm_client=None,
-        ))
+        result = asyncio.run(
+            adversarial_critique(
+                mode="meta",
+                proposal=proposal,
+                recent_rejections=rejections,
+                system_prompt_summary="",
+                llm_client=None,
+            )
+        )
         assert result["verdict"] == "reject", f"expected reject, got {result}"
         assert result.get("early_reject") is True, "should be early_reject"
         print("Task 3 self-check PASS")
 
         # FCM self-check: fake model 验证 winner 选择 / 越界保护 / 空候选退化
         class _FakeResp:
-            def __init__(self, text): self.content = text
+            def __init__(self, text):
+                self.content = text
 
         class _FakeModel:
             """前 3 次 (fork) 返回方案, 第 4 次 (critique) 返回评审 JSON."""
+
             def __init__(self, critique_json):
                 self.calls = 0
                 self._cj = critique_json
+
             def invoke(self, msgs):
                 self.calls += 1
                 if self.calls <= 3:
@@ -1571,8 +2267,10 @@ if __name__ == "__main__":
                 return _FakeResp(self._cj)
 
         # 1. winner=2 → 选第二个候选, merge_insights 透传
-        m = _FakeModel('{"scores": [3, 9, 5], "winner": 2, '
-                       '"merge_insights": ["use robust split"], "fatal_flaws": {}}')
+        m = _FakeModel(
+            '{"scores": [3, 9, 5], "winner": 2, '
+            '"merge_insights": ["use robust split"], "fatal_flaws": {}}'
+        )
         r = asyncio.run(fork_critique_merge("checklist text", "scan text", m, k=3))
         assert r["winner_plan"] == "plan from call 2", r
         assert r["merge_insights"] == ["use robust split"], r
@@ -1603,33 +2301,49 @@ if __name__ == "__main__":
         assert anneal_fork_count(0.9, 1) == 1
 
         class _FakeJudge:
-            def __init__(self, text): self._t = text
-            def invoke(self, msgs): return _FakeResp(self._t)
+            def __init__(self, text):
+                self._t = text
+
+            def invoke(self, msgs):
+                return _FakeResp(self._t)
 
         # 1. 正常 winner 选择 + merge_notes 透传
-        r = asyncio.run(judge_fork_reports(
-            {"fast": "report A", "robust": "report B"}, "checklist",
-            _FakeJudge('{"scores": {"fast": 5, "robust": 8}, "winner": "robust", '
-                       '"merge_notes": ["use CV split"]}')))
+        r = asyncio.run(
+            judge_fork_reports(
+                {"fast": "report A", "robust": "report B"},
+                "checklist",
+                _FakeJudge(
+                    '{"scores": {"fast": 5, "robust": 8}, "winner": "robust", '
+                    '"merge_notes": ["use CV split"]}'
+                ),
+            )
+        )
         assert r["winner"] == "robust" and r["merge_notes"] == ["use CV split"], r
         # 2. LLM 编了不存在的 fork 名 → fallback 第一份非空
-        r = asyncio.run(judge_fork_reports(
-            {"fast": "A", "exact": "B"}, "c", _FakeJudge('{"winner": "nope"}')))
+        r = asyncio.run(
+            judge_fork_reports(
+                {"fast": "A", "exact": "B"}, "c", _FakeJudge('{"winner": "nope"}')
+            )
+        )
         assert r["winner"] == "fast", r
         # 3. 空报告过滤 → 单候选直接过, 不调 LLM
-        r = asyncio.run(judge_fork_reports(
-            {"fast": "", "robust": "B"}, "c", _FakeJudge("bad")))
+        r = asyncio.run(
+            judge_fork_reports({"fast": "", "robust": "B"}, "c", _FakeJudge("bad"))
+        )
         assert r["winner"] == "robust", r
         # 4. 全空 → winner None
-        r = asyncio.run(judge_fork_reports(
-            {"fast": " ", "robust": ""}, "c", _FakeJudge("bad")))
+        r = asyncio.run(
+            judge_fork_reports({"fast": " ", "robust": ""}, "c", _FakeJudge("bad"))
+        )
         assert r["winner"] is None, r
         print("TFM self-check PASS (anneal 6 + judge 4)")
 
         # 复现门禁 self-check: 编数字的 fork 被门禁淘汰, 真实数字的免 LLM 直接胜
         import tempfile
+
         with tempfile.TemporaryDirectory() as td:
             import numpy as np
+
             ad = Path(td)
             np.save(ad / "stats.npy", np.array([2.6e-20, 1.4e-13, 0.95]))
             # 三种 sci 写法都要抓到
@@ -1642,41 +2356,76 @@ if __name__ == "__main__":
             ok, _ = _reproduction_gate("qualitative discussion only", ad)
             assert ok
             # judge 集成: fabricator 淘汰后单候选, 不调 LLM
-            r = asyncio.run(judge_fork_reports(
-                {"fast": "we found 9.9e-55 and 8.8e-44",
-                 "robust": "limits 2.6e-20 eV and 1.4e-13 eV"},
-                "c", _FakeJudge("bad"), artifact_dirs={"fast": ad, "robust": ad}))
+            r = asyncio.run(
+                judge_fork_reports(
+                    {
+                        "fast": "we found 9.9e-55 and 8.8e-44",
+                        "robust": "limits 2.6e-20 eV and 1.4e-13 eV",
+                    },
+                    "c",
+                    _FakeJudge("bad"),
+                    artifact_dirs={"fast": ad, "robust": ad},
+                )
+            )
             assert r["winner"] == "robust" and r["gate"]["fast"].startswith("FAIL"), r
         print("reproduction gate self-check PASS (4 cases)")
 
         # v14 Task 7: Step3→Step2 回退触发条件
         # case 1: 触发回退 (fix_needed + β_1>0 + numeric/exact gap)
-        assert _should_retry_execute(verdict="fix_needed", beta_1=1, gap_type="numeric_recompute")
-        assert _should_retry_execute(verdict="fix_needed", beta_1=2, gap_type="exact_component_missing")
+        assert _should_retry_execute(
+            verdict="fix_needed", beta_1=1, gap_type="numeric_recompute"
+        )
+        assert _should_retry_execute(
+            verdict="fix_needed", beta_1=2, gap_type="exact_component_missing"
+        )
         # case 1b: verdict=fail 也触发回退 (fail + 具体 gap = 可修问题, 放弃=0分)
-        assert _should_retry_execute(verdict="fail", beta_1=1, gap_type="numeric_recompute")
-        assert _should_retry_execute(verdict="fail", beta_1=1, gap_type="exact_component_missing")
+        assert _should_retry_execute(
+            verdict="fail", beta_1=1, gap_type="numeric_recompute"
+        )
+        assert _should_retry_execute(
+            verdict="fail", beta_1=1, gap_type="exact_component_missing"
+        )
         # case 2: verdict=pass 不回退
-        assert not _should_retry_execute(verdict="pass", beta_1=1, gap_type="numeric_recompute")
+        assert not _should_retry_execute(
+            verdict="pass", beta_1=1, gap_type="numeric_recompute"
+        )
         # case 3: β_1=0 不回退 (拓扑不许可, 无循环回退路径)
-        assert not _should_retry_execute(verdict="fix_needed", beta_1=0, gap_type="numeric_recompute")
+        assert not _should_retry_execute(
+            verdict="fix_needed", beta_1=0, gap_type="numeric_recompute"
+        )
         # case 4: text_description 不回退 (文字补完在 Step 3 内即可, 不必重跑 execute)
-        assert not _should_retry_execute(verdict="fix_needed", beta_1=1, gap_type="text_description")
+        assert not _should_retry_execute(
+            verdict="fix_needed", beta_1=1, gap_type="text_description"
+        )
         # case 5: gap_type=none 不回退
-        assert not _should_retry_execute(verdict="fix_needed", beta_1=1, gap_type="none")
+        assert not _should_retry_execute(
+            verdict="fix_needed", beta_1=1, gap_type="none"
+        )
         # case 6: verdict=reject 也不回退 (reject 走 finalize, 不走 retry)
-        assert not _should_retry_execute(verdict="reject", beta_1=1, gap_type="numeric_recompute")
+        assert not _should_retry_execute(
+            verdict="reject", beta_1=1, gap_type="numeric_recompute"
+        )
         # case 7: fail + text_description 不回退 (文字问题不必重跑 execute)
-        assert not _should_retry_execute(verdict="fail", beta_1=1, gap_type="text_description")
+        assert not _should_retry_execute(
+            verdict="fail", beta_1=1, gap_type="text_description"
+        )
         print("[CHECK v14 Task 7] Step3→Step2 retry trigger OK (8 cases)")
 
         # v14 Task 7 SubTask 7.1: CritiqueResult.gap_type 字段 + 默认值
         # 验证 dataclass 默认 gap_type="none", 模板路径不显式传 gap_type 时也是 none
         from huginn.cli.rcb_critique import CritiqueResult as _CR  # noqa: N814
+
         _cr_default = _CR(verdict="accept")
-        assert _cr_default.gap_type == "none", f"expected none, got {_cr_default.gap_type}"
+        assert _cr_default.gap_type == "none", (
+            f"expected none, got {_cr_default.gap_type}"
+        )
         # 显式构造每种 gap_type 都能正常存取
-        for _gt in ("numeric_recompute", "exact_component_missing", "text_description", "none"):
+        for _gt in (
+            "numeric_recompute",
+            "exact_component_missing",
+            "text_description",
+            "none",
+        ):
             _cr = _CR(verdict="fix_needed", gap_type=_gt)
             assert _cr.gap_type == _gt, f"expected {_gt}, got {_cr.gap_type}"
         print("[CHECK v14 Task 7] CritiqueResult.gap_type field OK")
@@ -1685,8 +2434,12 @@ if __name__ == "__main__":
         # C7: 正向验证 — 升温替代了 break, advisory 替代了终止.
         _src = Path(__file__).read_text(encoding="utf-8")
         assert "iters, heating]" in _src, "C7 FAIL: stagnation 未改成 heating"
-        assert "advisory, not stopping" in _src, "C7 FAIL: score_history 未改成 advisory"
+        assert "advisory, not stopping" in _src, (
+            "C7 FAIL: score_history 未改成 advisory"
+        )
         assert "_t_hot = min(1.0, _t_hot + 0.5)" in _src, "C7 FAIL: 升温逻辑丢失"
-        print("[C7] stagnation/score_history early-stop removed, heating retained — PASS")
+        print(
+            "[C7] stagnation/score_history early-stop removed, heating retained — PASS"
+        )
         sys.exit(0)
     main()

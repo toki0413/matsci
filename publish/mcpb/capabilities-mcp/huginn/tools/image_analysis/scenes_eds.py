@@ -1,4 +1,5 @@
 """EDS 元素 mapping — 颜色匹配 + 覆盖率 + 元素重叠分析."""
+
 from __future__ import annotations
 
 import logging
@@ -15,23 +16,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def eds_mapping(args: ImageAnalysisInput) -> ToolResult:
-    rgb = load_rgb(args.image_path)
-    H, W, _ = rgb.shape
-
-    element_colors_in = args.parameters.get("element_colors", None)
-    overlap_threshold = float(args.parameters.get("overlap_threshold", 0.30))
-    color_tolerance = float(args.parameters.get("color_tolerance", 30.0))
-
-    if element_colors_in:
-        element_colors = {
-            str(elem): parse_color(c)
-            for elem, c in element_colors_in.items()
-        }
-    else:
-        # 没给颜色就自动 k-means 兜底
-        element_colors = auto_detect_colors(rgb, k=5)
-
+def _element_stats(
+    rgb: np.ndarray,
+    element_colors: dict[str, Any],
+    h: int,
+    w: int,
+    color_tolerance: float,
+) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+    """按元素颜色生成 mask + 覆盖率/质心/散布统计."""
     element_masks: dict[str, np.ndarray] = {}
     element_stats: dict[str, Any] = {}
     for elem, target in element_colors.items():
@@ -39,7 +31,7 @@ def eds_mapping(args: ImageAnalysisInput) -> ToolResult:
         mask = dist < color_tolerance
         element_masks[elem] = mask
         n_px = int(mask.sum())
-        coverage = float(n_px / (H * W))
+        coverage = float(n_px / (h * w))
         if n_px > 0:
             ys, xs = np.where(mask)
             cx = float(xs.mean())
@@ -56,8 +48,13 @@ def eds_mapping(args: ImageAnalysisInput) -> ToolResult:
             "n_pixels": n_px,
             "hotspots": _find_hotspots(mask, top_n=3),
         }
+    return element_masks, element_stats
 
-    # 两两元素的重叠
+
+def _pairwise_overlaps(
+    element_masks: dict[str, np.ndarray], overlap_threshold: float
+) -> dict[str, Any]:
+    """两两元素 mask 的 IoU, 只保留超过阈值的."""
     overlaps: dict[str, Any] = {}
     elems = list(element_masks.keys())
     for i in range(len(elems)):
@@ -73,22 +70,56 @@ def eds_mapping(args: ImageAnalysisInput) -> ToolResult:
                     "intersection_px": inter,
                     "iou": iou,
                 }
+    return overlaps
 
+
+def _eds_data(
+    h: int,
+    w: int,
+    color_tolerance: float,
+    overlap_threshold: float,
+    element_stats: dict[str, Any],
+    overlaps: dict[str, Any],
+) -> dict[str, Any]:
+    """组装 summary + measurements."""
     cov_str = ", ".join(
         f"{e}: {s['coverage_fraction'] * 100:.1f}%" for e, s in element_stats.items()
     )
     summary = f"EDS mapping: 检测到 {len(element_stats)} 种元素/相, {cov_str}"
 
-    data = {
+    return {
         "summary": summary,
         "measurements": {
-            "image_shape": [int(H), int(W)],
+            "image_shape": [int(h), int(w)],
             "color_tolerance": color_tolerance,
             "overlap_threshold": overlap_threshold,
             "elements": element_stats,
             "overlaps": overlaps,
         },
     }
+
+
+def eds_mapping(args: ImageAnalysisInput) -> ToolResult:
+    rgb = load_rgb(args.image_path)
+    h, w, _ = rgb.shape
+
+    element_colors_in = args.parameters.get("element_colors", None)
+    overlap_threshold = float(args.parameters.get("overlap_threshold", 0.30))
+    color_tolerance = float(args.parameters.get("color_tolerance", 30.0))
+
+    if element_colors_in:
+        element_colors = {
+            str(elem): parse_color(c) for elem, c in element_colors_in.items()
+        }
+    else:
+        # 没给颜色就自动 k-means 兜底
+        element_colors = auto_detect_colors(rgb, k=5)
+
+    element_masks, element_stats = _element_stats(
+        rgb, element_colors, h, w, color_tolerance
+    )
+    overlaps = _pairwise_overlaps(element_masks, overlap_threshold)
+    data = _eds_data(h, w, color_tolerance, overlap_threshold, element_stats, overlaps)
     return ToolResult(data=data)
 
 
@@ -127,8 +158,10 @@ def _find_hotspots(mask: np.ndarray, top_n: int = 3) -> list[dict[str, Any]]:
         area = int(counts[lbl])
         # center_of_mass 返回 (row, col) = (y, x)
         com = center_of_mass(mask, labeled, lbl)
-        out.append({
-            "centroid_px": [float(com[1]), float(com[0])],  # [x, y]
-            "area_px2": area,
-        })
+        out.append(
+            {
+                "centroid_px": [float(com[1]), float(com[0])],  # [x, y]
+                "area_px2": area,
+            }
+        )
     return out

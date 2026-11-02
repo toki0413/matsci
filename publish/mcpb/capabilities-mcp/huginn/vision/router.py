@@ -31,7 +31,7 @@ _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif"
 
 # Matches a filesystem-ish path ending in a known image extension.
 _IMAGE_PATH_RE = re.compile(
-    r'(?:[\w./\\-]+\.(?:png|jpg|jpeg|gif|webp|bmp|tiff|tif))',
+    r"(?:[\w./\\-]+\.(?:png|jpg|jpeg|gif|webp|bmp|tiff|tif))",
     re.IGNORECASE,
 )
 
@@ -89,7 +89,9 @@ def _guess_mime(path: str | Path) -> str:
     return mime or "image/png"
 
 
-def build_multimodal_content(message: str, image_path: str | Path | bytes) -> list[dict]:
+def build_multimodal_content(
+    message: str, image_path: str | Path | bytes
+) -> list[dict]:
     """Build a LangChain/OpenAI multimodal content list from text + image.
 
     Returns a list of content blocks:
@@ -102,10 +104,12 @@ def build_multimodal_content(message: str, image_path: str | Path | bytes) -> li
 
     if isinstance(image_path, bytes | bytearray):
         b64 = base64.b64encode(image_path).decode("ascii")
-        blocks.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:image/png;base64,{b64}"},
-        })
+        blocks.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{b64}"},
+            }
+        )
         return blocks
 
     p = Path(image_path)
@@ -115,10 +119,12 @@ def build_multimodal_content(message: str, image_path: str | Path | bytes) -> li
     raw = p.read_bytes()
     b64 = base64.b64encode(raw).decode("ascii")
     mime = _guess_mime(p)
-    blocks.append({
-        "type": "image_url",
-        "image_url": {"url": f"data:{mime};base64,{b64}"},
-    })
+    blocks.append(
+        {
+            "type": "image_url",
+            "image_url": {"url": f"data:{mime};base64,{b64}"},
+        }
+    )
     return blocks
 
 
@@ -150,35 +156,10 @@ def _cv_pre_analyze(image_path: str | Path | bytes) -> str:
         p5, p50, p95 = np.percentile(arr, [5, 50, 95])
 
         # Edge density — rough indicator of "busy" vs "smooth" image
-        edges = 0
-        try:
-            from scipy.ndimage import sobel
-            sx = sobel(arr, axis=0)
-            sy = sobel(arr, axis=1)
-            edges = int((np.hypot(sx, sy) > 50).sum())
-            total = arr.shape[0] * arr.shape[1]
-            edge_density = edges / total if total > 0 else 0.0
-        except Exception:
-            edge_density = -1.0
+        edge_density = _cv_edge_density(np, arr)
 
         # Guess image type from extension + stats
-        ext = p.suffix.lower()
-        name_hint = p.stem.lower()
-        img_type = "unknown"
-        if any(kw in name_hint for kw in ("sem", "sem_photo", "fesem")):
-            img_type = "SEM"
-        elif any(kw in name_hint for kw in ("tem", "hrtem", "stem")):
-            img_type = "TEM"
-        elif any(kw in name_hint for kw in ("xrd", "diffraction")):
-            img_type = "XRD_plot"
-        elif any(kw in name_hint for kw in ("eds", "mapping")):
-            img_type = "EDS_map"
-        elif ext in (".csv", ".txt"):
-            img_type = "tabular_data"
-        elif edge_density > 0 and edge_density < 0.05:
-            img_type = "likely_microscopy_smooth"
-        elif edge_density > 0.15:
-            img_type = "likely_microscopy_busy_or_plot"
+        img_type = _guess_image_type(p, edge_density)
 
         lines = [
             f"[CV pre-analysis] image_type_guess={img_type}",
@@ -186,14 +167,52 @@ def _cv_pre_analyze(image_path: str | Path | bytes) -> str:
             f"std={std_i:.1f}, percentiles(5/50/95)={p5:.0f}/{p50:.0f}/{p95:.0f}",
         ]
         if edge_density >= 0:
-            lines.append(f"  edge_density={edge_density:.4f} "
-                         f"({'busy' if edge_density > 0.1 else 'smooth'})")
+            lines.append(
+                f"  edge_density={edge_density:.4f} "
+                f"({'busy' if edge_density > 0.1 else 'smooth'})"
+            )
         lines.append(
             "  Use image_analysis_tool for detailed SEM/TEM/EDS/particle metrics."
         )
         return "\n".join(lines)
     except Exception as exc:
         return f"[CV pre-analysis failed: {exc}]"
+
+
+def _cv_edge_density(np: Any, arr: Any) -> float:
+    edges = 0
+    try:
+        from scipy.ndimage import sobel
+
+        sx = sobel(arr, axis=0)
+        sy = sobel(arr, axis=1)
+        edges = int((np.hypot(sx, sy) > 50).sum())
+        total = arr.shape[0] * arr.shape[1]
+        edge_density = edges / total if total > 0 else 0.0
+    except Exception:
+        edge_density = -1.0
+    return edge_density
+
+
+def _guess_image_type(p: Path, edge_density: float) -> str:
+    ext = p.suffix.lower()
+    name_hint = p.stem.lower()
+    img_type = "unknown"
+    if any(kw in name_hint for kw in ("sem", "sem_photo", "fesem")):
+        img_type = "SEM"
+    elif any(kw in name_hint for kw in ("tem", "hrtem", "stem")):
+        img_type = "TEM"
+    elif any(kw in name_hint for kw in ("xrd", "diffraction")):
+        img_type = "XRD_plot"
+    elif any(kw in name_hint for kw in ("eds", "mapping")):
+        img_type = "EDS_map"
+    elif ext in (".csv", ".txt"):
+        img_type = "tabular_data"
+    elif edge_density > 0 and edge_density < 0.05:
+        img_type = "likely_microscopy_smooth"
+    elif edge_density > 0.15:
+        img_type = "likely_microscopy_busy_or_plot"
+    return img_type
 
 
 def _cv_qa_diagnostic(image_path: str | Path | bytes) -> str:
@@ -254,6 +273,7 @@ def _microscopy_quant_summary(image_path: str | Path | bytes, image_type: str) -
 
     try:
         from huginn.tools.image_analysis.tool import ImageAnalysisInput
+
         scene_name = action
         if scene_name == "sem_analysis":
             from huginn.tools.image_analysis.scenes_sem import sem_analysis as scene
@@ -268,6 +288,7 @@ def _microscopy_quant_summary(image_path: str | Path | bytes, image_type: str) -
             if summary:
                 return f"[{scene_name} 定量] {summary}"
             import json as _json
+
             return f"[{scene_name} 定量] {_json.dumps(res.data, ensure_ascii=False, default=str)[:400]}"
     except Exception:
         logger.debug("microscopy quant summary failed, non-fatal", exc_info=True)
@@ -295,82 +316,10 @@ def build_cv_context(
     if cv_hints:
         parts.append(cv_hints)
 
-    # ── 自研模态路由 (modality_router): 动态分辨率 + 模态路由 ──
-    # 把"该不该降采样 / 该用哪个 image_analysis action"的机读提示注入文本通道,
-    # 让 agent 知道如何最高效地分析这张图. best-effort, 失败不影响主链路.
-    try:
-        from huginn.vision.modality_router import modality_routing_hint
-
-        _mm_hint = modality_routing_hint(image_path)
-        if _mm_hint:
-            parts.append(_mm_hint)
-    except Exception:
-        logger.debug("modality_router hint failed, non-fatal", exc_info=True)
-
-    # ── Visual→Symbols: 单次提取, 文本 + 结构化复用同一份 chart_data ──
-    # 之前 visual_to_symbols 和 visual_to_symbols_structured 各自跑一遍
-    # extract_chart_data, 同一张图被算两次. 这里抽出来跑一次, 两个格式共用.
-    try:
-        from huginn.vision.symbol_encoder import (
-            _format_symbols_structured,
-            _format_symbols_text,
-            extract_chart_data,
-        )
-        chart_data = extract_chart_data(image_path)
-        if "error" not in chart_data:
-            # 文本部分 (去掉 _cv_pre_analyze 已输出的重复行)
-            symbol_text = _format_symbols_text(chart_data)
-            new_lines = [
-                _l for _l in symbol_text.split("\n")
-                if _l and not _l.startswith("[CV pre-analysis]")
-            ]
-            if new_lines:
-                parts.append("\n".join(new_lines))
-            # 结构化部分: agent 能精确引用字段 + 读 self_check 判断可信度
-            structured = _format_symbols_structured(chart_data)
-            if structured and "error" not in structured:
-                import json as _json
-                parts.append(
-                    "[VISUAL→SYMBOLS structured]\n"
-                    + _json.dumps(structured, ensure_ascii=False, default=str)
-                )
-            # 显微图定量: SEM/TEM/EDS 调对应 action, 把 measurement 压成一行摘要
-            _img_type = chart_data.get("image_type", "")
-            _quant = _microscopy_quant_summary(image_path, _img_type)
-            if _quant:
-                parts.append(_quant)
-    except Exception:
-        logger.debug("visual_to_symbols failed, graceful degradation", exc_info=True)
-
-    # ── visual memory: similar-image search ──
-    if visual_encoder is not None and image_index is not None:
-        try:
-            results = image_index.search(image_path, top_k=5)
-        except Exception:
-            results = []
-
-        if results:
-            paths = [r.get("path", "?") for r in results]
-            parts.append(f"Found {len(results)} similar indexed images: {', '.join(paths)}")
-            best = results[0]
-            meta = best.get("metadata", {})
-            sim = best.get("similarity", 0.0)
-            meta_str = ", ".join(f"{k}={v}" for k, v in meta.items()) if meta else "no metadata"
-            parts.append(
-                f"Closest match: {best.get('path', '?')} "
-                f"(similarity={sim:.3f}, {meta_str})"
-            )
-        else:
-            parts.append("No similar indexed images found in visual memory.")
-
-    # ── encoder health check ──
-    if visual_encoder is not None:
-        avail = getattr(visual_encoder, "available", False)
-        backend = getattr(visual_encoder, "backend_name", None)
-        if avail:
-            parts.append(f"Visual encoder active (backend={backend}).")
-        else:
-            parts.append("Visual encoder unavailable — image_analysis_tool recommended.")
+    _append_modality_hint(parts, image_path)
+    _append_visual_symbols(parts, image_path)
+    _append_visual_memory(parts, image_path, visual_encoder, image_index)
+    _append_encoder_health(parts, visual_encoder)
 
     # ── always: tell the LLM an image was attached ──
     label = "<bytes>" if isinstance(image_path, bytes | bytearray) else str(image_path)
@@ -389,6 +338,107 @@ def build_cv_context(
     )
 
     return "\n".join(parts)
+
+
+def _append_modality_hint(parts: list[str], image_path: str | Path | bytes) -> None:
+    # ── 自研模态路由 (modality_router): 动态分辨率 + 模态路由 ──
+    # 把"该不该降采样 / 该用哪个 image_analysis action"的机读提示注入文本通道,
+    # 让 agent 知道如何最高效地分析这张图. best-effort, 失败不影响主链路.
+    try:
+        from huginn.vision.modality_router import modality_routing_hint
+
+        _mm_hint = modality_routing_hint(image_path)
+        if _mm_hint:
+            parts.append(_mm_hint)
+    except Exception:
+        logger.debug("modality_router hint failed, non-fatal", exc_info=True)
+
+
+def _append_visual_symbols(parts: list[str], image_path: str | Path | bytes) -> None:
+    # ── Visual→Symbols: 单次提取, 文本 + 结构化复用同一份 chart_data ──
+    # 之前 visual_to_symbols 和 visual_to_symbols_structured 各自跑一遍
+    # extract_chart_data, 同一张图被算两次. 这里抽出来跑一次, 两个格式共用.
+    try:
+        from huginn.vision.symbol_encoder import (
+            _format_symbols_structured,
+            _format_symbols_text,
+            extract_chart_data,
+        )
+
+        chart_data = extract_chart_data(image_path)
+        if "error" not in chart_data:
+            # 文本部分 (去掉 _cv_pre_analyze 已输出的重复行)
+            symbol_text = _format_symbols_text(chart_data)
+            new_lines = [
+                _l
+                for _l in symbol_text.split("\n")
+                if _l and not _l.startswith("[CV pre-analysis]")
+            ]
+            if new_lines:
+                parts.append("\n".join(new_lines))
+            # 结构化部分: agent 能精确引用字段 + 读 self_check 判断可信度
+            structured = _format_symbols_structured(chart_data)
+            if structured and "error" not in structured:
+                import json as _json
+
+                parts.append(
+                    "[VISUAL→SYMBOLS structured]\n"
+                    + _json.dumps(structured, ensure_ascii=False, default=str)
+                )
+            # 显微图定量: SEM/TEM/EDS 调对应 action, 把 measurement 压成一行摘要
+            _img_type = chart_data.get("image_type", "")
+            _quant = _microscopy_quant_summary(image_path, _img_type)
+            if _quant:
+                parts.append(_quant)
+    except Exception:
+        logger.debug("visual_to_symbols failed, graceful degradation", exc_info=True)
+
+
+def _append_visual_memory(
+    parts: list[str],
+    image_path: str | Path | bytes,
+    visual_encoder: Any | None,
+    image_index: Any | None,
+) -> None:
+    # ── visual memory: similar-image search ──
+    if visual_encoder is not None and image_index is not None:
+        try:
+            results = image_index.search(image_path, top_k=5)
+        except Exception:
+            results = []
+
+        if results:
+            paths = [r.get("path", "?") for r in results]
+            parts.append(
+                f"Found {len(results)} similar indexed images: {', '.join(paths)}"
+            )
+            best = results[0]
+            meta = best.get("metadata", {})
+            sim = best.get("similarity", 0.0)
+            meta_str = (
+                ", ".join(f"{k}={v}" for k, v in meta.items())
+                if meta
+                else "no metadata"
+            )
+            parts.append(
+                f"Closest match: {best.get('path', '?')} "
+                f"(similarity={sim:.3f}, {meta_str})"
+            )
+        else:
+            parts.append("No similar indexed images found in visual memory.")
+
+
+def _append_encoder_health(parts: list[str], visual_encoder: Any | None) -> None:
+    # ── encoder health check ──
+    if visual_encoder is not None:
+        avail = getattr(visual_encoder, "available", False)
+        backend = getattr(visual_encoder, "backend_name", None)
+        if avail:
+            parts.append(f"Visual encoder active (backend={backend}).")
+        else:
+            parts.append(
+                "Visual encoder unavailable — image_analysis_tool recommended."
+            )
 
 
 class VisionRouter:
@@ -411,14 +461,10 @@ class VisionRouter:
         has_image = detect_image_in_message(message)
         return route_vision(model_name, has_image)
 
-    def build_context(
-        self, image_path: str | Path | bytes
-    ) -> str:
+    def build_context(self, image_path: str | Path | bytes) -> str:
         return build_cv_context(image_path, self.visual_encoder, self.image_index)
 
-    def build_content(
-        self, message: str, image_path: str | Path | bytes
-    ) -> list[dict]:
+    def build_content(self, message: str, image_path: str | Path | bytes) -> list[dict]:
         return build_multimodal_content(message, image_path)
 
     def coordinate(
@@ -444,7 +490,9 @@ class VisionRouter:
             if _mm_hint:
                 cv_hints = f"{cv_hints}\n{_mm_hint}" if cv_hints else _mm_hint
         except Exception:
-            logger.debug("modality_router coordinate hint failed, non-fatal", exc_info=True)
+            logger.debug(
+                "modality_router coordinate hint failed, non-fatal", exc_info=True
+            )
         # 批次 E: BOTH 场景给视觉 LLM 附加确定性 QA 诊断 — 视觉 LLM 既能看原图
         # 做语义级判断, 又能参考确定性质检 (blank/clipped/aspect/cluttered + 机读
         # directive) 聚焦"这张图是否值得语义解读、哪里需要修正". 失败降级不阻塞.

@@ -70,6 +70,29 @@ def _derive_self_consistent(problem: UnifiedProblem) -> dict[str, Any]:
     }
 
 
+def _derive_variational(
+    problem: UnifiedProblem, coords: list[sp.Symbol]
+) -> dict[str, Any]:
+    """Derive Euler-Lagrange equations for stationary/minimum/maximum principles."""
+    if problem.energy is None:
+        raise ValueError("Energy functional required for variational principles")
+    equations: dict[str, Any] = {}
+    for field_name, field in problem.fields.items():
+        primary = field.expr()
+        if isinstance(primary, sp.Matrix):
+            eqs = []
+            for sym in primary:
+                eqs.append(
+                    sp.Eq(_euler_lagrange(problem.energy.expression, sym, coords), 0)
+                )
+            equations[field_name] = eqs
+        else:
+            equations[field_name] = sp.Eq(
+                _euler_lagrange(problem.energy.expression, primary, coords), 0
+            )
+    return {"principle": problem.principle.value, "equations": equations}
+
+
 def derive_equations(problem: UnifiedProblem) -> dict[str, Any]:
     """Derive governing equations for a unified problem.
 
@@ -83,25 +106,7 @@ def derive_equations(problem: UnifiedProblem) -> dict[str, Any]:
         VariationalPrinciple.MINIMUM,
         VariationalPrinciple.MAXIMUM,
     }:
-        if problem.energy is None:
-            raise ValueError("Energy functional required for variational principles")
-        equations: dict[str, Any] = {}
-        for field_name, field in problem.fields.items():
-            primary = field.expr()
-            if isinstance(primary, sp.Matrix):
-                eqs = []
-                for sym in primary:
-                    eqs.append(
-                        sp.Eq(
-                            _euler_lagrange(problem.energy.expression, sym, coords), 0
-                        )
-                    )
-                equations[field_name] = eqs
-            else:
-                equations[field_name] = sp.Eq(
-                    _euler_lagrange(problem.energy.expression, primary, coords), 0
-                )
-        return {"principle": principle.value, "equations": equations}
+        return _derive_variational(problem, coords)
 
     if principle == VariationalPrinciple.HAMILTONIAN:
         if problem.energy is None:

@@ -73,11 +73,49 @@ async def execute_skill(params: dict[str, Any]) -> dict[str, Any]:
     if isinstance(result, dict) and "context" in result:
         safe_types = (str, int, float, bool, type(None), list, dict, tuple)
         result["context"] = {
-            k: v
-            for k, v in result["context"].items()
-            if isinstance(v, safe_types)
+            k: v for k, v in result["context"].items() if isinstance(v, safe_types)
         }
     return result
+
+
+async def _load_imported_skills(
+    importer: Any,
+    file: UploadFile | None,
+    path: str | None,
+    platform: str,
+) -> list[Any]:
+    """按上传文件 / 本地路径两种入口调用导入器，返回导入的技能列表。"""
+    if file is not None:
+        raw = await file.read()
+        if not raw:
+            raise HTTPException(status_code=400, detail="上传文件为空")
+        # 落临时文件再交给导入器，和 document.py 一个套路
+        tmp = Path(tempfile.gettempdir()) / f"skill_{uuid.uuid4().hex}.md"
+        try:
+            tmp.write_bytes(raw)
+            return [importer.import_file(tmp, platform)]
+        finally:
+            tmp.unlink(missing_ok=True)
+    if path:
+        p = Path(path)
+        if not p.exists():
+            raise HTTPException(status_code=404, detail=f"路径不存在: {path}")
+        if p.is_dir():
+            return importer.import_directory(p, platform)
+        return [importer.import_file(p, platform)]
+    raise HTTPException(status_code=400, detail="需要上传文件或提供 path 参数")
+
+
+def _skill_import_row(s: Any) -> dict[str, Any]:
+    """单个技能的导入结果行。"""
+    return {
+        "name": s.name,
+        "description": s.description,
+        "platform": s.metadata.get("platform", "unknown"),
+        "steps": len(s.steps),
+        "required_tools": s.required_tools,
+        "tags": s.tags,
+    }
 
 
 @router.post("/skills/import")
@@ -97,31 +135,7 @@ async def import_skill(
     from huginn.plugins.skill_importer import SkillImporter
 
     importer = SkillImporter()
-    skills = []
-
-    if file is not None:
-        raw = await file.read()
-        if not raw:
-            raise HTTPException(status_code=400, detail="上传文件为空")
-        # 落临时文件再交给导入器，和 document.py 一个套路
-        tmp = Path(tempfile.gettempdir()) / f"skill_{uuid.uuid4().hex}.md"
-        try:
-            tmp.write_bytes(raw)
-            skills = [importer.import_file(tmp, platform)]
-        finally:
-            tmp.unlink(missing_ok=True)
-    elif path:
-        p = Path(path)
-        if not p.exists():
-            raise HTTPException(status_code=404, detail=f"路径不存在: {path}")
-        if p.is_dir():
-            skills = importer.import_directory(p, platform)
-        else:
-            skills = [importer.import_file(p, platform)]
-    else:
-        raise HTTPException(
-            status_code=400, detail="需要上传文件或提供 path 参数"
-        )
+    skills = await _load_imported_skills(importer, file, path, platform)
 
     for s in skills:
         SkillRegistry.register(s)
@@ -129,15 +143,5 @@ async def import_skill(
     logger.info("从 %s 导入 %d 个技能", path or file.filename, len(skills))
     return {
         "count": len(skills),
-        "imported": [
-            {
-                "name": s.name,
-                "description": s.description,
-                "platform": s.metadata.get("platform", "unknown"),
-                "steps": len(s.steps),
-                "required_tools": s.required_tools,
-                "tags": s.tags,
-            }
-            for s in skills
-        ],
+        "imported": [_skill_import_row(s) for s in skills],
     }

@@ -14,6 +14,7 @@
 
 输出: per-question correct/total + 汇总 success_rate.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -197,7 +198,9 @@ _QUESTIONS = [
             "what are the new fractional coordinates of Si2? "
             "Answer with 3 numbers separated by spaces, e.g. '0.25 0.25 0.25'."
         ),
-        "verify": lambda ans: _check_rotated_coords(ans, "Si", axis="z", angle=180, target_idx=1),
+        "verify": lambda ans: _check_rotated_coords(
+            ans, "Si", axis="z", angle=180, target_idx=1
+        ),
     },
     {
         "id": "q3_distance_after_rot",
@@ -246,13 +249,15 @@ def _check_distance_invariance(answer: str, struct_name: str) -> bool:
         logger.debug("best-effort op failed", exc_info=True)
         return False
     from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
+
     m = StructureCognitiveMap.from_cif(_MOCK_CIFS[struct_name])
     expected = m.query_distance(0, 1)
     return abs(predicted - expected) < 0.5  # 0.5Å 容差
 
 
-def _check_rotated_coords(answer: str, struct_name: str, axis: str,
-                           angle: float, target_idx: int) -> bool:
+def _check_rotated_coords(
+    answer: str, struct_name: str, axis: str, angle: float, target_idx: int
+) -> bool:
     """检查旋转后坐标."""
     try:
         nums = [float(x) for x in answer.strip().split()]
@@ -262,6 +267,7 @@ def _check_rotated_coords(answer: str, struct_name: str, axis: str,
         logger.debug("best-effort op failed", exc_info=True)
         return False
     from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
+
     m = StructureCognitiveMap.from_cif(_MOCK_CIFS[struct_name])
     rotated = m.query_after_rotation([target_idx], axis=axis, angle=angle, degrees=True)
     expected = rotated[0]
@@ -285,6 +291,7 @@ def _check_angle_invariance(answer: str, struct_name: str) -> bool:
         return False
     # 原始角度 (Na-Cl-ThirdAtom at (1,0,0) frac)
     from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
+
     m = StructureCognitiveMap.from_cif(_MOCK_CIFS[struct_name])
     # 加一个虚拟第三原子
     np.linalg.inv(m.lattice)
@@ -302,6 +309,7 @@ def _check_supercell_distance(answer: str, struct_name: str) -> bool:
         logger.debug("best-effort op failed", exc_info=True)
         return False
     from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
+
     m = StructureCognitiveMap.from_cif(_MOCK_CIFS[struct_name])
     # 原 cell 中 Si2 距离 Si1
     d_orig = m.query_distance(0, 1)
@@ -311,6 +319,7 @@ def _check_supercell_distance(answer: str, struct_name: str) -> bool:
 
 # ── 难题 verify: 非整数旋转后坐标 / 距离 ─────────────────────────
 
+
 def _hard_map(struct_name: str):
     """用 from_coords 构造 hard structure, atom index 确定.
     ponytail: 不用 from_cif 避免 pymatgen atom 重排导致 index 错位.
@@ -318,43 +327,101 @@ def _hard_map(struct_name: str):
     import numpy as np
 
     from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
+
     lat10 = np.array([[10, 0, 0], [0, 10, 0], [0, 0, 10]], dtype=float)
     if struct_name == "CH4":
-        return StructureCognitiveMap.from_coords(
-            ["C", "H", "H", "H", "H"],
-            np.array([[5, 5, 5], [5.53, 5.53, 5.53], [5.53, 4.47, 4.47],
-                      [4.47, 5.53, 4.47], [4.47, 4.47, 5.53]]),
-            lat10,
-        )
+        return _ch4_map(StructureCognitiveMap, lat10)
     if struct_name == "C8_cube":
-        v = [(0.4, 0.4, 0.4), (0.6, 0.4, 0.4), (0.4, 0.6, 0.4), (0.6, 0.6, 0.4),
-             (0.4, 0.4, 0.6), (0.6, 0.4, 0.6), (0.4, 0.6, 0.6), (0.6, 0.6, 0.6)]
-        return StructureCognitiveMap.from_coords(
-            ["C"] * 8,
-            np.array([[x * 10 for x in c] for c in v]),
-            lat10,
-        )
+        return _c8_cube_map(StructureCognitiveMap, lat10)
     if struct_name == "water_dimer":
-        return StructureCognitiveMap.from_coords(
-            ["O", "H", "H", "O", "H", "H"],
-            np.array([[4, 5, 5], [4.5, 5.5, 5], [4.5, 4.5, 5],
-                      [6, 5, 5], [6.5, 5.5, 5], [6.5, 4.5, 5]]),
-            lat10,
-        )
+        return _water_dimer_map(StructureCognitiveMap, lat10)
     if struct_name == "C10":
-        v = [(0.3, 0.3, 0.3), (0.7, 0.3, 0.3), (0.3, 0.7, 0.3), (0.7, 0.7, 0.3),
-             (0.3, 0.3, 0.7), (0.7, 0.3, 0.7), (0.3, 0.7, 0.7), (0.7, 0.7, 0.7),
-             (0.5, 0.5, 0.5), (0.5, 0.5, 0.7)]
-        return StructureCognitiveMap.from_coords(
-            ["C"] * 10,
-            np.array([[x * 10 for x in c] for c in v]),
-            lat10,
-        )
+        return _c10_map(StructureCognitiveMap, lat10)
     raise KeyError(f"unknown hard structure: {struct_name}")
 
 
-def _check_rotated_cart_coords(answer: str, struct_name: str, atom_idx: int,
-                                axis: str, angle: float) -> bool:
+def _ch4_map(StructureCognitiveMap, lat10):
+    import numpy as np
+
+    return StructureCognitiveMap.from_coords(
+        ["C", "H", "H", "H", "H"],
+        np.array(
+            [
+                [5, 5, 5],
+                [5.53, 5.53, 5.53],
+                [5.53, 4.47, 4.47],
+                [4.47, 5.53, 4.47],
+                [4.47, 4.47, 5.53],
+            ]
+        ),
+        lat10,
+    )
+
+
+def _c8_cube_map(StructureCognitiveMap, lat10):
+    import numpy as np
+
+    v = [
+        (0.4, 0.4, 0.4),
+        (0.6, 0.4, 0.4),
+        (0.4, 0.6, 0.4),
+        (0.6, 0.6, 0.4),
+        (0.4, 0.4, 0.6),
+        (0.6, 0.4, 0.6),
+        (0.4, 0.6, 0.6),
+        (0.6, 0.6, 0.6),
+    ]
+    return StructureCognitiveMap.from_coords(
+        ["C"] * 8,
+        np.array([[x * 10 for x in c] for c in v]),
+        lat10,
+    )
+
+
+def _water_dimer_map(StructureCognitiveMap, lat10):
+    import numpy as np
+
+    return StructureCognitiveMap.from_coords(
+        ["O", "H", "H", "O", "H", "H"],
+        np.array(
+            [
+                [4, 5, 5],
+                [4.5, 5.5, 5],
+                [4.5, 4.5, 5],
+                [6, 5, 5],
+                [6.5, 5.5, 5],
+                [6.5, 4.5, 5],
+            ]
+        ),
+        lat10,
+    )
+
+
+def _c10_map(StructureCognitiveMap, lat10):
+    import numpy as np
+
+    v = [
+        (0.3, 0.3, 0.3),
+        (0.7, 0.3, 0.3),
+        (0.3, 0.7, 0.3),
+        (0.7, 0.7, 0.3),
+        (0.3, 0.3, 0.7),
+        (0.7, 0.3, 0.7),
+        (0.3, 0.7, 0.7),
+        (0.7, 0.7, 0.7),
+        (0.5, 0.5, 0.5),
+        (0.5, 0.5, 0.7),
+    ]
+    return StructureCognitiveMap.from_coords(
+        ["C"] * 10,
+        np.array([[x * 10 for x in c] for c in v]),
+        lat10,
+    )
+
+
+def _check_rotated_cart_coords(
+    answer: str, struct_name: str, atom_idx: int, axis: str, angle: float
+) -> bool:
     """验证旋转后原子 cart 坐标. 容差 0.3Å (非整数旋转容差大)."""
     try:
         nums = [float(x) for x in answer.strip().split()]
@@ -364,13 +431,21 @@ def _check_rotated_cart_coords(answer: str, struct_name: str, atom_idx: int,
         logger.debug("best-effort op failed", exc_info=True)
         return False
     m = _hard_map(struct_name)
-    expected = m.query_after_rotation([atom_idx], axis=axis, angle=angle, degrees=True)[0]
+    expected = m.query_after_rotation([atom_idx], axis=axis, angle=angle, degrees=True)[
+        0
+    ]
     return all(abs(nums[i] - expected[i]) < 0.3 for i in range(3))
 
 
-def _check_multistep_distance(answer: str, struct_name: str, axis: str,
-                                angle: float, translation: tuple[float, float, float],
-                                atom_i: int, atom_j: int) -> bool:
+def _check_multistep_distance(
+    answer: str,
+    struct_name: str,
+    axis: str,
+    angle: float,
+    translation: tuple[float, float, float],
+    atom_i: int,
+    atom_j: int,
+) -> bool:
     """多步: 旋转 → 平移 → 查距离. 距离不受平移影响 (SE(3) 等变)."""
     try:
         predicted = float(answer.strip().split()[0])
@@ -418,7 +493,9 @@ _HARD_QUESTIONS = [
             "What are the new Cartesian coordinates of atom O2 (atom index 3, originally at frac 0.6,0.5,0.5)? "
             "Answer with 3 numbers in Angstroms separated by spaces."
         ),
-        "verify": lambda ans: _check_rotated_cart_coords(ans, "water_dimer", 3, "x", 60),
+        "verify": lambda ans: _check_rotated_cart_coords(
+            ans, "water_dimer", 3, "x", 60
+        ),
     },
     {
         "id": "h4_c10_rot37_coords",
@@ -450,26 +527,7 @@ _HARD_QUESTIONS = [
 
 async def _run_agent(question: str, cif_str: str) -> str:
     """用 HuginnAgent (CodeAct + DeepSeek) 跑一道题."""
-    from huginn.agent import Agent
-    from huginn.config import HuginnConfig
-    from huginn.memory.longterm import LongTermMemory
-    from huginn.memory.manager import MemoryManager
-    from huginn.models.registry import ModelRegistry
-
-    hcfg = HuginnConfig.from_env()
-    registry = ModelRegistry.from_config(hcfg)
-    alias = registry.default_alias()
-    if alias:
-        model = registry.resolve(alias)
-    elif hcfg.provider and hcfg.provider != "default":
-        model = registry.resolve(f"{hcfg.provider}/{hcfg.model or 'auto'}")
-    else:
-        raise RuntimeError("No model configured. Set HUGINN_PROVIDER and HUGINN_API_KEY.")
-
-    mm = MemoryManager(longterm=LongTermMemory(db_path=_CACHE_DIR / "memory.db"))
-    # ponytail: kb_enabled=False 避免 ChromaDB rust backend segfault (sandbox 不能写)
-    agent = Agent(model=model, memory_manager=mm, kb_enabled=False)
-    agent.register_tools_from_registry()
+    agent = _build_agent()
 
     prompt = f"""You are given a crystal structure CIF and a 3D reasoning question.
 
@@ -486,21 +544,53 @@ Think step by step. If you have access to cognitive_map_* tools, use them to que
 End your response with a line that starts with 'ANSWER: ' followed by just the
 numeric answer (or 3 numbers separated by spaces for coordinates).
 """
-    final = ""
     try:
-        async def _collect() -> None:
-            nonlocal final
-            async for chunk in agent.chat(prompt):
-                msgs = chunk.get("messages", [])
-                if msgs:
-                    last = msgs[-1]
-                    content = getattr(last, "content", "")
-                    if content:
-                        final = str(content)
-        await asyncio.wait_for(_collect(), timeout=120)
+        return await _collect_agent_reply(agent, prompt)
     except Exception as e:
         logger.warning("agent.chat failed: %s", e)
         return ""
+
+
+def _build_agent():
+    from huginn.agent import Agent
+    from huginn.config import HuginnConfig
+    from huginn.memory.longterm import LongTermMemory
+    from huginn.memory.manager import MemoryManager
+    from huginn.models.registry import ModelRegistry
+
+    hcfg = HuginnConfig.from_env()
+    registry = ModelRegistry.from_config(hcfg)
+    alias = registry.default_alias()
+    if alias:
+        model = registry.resolve(alias)
+    elif hcfg.provider and hcfg.provider != "default":
+        model = registry.resolve(f"{hcfg.provider}/{hcfg.model or 'auto'}")
+    else:
+        raise RuntimeError(
+            "No model configured. Set HUGINN_PROVIDER and HUGINN_API_KEY."
+        )
+
+    mm = MemoryManager(longterm=LongTermMemory(db_path=_CACHE_DIR / "memory.db"))
+    # ponytail: kb_enabled=False 避免 ChromaDB rust backend segfault (sandbox 不能写)
+    agent = Agent(model=model, memory_manager=mm, kb_enabled=False)
+    agent.register_tools_from_registry()
+    return agent
+
+
+async def _collect_agent_reply(agent, prompt: str) -> str:
+    final = ""
+
+    async def _collect() -> None:
+        nonlocal final
+        async for chunk in agent.chat(prompt):
+            msgs = chunk.get("messages", [])
+            if msgs:
+                last = msgs[-1]
+                content = getattr(last, "content", "")
+                if content:
+                    final = str(content)
+
+    await asyncio.wait_for(_collect(), timeout=120)
     return final
 
 
@@ -511,7 +601,7 @@ def _extract_answer(agent_response: str) -> str:
     for line in agent_response.splitlines():
         line = line.strip()
         if line.startswith("ANSWER:"):
-            return line[len("ANSWER:"):].strip()
+            return line[len("ANSWER:") :].strip()
     # 没找到 ANSWER 标记, 取最后一行非空
     lines = [ln.strip() for ln in agent_response.splitlines() if ln.strip()]
     return lines[-1] if lines else ""
@@ -519,6 +609,39 @@ def _extract_answer(agent_response: str) -> str:
 
 async def run_baseline(n_questions: int = 5, hard: bool = False) -> dict[str, Any]:
     """跑 mini rotation baseline."""
+    flag_state, mode, questions = _prepare_run(n_questions, hard)
+
+    results: list[dict[str, Any]] = []
+
+    for q in questions:
+        cif = _MOCK_CIFS[q["structure"]]
+        print(f"[{q['id']}] structure={q['structure']}")
+        results.append(await _run_one_question(q, cif))
+
+    n = len(results)
+    n_correct = sum(1 for r in results if r.get("correct"))
+    rate = n_correct / n if n > 0 else 0.0
+    _print_summary(mode, flag_state, results, n_correct, n, rate)
+    return {
+        "flag": flag_state,
+        "mode": mode,
+        "results": results,
+        "n_correct": n_correct,
+        "n_total": n,
+        "success_rate": rate,
+        # B3: 3D 空间旋转推理 → depth 类 (PerceptionBench 分类)
+        "visual_capability_tag": "depth",
+        "visual_failure_summary": {
+            "depth": {
+                "passed": n_correct,
+                "failed": n - n_correct,
+                "unreliable": 0,
+            }
+        },
+    }
+
+
+def _prepare_run(n_questions: int, hard: bool):
     flag_state = os.environ.get("HUGINN_USE_COGNITIVE_MAP", "0")
     mode = "HARD" if hard else "EASY"
     print(f"\n=== Mini Rotation Baseline ({mode}) ===")
@@ -530,56 +653,60 @@ async def run_baseline(n_questions: int = 5, hard: bool = False) -> dict[str, An
         print(f"n_questions = {n_questions}")
         questions = _QUESTIONS[:n_questions]
     print()
+    return flag_state, mode, questions
 
-    results: list[dict[str, Any]] = []
 
-    for q in questions:
-        cif = _MOCK_CIFS[q["structure"]]
-        print(f"[{q['id']}] structure={q['structure']}")
-        try:
-            response = await _run_agent(q["question"], cif)
-            answer = _extract_answer(response)
-            correct = q["verify"](answer)
-            print(f"  agent_answer: {answer!r}")
-            print(f"  correct: {correct}")
-            print()
-            results.append({
-                "id": q["id"], "structure": q["structure"],
-                "answer": answer, "correct": correct,
-            })
-        except Exception as e:
-            print(f"  ERROR: {e}")
-            results.append({"id": q["id"], "structure": q["structure"],
-                            "answer": "", "correct": False, "error": str(e)})
+async def _run_one_question(q: dict, cif: str) -> dict[str, Any]:
+    try:
+        response = await _run_agent(q["question"], cif)
+        answer = _extract_answer(response)
+        correct = q["verify"](answer)
+        print(f"  agent_answer: {answer!r}")
+        print(f"  correct: {correct}")
+        print()
+        return {
+            "id": q["id"],
+            "structure": q["structure"],
+            "answer": answer,
+            "correct": correct,
+        }
+    except Exception as e:
+        print(f"  ERROR: {e}")
+        return {
+            "id": q["id"],
+            "structure": q["structure"],
+            "answer": "",
+            "correct": False,
+            "error": str(e),
+        }
 
-    n = len(results)
-    n_correct = sum(1 for r in results if r.get("correct"))
-    rate = n_correct / n if n > 0 else 0.0
+
+def _print_summary(
+    mode: str,
+    flag_state: str,
+    results: list[dict[str, Any]],
+    n_correct: int,
+    n: int,
+    rate: float,
+) -> None:
     print(f"=== Summary ({mode}) ===")
     print(f"HUGINN_USE_COGNITIVE_MAP={flag_state}")
     print(f"correct: {n_correct}/{n} ({rate:.1%})")
     for r in results:
         status = "OK" if r.get("correct") else "FAIL"
-        print(f"  [{status}] {r['id']}: ans={r.get('answer','')!r}")
-    return {"flag": flag_state, "mode": mode, "results": results,
-            "n_correct": n_correct, "n_total": n, "success_rate": rate,
-            # B3: 3D 空间旋转推理 → depth 类 (PerceptionBench 分类)
-            "visual_capability_tag": "depth",
-            "visual_failure_summary": {
-                "depth": {
-                    "passed": n_correct,
-                    "failed": n - n_correct,
-                    "unreliable": 0,
-                }
-            }}
+        print(f"  [{status}] {r['id']}: ans={r.get('answer', '')!r}")
 
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument("--n-questions", type=int, default=5,
-                   help="number of easy questions (1-5)")
-    p.add_argument("--hard", action="store_true",
-                   help="run hard questions (5 multi-atom non-integer rotation)")
+    p.add_argument(
+        "--n-questions", type=int, default=5, help="number of easy questions (1-5)"
+    )
+    p.add_argument(
+        "--hard",
+        action="store_true",
+        help="run hard questions (5 multi-atom non-integer rotation)",
+    )
     return p.parse_args()
 
 

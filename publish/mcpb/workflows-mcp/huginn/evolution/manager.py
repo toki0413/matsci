@@ -13,6 +13,7 @@ HUGINN_USE_EVOLUTION_MANAGER=0 或 HUGINN_DISABLE_EVOLUTION_MANAGER=1 显式关�
 
 ponytail: 单例 (跟 SkillEvolutionLayer.shared() 风格一致), 不新建引擎.
 """
+
 from __future__ import annotations
 
 import logging
@@ -53,6 +54,248 @@ class Recommendation:
     # 而非仅避开/换策略.
     revisit_world_model: list[str] = field(default_factory=list)
     rationale: str = ""
+
+
+def _validation_status_reason(validation: dict | None) -> tuple[str, str]:
+    """从 validation dict 抽 (status, reason). 多种 key 兼容."""
+    val_status = ""
+    val_reason = ""
+    if isinstance(validation, dict):
+        # 多种 key 兼容: status / tests_passed → 推断; reason / error / summary
+        val_status = validation.get("status", "")
+        if not val_status:
+            tests_passed = validation.get("tests_passed")
+            if tests_passed is False:
+                val_status = "refuted"
+            elif tests_passed is True:
+                val_status = "supported"
+        val_reason = (
+            validation.get("reason")
+            or validation.get("error")
+            or validation.get("summary")
+            or ""
+        )
+    return val_status, val_reason
+
+
+def _strategy_name(plan: dict | None) -> str:
+    """抽 plan.mode/strategy 作为 strategy 级名称."""
+    strategy_name = ""
+    if isinstance(plan, dict):
+        strategy_name = plan.get("mode") or plan.get("strategy") or ""
+    return strategy_name
+
+
+def _record_failed_directions(
+    em: EvolutionManager,
+    *,
+    hypothesis: str,
+    plan: dict | None,
+    val_reason: str,
+    run_id: str,
+    persona_id: str | None,
+    math_concept: str,
+    val_status: str,
+    gap_type: str,
+) -> str:
+    """refuted/superseded/failed 时记 hypothesis 级 + strategy 级 failed_direction."""
+    # refuted/superseded/failed 时记 failed_direction (hypothesis 级)
+    if val_status in ("refuted", "superseded", "failed"):
+        try:
+            em._failed_store.record(
+                hypothesis_text=hypothesis,
+                reason=val_reason,
+                run_id=run_id,
+                persona_id=persona_id,
+                math_concept=math_concept,
+                status=val_status,
+                gap_type=gap_type,
+            )
+        except Exception:
+            logger.warning("record failed_direction failed", exc_info=True)
+
+    # strategy 级失败: 抽 plan.mode/strategy, 单独记一条 strategy_failed
+    strategy_name = _strategy_name(plan)
+
+    if strategy_name and val_status in ("refuted", "superseded", "failed"):
+        try:
+            em._failed_store.record(
+                hypothesis_text=hypothesis,
+                reason=f"strategy {strategy_name} failed: {val_reason}",
+                run_id=run_id,
+                persona_id=persona_id,
+                math_concept=math_concept,
+                strategy_name=strategy_name,
+                status="strategy_failed",
+                gap_type=gap_type,
+            )
+        except Exception:
+            logger.warning("record strategy_failed failed", exc_info=True)
+
+    return strategy_name
+
+
+def _record_skill_evolution_failures(
+    em: EvolutionManager,
+    *,
+    hypothesis: str,
+    val_reason: str,
+    math_concept: str,
+    strategy_name: str,
+    val_status: str,
+) -> None:
+    """同步到 SkillEvolutionLayer (hypothesis / strategy 级, 不只是工具参数)."""
+    if em._se is not None and val_status in ("refuted", "superseded", "failed"):
+        try:
+            em._se.record_hypothesis_failure(
+                hypothesis_text=hypothesis,
+                reason=val_reason,
+                math_concept=math_concept,
+            )
+            if strategy_name:
+                em._se.record_strategy_failure(
+                    strategy_name=strategy_name,
+                    reason=val_reason,
+                )
+        except Exception:
+            logger.warning("SkillEvolutionLayer record failed", exc_info=True)
+
+
+def _record_harness_gate(hypothesis: str, strategy_name: str, val_status: str) -> None:
+    """HarnessDev 结论④ 接线: 把真实 outcome 喂进 OOD holdout / significance 门控.
+
+    之前 record_outcome/record_pair 在生产零调用, 门控存储恒空、恒 advisory.
+    这里在单步 validation 有明确 supported/refuted 信号时, 记一条
+    (config=strategy|candidate, task=hypothesis, score=1.0/0.0). fail-open:
+    任何异常吞掉不阻断; 由常量门开关默认关 ⇒ 不开不影响现有行为.
+    """
+    if not (_record_harness_gates_enabled() and strategy_name and val_status):
+        return
+    try:
+        from huginn.harness.ood_holdout import OODHoldoutValidator
+
+        cfg = f"strategy:{strategy_name}"
+        score = 1.0 if val_status in ("supported",) else 0.0
+        OODHoldoutValidator.get_instance().record_outcome(
+            config_id=cfg,
+            task_id=hypothesis,
+            score=score,
+        )
+    except Exception:
+        logger.debug("harness gate record failed-open", exc_info=True)
+
+
+def _distill_persona_failures(mm: object, records: list, written: list[str]) -> None:
+    """按 (persona_id, math_concept) 分组, 找 ≥3 次失败的 → avoid principle."""
+    # 按 (persona_id, math_concept) 分组, 找 ≥3 次失败的
+    groups: dict[tuple[str, str], list] = defaultdict(list)
+    for r in records:
+        key = (r.persona_id or "", r.math_concept or "")
+        groups[key].append(r)
+    for (pid, mc), recs in groups.items():
+        if len(recs) < 3:
+            continue
+        # ponytail: 不做"连续"严格判定 (没时间序), 用 count≥3 近似.
+        # 升级路径: 按 created_at 排序后验连续 3 次.
+        principle = (
+            f"avoid persona {pid or 'default'} for math concept "
+            f"{mc or 'unknown'} (3+ failures)"
+        )
+        try:
+            from huginn.memory.typing import remember_typed
+
+            remember_typed(
+                mm,
+                content=principle,
+                memory_type="stable_principle",
+                persona_id=pid or None,
+                status="avoid",
+                importance=0.8,
+                tier="long",
+                source="evolution:distill",
+            )
+            written.append(principle)
+        except Exception:
+            logger.warning("distill stable_principle write failed", exc_info=True)
+
+
+def _distill_environment_gaps(mm: object, records: list, written: list[str]) -> None:
+    """认知更新通道 (Physical RSI): 连续 3 次同 (persona, math_concept) 的
+    environment_gap → 写 "revise world model" STABLE_PRINCIPLE
+    (status="environment_gap"). 告诉 evolve 要修订对域的模型/假设,
+    而非只换策略.
+    """
+    env_groups: dict[tuple[str, str], list] = defaultdict(list)
+    for r in records:
+        if r.gap_type == "environment_gap":
+            key = (r.persona_id or "", r.math_concept or "")
+            env_groups[key].append(r)
+    for (pid, mc), recs in env_groups.items():
+        if len(recs) < 3:
+            continue
+        principle = (
+            f"revise world model / domain assumption for math concept "
+            f"{mc or 'unknown'} (3+ environment gaps)"
+        )
+        try:
+            from huginn.memory.typing import remember_typed
+
+            remember_typed(
+                mm,
+                content=principle,
+                memory_type="stable_principle",
+                persona_id=pid or None,
+                status="environment_gap",
+                importance=0.8,
+                tier="long",
+                source="evolution:distill",
+            )
+            written.append(principle)
+        except Exception:
+            logger.warning("distill environment_gap write failed", exc_info=True)
+
+
+def _recommend_avoid(failed_store: object) -> list[str]:
+    """最近 5 条 failed_direction (跨 session 可恢复)."""
+    avoid: list[str] = []
+    try:
+        records = failed_store.query(limit=5)
+        avoid = [r.hypothesis_text for r in records if r.hypothesis_text]
+    except Exception:
+        logger.warning("recommend avoid query failed", exc_info=True)
+    return avoid
+
+
+def _recommend_revisit(failed_store: object) -> list[str]:
+    """认知更新通道: 环境缺口方向单独列出, 让 hypothesis loop 修订对域的
+    模型/假设, 而非仅避开. 与 avoid_directions 重叠但语义不同.
+    """
+    revisit: list[str] = []
+    try:
+        env_records = failed_store.query(limit=5, gap_type="environment_gap")
+        revisit = [r.hypothesis_text for r in env_records if r.hypothesis_text]
+    except Exception:
+        logger.warning("recommend revisit query failed", exc_info=True)
+    return revisit
+
+
+def _recommend_prefer(mm: object) -> list[str]:
+    """从 STABLE_PRINCIPLE status="prefer" 取 (当前 distill 只写 avoid)."""
+    prefer: list[str] = []
+    try:
+        if hasattr(mm, "recall_typed"):
+            from huginn.memory.typing import recall_typed
+
+            principles = recall_typed(
+                mm,
+                memory_type="stable_principle",
+                status="prefer",
+                limit=3,
+            )
+            prefer = [p.get("content", "") for p in principles if p.get("content")]
+    except Exception:
+        logger.warning("recommend prefer query failed", exc_info=True)
+    return prefer
 
 
 class EvolutionManager:
@@ -112,93 +355,31 @@ class EvolutionManager:
             logger.warning("EvolutionManager: no memory_manager, skip record_outcome")
             return
 
-        val_status = ""
-        val_reason = ""
-        if isinstance(validation, dict):
-            # 多种 key 兼容: status / tests_passed → 推断; reason / error / summary
-            val_status = validation.get("status", "")
-            if not val_status:
-                tests_passed = validation.get("tests_passed")
-                if tests_passed is False:
-                    val_status = "refuted"
-                elif tests_passed is True:
-                    val_status = "supported"
-            val_reason = (
-                validation.get("reason")
-                or validation.get("error")
-                or validation.get("summary")
-                or ""
-            )
+        val_status, val_reason = _validation_status_reason(validation)
 
-        # refuted/superseded/failed 时记 failed_direction (hypothesis 级)
-        if val_status in ("refuted", "superseded", "failed"):
-            try:
-                self._failed_store.record(
-                    hypothesis_text=hypothesis,
-                    reason=val_reason,
-                    run_id=run_id,
-                    persona_id=persona_id,
-                    math_concept=math_concept,
-                    status=val_status,
-                    gap_type=gap_type,
-                )
-            except Exception:
-                logger.warning("record failed_direction failed", exc_info=True)
-
-        # strategy 级失败: 抽 plan.mode/strategy, 单独记一条 strategy_failed
-        strategy_name = ""
-        if isinstance(plan, dict):
-            strategy_name = plan.get("mode") or plan.get("strategy") or ""
-
-        if strategy_name and val_status in ("refuted", "superseded", "failed"):
-            try:
-                self._failed_store.record(
-                    hypothesis_text=hypothesis,
-                    reason=f"strategy {strategy_name} failed: {val_reason}",
-                    run_id=run_id,
-                    persona_id=persona_id,
-                    math_concept=math_concept,
-                    strategy_name=strategy_name,
-                    status="strategy_failed",
-                    gap_type=gap_type,
-                )
-            except Exception:
-                logger.warning("record strategy_failed failed", exc_info=True)
+        strategy_name = _record_failed_directions(
+            self,
+            hypothesis=hypothesis,
+            plan=plan,
+            val_reason=val_reason,
+            run_id=run_id,
+            persona_id=persona_id,
+            math_concept=math_concept,
+            val_status=val_status,
+            gap_type=gap_type,
+        )
 
         # 同步到 SkillEvolutionLayer (hypothesis / strategy 级, 不只是工具参数)
-        if self._se is not None and val_status in ("refuted", "superseded", "failed"):
-            try:
-                self._se.record_hypothesis_failure(
-                    hypothesis_text=hypothesis,
-                    reason=val_reason,
-                    math_concept=math_concept,
-                )
-                if strategy_name:
-                    self._se.record_strategy_failure(
-                        strategy_name=strategy_name,
-                        reason=val_reason,
-                    )
-            except Exception:
-                logger.warning("SkillEvolutionLayer record failed", exc_info=True)
+        _record_skill_evolution_failures(
+            self,
+            hypothesis=hypothesis,
+            val_reason=val_reason,
+            math_concept=math_concept,
+            strategy_name=strategy_name,
+            val_status=val_status,
+        )
 
-        # HarnessDev 结论④ 接线: 把真实 outcome 喂进 OOD holdout / significance 门控.
-        # 之前 record_outcome/record_pair 在生产零调用, 门控存储恒空、恒 advisory.
-        # 这里在单步 validation 有明确 supported/refuted 信号时, 记一条
-        # (config=strategy|candidate, task=hypothesis, score=1.0/0.0). fail-open:
-        # 任何异常吞掉不阻断; 由常量门开关默认关 ⇒ 不开不影响现有行为.
-        if _record_harness_gates_enabled() and strategy_name and val_status:
-            try:
-                from huginn.harness.ood_holdout import OODHoldoutValidator
-
-                cfg = f"strategy:{strategy_name}"
-                score = 1.0 if val_status in ("supported",) else 0.0
-                OODHoldoutValidator.get_instance().record_outcome(
-                    config_id=cfg,
-                    task_id=hypothesis,
-                    score=score,
-                )
-            except Exception:
-                logger.debug("harness gate record failed-open", exc_info=True)
+        _record_harness_gate(hypothesis, strategy_name, val_status)
 
     def distill(self, run_id: str | None = None) -> list[str]:
         """蒸馏 STABLE_PRINCIPLE. 返回写入的 principle 文本列表.
@@ -221,69 +402,13 @@ class EvolutionManager:
         written: list[str] = []
         try:
             records = self._failed_store.query(limit=20)
-            # 按 (persona_id, math_concept) 分组, 找 ≥3 次失败的
-            groups: dict[tuple[str, str], list] = defaultdict(list)
-            for r in records:
-                key = (r.persona_id or "", r.math_concept or "")
-                groups[key].append(r)
-            for (pid, mc), recs in groups.items():
-                if len(recs) < 3:
-                    continue
-                # ponytail: 不做"连续"严格判定 (没时间序), 用 count≥3 近似.
-                # 升级路径: 按 created_at 排序后验连续 3 次.
-                principle = (
-                    f"avoid persona {pid or 'default'} for math concept "
-                    f"{mc or 'unknown'} (3+ failures)"
-                )
-                try:
-                    from huginn.memory.typing import remember_typed
-
-                    remember_typed(
-                        self._mm,
-                        content=principle,
-                        memory_type="stable_principle",
-                        persona_id=pid or None,
-                        status="avoid",
-                        importance=0.8,
-                        tier="long",
-                        source="evolution:distill",
-                    )
-                    written.append(principle)
-                except Exception:
-                    logger.warning("distill stable_principle write failed", exc_info=True)
+            _distill_persona_failures(self._mm, records, written)
 
             # 认知更新通道 (Physical RSI): 连续 3 次同 (persona, math_concept) 的
             # environment_gap → 写 "revise world model" STABLE_PRINCIPLE
             # (status="environment_gap"). 告诉 evolve 要修订对域的模型/假设,
             # 而非只换策略.
-            env_groups: dict[tuple[str, str], list] = defaultdict(list)
-            for r in records:
-                if r.gap_type == "environment_gap":
-                    key = (r.persona_id or "", r.math_concept or "")
-                    env_groups[key].append(r)
-            for (pid, mc), recs in env_groups.items():
-                if len(recs) < 3:
-                    continue
-                principle = (
-                    f"revise world model / domain assumption for math concept "
-                    f"{mc or 'unknown'} (3+ environment gaps)"
-                )
-                try:
-                    from huginn.memory.typing import remember_typed
-
-                    remember_typed(
-                        self._mm,
-                        content=principle,
-                        memory_type="stable_principle",
-                        persona_id=pid or None,
-                        status="environment_gap",
-                        importance=0.8,
-                        tier="long",
-                        source="evolution:distill",
-                    )
-                    written.append(principle)
-                except Exception:
-                    logger.warning("distill environment_gap write failed", exc_info=True)
+            _distill_environment_gaps(self._mm, records, written)
         except Exception:
             logger.warning("distill failed", exc_info=True)
         return written
@@ -298,40 +423,13 @@ class EvolutionManager:
         if not _use_evolution_manager() or self._failed_store is None:
             return Recommendation(rationale="flag off or no memory_manager")
 
-        avoid: list[str] = []
-        try:
-            records = self._failed_store.query(limit=5)
-            avoid = [r.hypothesis_text for r in records if r.hypothesis_text]
-        except Exception:
-            logger.warning("recommend avoid query failed", exc_info=True)
+        avoid = _recommend_avoid(self._failed_store)
 
         # 认知更新通道: 环境缺口方向单独列出, 让 hypothesis loop 修订对域的
         # 模型/假设, 而非仅避开. 与 avoid_directions 重叠但语义不同.
-        revisit: list[str] = []
-        try:
-            env_records = self._failed_store.query(
-                limit=5, gap_type="environment_gap"
-            )
-            revisit = [r.hypothesis_text for r in env_records if r.hypothesis_text]
-        except Exception:
-            logger.warning("recommend revisit query failed", exc_info=True)
+        revisit = _recommend_revisit(self._failed_store)
 
-        prefer: list[str] = []
-        try:
-            if hasattr(self._mm, "recall_typed"):
-                from huginn.memory.typing import recall_typed
-
-                principles = recall_typed(
-                    self._mm,
-                    memory_type="stable_principle",
-                    status="prefer",
-                    limit=3,
-                )
-                prefer = [
-                    p.get("content", "") for p in principles if p.get("content")
-                ]
-        except Exception:
-            logger.warning("recommend prefer query failed", exc_info=True)
+        prefer = _recommend_prefer(self._mm)
 
         rationale = (
             f"avoid {len(avoid)} failed directions, "
@@ -349,19 +447,8 @@ class EvolutionManager:
 # ── selfcheck ─────────────────────────────────────────────────────────────
 # 3 场景: flag off no-op / record_outcome + recommend 闭环 / distill 3+ 触发.
 
-def _selfcheck() -> None:
-    import shutil
-    import sys
-    import tempfile
-    from pathlib import Path
 
-    _agent_root = Path(__file__).resolve().parents[2]
-    if str(_agent_root) not in sys.path:
-        sys.path.insert(0, str(_agent_root))
-
-    from huginn.memory.longterm import LongTermMemory
-    from huginn.memory.manager import MemoryManager
-
+def _selfcheck_scenario_flag_off() -> None:
     # 场景 1: flag off → record_outcome / distill / recommend 全 no-op
     os.environ.pop(_FLAG, None)
     EvolutionManager._reset_for_test()
@@ -374,8 +461,14 @@ def _selfcheck() -> None:
     assert "flag off" in rec.rationale, rec.rationale
     print("1. flag off no-op OK")
 
+
+def _selfcheck_scenario_roundtrip(tmpdir: str) -> EvolutionManager:
+    from pathlib import Path
+
+    from huginn.memory.longterm import LongTermMemory
+    from huginn.memory.manager import MemoryManager
+
     # 场景 2: flag on → record_outcome 写 failed_direction, recommend 查到
-    tmpdir = tempfile.mkdtemp(prefix="huginn_em_selfcheck_")
     db_path = Path(tmpdir) / "memory.db"
     ltm = LongTermMemory(db_path=str(db_path), enable_semantic=False)
     mm = MemoryManager(longterm=ltm)
@@ -392,10 +485,15 @@ def _selfcheck() -> None:
         math_concept="DFT-PZ LDA gap underestimation",
     )
     rec = em.recommend()
-    assert rec.avoid_directions, f"expected avoid_directions, got {rec.avoid_directions}"
+    assert rec.avoid_directions, (
+        f"expected avoid_directions, got {rec.avoid_directions}"
+    )
     assert any("GaN gap" in a for a in rec.avoid_directions), rec.avoid_directions
     print("2. record_outcome + recommend round-trip OK")
+    return em
 
+
+def _selfcheck_scenario_distill(em: EvolutionManager) -> None:
     # 场景 3: distill — 连续 3 次同 persona+math_concept 失败 → STABLE_PRINCIPLE
     for i in range(2):
         em.record_outcome(
@@ -403,7 +501,7 @@ def _selfcheck() -> None:
             plan={"mode": "lda_direct"},
             validation={"status": "refuted", "reason": f"fail {i}"},
             persona_id="dft_expert",
-            run_id=f"run_{i+2}",
+            run_id=f"run_{i + 2}",
             math_concept="DFT-PZ LDA gap underestimation",
         )
     principles = em.distill()
@@ -411,6 +509,8 @@ def _selfcheck() -> None:
     assert any("avoid persona dft_expert" in p for p in principles), principles
     print("3. distill 3+ failures → STABLE_PRINCIPLE OK")
 
+
+def _selfcheck_scenario_env_gap(em: EvolutionManager) -> None:
     # 场景 4: 认知更新通道 — 3 次 environment_gap → revise world model principle
     #         + recommend 暴露 revisit_world_model
     for i in range(3):
@@ -428,13 +528,31 @@ def _selfcheck() -> None:
             gap_type="environment_gap",
         )
     env_principles = em.distill()
-    assert any(
-        "revise world model" in p for p in env_principles
-    ), env_principles
+    assert any("revise world model" in p for p in env_principles), env_principles
     rec4 = em.recommend()
     assert rec4.revisit_world_model, rec4.revisit_world_model
-    assert any("env gap" in d for d in rec4.revisit_world_model), rec4.revisit_world_model
+    assert any("env gap" in d for d in rec4.revisit_world_model), (
+        rec4.revisit_world_model
+    )
     print("4. environment_gap → revise-world-model + revisit_world_model OK")
+
+
+def _selfcheck() -> None:
+    import shutil
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    _agent_root = Path(__file__).resolve().parents[2]
+    if str(_agent_root) not in sys.path:
+        sys.path.insert(0, str(_agent_root))
+
+    _selfcheck_scenario_flag_off()
+
+    tmpdir = tempfile.mkdtemp(prefix="huginn_em_selfcheck_")
+    em = _selfcheck_scenario_roundtrip(tmpdir)
+    _selfcheck_scenario_distill(em)
+    _selfcheck_scenario_env_gap(em)
 
     # 清理
     os.environ.pop(_FLAG, None)

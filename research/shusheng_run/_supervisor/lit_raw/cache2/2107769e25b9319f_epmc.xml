@@ -1,0 +1,572 @@
+
+<!DOCTYPE article
+  PUBLIC "-//NLM//DTD JATS (Z39.96) Journal Archiving and Interchange DTD with MathML3 v1.4 20241031//EN" "JATS-archivearticle1-4-mathml3.dtd">
+<article xml:lang="en" article-type="research-article" dtd-version="1.4"><processing-meta base-tagset="archiving" mathml-version="3.0" table-model="xhtml" tagset-family="jats"><restricted-by>pmc</restricted-by></processing-meta><front><journal-meta><journal-id journal-id-type="nlm-ta">RSC Adv</journal-id><journal-id journal-id-type="iso-abbrev">RSC Adv</journal-id><journal-id journal-id-type="pmc-domain-id">4079</journal-id><journal-id journal-id-type="pmc-domain">rscadv</journal-id><journal-id journal-id-type="nlm-id">101581657</journal-id><journal-id journal-id-type="publisher-id">RA</journal-id><journal-title-group><journal-title>RSC Advances</journal-title></journal-title-group><issn pub-type="epub">2046-2069</issn><?publisher_abbrev rsc?><publisher><publisher-name>Royal Society of Chemistry</publisher-name></publisher></journal-meta><article-meta><article-id pub-id-type="pmcid">PMC9084346</article-id><article-id pub-id-type="pmcid-ver">PMC9084346.1</article-id><article-id pub-id-type="pmcaid">9084346</article-id><article-id pub-id-type="pmcaiid">9084346</article-id><article-id pub-id-type="pmid">35542472</article-id><article-id pub-id-type="doi">10.1039/c8ra05464a</article-id><article-id pub-id-type="publisher-id">c8ra05464a</article-id><article-version article-version-type="pmc-version">1</article-version><article-categories><subj-group subj-group-type="heading"><subject>Chemistry</subject></subj-group></article-categories><title-group><article-title>Enhanced H<sub>2</sub> sorption performance of magnesium hydride with hard-carbon-sphere-wrapped nickel</article-title></title-group><contrib-group><contrib contrib-type="author"><name name-style="western"><surname>Peng</surname><given-names initials="D">Dandan</given-names></name><xref rid="affa" ref-type="aff"/><xref rid="affb" ref-type="aff"/></contrib><contrib contrib-type="author"><name name-style="western"><surname>Ding</surname><given-names initials="Z">Zhenmin</given-names></name><xref rid="affa" ref-type="aff"/><xref rid="affb" ref-type="aff"/></contrib><contrib contrib-type="author"><name name-style="western"><surname>Fu</surname><given-names initials="Y">Yaokun</given-names></name><xref rid="affa" ref-type="aff"/><xref rid="affb" ref-type="aff"/></contrib><contrib contrib-type="author"><name name-style="western"><surname>Wang</surname><given-names initials="Y">Yu</given-names></name><xref rid="affa" ref-type="aff"/><xref rid="affb" ref-type="aff"/></contrib><contrib contrib-type="author"><name name-style="western"><surname>Bi</surname><given-names initials="J">Jia</given-names></name><xref rid="affa" ref-type="aff"/><xref rid="affb" ref-type="aff"/></contrib><contrib contrib-type="author"><name name-style="western"><surname>Li</surname><given-names initials="Y">Yuan</given-names></name><xref rid="affa" ref-type="aff"/><xref rid="affb" ref-type="aff"/></contrib><contrib contrib-type="author" corresp="yes"><contrib-id contrib-id-type="orcid" authenticated="false">https://orcid.org/0000-0002-9543-8288</contrib-id><name name-style="western"><surname>Han</surname><given-names initials="S">Shumin</given-names></name><xref rid="affa" ref-type="aff"/><xref rid="affb" ref-type="aff"/></contrib><aff id="affa">
+<institution>State Key Laboratory of Metastable Materials Science and Technology, Yanshan University</institution>
+<city>Qinhuangdao 066004</city>
+<country>P. R. China</country>
+</aff><aff id="affb">
+<institution>School of Environmental and Chemical Engineering, Yanshan University</institution>
+<city>Qinhuangdao 066004</city>
+<country>P. R. China</country>
+<email>hanshm@ysu.edu.cn</email>
+<fax>+86-335-8074648</fax>
+<phone>+86-335-8074648</phone>
+</aff></contrib-group><pub-date publication-format="electronic" date-type="pub" iso-8601-date="2018-08-13"><day>13</day><month>8</month><year>2018</year></pub-date><pub-date publication-format="electronic" date-type="collection" iso-8601-date="2018-08-07"><day>7</day><month>8</month><year>2018</year></pub-date><volume>8</volume><issue>50</issue><issue-id pub-id-type="pmc-issue-id">407316</issue-id><fpage>28787</fpage><lpage>28796</lpage><history><date date-type="received" iso-8601-date="2018-06-26"><day>26</day><month>6</month><year>2018</year></date><date date-type="accepted" iso-8601-date="2018-07-13"><day>13</day><month>7</month><year>2018</year></date></history><pub-history><event event-type="pmc-release"><date><day>13</day><month>08</month><year>2018</year></date></event><event event-type="pmc-live"><date><day>09</day><month>05</month><year>2022</year></date></event><event event-type="pmc-last-change"><date iso-8601-date="2022-06-14 22:16:39.300"><day>14</day><month>06</month><year>2022</year></date></event></pub-history><permissions><copyright-statement>This journal is © The Royal Society of Chemistry</copyright-statement><copyright-year>2018</copyright-year><copyright-holder>The Royal Society of Chemistry</copyright-holder><license><ali:license_ref xmlns:ali="http://www.niso.org/schemas/ali/1.0/" specific-use="textmining" content-type="ccbylicense" start_date="2018-08-13">https://creativecommons.org/licenses/by/3.0/</ali:license_ref></license></permissions><self-uri xmlns:xlink="http://www.w3.org/1999/xlink" content-type="pmc-pdf" xlink:href="RA-008-C8RA05464A.pdf"><?pdf-name RA-008-C8RA05464A.pdf?><?pdf-size 1502149?><?pdf-md5 1c6ce48f8efc8177d5cc0fda5b346422?><?pdf-image-server-status NEVER_LOAD?><?pdf-cloudpmc-urn urn:app:0257/9084346/1c6ce48f8efc/RA-008-C8RA05464A.pdf?></self-uri><abstract><p>Magnesium hydride is regarded as one of the most ideal candidates for hydrogen storage, but its relatively high operating temperatures and slow kinetics always hinder its commercial applications. Herein, we first fabricated hard-carbon-sphere-wrapped Ni (Ni/HCS) <italic toggle="yes">via</italic> a mild chemical method; subsequently, the as-prepared additive was introduced to fabricate an Mg–Ni/HCS composite by using hydriding combustion synthesis. Hard carbon spheres (HCS) effectively inhibited the agglomeration of hydride particles during hydrogen storage cycling; they could also provide active sites to promote the nucleation of Mg-based hydrides. During the hydriding combustion synthesis procedure, <italic toggle="yes">in situ</italic>-formed Mg<sub>2</sub>NiH<sub>4</sub> could induce the absorption of MgH<sub>2</sub>, thus triggering its hydrogen properties. Remarkable enhancement in hydrogen absorption properties of the composite was found. The composite absorbed 6.0 wt% H<sub>2</sub> within 5 min at 275 °C; moreover, even at 75 °C, it could still absorb 3.5 wt% H<sub>2</sub>. Furthermore, it delivered a high reversible hydrogen absorption capacity of 6.2 wt% and excellent rate capability at 350 °C. It was also demonstrated that the composite could release 6.2 wt% H<sub>2</sub> at 350 °C within 5 min. A rather low activation energy value (65.9 kJ mol<sup>−1</sup>) for the dehydrogenation of MgH<sub>2</sub> was calculated as compared to that for commercial MgH<sub>2</sub> (133.5 kJ mol<sup>−1</sup>).</p></abstract><abstract abstract-type="toc"><p>Magnesium hydride is regarded as one of the most ideal candidates for hydrogen storage, but its relatively high operating temperatures and slow kinetics always hinder its commercial applications.<graphic xmlns:xlink="http://www.w3.org/1999/xlink" id="ga" position="float" orientation="portrait" xlink:href="c8ra05464a-ga.jpg"><?image-name c8ra05464a-ga.jpg?><?image-size 76767?><?image-md5 f7d1940659c55c97761c65dc6682d52e?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 750?><?image-original-width 1890?><?image-scaled-height 300?><?image-scaled-width 756?><?image-cloudpmc-urn urn:cdn:blobs/0257/9084346/f7d1940659c5/c8ra05464a-ga.jpg?></graphic></p></abstract><funding-group><award-group><funding-source>
+<institution-wrap><institution>China Postdoctoral Science Foundation</institution><institution-id institution-id-type="doi">10.13039/501100002858</institution-id></institution-wrap>
+</funding-source><award-id>2016M601281</award-id></award-group><award-group><funding-source>
+<institution-wrap><institution>National Natural Science Foundation of China</institution><institution-id institution-id-type="doi">10.13039/501100001809</institution-id></institution-wrap>
+</funding-source><award-id>51571173</award-id><award-id>51771164</award-id><award-id>51701175</award-id></award-group></funding-group><counts><page-count count="10"/></counts><custom-meta-group><custom-meta><meta-name>pmc-status-qastatus</meta-name><meta-value>0</meta-value></custom-meta><custom-meta><meta-name>pmc-status-live</meta-name><meta-value>yes</meta-value></custom-meta><custom-meta><meta-name>pmc-status-embargo</meta-name><meta-value>no</meta-value></custom-meta><custom-meta><meta-name>pmc-status-released</meta-name><meta-value>yes</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-open-access</meta-name><meta-value>yes</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-olf</meta-name><meta-value>no</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-manuscript</meta-name><meta-value>no</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-legally-suppressed</meta-name><meta-value>no</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-has-pdf</meta-name><meta-value>yes</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-has-supplement</meta-name><meta-value>no</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-pdf-only</meta-name><meta-value>no</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-suppress-copyright</meta-name><meta-value>no</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-is-real-version</meta-name><meta-value>no</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-is-scanned-article</meta-name><meta-value>no</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-preprint</meta-name><meta-value>no</meta-value></custom-meta><custom-meta><meta-name>pmc-prop-in-epmc</meta-name><meta-value>yes</meta-value></custom-meta><custom-meta><meta-name>pmc-license-ref</meta-name><meta-value>CC BY</meta-value></custom-meta><custom-meta><meta-name>pubstatus</meta-name><meta-value>Paginated Article</meta-value></custom-meta></custom-meta-group></article-meta></front><body><sec><label>1.</label><title>Introduction</title><p>One of the most technically challenging issues anticipated for future hydrogen economy is the development of safe and efficient onboard hydrogen storage materials.<sup><xref rid="cit1" ref-type="bibr">1</xref></sup> A variety of materials that satisfy the requirements of sufficient storage density, beneficial thermodynamics, desirable kinetics, and low cost have been studied in pursuit of a suitable hydrogen storage system.<sup><xref rid="cit2" ref-type="bibr">2,3</xref></sup> Among solid-state hydrogen storage systems, magnesium-based hydrides have been proposed to be promising candidates for effective hydrogen storage due to their high volumetric and gravimetric hydrogen storage capacities, high abundance, low cost, nontoxicity, and high safety.<sup><xref rid="cit4" ref-type="bibr">4</xref></sup> However, their unfavorable thermodynamic stability and slow kinetic behavior significantly obstruct their commercial use, and proper strategies are required to overcome these problems. During the past decade, many methods have been discovered and proven to be effective for magnesium hydride systems, and they include both chemical and physical methods.<sup><xref rid="cit5" ref-type="bibr">5–11</xref></sup> One of these methods involves alloying with transition metal elements (<italic toggle="yes">e.g.</italic>, Mg<sub>2</sub>Ni); Mg-based alloys exhibit better thermal instability of hydrides than pure magnesium.<sup><xref rid="cit12" ref-type="bibr">12–15</xref></sup> However, the unavoidable loss of hydrogen storage capacity is the major drawback of the alloying route due to the addition of a transition metal. To solve this problem, a beneficial solution is to build MgH<sub>2</sub>-rich complex hydrides,<sup><xref rid="cit16" ref-type="bibr">16</xref></sup><italic toggle="yes">i.e.</italic>, MgH<sub>2</sub>–Mg<sub>2</sub>NiH<sub>4</sub> composites, which exhibit a considerable reduction in stability without a clear loss in capacity.<sup><xref rid="cit14" ref-type="bibr">14,17</xref></sup> Recently, the introduction of various novel catalysts has been used as another strategy to relieve the kinetic barrier and thermodynamic stability of magnesium hydride systems.<sup><xref rid="cit18" ref-type="bibr">18–24</xref></sup> Catalysts are usually supposed to function as activation agents, forming intermediate metastable states, facilitating dynamics, and destabilizing the Mg–H bonding energy. Furthermore, another very effective technique to relieve the kinetic barrier and thermodynamic stability of Mg-based hydrides is nanostructuring,<sup><xref rid="cit25" ref-type="bibr">25</xref></sup> which can directly result in larger surface-to-volume ratio of the particles and shorter solid-state diffusion distances for hydrogen. Recently, extensive experimental and theoretical studies have demonstrated that decreasing the particle size is an efficient way to destabilize Mg-based hydrides, leading to further enhancement in hydrogen storage performances.<sup><xref rid="cit26" ref-type="bibr">26–30</xref></sup> However, high reactivity of Mg-based hydrides restricts the synthetic methods for nanostructuring because of severe agglomeration. Meanwhile, owing to high surface energy, the original hydride nanoparticles always tend to aggregate based on the solid-state reactions, leading to rapid loss of the initial morphology and continual reduction in storage capacities.<sup><xref rid="cit31" ref-type="bibr">31</xref></sup> Previously, Imamura and coworkers had reported studies on catalyzing MgH<sub>2</sub> with graphite;<sup><xref rid="cit32" ref-type="bibr">32,33</xref></sup> since then, many carbon materials, including multiwalled carbon nanotubes (MWCNT),<sup><xref rid="cit34" ref-type="bibr">34</xref></sup> single-walled carbon nanotubes (SWCNT),<sup><xref rid="cit35" ref-type="bibr">35–37</xref></sup> graphene nanosheets (GNS),<sup><xref rid="cit38" ref-type="bibr">38</xref></sup> and activated carbon,<sup><xref rid="cit39" ref-type="bibr">39</xref></sup> have been extensively studied to promote the hydrogen storage properties of MgH<sub>2</sub>. Although these issues can be solved by dispersing MgH<sub>2</sub> into porous carbon hosts, these strategies unfortunately suffer from irregular spatial distributions and low infiltration efficiency.<sup><xref rid="cit40" ref-type="bibr">40,41</xref></sup></p><p>As the demand for renewable energy continues to grow, efforts toward improving the efficiency of carbon materials are getting more and more attention. Yuan <italic toggle="yes">et al.</italic><sup><xref rid="cit42" ref-type="bibr">42</xref></sup> studied Mg-based hydrides associated with carbon-based catalysts; by focusing on the roles of metal-assisted MWCNT hybrids, they revealed that MWCNTs and supporting metallic particles have a synergetic catalytic effect. Meanwhile, Yao <italic toggle="yes">et al.</italic><sup><xref rid="cit43" ref-type="bibr">43</xref></sup> also reported the synergistic effect of metallic couple and carbon nanotubes on Mg, yielding ultrafast kinetics due to metal–H atomic interactions at the Mg surface. In addition, Ismail and coworkers<sup><xref rid="cit44" ref-type="bibr">44</xref></sup> showed that 10 wt% K<sub>2</sub>NbF<sub>7</sub> and 5 wt% MWCNT milled with MgH<sub>2</sub> significantly reduced the initial decomposition temperature to 248 °C with a capacity of 6.2 wt%; they also found that co-doping FeCl<sub>3</sub> and CNTs with MgH<sub>2</sub> resulted in both decreased desorption temperature and improved sorption kinetics when compared to those of the undoped MgH<sub>2</sub>–FeCl<sub>3</sub> composite.<sup><xref rid="cit45" ref-type="bibr">45</xref></sup> Amirkhiz <italic toggle="yes">et al.</italic><sup><xref rid="cit46" ref-type="bibr">46</xref></sup> examined the effect of SWCNT-metallic nanoparticle additions on the hydrogen desorption behavior of MgH<sub>2</sub>; after high-energy co-milling, they found that SWCNT-nanoparticle additions have beneficial influence on the desorption kinetics. Furthermore, in the carbon family, hard carbon spheres (HCS) have attracted tremendous attention due to their notable physical and chemical properties. For example, Yang <italic toggle="yes">et al.</italic><sup><xref rid="cit47" ref-type="bibr">47</xref></sup> studied monodispersed hard carbon spherules as a catalyst support for the electrooxidation of methanol. Moreover, because of their superior surface area and controllable homogeneous structure, carbon spheres can provide several promising applications in energy storage. Therefore, the introduction of HCS as a support in Mg-based hydride systems has considerable potential for significantly enhancing the de/absorption properties.</p><p>Herein, we controllably fabricate hard carbon sphere-wrapped Ni additives by a chemical method and then, we introduce these materials into Mg-based hydride systems; significant enhancement in their de/absorption behaviors has been observed. Moreover, a possible mechanism for the catalytic phase in the system has been proposed.</p></sec><sec><label>2.</label><title>Experimental</title><sec><label>2.1</label><title>Synthesis of Ni/HCS and Mg–Ni/HCS</title><p>All chemicals were of analytical grade and used without any further purification. The typical preparation process of HCS was based on a solvothermal method followed by a calcination procedure at high temperatures. During the hydrothermal process, we selected sucrose (Aladdin, AR, 0.28∼0.90 mm) as the precursor; then, the precursor was subjected to a dewatering process, yielding carbon spheres. An aqueous sucrose solution of 0.2 mol L<sup>−1</sup> was filled in a Teflon-lined autoclave at a fill rate of 80%, which was heated gradually to 190 °C and maintained at this temperature for 5 h. The obtained black precipitated particles were separated by filtration and washed with deionized water and ethanol (Aladdin, AR, ≧99.5%), and this process was repeated several times. The prepared black powders were fully dried in vacuum at 60 °C for 24 h to obtain a solid product, namely, carbon spheres (CS). Then, the as-prepared CS were further carbonized at 950 °C for 4 h under an argon atmosphere in a tube furnace. Then, the product was naturally cooled and transferred into a glovebox for further handling; the obtained final product was denoted as HCS. Then, HCS were initially treated with concentrated nitric acid (Aladdin, AR, 65–68%) to introduce carbonyl, carboxylic, and hydroxyl groups onto the surfaces; these functional groups may provide nucleation sites for metal species. To synthesize Ni/HCS, we mixed HCS and Ni(NO<sub>3</sub>)<sub>2</sub>·6H<sub>2</sub>O (Aladdin, AR, 98%) at a mass ratio of 6 : 4 (Ni : HCS) in 50 mL acetone (Sigma-Aladdin, AR, ≧99.5%); this mixture was subjected to ultrasonic treatment for half an hour and dried in a blowing dry oven at 50 °C for 8 h. Afterwards, the product was heat-treated in a tube furnace at 400 °C for 4 h under an Ar atmosphere. Finally, the products were reduced under an H<sub>2</sub> atmosphere at 450 °C for 24 h.</p><p>The Mg–Ni/HCS composite was synthesized <italic toggle="yes">via</italic> hydriding combustion synthesis of Mg powder (Shanghai Pantian nano Materials Co., 99.9%, 1 μm), yielding Ni/HCS with a mass ratio of 5 : 1. In the hydriding combustion synthesis process, 0.75 g of crude magnesium powder and 0.15 g Ni/HCS were mixed in a pressure reactor vessel and heated to 400 °C under a hydrogen pressure of 4 MPa for 40 h. Subsequently, the sample was mechanically milled in a stainless steel vial with a ball-to-powder weight ratio of 30 : 1 under an Ar atmosphere. The ball milling process was paused for 15 min after each 15 min of milling to avoid increasing the temperature of the sample. For comparison, an Mg–HCS composite was synthesized under the same conditions, and pure MgH<sub>2</sub> (Aldrich, 95%) was also prepared by a planetary ball mill under the same conditions. All the materials were handled in a glove box filled with purified argon (99.999%), which could maintain the water vapor and oxygen levels below 1 ppm by recycling the purification system to avoid oxidation.</p></sec><sec><label>2.2</label><title>Structural analysis and hydrogen desorption experiments</title><p>A Rigaku SmartLab X-ray diffractometer (XRD) with Cu Kα radiation was used to complete phase analysis. During the sample transfer and scanning process, an argon-filled container was used to prevent the samples from contacting air and moisture. The microstructure was further examined by transmission electron microscopy (TEM, JEM-2010, working at 120 kV) equipped with energy dispersive analysis by X-ray spectroscopy (EDAX). A scanning electron microscope (SEM, S-3400) was used to observe the surface morphology, and nitrogen flow was applied to prevent H<sub>2</sub>O/O<sub>2</sub> contamination during the transfer process. The specific surface areas and porous nature of the as-prepared HCS were further, investigated by nitrogen adsorption/desorption measurements (ASAP 2020 Plus). Brunauer–Emmett–Teller (BET) and Barrett–Joyner–Halenda (BJH) methods were used to calculate the surface area and pore size distribution, respectively, based on the desorption data. The thermal behavior of the sample was investigated by thermal analysis (DTG-60A) from room temperature to 500 °C at different heating rates (5, 10, 15, 20 °C min<sup>−1</sup>). The valence states and structural information of the synthesized Ni/HCS were determined using an X-ray photoelectron spectrometer (XPS).</p><p>The hydrogen desorption and absorption properties of the as-synthesized Mg–Ni/HCS and Mg–HCS were determined using Sieverts-type pressure-composition-temperature (PCT). During isothermal rehydrogenation experiments, the composites were pressurized at 3 MPa. For the cyclic stability measurements of the composite, we performed dehydrogenation under 0.001 MPa for 2 h, and the hydrogenation process was carried out at 3 MPa for 1 h.</p></sec></sec><sec><label>3.</label><title>Results and discussion</title><sec><label>3.1</label><title>Characterization of Mg–Ni/HCS and Mg–HCS</title><p>
+<xref rid="fig1" ref-type="fig">Fig. 1a</xref> shows the XRD patterns of the as-synthesized CS and HCS. From the XRD patterns, it is evident that CS possess an amorphous structure when subjected to a hydrothermal process at 190 °C for 5 h, with just one broad reflection peak at around 2<italic toggle="yes">θ</italic> = 22° corresponding to the (002) plane. However, two broad peaks around 23° and 44° corresponding to the (002) and (100) reflections of the graphite layers are observed after carbonization in the tube furnace, indicating that the second process yields graphitization of HCS. Moreover, the peak of (002) shifts slightly to a higher 2<italic toggle="yes">θ</italic> value after the second carbonization process. The specific surface areas and features of HCS are further investigated by nitrogen adsorption/desorption measurements. BET analysis (<xref rid="fig1" ref-type="fig">Fig. 1b</xref>) indicates that the as-prepared HCS have a specific surface area and pore volume up to 623 m<sup>2</sup> g<sup>−1</sup> and 0.22 cm<sup>3</sup> g<sup>−1</sup>, respectively. The pore size distributions are calculated from the desorption isotherms by the BJH method, and the peak in the BJH pore distribution is at 40 nm, exhibiting the characteristics of a mesoporous material. This is in good agreement with the following microscopy findings (<xref rid="fig3" ref-type="fig">Fig. 3d</xref>). The high surface area of HCS with mesoporous materials can undertake the role of a mechanical support, and it is believed that HCS can easily anchor and load Ni- and Mg-based composites with uniform dispersion; this indicates that it can play an important role in mediating the nucleation and growth of Mg-based particles coupled with this hydrogenation process strategy.</p><fig position="float" id="fig1" orientation="portrait"><label>Fig. 1</label><caption><title>X-ray diffraction (XRD) profiles (a) of the obtained CS and HCS; N<sub>2</sub> adsorption–desorption isotherms and the corresponding pore size distribution curves (b) of HCS.</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="c8ra05464a-f1.jpg"><?image-name c8ra05464a-f1.jpg?><?image-size 72298?><?image-md5 42c32ff4eedba3a9a5ccf6f7f7e8ae33?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 1138?><?image-original-width 2868?><?image-scaled-height 285?><?image-scaled-width 717?><?image-cloudpmc-urn urn:cdn:blobs/0257/9084346/42c32ff4eedb/c8ra05464a-f1.jpg?><?thumb-name c8ra05464a-f1.gif?><?thumb-size 10175?><?thumb-md5 2f2da63f8a166cdcf8096473c559c8bf?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 79?><?thumb-scaled-width 200?><?thumb-cloudpmc-urn urn:cdn:blobs/0257/9084346/2f2da63f8a16/c8ra05464a-f1.gif?></graphic></fig><p>
+<xref rid="fig2" ref-type="fig">Fig. 2a</xref> shows the XRD patterns of Ni/HCS, Mg–Ni/HCS, and Mg–HCS composites before ball milling. As shown in <xref rid="fig2" ref-type="fig">Fig. 2a</xref>, the acetone solution of HCS and Ni(NO<sub>3</sub>)<sub>2</sub>·6H<sub>2</sub>O was dried and heat-treated in a tube furnace under an Ar atmosphere. Sharp diffraction peaks of NiO phases appeared as the characteristic peaks; after reducing in an H<sub>2</sub> atmosphere, the NiO phase disappeared, and the peaks centered at 44.5° (111), 51.7° (200), and 76.4° (220) were assigned to Ni (JCPDS data no. 65-380). After the process of hydriding combustion synthesis, the Mg–Ni/HCS composite mainly corresponded to MgH<sub>2</sub>, Mg<sub>2</sub>NiH<sub>4</sub>, and an amount of Mg that has not completely reacted. The non-appearance of Ni peaks indicated that the Ni particles reacted with Mg to form a binary intermetallic compound (Mg<sub>2</sub>Ni) during this process. With regard to the Mg–HCS composite, the main phases were MgH<sub>2</sub> and unreacted Mg. With regard to both Mg–Ni/HCS and Mg–HCS, the non-appearance of HCS may be due to the amorphous structure of HCS and low X-ray scattering cross-sections of the light component elements.</p><fig position="float" id="fig2" orientation="portrait"><label>Fig. 2</label><caption><title>XRD curves (a) of the prepared Ni/HCS, Mg–HCS, and Mg–Ni/HCS, and XPS spectrum (b–d) of the as-synthesized Ni/HCS sample.</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="c8ra05464a-f2.jpg"><?image-name c8ra05464a-f2.jpg?><?image-size 113572?><?image-md5 80f5b345b9ea7289123680b606b558c0?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 2258?><?image-original-width 2924?><?image-scaled-height 565?><?image-scaled-width 731?><?image-cloudpmc-urn urn:cdn:blobs/0257/9084346/80f5b345b9ea/c8ra05464a-f2.jpg?><?thumb-name c8ra05464a-f2.gif?><?thumb-size 11575?><?thumb-md5 480b3af3e52d12db02231a6e7e43c7e6?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 80?><?thumb-scaled-width 103?><?thumb-cloudpmc-urn urn:cdn:blobs/0257/9084346/480b3af3e52d/c8ra05464a-f2.gif?></graphic></fig><fig position="float" id="fig3" orientation="portrait"><label>Fig. 3</label><caption><title>SEM images (a), (c) and (d) and TEM image (b) of the as-prepared HCS. The inset of (b) shows the corresponding selected area electron diffraction (SAED) pattern. SEM images (e) and (f) of NiO/HCS and SEM (g) and TEM images (h) of Ni/HCS. The inset of (g) shows the SEM images of Ni/HCS at different magnifications.</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="c8ra05464a-f3.jpg"><?image-name c8ra05464a-f3.jpg?><?image-size 108769?><?image-md5 69d92717f66fcac2ca8cc0d34191a70d?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 1171?><?image-original-width 2892?><?image-scaled-height 293?><?image-scaled-width 723?><?image-cloudpmc-urn urn:cdn:blobs/0257/9084346/69d92717f66f/c8ra05464a-f3.jpg?><?thumb-name c8ra05464a-f3.gif?><?thumb-size 19875?><?thumb-md5 9a3d36b4e023a0190d9f20e568034b9a?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 80?><?thumb-scaled-width 197?><?thumb-cloudpmc-urn urn:cdn:blobs/0257/9084346/9a3d36b4e023/c8ra05464a-f3.gif?></graphic></fig><p>To obtain additional information on the valence states of Ni and HCS in Ni/HCS particles, X-ray photoelectron spectroscopy (XPS) was used (<xref rid="fig2" ref-type="fig">Fig. 2b–d</xref>). From the full spectrum (<xref rid="fig2" ref-type="fig">Fig. 2b</xref>), it is evident that the peaks of Ni were dominant; the peak observed at 854 eV corresponded to the bond of Ni 2p (<xref rid="fig2" ref-type="fig">Fig. 2c</xref>), demonstrating the existence of Ni.<sup><xref rid="cit48" ref-type="bibr">48</xref></sup> In addition, the bonding energy of 285 eV is generally assigned to the characteristic peak of C 1s (<xref rid="fig2" ref-type="fig">Fig. 2d</xref>).</p><p>To explore the microstructure of the products, SEM and TEM characterizations of HCS and Ni/HCS are further applied. The SEM images shown in <xref rid="fig3" ref-type="fig">Fig. 3a, c and d</xref> show micrographs that clearly reveal the spherical characteristics of HCS after the second carbonization process, and the majority of the particles are ±1.7 μm in diameter; some particles are fused together to form a pearl necklace, as shown in <xref rid="fig3" ref-type="fig">Fig. 3b</xref>. In addition, from the corresponding selected area electron diffraction (SAED) pattern (inset of <xref rid="fig3" ref-type="fig">Fig. 3b</xref>), we can see a dispersion center, suggesting the amorphous nature of HCS and confirming the XRD result (<xref rid="fig1" ref-type="fig">Fig. 1a</xref>). The surface of HCS is not smooth, and many pores (<italic toggle="yes">ca.</italic> 40 nm) can be observed on the surface of the spherules (<xref rid="fig3" ref-type="fig">Fig. 3c</xref>). The surface roughness increases the specific surface area of HCS, which facilitates the adsorption of Mg and Ni. This is further utilized to fabricate MgH<sub>2</sub> particles or Ni/HCS. SEM observations show wire-like clusters of NiO with an average length of 500 nm and width of 50 nm, and these are uniformly anchored on the surface of HCS (<xref rid="fig3" ref-type="fig">Fig. 3e and f</xref>). In the solvent, HCS are assumed to act as nucleation sites, and the particles coalesce and grow, leading to the formation of NiO in the next step. However, after the reduction procedure in an H<sub>2</sub> atmosphere, the wire-like clusters of NiO are converted to hexagonal Ni particles with size of around 400–500 nm (<xref rid="fig2" ref-type="fig">Fig. 2g and h</xref>), and HCS burst into small particles covered on the surface of Ni, reducing the agglomeration of Ni particles during the dehydrogenation process.</p><p>SEM examinations were used to characterize the structure and distribution of the products. Interestingly, the element mapping images of the Mg–Ni/HCS composite, as shown in <xref rid="fig4" ref-type="fig">Fig. 4b</xref>, demonstrated that the distribution of C, Mg, and Ni was uniform without any detectable aggregation, proving that the distribution of C, Mg, and Ni composite could exhibit the entire distribution in the Mg–Ni/HCS matrix. From <xref rid="fig4" ref-type="fig">Fig. 4a</xref>, it can also be seen that Mg–HCS exhibited extremely fine particles on the surface of HCS, and the homogeneous anchoring was due to the favorable absorption of MgH<sub>2</sub> particles on HCS. Furthermore, no aggregation was observed due to high surface area of HCS, which also acted as the structural support. Furthermore, the elemental distributions of the hydrogenated products confirmed the existence of Mg, C, and O. The results suggested that the formed MgH<sub>2</sub> was well distributed and anchored on HCS owing to the favorable adsorption of Mg on HCS, which was easily realized by treatment with hydrogen. Therefore, the above analysis strongly suggested that MgH<sub>2</sub> has been successfully incorporated onto the surface of HCS.</p><fig position="float" id="fig4" orientation="portrait"><label>Fig. 4</label><caption><title>SEM images of Mg–HCS (a) and Mg–Ni/HCS (b) before ball milling. Image of the composites captured by a gallium ion beam, and the corresponding elemental mapping images of Mg, C, O, and Ni in the selected area.</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="c8ra05464a-f4.jpg"><?image-name c8ra05464a-f4.jpg?><?image-size 207796?><?image-md5 c06a1b5c76bb2919703ea8931b7b4021?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 1136?><?image-original-width 1544?><?image-scaled-height 568?><?image-scaled-width 772?><?image-cloudpmc-urn urn:cdn:blobs/0257/9084346/c06a1b5c76bb/c8ra05464a-f4.jpg?><?thumb-name c8ra05464a-f4.gif?><?thumb-size 17739?><?thumb-md5 adb74896e1c96fb006aea3d36bd92db3?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 79?><?thumb-scaled-width 108?><?thumb-cloudpmc-urn urn:cdn:blobs/0257/9084346/adb74896e1c9/c8ra05464a-f4.gif?></graphic></fig><p>One of the biggest challenges is the fabrication of Mg-based hydride composites that are highly reactive and well dispersed. Here, we use Mg as the original material and maintain the growth of Mg-based hydrides by hydriding combustion synthesis. <xref rid="fig5" ref-type="fig">Fig. 5</xref> shows a schematic illustration of the synthesis processes for Mg–Ni/HCS and Mg–HCS. For the Mg–Ni/HCS sample, we select sucrose as the precursor and obtain HCS <italic toggle="yes">via</italic> the carbonation process. The Ni/HCS additive is synthesized through a chemical method. During the hydriding combustion synthesis process, Mg<sub>2</sub>NiH<sub>4</sub> particles are formed <italic toggle="yes">in situ</italic> and homogenously distributed onto the Mg/MgH<sub>2</sub> matrix with the existence of HCS. In the case of Mg–HCS, Mg powder and HCS are used as the starting materials to fabricate Mg–HCS. HCS with defective domains and mesoporous characteristics favors the nucleation and growth of MgH<sub>2</sub> particles. After the hydriding combustion synthesis process, MgH<sub>2</sub> particles are believed to be generated on the surface of HCS, and it can easily capture hydrogen molecules and dissociate H<sub>2</sub> to atomic H in the hydrogenation process after ball milling.</p><fig position="float" id="fig5" orientation="portrait"><label>Fig. 5</label><caption><title>Schematic diagram of the preparation of Mg–HCS and Mg–Ni/HCS.</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="c8ra05464a-f5.jpg"><?image-name c8ra05464a-f5.jpg?><?image-size 105249?><?image-md5 fc87037ce4406df58e8fa25cad6679f9?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 966?><?image-original-width 1832?><?image-scaled-height 386?><?image-scaled-width 732?><?image-cloudpmc-urn urn:cdn:blobs/0257/9084346/fc87037ce440/c8ra05464a-f5.jpg?><?thumb-name c8ra05464a-f5.gif?><?thumb-size 11369?><?thumb-md5 556160440c0e92ca2c0040f63a887ac1?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 80?><?thumb-scaled-width 151?><?thumb-cloudpmc-urn urn:cdn:blobs/0257/9084346/556160440c0e/c8ra05464a-f5.gif?></graphic></fig></sec><sec><label>3.2</label><title>Hydrogen storage properties of Mg–Ni/HCS and Mg–HCS</title><p>To investigate the hydrogen storage properties of the obtained Mg–Ni/HCS and Mg–HCS composites, the cyclic stability and dehydrogenation kinetic measurements are performed using PCT. First, a total of 50 cycles are performed, and the results are shown in <xref rid="fig6" ref-type="fig">Fig. 6a</xref>. This shows that there is no clear reduction in the capacity after 50 cycles of both Mg–Ni/HCS and Mg–HCS composites, indicating that the composites have excellent cyclic stabilities. The Mg–Ni/HCS and Mg–HCS systems are able to absorb 6.2 wt% of hydrogen within 5 min during the de/rehydrogenation process, exhibiting favourable hydrogen-absorbing dynamic performance. Meanwhile, for the MgH<sub>2</sub>–HCS composite, the cycling hydrogen desorption capacity is clearly lower than the absorption capacity, mainly because of the barrier induced by the breakage of the Mg–H bonds during the dehydrogenation process; therefore, for the cyclic stability measurements, between dehydrogenation and hydrogenation of each cycle, a 30 min evacuation process is conducted to ensure complete dehydrogenation reaction of the sample. <xref rid="fig6" ref-type="fig">Fig. 6b</xref> shows the XRD patterns of Mg–HCS and Mg–Ni/HCS composites before and after dehydrogenation after cycling. As shown in <xref rid="fig6" ref-type="fig">Fig. 6b (I)</xref> and <xref rid="fig6" ref-type="fig">Fig. 6b (III)</xref>, the two samples mainly contain Mg phase after dehydrogenation, and the Mg<sub>2</sub>Ni phase is detected for the Mg–Ni/HCS composite, which reveals that the addition of Ni changes the path of dehydrogenation. The XRD patterns of the cycled Mg–HCS and Mg–Ni/HCS composites after hydrogen absorption are shown in <xref rid="fig6" ref-type="fig">Fig. 6b (II)</xref> and <xref rid="fig6" ref-type="fig">Fig. 6b (IV)</xref>. The diffraction intensity of the MgH<sub>2</sub> phase is detected, and the Mg<sub>2</sub>NiH<sub>4</sub> phase is detected for the Mg–Ni/HCS composite. More importantly, the diffraction peaks of Mg can be detected in <xref rid="fig6" ref-type="fig">Fig. 6b (IV)</xref>, which reveals incomplete hydrogenation of Mg. This also proves the reduction of hydrogen storage capacity during hydrogen desorption/absorption cycling. In contrast, no Mg diffraction peaks are observed for the Mg–HCS composite after hydrogenation, implying complete hydrogenation of Mg. Mao <italic toggle="yes">et al.</italic><sup><xref rid="cit49" ref-type="bibr">49</xref></sup> investigated the hydrogen sorption properties of MgH<sub>2</sub> doped with NiCl<sub>2</sub> and CoCl<sub>2</sub>; they found that the MgH<sub>2</sub>/NiCl<sub>2</sub> sample showed better sorption properties than the CoCl<sub>2</sub>-doped sample. As reported by Zhang <italic toggle="yes">et al.</italic>,<sup><xref rid="cit50" ref-type="bibr">50</xref></sup> it is experimentally confirmed that the MgH<sub>2</sub>–Ni<sub>3</sub>C composites exhibit the best hydrogen storage properties as compared to MgH<sub>2</sub>–Ni<sub>3</sub>N, MgH<sub>2</sub>–NiO, and MgH<sub>2</sub>–Ni<sub>2</sub>P. They suspected that Ni binding with an element having low electronegativity is favorable for the dehydrogenation of Mg-based composites, which is consistent with our finding. Moreover, Sulaiman <italic toggle="yes">et al.</italic><sup><xref rid="cit51" ref-type="bibr">51</xref></sup> showed that 5 wt% of K<sub>2</sub>NiF<sub>6</sub> had a favourable catalytic effect in the context of MgH<sub>2</sub> hydrogen storage properties, which can be due to the <italic toggle="yes">in situ</italic>-formed KF, KH, and Mg<sub>2</sub>Ni; these active species can provide a synergetic catalytic effect in enhancing the hydrogen sorption properties of MgH<sub>2</sub>. Furthermore, Yahya <italic toggle="yes">et al.</italic><sup><xref rid="cit52" ref-type="bibr">52</xref></sup> studied the synergistic catalytic effect of SrTiO<sub>3</sub> and Ni on the improvement of the hydrogen storage properties of the MgH<sub>2</sub> system; the composite can absorb 2.9 wt% of hydrogen in 10 min under pressure of 2.7 MPa of hydrogen.</p><p>It is noteworthy that with regard to the as-prepared composites, there are no indications of the formation of any metastable phases under the current experimental conditions based on XRD analysis (<xref rid="fig6" ref-type="fig">Fig. 6b</xref>). Furthermore, the XRD results show that no reaction occurs between Mg-based hydrides and HCS. Therefore, it is reasonable to assume that HCS with a mesoporous and defective structure may function as a dispersant, serving as the center for nucleation and growth of the magnesium hydride phase. However, a broad diffraction peak at around 42.9° can be assigned to MgO, which is consistent with the SAED results (<xref rid="fig5" ref-type="fig">Fig. 5</xref>). House <italic toggle="yes">et al.</italic> found that during the ball milling process, an ultrafine-grained MgO layer can be formed.<sup><xref rid="cit53" ref-type="bibr">53</xref></sup> Alternatively, the appearance of MgO may be ascribed to exposure to air during the measurement. It is also found that MgH<sub>2</sub> is covered with oxides during desorption, demonstrating that MgO can recombine atomic hydrogen. Therefore, the existence of MgO can provide small surface vacancies, which are countered by a very high turnover frequency due to small activation energy for dissociation of hydrogen.<sup><xref rid="cit54" ref-type="bibr">54</xref></sup></p><fig position="float" id="fig6" orientation="portrait"><label>Fig. 6</label><caption><title>Cyclic kinetic measurements (a) of Mg–HCS and Mg–Ni/HCS composites. XRD patterns (b) of Mg–HCS (I) after dehydrogenation and (II) after rehydrogenation and those of Mg–Ni/HCS (III) after dehydrogenation and (IV) after rehydrogenation at 350 °C.</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="c8ra05464a-f6.jpg"><?image-name c8ra05464a-f6.jpg?><?image-size 194522?><?image-md5 d346f1bc75837e272de5070a4b64f8fe?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 2208?><?image-original-width 1610?><?image-scaled-height 883?><?image-scaled-width 644?><?image-cloudpmc-urn urn:cdn:blobs/0257/9084346/d346f1bc7583/c8ra05464a-f6.jpg?><?thumb-name c8ra05464a-f6.gif?><?thumb-size 16760?><?thumb-md5 bc8f71e4b6b40cc354258af7427613c7?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 137?><?thumb-scaled-width 100?><?thumb-cloudpmc-urn urn:cdn:blobs/0257/9084346/bc8f71e4b6b4/c8ra05464a-f6.gif?></graphic></fig><p>To investigate the hydrogen storage properties of Mg–Ni/HCS and Mg–HCS composites, dehydrogenation and hydrogenation measurements under different conditions are obtained using PCT. TPD experiments can provide a clear comparison of the desorption kinetics; thus, we first obtain TPD measurements to study the kinetics and overall hydrogen storage behavior. <xref rid="fig7" ref-type="fig">Fig. 7a</xref> shows the TPD profiles of the as-prepared Mg–Ni/HCS and Mg–HCS and milled as-received commercial MgH<sub>2</sub>. The dehydrogenation of Mg–Ni/HCS composite starts at about 230 °C, which is much lower than those of Mg–HCS (320 °C) and commercial MgH<sub>2</sub> (425 °C). In particular, both Mg–Ni/HCS and Mg–HCS composites show a drastically faster dehydrogenation rate than primary MgH<sub>2</sub>. As illustrated in <xref rid="fig7" ref-type="fig">Fig. 7a and b</xref>, a total mass loss of 5.9 wt% is observed for the primary MgH<sub>2</sub> composite with a desorption peak at 484 °C. However, the desorption peaks of Mg–Ni/HCS and Mg–HCS shift downward to 290 °C and 348 °C, respectively; both of these materials exhibit H<sub>2</sub> capacity of 6.2 wt%, which is fairly close to the theoretical value of the composite (7.6 wt% × 5/6 = 6.33 wt%). This suggests that the Mg phase can completely transform into the MgH<sub>2</sub> or Mg<sub>2</sub>NiH<sub>4</sub> phase during the hydrogenation process, which agrees with the XRD results (<xref rid="fig6" ref-type="fig">Fig. 6b</xref>). The isothermal hydrogenation curves of the Mg–Ni/HCS composite (<xref rid="fig7" ref-type="fig">Fig. 7c</xref>) reveal that the hydrogenation process of the composite can be implemented within 30 min at 250 °C, and there can be 3.5 wt% hydrogen uptake even at 75 °C within 200 min. In the case of dehydrogenation plots (<xref rid="fig7" ref-type="fig">Fig. 7d</xref>), the temperatures increase from 275 to 350 °C; the dehydrogenation rates and capacities increase remarkably, and the excellent absorption rate remains almost unchanged. For instance, the composite can release 3.8 wt% H<sub>2</sub> at 300 °C within 30 min. The hydrogen desorption behaviors of the Mg–HCS composite are also given (inset in <xref rid="fig7" ref-type="fig">Fig. 7(c) and (d)</xref>). For hydrogen absorption, the Mg–HCS composite can reach the maximum value in less than 5 min; for example, it can uptake 2.5 wt% H<sub>2</sub> at 150 °C. Although this value is enhanced when compared with that of pure MgH<sub>2</sub>, it is much lower than that for the Mg–Ni/HCS composite. Therefore, the absorption properties are clearly improved by introducing Ni/HCS, suggesting the prominent effect on the hydrogenation reaction of Mg. By further increasing the applied temperature, the desorbed hydrogen capacity significantly increases (<xref rid="fig7" ref-type="fig">Fig. 7d</xref>), indicating that the performance of dehydrogenation is considerably influenced by the temperatures of both Mg–Ni/HCS and Mg–HCS composites.</p><fig position="float" id="fig7" orientation="portrait"><label>Fig. 7</label><caption><title>TPD curves (a) and (b) of pure MgH<sub>2</sub>, Mg–HCS, and Mg–Ni/HCS composites. Hydrogenation (c) and dehydrogenation (d) curves of Mg–Ni/HCS composite at various temperatures. The insets of (c) and (d) show the hydrogenation and dehydrogenation curves of Mg–HCS composite at various temperatures, respectively.</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="c8ra05464a-f7.jpg"><?image-name c8ra05464a-f7.jpg?><?image-size 193337?><?image-md5 761453a87c830c1e85b963208b5558b3?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 2256?><?image-original-width 2950?><?image-scaled-height 564?><?image-scaled-width 737?><?image-cloudpmc-urn urn:cdn:blobs/0257/9084346/761453a87c83/c8ra05464a-f7.jpg?><?thumb-name c8ra05464a-f7.gif?><?thumb-size 14776?><?thumb-md5 db775f47da1b3c02e6e9c1ee870e3fb7?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 80?><?thumb-scaled-width 104?><?thumb-cloudpmc-urn urn:cdn:blobs/0257/9084346/db775f47da1b/c8ra05464a-f7.gif?></graphic></fig><p>To further understand the hydrogenation kinetics mechanism, we also analyzed the DTA profiles at different ramping rates and estimated the activation energies (<italic toggle="yes">E</italic><sub>a</sub>) of the dehydrogenation processes of Mg–Ni/HCS and Mg–HCS based on the Kissinger method according to <xref rid="eqn1" ref-type="disp-formula">eqn (1)</xref>. Here, <italic toggle="yes">α</italic> is the heating rate, <italic toggle="yes">T</italic><sub>m</sub> is the peak temperature, and <italic toggle="yes">R</italic> is the gas constant. In addition, <italic toggle="yes">T</italic><sub>m</sub> was obtained at <italic toggle="yes">α</italic> values of 5, 10, 15, and 20 °C min<sup>−1</sup>, as shown in <xref rid="fig8" ref-type="fig">Fig. 8a and c</xref>. <xref rid="fig8" ref-type="fig">Fig. 8b and d</xref> show the slopes of the fitted lines of Mg–Ni/HCS and Mg–HCS, respectively, which are used to determine the value of <italic toggle="yes">E</italic><sub>a</sub>/<italic toggle="yes">R</italic>. The <italic toggle="yes">E</italic><sub>a</sub> value for the Mg–Ni/HCS composite was 65.9 kJ mol<sup>−1</sup>; the <italic toggle="yes">E</italic><sub>a</sub> value for the Mg–HCS sample was 111.0 kJ mol<sup>−1</sup> and that for pure MgH<sub>2</sub> was 133.5 kJ mol<sup>−1</sup>.<sup><xref rid="cit55" ref-type="bibr">55</xref></sup> The values for the Mg–Ni/HCS and Mg–HCS composites were 67.6 kJ mol<sup>−1</sup> and 22.5 kJ mol<sup>−1</sup> lower than that for pure MgH<sub>2</sub>, respectively, which provided further evidence for the correlation between the presence of HCS and hydrogen desorption kinetics as well as the synergistic catalysis between HCS and Ni.<disp-formula id="eqn1"><label>1</label><graphic xmlns:xlink="http://www.w3.org/1999/xlink" id="ugt1" position="float" orientation="portrait" xlink:href="c8ra05464a-t1.jpg"><?image-name c8ra05464a-t1.jpg?><?image-size 13714?><?image-md5 ee368f1e2e21da505f6bfc80ae063175?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 158?><?image-original-width 1058?><?image-scaled-height 105?><?image-scaled-width 705?><?image-cloudpmc-urn urn:cdn:blobs/0257/9084346/ee368f1e2e21/c8ra05464a-t1.jpg?></graphic></disp-formula></p><fig position="float" id="fig8" orientation="portrait"><label>Fig. 8</label><caption><title>DTA profiles at different heating rates of (a) Mg–Ni/HCS and (c) Mg–HCS. Kissinger plots of the dehydrogenation of (b) Mg–Ni/HCS and (d) Mg–HCS.</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="c8ra05464a-f8.jpg"><?image-name c8ra05464a-f8.jpg?><?image-size 123857?><?image-md5 e83da9e7a876101815f75aa4396ec2eb?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 2052?><?image-original-width 2646?><?image-scaled-height 586?><?image-scaled-width 756?><?image-cloudpmc-urn urn:cdn:blobs/0257/9084346/e83da9e7a876/c8ra05464a-f8.jpg?><?thumb-name c8ra05464a-f8.gif?><?thumb-size 11527?><?thumb-md5 c4d9f101f1d9f3ba696b930da6e2b298?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 80?><?thumb-scaled-width 103?><?thumb-cloudpmc-urn urn:cdn:blobs/0257/9084346/c4d9f101f1d9/c8ra05464a-f8.gif?></graphic></fig><p>To further study the hydrogen absorption and desorption thermodynamics, the pressure–composition (<italic toggle="yes">P</italic>–<italic toggle="yes">C</italic>) isotherms of Mg–Ni/HCS and Mg–HCS are measured at 350, 330, and 310 °C, as shown in <xref rid="fig9" ref-type="fig">Fig. 9a and c</xref>, respectively. The Van't Hoff plots derived from the <italic toggle="yes">P</italic>–<italic toggle="yes">C</italic> isotherms are shown in <xref rid="fig9" ref-type="fig">Fig. 9b and d</xref>. For the Mg–Ni/HCS composite, two plateaus are clearly visible for each plot, independent of the temperature; they correspond to the hydrogen sorption reactions for Mg/MgH<sub>2</sub> at a lower concentration of H<sub>2</sub> (long and fairly flat plateau) and hydrogen sorption reactions for Mg<sub>2</sub>Ni/Mg<sub>2</sub>NiH<sub>4</sub> (short and narrow plateau) at a higher concentration of H<sub>2</sub>. Based on the midpoint pressures at different temperatures, Mg–Ni/HCS displays the equilibrium pressures of absorption plateaus at lower plateaus of 1.46, 2.48, and 3.60 bar, and the equilibrium pressures of the desorption plateaus are 1.23, 2.12, and 3.30 bar at 310, 330, and 350 °C, respectively. The hydrogenation and dehydrogenation enthalpies (Δ<italic toggle="yes">H</italic>) are determined to be −67.2 and 73.8 kJ mol<sup>−1</sup> H<sub>2</sub>, and the hydrogenation and dehydrogenation entropies are calculated to be −119.5 and 131.9 J K<sup>−1</sup> mol<sup>−1</sup> H<sub>2</sub>, respectively. As compared to the standard value for MgH<sub>2</sub> (74.7 kJ mol<sup>−1</sup> H<sub>2</sub>),<sup><xref rid="cit56" ref-type="bibr">56</xref></sup> the Δ<italic toggle="yes">H</italic> values for hydrogenation and dehydrogenation are not essential. For the Mg–HCS composite, only one plateau is identified at each temperature, corresponding to the reactions for the Mg/MgH<sub>2</sub> system. Based on a similar method, the hydrogenation and dehydrogenation enthalpies of the Mg–HCS composite are determined to be about −66.4 and 66.7 kJ mol<sup>−1</sup> H<sub>2</sub>, and the hydrogenation and dehydrogenation entropies are determined to be about −114.3 and 113.6 J K<sup>−1</sup> mol<sup>−1</sup> H<sub>2</sub>, respectively. When compared to the standard value for MgH<sub>2</sub> (74.7 kJ mol<sup>−1</sup> H<sub>2</sub>), the Δ<italic toggle="yes">H</italic> values for hydrogenation and dehydrogenation are also not prominent, suggesting marginal changes in the thermodynamic properties following the addition of HCS and Ni/HCS.</p><fig position="float" id="fig9" orientation="portrait"><label>Fig. 9</label><caption><title>
+<italic toggle="yes">P</italic>–<italic toggle="yes">C</italic> isotherms for hydrogen absorption and desorption (a) and (c) and Van't Hoff plots, <italic toggle="yes">i.e.</italic>, log <italic toggle="yes">P</italic>(H<sub>2</sub>) <italic toggle="yes">vs.</italic> 1000/<italic toggle="yes">T</italic> (b) and (d) of Mg–Ni/HCS and Mg–HCS.</title></caption><graphic xmlns:xlink="http://www.w3.org/1999/xlink" position="float" orientation="portrait" xlink:href="c8ra05464a-f9.jpg"><?image-name c8ra05464a-f9.jpg?><?image-size 180315?><?image-md5 1a043039eb3e36372ce4eb6ed0ca6d6d?><?image-image-server-status LOAD_COMPLETED?><?image-original-height 1986?><?image-original-width 2624?><?image-scaled-height 567?><?image-scaled-width 749?><?image-cloudpmc-urn urn:cdn:blobs/0257/9084346/1a043039eb3e/c8ra05464a-f9.jpg?><?thumb-name c8ra05464a-f9.gif?><?thumb-size 14020?><?thumb-md5 94ca8b80c75b4e1a80748866635fa4bc?><?thumb-image-server-status NEVER_LOAD?><?thumb-scaled-height 79?><?thumb-scaled-width 105?><?thumb-cloudpmc-urn urn:cdn:blobs/0257/9084346/94ca8b80c75b/c8ra05464a-f9.gif?></graphic></fig></sec><sec><label>3.3</label><title>Mechanism</title><p>The above performances of Mg–Ni/HCS and Mg–HCS composites prepared by hydriding combustion synthesis and ball milling reveal considerably enhanced hydrogen storage properties of Mg hydrides. Nevertheless, the PCT measurement results exhibited marginal differences in the thermodynamic properties. We highlight the excellent kinetic improvements in the as-prepared Mg–Ni/HCS composite in the dispersity of HCS and the <italic toggle="yes">in situ</italic>-formed Mg<sub>2</sub>NiH<sub>4</sub>. The particular distribution of the Mg<sub>2</sub>NiH<sub>4</sub> phase is assumed to play a critical role in triggering de/absorption of MgH<sub>2</sub>. Zhang <italic toggle="yes">et al.</italic><sup><xref rid="cit57" ref-type="bibr">57</xref></sup> found that in Ni-containing Mg-based systems, Ni always transforms into Mg<sub>2</sub>NiH<sub>4</sub> during the hydriding combustion synthesis process, and it changes to Mg<sub>2</sub>Ni after desorption; the Mg<sub>2</sub>Ni phase can act as a porthole to adsorb H<sub>2</sub> and dissociate H<sub>2</sub> into H atoms. This yields more significant reduction in the hydrogenation barrier as compared to that for pure Mg and triggers its hydrogen performances. Please note that HCS burst and wrap onto Ni; therefore, the existence of HCS causes a sufficient dispersion effect in the hybrid. The active sites of carbon materials are also crucial for facilitating the nucleation of Mg<sub>2</sub>Ni/Mg<sub>2</sub>NiH<sub>4</sub> particles.</p></sec></sec><sec><label>4.</label><title>Conclusions</title><p>We have prepared an Mg–Ni/HCS composite by hydriding combustion synthesis and mechanical milling process involving Mg powder and carbon-wrapped Ni additive as the raw materials. Microstructural characterization reveals that the <italic toggle="yes">in situ</italic>-formed Mg<sub>2</sub>NiH<sub>4</sub> particles are evenly distributed into the matrix of the composite and play a key role in significant enhancement of hydrogen desorption kinetics. HCS assume an important role as a support material in providing nucleation sites for MgH<sub>2</sub> and Mg<sub>2</sub>NiH<sub>4</sub> and act as an inhibitor for the agglomeration of hydrides to enhance the dehydrogenation performances. The Mg–Ni/HCS composite absorbs 3.5 wt% of hydrogen in 200 min at 75 °C and desorbs 2.7 wt% of hydrogen in 120 min at 275 °C. The <italic toggle="yes">E</italic><sub>a</sub> value of the composite for the dehydrogenation of MgH<sub>2</sub> is 65.9 kJ mol<sup>−1</sup>, indicating sharp reduction in the barrier to dehydrogenation when compared with that of commercial MgH<sub>2</sub>. Our results demonstrate that the carbon-wrapped Ni additive can greatly improve the hydrogen performances of the Mg-based hydride system and provide considerable potential for practical applications.</p></sec><sec sec-type="COI-statement"><title>Conflicts of interest</title><p>There are no conflicts to declare.</p></sec><sec sec-type="supplementary-material"><title>Supplementary Material</title></sec></body><back><ack><p>This work was financially supported by the National Natural Science Foundation of China (No. 51571173, 51771164 and 51701175), the National Postdoctoral Program for Innovative Talents (BX201700204) and the China Postdoctoral Science Foundation (2016M601281).</p></ack><ref-list><title>Notes and references</title><ref id="cit1"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Schlapbach</surname><given-names>L.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Züttel</surname><given-names>A.</given-names></name>
+</person-group><source>Nature</source><year>2001</year><volume>414</volume><fpage>353</fpage><lpage>358</lpage><pub-id pub-id-type="doi">10.1038/35104634</pub-id><pub-id pub-id-type="pmid">11713542</pub-id></element-citation></ref><ref id="cit2"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Zhu</surname><given-names>Y. Q.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhou</surname><given-names>S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Feng</surname><given-names>Y. M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Hu</surname><given-names>Z. K.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yuan</surname><given-names>L.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2017</year><volume>42</volume><fpage>19389</fpage><lpage>19394</lpage><pub-id pub-id-type="doi">10.1016/j.ijhydene.2017.06.042</pub-id></element-citation></ref><ref id="cit3"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Aktekin</surname><given-names>B.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Eyövge</surname><given-names>C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Öztürk</surname><given-names>T.</given-names></name>
+</person-group><source>J. Alloys Compd.</source><year>2017</year><volume>720</volume><fpage>7</fpage><lpage>21</lpage><pub-id pub-id-type="doi">10.1016/j.jallcom.2017.05.241</pub-id></element-citation></ref><ref id="cit4"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Orimo</surname><given-names>S. I.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Nakamori</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Eliseo</surname><given-names>J. R.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Züttel</surname><given-names>A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Jensen</surname><given-names>C. M.</given-names></name>
+</person-group><source>Chem. Rev.</source><year>2007</year><volume>107</volume><fpage>4111</fpage><lpage>4132</lpage><pub-id pub-id-type="doi">10.1021/cr0501846</pub-id><pub-id pub-id-type="pmid">17848101</pub-id></element-citation></ref><ref id="cit5"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Chung</surname><given-names>C. J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Nivargi</surname><given-names>C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Clemens</surname><given-names>B.</given-names></name>
+</person-group><source>Phys. Chem. Chem. Phys.</source><year>2015</year><volume>17</volume><fpage>28977</fpage><lpage>28984</lpage><pub-id pub-id-type="doi">10.1039/C5CP04515K</pub-id><pub-id pub-id-type="pmid">26455282</pub-id></element-citation></ref><ref id="cit6"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Chen</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Xia</surname><given-names>G. L.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Guo</surname><given-names>Z. P.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Huang</surname><given-names>Z. G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Liu</surname><given-names>H. K.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yu</surname><given-names>X. B.</given-names></name>
+</person-group><source>J. Mater. Chem. A</source><year>2015</year><volume>3</volume><fpage>15843</fpage><lpage>15848</lpage><pub-id pub-id-type="doi">10.1039/C5TA03721B</pub-id></element-citation></ref><ref id="cit7"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>An</surname><given-names>C. H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>Y. J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Huang</surname><given-names>Y. N.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Chen</surname><given-names>C. C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Jiao</surname><given-names>L. F.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yuan</surname><given-names>H. T.</given-names></name>
+</person-group><source>J. Mater. Chem. A</source><year>2014</year><volume>2</volume><fpage>16285</fpage><lpage>16291</lpage><pub-id pub-id-type="doi">10.1039/C4TA02759K</pub-id></element-citation></ref><ref id="cit8"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Shao</surname><given-names>H. Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Xin</surname><given-names>G. B.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zheng</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>X. G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Akiba</surname><given-names>E.</given-names></name>
+</person-group><source>Nano Energy</source><year>2012</year><volume>1</volume><fpage>590</fpage><lpage>601</lpage><pub-id pub-id-type="doi">10.1016/j.nanoen.2012.05.005</pub-id></element-citation></ref><ref id="cit9"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Setijadi</surname><given-names>E. J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Boyer</surname><given-names>C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Agueyzinsou</surname><given-names>K. F.</given-names></name>
+</person-group><source>RSC Adv.</source><year>2014</year><volume>4</volume><fpage>39934</fpage><lpage>39940</lpage><pub-id pub-id-type="doi">10.1039/C4RA08404G</pub-id></element-citation></ref><ref id="cit10"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Jeon</surname><given-names>K. J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Moon</surname><given-names>H. R.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ruminski</surname><given-names>A. M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Jiang</surname><given-names>B.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Kisielowski</surname><given-names>C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Bardhan</surname><given-names>R.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Urban</surname><given-names>J. J.</given-names></name>
+</person-group><source>Nat. Mater.</source><year>2011</year><volume>10</volume><fpage>286</fpage><lpage>290</lpage><pub-id pub-id-type="doi">10.1038/nmat2978</pub-id><pub-id pub-id-type="pmid">21399630</pub-id></element-citation></ref><ref id="cit11"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Xiao</surname><given-names>X. Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Liu</surname><given-names>Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Saremi-Yarahmadia</surname><given-names>S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Gregory</surname><given-names>D. H.</given-names></name>
+</person-group><source>Phys. Chem. Chem. Phys.</source><year>2016</year><volume>18</volume><fpage>10492</fpage><lpage>10498</lpage><pub-id pub-id-type="doi">10.1039/C5CP07762A</pub-id><pub-id pub-id-type="pmid">27030171</pub-id></element-citation></ref><ref id="cit12"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Braga</surname><given-names>M. H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>El-Azab</surname><given-names>A.</given-names></name>
+</person-group><source>Phys. Chem. Chem. Phys.</source><year>2014</year><volume>16</volume><fpage>23012</fpage><lpage>23025</lpage><pub-id pub-id-type="doi">10.1039/C4CP01815J</pub-id><pub-id pub-id-type="pmid">25241796</pub-id></element-citation></ref><ref id="cit13"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Liu</surname><given-names>W.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Setijadi</surname><given-names>E. J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Aguey–Zinsou</surname><given-names>K. F.</given-names></name>
+</person-group><source>J. Phys. Chem. C</source><year>2014</year><volume>118</volume><fpage>27781</fpage><lpage>27792</lpage><pub-id pub-id-type="doi">10.1021/jp5097663</pub-id></element-citation></ref><ref id="cit14"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Bogerd</surname><given-names>R.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Adelhelm</surname><given-names>P.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Meeldijk</surname><given-names>J. H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>de Jong</surname><given-names>K. P.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>de Jongh</surname><given-names>P. E.</given-names></name>
+</person-group><source>Nanotechnology</source><year>2009</year><volume>20</volume><fpage>204019</fpage><pub-id pub-id-type="doi">10.1088/0957-4484/20/20/204019</pub-id><pub-id pub-id-type="pmid">19420667</pub-id></element-citation></ref><ref id="cit15"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Ismail</surname><given-names>M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhao</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yu</surname><given-names>X. B.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Dou</surname><given-names>S. X.</given-names></name>
+</person-group><source>RSC Adv.</source><year>2011</year><volume>1</volume><fpage>408</fpage><lpage>414</lpage><pub-id pub-id-type="doi">10.1039/C1RA00209K</pub-id></element-citation></ref><ref id="cit16"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>Y. W.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Xiao</surname><given-names>X. Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Luo</surname><given-names>B. S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Huang</surname><given-names>X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Liu</surname><given-names>M. J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Chen</surname><given-names>L. X.</given-names></name>
+</person-group><source>J. Phys. Chem. C</source><year>2018</year><volume>122</volume><fpage>2528</fpage><lpage>2538</lpage><pub-id pub-id-type="doi">10.1021/acs.jpcc.7b11222</pub-id></element-citation></ref><ref id="cit17"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Zaluska</surname><given-names>A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zaluski</surname><given-names>L.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ström–Olsen</surname><given-names>J. O.</given-names></name>
+</person-group><source>J. Alloys Compd.</source><year>1999</year><volume>289</volume><fpage>197</fpage><lpage>206</lpage><pub-id pub-id-type="doi">10.1016/S0166-0462(99)00013-7</pub-id></element-citation></ref><ref id="cit18"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Malka</surname><given-names>I. E.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Czujko</surname><given-names>T.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Bystrzycki</surname><given-names>J.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2010</year><volume>35</volume><fpage>1706</fpage><lpage>1712</lpage><pub-id pub-id-type="doi">10.1016/j.ijhydene.2009.12.024</pub-id></element-citation></ref><ref id="cit19"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Ali</surname><given-names>N. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Idris</surname><given-names>N. H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Md Din</surname><given-names>M. F.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Mustafa</surname><given-names>N. S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sazelee</surname><given-names>N. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Halim Yap</surname><given-names>F. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sulaiman</surname><given-names>N. N.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yahya</surname><given-names>M. S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ismail</surname><given-names>M.</given-names></name>
+</person-group><source>RSC Adv.</source><year>2018</year><volume>8</volume><fpage>15667</fpage><lpage>15674</lpage><pub-id pub-id-type="doi">10.1039/C8RA02168F</pub-id><pub-id pub-id-type="pmcid">PMC9088278</pub-id><pub-id pub-id-type="pmid">35559118</pub-id></element-citation></ref><ref id="cit20"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Sulaiman</surname><given-names>N. N.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Mustafa</surname><given-names>N. S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ismail</surname><given-names>M.</given-names></name>
+</person-group><source>Dalton Trans.</source><year>2016</year><volume>45</volume><fpage>7085</fpage><lpage>7093</lpage><pub-id pub-id-type="doi">10.1039/C6DT00068A</pub-id><pub-id pub-id-type="pmid">27005483</pub-id></element-citation></ref><ref id="cit21"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Z Liu</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wu</surname><given-names>C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhou</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Chen</surname><given-names>T.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Liu</surname><given-names>Y. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>X. H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Dong</surname><given-names>Z. H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ge</surname><given-names>H. W.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>S. Q.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yan</surname><given-names>M.</given-names></name>
+</person-group><source>RSC Adv.</source><year>2015</year><volume>5</volume><fpage>22091</fpage><lpage>22096</lpage><pub-id pub-id-type="doi">10.1039/C4RA17139J</pub-id></element-citation></ref><ref id="cit22"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Huang</surname><given-names>X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Xiao</surname><given-names>X. Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>W.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Fan</surname><given-names>X. L.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>L. T.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Cheng</surname><given-names>C. J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>S. Q.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ge</surname><given-names>H. W.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>Q. D.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Chen</surname><given-names>L. X.</given-names></name>
+</person-group><source>Phys. Chem. Chem. Phys.</source><year>2017</year><volume>19</volume><fpage>4019</fpage><lpage>4029</lpage><pub-id pub-id-type="doi">10.1039/C6CP07852D</pub-id><pub-id pub-id-type="pmid">28106897</pub-id></element-citation></ref><ref id="cit23"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Xiao</surname><given-names>X. Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Xu</surname><given-names>C. C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Shao</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>L. T.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Qin</surname><given-names>T.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>S. Q.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>W Ge</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>Q. D.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Chen</surname><given-names>L. X.</given-names></name>
+</person-group><source>J. Mater. Chem. A</source><year>2015</year><volume>3</volume><fpage>5517</fpage><lpage>5524</lpage><pub-id pub-id-type="doi">10.1039/C4TA06837H</pub-id></element-citation></ref><ref id="cit24"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>L. T.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Xiao</surname><given-names>X. Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Xu</surname><given-names>C. C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zheng</surname><given-names>J. G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Fan</surname><given-names>X. L.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Shao</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>S. Q.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ge</surname><given-names>H. W.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>Q. D.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Chen</surname><given-names>L. X.</given-names></name>
+</person-group><source>J. Phys. Chem. C</source><year>2015</year><volume>119</volume><fpage>8554</fpage><lpage>8562</lpage><pub-id pub-id-type="doi">10.1021/acs.jpcc.5b01532</pub-id></element-citation></ref><ref id="cit25"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>de Jongh</surname><given-names>P. E.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Adelhelm</surname><given-names>P.</given-names></name>
+</person-group><source>ChemSusChem</source><year>2010</year><volume>3</volume><fpage>1332</fpage><lpage>1348</lpage><pub-id pub-id-type="doi">10.1002/cssc.201000248</pub-id><pub-id pub-id-type="pmid">21080405</pub-id></element-citation></ref><ref id="cit26"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Rather</surname><given-names>S. U.</given-names></name>
+</person-group><source>Mater. Res. Bull.</source><year>2014</year><volume>60</volume><fpage>556</fpage><lpage>561</lpage><pub-id pub-id-type="doi">10.1016/j.materresbull.2014.09.027</pub-id></element-citation></ref><ref id="cit27"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Shao</surname><given-names>H. Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Xin</surname><given-names>G. B.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zheng</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>X. G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Akiba</surname><given-names>E.</given-names></name>
+</person-group><source>Nano Energy</source><year>2012</year><volume>1</volume><fpage>590</fpage><lpage>601</lpage><pub-id pub-id-type="doi">10.1016/j.nanoen.2012.05.005</pub-id></element-citation></ref><ref id="cit28"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Wu</surname><given-names>Z. G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Allendorf</surname><given-names>M. D.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Grossman</surname><given-names>J. C.</given-names></name>
+</person-group><source>J. Am. Chem. Soc.</source><year>2009</year><volume>131</volume><fpage>13918</fpage><lpage>13919</lpage><pub-id pub-id-type="doi">10.1021/ja905639m</pub-id><pub-id pub-id-type="pmid">19739635</pub-id></element-citation></ref><ref id="cit29"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Wagemans</surname><given-names>R. W.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>van Lenthe</surname><given-names>J. H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>de Jongh</surname><given-names>P. E.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>van Dillen</surname><given-names>A. J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>de Jong</surname><given-names>K. P.</given-names></name>
+</person-group><source>J. Am. Chem. Soc.</source><year>2005</year><volume>127</volume><fpage>16675</fpage><lpage>16680</lpage><pub-id pub-id-type="doi">10.1021/ja054569h</pub-id><pub-id pub-id-type="pmid">16305257</pub-id></element-citation></ref><ref id="cit30"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Paskevicius</surname><given-names>M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sheppard</surname><given-names>D. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Buckley</surname><given-names>C. E.</given-names></name>
+</person-group><source>J. Am. Chem. Soc.</source><year>2010</year><volume>132</volume><fpage>5077</fpage><lpage>5083</lpage><pub-id pub-id-type="doi">10.1021/ja908398u</pub-id><pub-id pub-id-type="pmid">20307102</pub-id></element-citation></ref><ref id="cit31"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Rönnebro</surname><given-names>E. C. E.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Majzoub</surname><given-names>E. H.</given-names></name>
+</person-group><source>MRS Bull.</source><year>2013</year><volume>38</volume><fpage>452</fpage><lpage>461</lpage><pub-id pub-id-type="doi">10.1557/mrs.2013.132</pub-id></element-citation></ref><ref id="cit32"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Imamura</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sakasai</surname><given-names>N.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Fujinaga</surname><given-names>T.</given-names></name>
+</person-group><source>J. Alloys Compd.</source><year>1997</year><volume>253–254</volume><fpage>34</fpage><lpage>37</lpage><pub-id pub-id-type="doi">10.1016/S0925-8388(96)03074-5</pub-id></element-citation></ref><ref id="cit33"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Imamura</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Takesue</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Tabata</surname><given-names>S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Shigetomi</surname><given-names>N.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Sakataand</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Tsuchiya</surname><given-names>S.</given-names></name>
+</person-group><source>Chem. Commun.</source><year>1999</year><volume>22</volume><fpage>2277</fpage><lpage>2278</lpage><pub-id pub-id-type="doi">10.1039/A906454K</pub-id></element-citation></ref><ref id="cit34"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Rather</surname><given-names>S. U.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Nahm</surname><given-names>K. S.</given-names></name>
+</person-group><source>Mater. Res. Bull.</source><year>2014</year><volume>49</volume><fpage>525</fpage><lpage>530</lpage><pub-id pub-id-type="doi">10.1016/j.materresbull.2013.09.022</pub-id></element-citation></ref><ref id="cit35"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Amirkhiz</surname><given-names>B. S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Danaie</surname><given-names>M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Barnes</surname><given-names>M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Simard</surname><given-names>B.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Mitlin</surname><given-names>D.</given-names></name>
+</person-group><source>J. Phys. Chem. C</source><year>2010</year><volume>114</volume><fpage>3265</fpage><lpage>3275</lpage><pub-id pub-id-type="doi">10.1021/jp907724t</pub-id></element-citation></ref><ref id="cit36"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Wu</surname><given-names>C. Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>P.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yao</surname><given-names>X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Liu</surname><given-names>C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Chen</surname><given-names>D. M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Lu</surname><given-names>G. Q.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Cheng</surname><given-names>H. M.</given-names></name>
+</person-group><source>J. Alloys Compd.</source><year>2006</year><volume>420</volume><fpage>278</fpage><lpage>282</lpage><pub-id pub-id-type="doi">10.1016/j.jallcom.2005.10.028</pub-id></element-citation></ref><ref id="cit37"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Wu</surname><given-names>C. Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>P.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yao</surname><given-names>X. D.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Liu</surname><given-names>C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Chen</surname><given-names>D. M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Lu</surname><given-names>G. Q.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Cheng</surname><given-names>H. M.</given-names></name>
+</person-group><source>J. Phys. Chem. B</source><year>2005</year><volume>109</volume><fpage>22217</fpage><lpage>22221</lpage><pub-id pub-id-type="doi">10.1021/jp0545041</pub-id><pub-id pub-id-type="pmid">16853892</pub-id></element-citation></ref><ref id="cit38"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Liu</surname><given-names>G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>Y. J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Jiao</surname><given-names>L. F.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yuan</surname><given-names>H. T.</given-names></name>
+</person-group><source>ACS Appl. Mater. Interfaces</source><year>2014</year><volume>6</volume><fpage>11038</fpage><lpage>11046</lpage><pub-id pub-id-type="doi">10.1021/am502755s</pub-id><pub-id pub-id-type="pmid">24941011</pub-id></element-citation></ref><ref id="cit39"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Beattie</surname><given-names>S. D.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Setthanan</surname><given-names>U.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>McGrady</surname><given-names>G. S.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2011</year><volume>36</volume><fpage>6014</fpage><lpage>6021</lpage><pub-id pub-id-type="doi">10.1016/j.ijhydene.2011.02.026</pub-id></element-citation></ref><ref id="cit40"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Christian</surname><given-names>M. L.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Aguey-Zinsou</surname><given-names>K. F.</given-names></name>
+</person-group><source>ACS Nano</source><year>2012</year><volume>6</volume><fpage>7739</fpage><lpage>7751</lpage><pub-id pub-id-type="doi">10.1021/nn3030018</pub-id><pub-id pub-id-type="pmid">22873406</pub-id></element-citation></ref><ref id="cit41"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Prieto</surname><given-names>G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zečević</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Friedrich</surname><given-names>H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>de Jong</surname><given-names>K. P.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>de Jongh</surname><given-names>P. E.</given-names></name>
+</person-group><source>Nat. Mater.</source><year>2013</year><volume>12</volume><fpage>34</fpage><lpage>39</lpage><pub-id pub-id-type="doi">10.1038/nmat3471</pub-id><pub-id pub-id-type="pmid">23142841</pub-id></element-citation></ref><ref id="cit42"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Yuan</surname><given-names>J. G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhu</surname><given-names>Y. F.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>L. Q.</given-names></name>
+</person-group><source>Chem. Commun.</source><year>2014</year><volume>50</volume><fpage>6641</fpage><lpage>6644</lpage><pub-id pub-id-type="doi">10.1039/C4CC01569J</pub-id><pub-id pub-id-type="pmid">24825430</pub-id></element-citation></ref><ref id="cit43"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Yao</surname><given-names>X. D.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wu</surname><given-names>C. Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Du</surname><given-names>A. J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zou</surname><given-names>J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhu</surname><given-names>Z. H.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>P.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Cheng</surname><given-names>H. M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Smith</surname><given-names>S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Lu</surname><given-names>G. Q.</given-names></name>
+</person-group><source>J. Am. Chem. Soc.</source><year>2007</year><volume>129</volume><fpage>15650</fpage><lpage>15654</lpage><pub-id pub-id-type="doi">10.1021/ja0751431</pub-id><pub-id pub-id-type="pmid">18034479</pub-id></element-citation></ref><ref id="cit44"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Yahya</surname><given-names>M. S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ismail</surname><given-names>M.</given-names></name>
+</person-group><source>J. Phys. Chem. C</source><year>2018</year><volume>122</volume><fpage>11222</fpage><lpage>11233</lpage><pub-id pub-id-type="doi">10.1021/acs.jpcc.8b02162</pub-id></element-citation></ref><ref id="cit45"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Ismail</surname><given-names>M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Juahir</surname><given-names>N.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Mustafa</surname><given-names>N. S.</given-names></name>
+</person-group><source>J. Phys. Chem. C</source><year>2014</year><volume>118</volume><fpage>18878</fpage><lpage>18883</lpage><pub-id pub-id-type="doi">10.1021/jp5046436</pub-id></element-citation></ref><ref id="cit46"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Amirkhiz</surname><given-names>B. S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Danaie</surname><given-names>M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Mitlin</surname><given-names>D.</given-names></name>
+</person-group><source>Nanotechnology</source><year>2009</year><volume>20</volume><fpage>204016</fpage><pub-id pub-id-type="doi">10.1088/0957-4484/20/20/204016</pub-id><pub-id pub-id-type="pmid">19420664</pub-id></element-citation></ref><ref id="cit47"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Yang</surname><given-names>R. Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Qiu</surname><given-names>X. P.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>H. R.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>J. Q.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhu</surname><given-names>W. T.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>Z. X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Huang</surname><given-names>X. J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Chen</surname><given-names>L. Q.</given-names></name>
+</person-group><source>Carbon</source><year>2005</year><volume>43</volume><fpage>11</fpage><lpage>16</lpage><pub-id pub-id-type="doi">10.1016/j.carbon.2004.08.008</pub-id></element-citation></ref><ref id="cit48"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Liu</surname><given-names>G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>Y. J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Qiu</surname><given-names>F. Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>L.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Jiao</surname><given-names>L. F.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yuan</surname><given-names>H. T.</given-names></name>
+</person-group><source>J. Mater. Chem.</source><year>2012</year><volume>22</volume><fpage>22542</fpage><lpage>22549</lpage><pub-id pub-id-type="doi">10.1039/C2JM34730J</pub-id></element-citation></ref><ref id="cit49"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Mao</surname><given-names>J. F.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Guo</surname><given-names>Z. P.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yu</surname><given-names>X. B.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Liu</surname><given-names>H. K.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wu</surname><given-names>Z.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ni</surname><given-names>J.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2010</year><volume>35</volume><fpage>4569</fpage><lpage>4575</lpage><pub-id pub-id-type="doi">10.1016/j.ijhydene.2010.02.107</pub-id></element-citation></ref><ref id="cit50"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>Q. Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zang</surname><given-names>L.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Huang</surname><given-names>Y. K.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Gao</surname><given-names>P. Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Jiao</surname><given-names>L. F.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Yuan</surname><given-names>H. T.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wang</surname><given-names>Y. J.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2017</year><volume>42</volume><fpage>24247</fpage><lpage>24255</lpage><pub-id pub-id-type="doi">10.1016/j.ijhydene.2017.07.220</pub-id></element-citation></ref><ref id="cit51"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Sulaiman</surname><given-names>N. N.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Juahir</surname><given-names>N.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Mustafa</surname><given-names>N. S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Halim Yap</surname><given-names>F. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ismail</surname><given-names>M.</given-names></name>
+</person-group><source>J. Energy Chem.</source><year>2016</year><volume>25</volume><fpage>832</fpage><lpage>839</lpage><pub-id pub-id-type="doi">10.1016/j.jechem.2016.04.015</pub-id></element-citation></ref><ref id="cit52"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Yahya</surname><given-names>M. S.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ismail</surname><given-names>M.</given-names></name>
+</person-group><source>Int. J. Hydrogen Energy</source><year>2018</year><volume>43</volume><fpage>6244</fpage><lpage>6255</lpage><pub-id pub-id-type="doi">10.1016/j.ijhydene.2018.02.028</pub-id></element-citation></ref><ref id="cit53"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>House</surname><given-names>S. D.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Vajo</surname><given-names>J. J.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ren</surname><given-names>C.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Rockett</surname><given-names>A. A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Robertson</surname><given-names>I. M.</given-names></name>
+</person-group><source>Acta Mater.</source><year>2015</year><volume>86</volume><fpage>55</fpage><lpage>68</lpage><pub-id pub-id-type="doi">10.1016/j.actamat.2014.11.047</pub-id></element-citation></ref><ref id="cit54"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Borgschulte</surname><given-names>A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Bielmann</surname><given-names>M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Züttel</surname><given-names>A.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Barkhordarian</surname><given-names>G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Dornheim</surname><given-names>M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Bormann</surname><given-names>R.</given-names></name>
+</person-group><source>Appl. Surf. Sci.</source><year>2008</year><volume>254</volume><fpage>2377</fpage><lpage>2384</lpage><pub-id pub-id-type="doi">10.1016/j.apsusc.2007.09.069</pub-id></element-citation></ref><ref id="cit55"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Peng</surname><given-names>D. D.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Liu</surname><given-names>Y.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>L.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>H. M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Ding</surname><given-names>Z. M.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Han</surname><given-names>S. M.</given-names></name>
+</person-group><source>J. Alloys Compd.</source><year>2017</year><volume>711</volume><fpage>104</fpage><lpage>110</lpage><pub-id pub-id-type="doi">10.1016/j.jallcom.2017.03.263</pub-id></element-citation></ref><ref id="cit56"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Bohmhammel</surname><given-names>K.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wolf</surname><given-names>U.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Wolf</surname><given-names>G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Königsberger</surname><given-names>E.</given-names></name>
+</person-group><source>Thermochim. Acta</source><year>1999</year><volume>337</volume><fpage>195</fpage><lpage>199</lpage><pub-id pub-id-type="doi">10.1016/S0040-6031(99)00235-X</pub-id></element-citation></ref><ref id="cit57"><element-citation publication-type="journal"><person-group person-group-type="author">
+<name name-style="western"><surname>Zhang</surname><given-names>J. G.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhu</surname><given-names>Y. F.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zang</surname><given-names>X. X.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Huan</surname><given-names>Q. Q.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Su</surname><given-names>W.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Zhu</surname><given-names>D. L.</given-names></name>
+</person-group><person-group person-group-type="author">
+<name name-style="western"><surname>Li</surname><given-names>L. Q.</given-names></name>
+</person-group><source>J. Mater. Chem. A</source><year>2016</year><volume>4</volume><fpage>2560</fpage><lpage>2570</lpage><pub-id pub-id-type="doi">10.1039/C5TA09848C</pub-id></element-citation></ref></ref-list></back></article>

@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # Spec: 分层流式结算（缺陷一/二的三阶段方案：P-A · P-B · P-C）
 
 > 状态: **P-A / P-B / P-C 已落地**（`huginn/research/` 下 `program.py` + `replan_gate.py` +

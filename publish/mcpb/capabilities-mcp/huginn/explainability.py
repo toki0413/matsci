@@ -105,52 +105,13 @@ class Explainer:
         key_findings: dict[str, Any] = {}
 
         # 1) 审计时间线: 谁做了什么
-        if self._audit is not None:
-            for ev in self._audit.query(
-                action=queries or None,
-                actor=actor,
-                tool=tool,
-                limit=limit,
-            ):
-                steps.append(
-                    ExplainStep(
-                        ts=_to_ts(ev.get("timestamp")),
-                        kind="audit",
-                        actor=ev.get("actor", ""),
-                        action=ev.get("action", ""),
-                        detail=ev.get("details") or {},
-                    )
-                )
+        Explainer._collect_audit_steps(self, steps, queries, actor, tool, limit)
 
         # 2) 溯源产出: 产出了什么文件/关键值
         if self._provenance is not None:
-            if queries:
-                entries = self._provenance.search(queries)
-            else:
-                entries = [self._as_dict(e) for e in self._provenance.recent(limit)]
+            entries = Explainer._provenance_entries(self, queries, limit)
             artifacts = list(entries)
-            for a in entries:
-                steps.append(
-                    ExplainStep(
-                        ts=a.get("produced_at", 0.0),
-                        kind="artifact",
-                        produced_by=a.get("produced_by", ""),
-                        action=a.get("produced_by", ""),
-                        file_path=a.get("file_path", ""),
-                        detail=a,
-                    )
-                )
-                # 依赖边: 产出文件 → 其输入文件
-                for inp in a.get("input_files") or []:
-                    edges.append(
-                        {
-                            "from_file": inp,
-                            "to_file": a["file_path"],
-                            "produced_by": a.get("produced_by", ""),
-                        }
-                    )
-                for k, v in (a.get("key_properties") or {}).items():
-                    key_findings.setdefault(k, v)
+            _collect_artifact_steps(steps, edges, key_findings, entries)
 
         return Explanation(
             goal=queries,
@@ -164,6 +125,72 @@ class Explainer:
     def _as_dict(e: Any) -> dict[str, Any]:
         """溯源条目可能是 entry 对象 (有 to_dict) 或已是 dict, 统一为 dict."""
         return e if isinstance(e, dict) else e.to_dict()
+
+    def _collect_audit_steps(
+        self,
+        steps: list[ExplainStep],
+        queries: str,
+        actor: str | None,
+        tool: str | None,
+        limit: int,
+    ) -> None:
+        """把审计事件归一化后追加到 ``steps`` (无审计后端时不动)."""
+        if self._audit is None:
+            return
+        for ev in self._audit.query(
+            action=queries or None,
+            actor=actor,
+            tool=tool,
+            limit=limit,
+        ):
+            steps.append(
+                ExplainStep(
+                    ts=_to_ts(ev.get("timestamp")),
+                    kind="audit",
+                    actor=ev.get("actor", ""),
+                    action=ev.get("action", ""),
+                    detail=ev.get("details") or {},
+                )
+            )
+
+    def _provenance_entries(self, queries: str, limit: int) -> list[dict[str, Any]]:
+        """按关键词搜索 (或取最近条目) 得到溯源条目列表."""
+        if queries:
+            entries = self._provenance.search(queries)
+        else:
+            entries = [self._as_dict(e) for e in self._provenance.recent(limit)]
+        return list(entries)
+
+
+def _collect_artifact_steps(
+    steps: list[ExplainStep],
+    edges: list[dict[str, Any]],
+    key_findings: dict[str, Any],
+    entries: list[dict[str, Any]],
+) -> None:
+    """把溯源条目追加为 timeline step/依赖边/关键发现."""
+    for a in entries:
+        steps.append(
+            ExplainStep(
+                ts=a.get("produced_at", 0.0),
+                kind="artifact",
+                produced_by=a.get("produced_by", ""),
+                action=a.get("produced_by", ""),
+                file_path=a.get("file_path", ""),
+                detail=a,
+            )
+        )
+        # 依赖边: 产出文件 → 其输入文件
+        for inp in a.get("input_files") or []:
+            edges.append(
+                {
+                    "from_file": inp,
+                    "to_file": a["file_path"],
+                    "produced_by": a.get("produced_by", ""),
+                }
+            )
+        for k, v in (a.get("key_properties") or {}).items():
+            key_findings.setdefault(k, v)
 
 
 def _to_ts(t: Any) -> float:

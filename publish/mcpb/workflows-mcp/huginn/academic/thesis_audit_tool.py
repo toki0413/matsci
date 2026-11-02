@@ -129,6 +129,71 @@ _AUDIT_SYSTEM_PROMPT = """你是论文审计员。给定论文 markdown 和分�
 }"""
 
 
+def _extract_audit_payload(text: str) -> dict[str, Any]:
+    """剥掉 markdown 围栏并解析 LLM 回复里的 JSON."""
+    raw = text.strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```[a-zA-Z]*\n?", "", raw)
+        raw = re.sub(r"\n?```\s*$", "", raw)
+    data: dict[str, Any] = {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        start, end = raw.find("{"), raw.rfind("}")
+        if start != -1 and end > start:
+            try:
+                data = json.loads(raw[start : end + 1])
+            except json.JSONDecodeError:
+                data = {}
+    return data
+
+
+def _normalize_audit_coverage(data: dict[str, Any], items: list[str]) -> list[dict]:
+    """以 items 为基准, LLM 没回或状态非法的补 blocked."""
+    cov_by_id = {
+        c.get("id"): c for c in (data.get("coverage") or []) if isinstance(c, dict)
+    }
+    coverage: list[dict] = []
+    for iid in items:
+        c = cov_by_id.get(iid)
+        status = c.get("status") if c else None
+        if status not in COVERAGE_STATUSES:
+            status = STATUS_BLOCKED
+        coverage.append(
+            {
+                "id": iid,
+                "status": status,
+                "scope": c.get("scope") if c else None,
+                "reason": (c.get("reason") if c else "LLM 未返回该条目"),
+            }
+        )
+    return coverage
+
+
+def _normalize_audit_issues(data: dict[str, Any]) -> tuple[list[dict], list[str]]:
+    """字段不全的 issue 丢进 work_notes, 不进正式列表."""
+    required = ("location", "excerpt", "basis", "priority", "certainty")
+    issues: list[dict] = []
+    work_notes: list[str] = list(data.get("work_notes") or [])
+    for it in data.get("issues") or []:
+        if not isinstance(it, dict):
+            continue
+        if all(it.get(k) for k in required):
+            issues.append(
+                {
+                    "id": it.get("id"),
+                    "location": it["location"],
+                    "excerpt": it["excerpt"],
+                    "basis": it["basis"],
+                    "priority": it["priority"],
+                    "certainty": it["certainty"],
+                }
+            )
+        else:
+            work_notes.append(f"issue {it.get('id')} 字段不全, 已降级为 work_note")
+    return issues, work_notes
+
+
 class ThesisAuditTool(HuginnTool):
     """论文审计: 分母抽取 + 9 态覆盖矩阵 + 完成门禁."""
 
@@ -143,9 +208,7 @@ class ThesisAuditTool(HuginnTool):
     output_schema = ThesisAuditOutput
     read_only = True
 
-    async def call(
-        self, args: ThesisAuditInput, context: ToolContext
-    ) -> ToolResult:
+    async def call(self, args: ThesisAuditInput, context: ToolContext) -> ToolResult:
         # 阶段 1: 对象账本 (纯正则, 不调 LLM)
         denom = self._extract_denominator(args.content)
 
@@ -220,7 +283,7 @@ class ThesisAuditTool(HuginnTool):
         # 升级路径: 用 AST 级 latex 解析器区分 inline/display
         block_count = len(re.findall(r"\$\$", content)) // 2
         env_count = len(re.findall(r"\\begin\{equation\}", content))
-        return [f"eq:{i+1}" for i in range(block_count + env_count)]
+        return [f"eq:{i + 1}" for i in range(block_count + env_count)]
 
     def _count_references(self, content: str) -> int:
         # 优先找 References / 参考文献 段后的 [N] 最大编号
@@ -326,7 +389,7 @@ class ThesisAuditTool(HuginnTool):
             "tables": denom.tables,
             "equations": denom.equations,
             "references": (
-                [f"ref:{i+1}" for i in range(denom.references_count)]
+                [f"ref:{i + 1}" for i in range(denom.references_count)]
                 if denom.references_count
                 else []
             ),
@@ -366,69 +429,9 @@ class ThesisAuditTool(HuginnTool):
         self, text: str, items: list[str]
     ) -> tuple[list[dict], list[dict], list[str], str]:
         """从 LLM 回复抠 JSON, 补齐缺失条目, 字段不全的 issue 丢弃."""
-        raw = text.strip()
-        if raw.startswith("```"):
-            raw = re.sub(r"^```[a-zA-Z]*\n?", "", raw)
-            raw = re.sub(r"\n?```\s*$", "", raw)
-        data: dict[str, Any] = {}
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            start, end = raw.find("{"), raw.rfind("}")
-            if start != -1 and end > start:
-                try:
-                    data = json.loads(raw[start : end + 1])
-                except json.JSONDecodeError:
-                    data = {}
-
-        # coverage: 以 items 为基准, LLM 没回或状态非法的补 blocked
-        cov_by_id = {
-            c.get("id"): c
-            for c in (data.get("coverage") or [])
-            if isinstance(c, dict)
-        }
-        coverage: list[dict] = []
-        for iid in items:
-            c = cov_by_id.get(iid)
-            status = c.get("status") if c else None
-            if status not in COVERAGE_STATUSES:
-                status = STATUS_BLOCKED
-            coverage.append(
-                {
-                    "id": iid,
-                    "status": status,
-                    "scope": c.get("scope") if c else None,
-                    "reason": (
-                        c.get("reason")
-                        if c
-                        else "LLM 未返回该条目"
-                    ),
-                }
-            )
-
-        # issues: 字段不全的丢进 work_notes, 不进正式列表
-        required = ("location", "excerpt", "basis", "priority", "certainty")
-        issues: list[dict] = []
-        work_notes: list[str] = list(data.get("work_notes") or [])
-        for it in data.get("issues") or []:
-            if not isinstance(it, dict):
-                continue
-            if all(it.get(k) for k in required):
-                issues.append(
-                    {
-                        "id": it.get("id"),
-                        "location": it["location"],
-                        "excerpt": it["excerpt"],
-                        "basis": it["basis"],
-                        "priority": it["priority"],
-                        "certainty": it["certainty"],
-                    }
-                )
-            else:
-                work_notes.append(
-                    f"issue {it.get('id')} 字段不全, 已降级为 work_note"
-                )
-
+        data = _extract_audit_payload(text)
+        coverage = _normalize_audit_coverage(data, items)
+        issues, work_notes = _normalize_audit_issues(data)
         verdict = data.get("overall_verdict", "blocked")
         if verdict not in ("pass", "minor_issues", "major_issues", "blocked"):
             verdict = "blocked"
@@ -457,9 +460,7 @@ class ThesisAuditTool(HuginnTool):
         for it in issues:
             for k in required:
                 if not it.get(k):
-                    raise AuditValidationError(
-                        f"issue {it.get('id')} 缺字段: {k}"
-                    )
+                    raise AuditValidationError(f"issue {it.get('id')} 缺字段: {k}")
 
         # 3. critical issue > 0 时 overall_verdict 不能是 pass
         critical = sum(1 for it in issues if it.get("priority") == "critical")

@@ -1,3 +1,4 @@
+# governance-gate
 """制度化闭环：huginn 消费仓库根 `.mcp.json`（标准 MCP 配置）。
 
 IDE/桌面读 `.mcp.json` 连外部 MCP（如 flint-chart），huginn 的 lifespan 现在

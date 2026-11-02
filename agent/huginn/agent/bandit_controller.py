@@ -8,6 +8,7 @@ ponytail: 不引依赖, 不做 function approximation. 天花板 = 4 维 state s
 
 参考: MemCon (arXiv:2607.13591) — memory ops MDP + UCB + 跨任务学习.
 """
+
 from __future__ import annotations
 
 import json
@@ -47,12 +48,16 @@ def _bucket(value: float, edges: list[float]) -> int:
 # tiling 0 = 精确状态 (现有行为); 其余 tiling 用 /2 粗化 + 不同偏移错开 coarse 边界,
 # 多个粗化 tiling 让不同维度组合都能共享邻居经验.
 _TILE_OFFSETS: tuple[tuple[int, int, int], ...] = (
-    (0, 0, 0), (1, 1, 1), (0, 1, 1), (1, 0, 1),
+    (0, 0, 0),
+    (1, 1, 1),
+    (0, 1, 1),
+    (1, 0, 1),
 )
 
 
-def _tile_keys(item_idx: int, time_bucket: int, calls_bucket: int,
-               progress_bucket: int) -> list[str]:
+def _tile_keys(
+    item_idx: int, time_bucket: int, calls_bucket: int, progress_bucket: int
+) -> list[str]:
     """返回该状态所属的多个 tiling key (精确 + 粗化)."""
     keys = [f"{item_idx}|{time_bucket}|{calls_bucket}|{progress_bucket}"]
     for _ot, _oc, _op in _TILE_OFFSETS:
@@ -141,6 +146,7 @@ class EffortBandit:
             # bandit_controller.py 在 agent/huginn/agent/, parents[3] = 项目根
             # __file__ 在 staticmethod 里走 module globals, 不会是 caller 的 globals.
             import huginn.agent.bandit_controller as _self_mod
+
             _root = Path(_self_mod.__file__).resolve().parents[3]
             _cand = _root / HUGINN_DIR_NAME / "bandit_q.json"
             _cand.parent.mkdir(parents=True, exist_ok=True)
@@ -158,8 +164,11 @@ class EffortBandit:
             self._N = _data.get("N", {})
             # 向后兼容: 旧 v18 文件没有 verified_lessons, 默认空 dict.
             self._verified_lessons = _data.get("verified_lessons", {})
-            logger.info("[v19] bandit loaded %d states, %d patterns",
-                        len(self._Q), len(self._verified_lessons))
+            logger.info(
+                "[v19] bandit loaded %d states, %d patterns",
+                len(self._Q),
+                len(self._verified_lessons),
+            )
         except Exception as _e:
             logger.warning("[v19] bandit load failed: %s", _e)
 
@@ -167,9 +176,15 @@ class EffortBandit:
         if not self._persist_path:
             return
         try:
-            _data = {"version": 2, "C": _C, "alpha": _ALPHA, "beta": _BETA,
-                     "Q": self._Q, "N": self._N,
-                     "verified_lessons": self._verified_lessons}
+            _data = {
+                "version": 2,
+                "C": _C,
+                "alpha": _ALPHA,
+                "beta": _BETA,
+                "Q": self._Q,
+                "N": self._N,
+                "verified_lessons": self._verified_lessons,
+            }
             _tmp = self._persist_path.with_suffix(".tmp")
             _tmp.write_text(json.dumps(_data), encoding="utf-8")
             _tmp.replace(self._persist_path)
@@ -209,12 +224,15 @@ class EffortBandit:
             if _status.exists():
                 _txt = _status.read_text(encoding="utf-8", errors="ignore")[:2000]
                 import re as _re
+
                 _m = _re.search(r"progress[:\s]+(\d+)%", _txt, _re.IGNORECASE)
                 if _m:
                     return float(_m.group(1))
                 if "complete" in _txt.lower():
                     return 100.0
-            _n_files = sum(1 for _ in _out.glob("*") if _.is_file() and _.stat().st_size > 100)
+            _n_files = sum(
+                1 for _ in _out.glob("*") if _.is_file() and _.stat().st_size > 100
+            )
             _file_prog = min(100.0, (_n_files / max(self._items_count, 1) / 3) * 100)
             if _file_prog > 0:
                 return _file_prog
@@ -256,8 +274,9 @@ class EffortBandit:
         st = self._build_state(rt, _prog)
         # tile coding: 聚合状态所属所有 tiling 的 Q/N 做 UCB — 未访问的精确状态
         # 也能从同 coarse tile 的邻居继承经验 (缓解稀疏), 有经验的精确状态仍主导.
-        _tiles = _tile_keys(st.item_idx, st.time_bucket, st.calls_bucket,
-                            st.progress_bucket)
+        _tiles = _tile_keys(
+            st.item_idx, st.time_bucket, st.calls_bucket, st.progress_bucket
+        )
         _N_tot = 0
         _n: dict[str, int] = dict.fromkeys(_ACTIONS, 0)
         _q_sum: dict[str, float] = dict.fromkeys(_ACTIONS, 0.0)
@@ -328,7 +347,9 @@ class EffortBandit:
                     self._mcmc_accept_rate = accept_rate
                 else:
                     # 滑动平均: avg ← avg + (x - avg)/n
-                    self._mcmc_accept_rate += (accept_rate - self._mcmc_accept_rate) / _n
+                    self._mcmc_accept_rate += (
+                        accept_rate - self._mcmc_accept_rate
+                    ) / _n
         except Exception as _e:
             logger.debug("[v19] update_mcmc_acceptance fallback: %s", _e)
 
@@ -382,12 +403,17 @@ class EffortBandit:
                     self._bump_tiles(st, _a, _reward_slow)
                 # DeLM: 同步更新 verified_lessons (cross-task shared context).
                 # ponytail: incremental mean, 不存原始 reward 序列, JSON 够小.
-                _pattern = (self._items_labels[rt.item_idx]
-                            if rt.item_idx < len(self._items_labels) else "UNLABELED")
+                _pattern = (
+                    self._items_labels[rt.item_idx]
+                    if rt.item_idx < len(self._items_labels)
+                    else "UNLABELED"
+                )
                 _pl = self._verified_lessons.setdefault(_pattern, {})
                 _entry = _pl.setdefault(_a, {"avg": 0.0, "n": 0})
                 _n = _entry["n"]
-                _entry["avg"] = _entry["avg"] + (_reward_slow - _entry["avg"]) / (_n + 1)
+                _entry["avg"] = _entry["avg"] + (_reward_slow - _entry["avg"]) / (
+                    _n + 1
+                )
                 _entry["n"] = _n + 1
                 self._update_count += 1
                 if self._update_count % _PERSIST_FLUSH_EVERY == 0:
@@ -395,16 +421,18 @@ class EffortBandit:
         except Exception as _e:
             logger.debug("[v19] update_iter_end fallback: %s", _e)
 
-    def _bump_tiles(self, st: _BanditState, action: str, delta: float,
-                   alpha: float | None = None) -> None:
+    def _bump_tiles(
+        self, st: _BanditState, action: str, delta: float, alpha: float | None = None
+    ) -> None:
         """tile coding 更新: 对状态所属的所有 tiling key 做 Q 更新.
 
         alpha=None 用增量均值学习率 1/(N+1) (与 _update_q 语义一致);
         传 alpha 则用固定学习率 (如 _flush_trajectory 的 MC alpha=1.0).
         coarse key 与精确 key 同存 _Q/_N, 持久化无需改 schema.
         """
-        for k in _tile_keys(st.item_idx, st.time_bucket, st.calls_bucket,
-                            st.progress_bucket):
+        for k in _tile_keys(
+            st.item_idx, st.time_bucket, st.calls_bucket, st.progress_bucket
+        ):
             if k not in self._Q:
                 self._Q[k] = dict.fromkeys(_ACTIONS, 0.0)
                 self._N[k] = dict.fromkeys(_ACTIONS, 0)
@@ -432,8 +460,11 @@ class EffortBandit:
         与 slow (update_iter_end) 两条 stream 合并进同一步, 便于 MC 回传.
         """
         k = st.key()
-        if self._trajectory and \
-                self._trajectory[-1][0].key() == k and self._trajectory[-1][1] == action:
+        if (
+            self._trajectory
+            and self._trajectory[-1][0].key() == k
+            and self._trajectory[-1][1] == action
+        ):
             _prev_st, _a, _r = self._trajectory[-1]
             self._trajectory[-1] = (_prev_st, _a, _r + reward)
         else:
@@ -500,52 +531,67 @@ class EffortBandit:
                 elif self._mcmc_accept_rate is not None:
                     # MCMC 探索/利用信号 (advisory): 高接受率=仍在探索, 低接受率=已收敛.
                     # 收敛 + progress 停滞 → 提示可能是局部最优, 考虑换个假设方向.
-                    _mcmc_line = (
-                        "still exploring hypothesis space (MCMC accept high)"
-                        if self._mcmc_accept_rate >= 0.1
-                        else "MCMC converged (accept low) — if progress stalled, "
-                             "consider exploring a different hypothesis direction"
-                    )
-                    return (
-                        f"\n\n## MCMC Exploration Signal (advisory)\n"
-                        f"MCMC accept rate ≈ {self._mcmc_accept_rate:.3f}: {_mcmc_line}\n"
-                        f"You can ignore this and continue if your current direction is working.\n"
-                    )
+                    return EffortBandit._mcmc_signal_hint(self)
                 else:
                     return ""
-                rt = self._runtime
-                _prog = rt.last_progress_pct
-                _elapsed = time.time() - rt.start_ts
-                _cur = (self._items_names[rt.item_idx]
-                        if rt.item_idx < len(self._items_names) else f"item{rt.item_idx}")
-                if _advice == "switch":
-                    # DeLM 去中心化 task queue: 给 candidate list, agent 自治选, 不强制指定.
-                    _cands = []
-                    for _i in range(rt.item_idx + 1, min(rt.item_idx + 4, self._items_count)):
-                        _name = (self._items_names[_i]
-                                 if _i < len(self._items_names) else f"item{_i}")
-                        _pat = (self._items_labels[_i]
-                                if _i < len(self._items_labels) else "UNLABELED")
-                        _cands.append(f"  - item {_i + 1}: {_name} [{_pat}]")
-                    _cand_str = "\n".join(_cands) if _cands else "  (no further items)"
-                    return (
-                        f"\n\n## Effort Controller Hint (advisory)\n"
-                        f"Current: item {rt.item_idx + 1}/{self._items_count} ({_cur}), "
-                        f"{_elapsed:.0f}s in, {rt.tool_calls} tool calls, progress {_prog:.0f}%.\n"
-                        f"Suggestion: progress plateaued — consider claiming a different item:\n"
-                        f"{_cand_str}\n"
-                        f"Reason: bandit Q(switch) > Q(continue), cross-task lessons suggest pivot.\n"
-                        f"You can ignore this, continue current, or pick any item (not limited above).\n"
-                    )
-                if _advice == "requery":
-                    return (
-                        f"\n\n## Effort Controller Hint (advisory)\n"
-                        f"Current: item {rt.item_idx + 1}/{self._items_count} ({_cur}), "
-                        f"{_elapsed:.0f}s in, {rt.tool_calls} tool calls, progress {_prog:.0f}%.\n"
-                        f"Suggestion: appears stuck — try an alternative approach or re-query KB.\n"
-                        f"You can ignore this and continue if you have a clear plan.\n"
-                    )
-                return ""
+                return EffortBandit._advice_hint(self, _advice)
         except Exception as _e:
             logger.debug("[v19] build_hint fallback: %s", _e)
             return ""
+
+    def _mcmc_signal_hint(self) -> str:
+        _mcmc_line = (
+            "still exploring hypothesis space (MCMC accept high)"
+            if self._mcmc_accept_rate >= 0.1
+            else "MCMC converged (accept low) — if progress stalled, "
+            "consider exploring a different hypothesis direction"
+        )
+        return (
+            f"\n\n## MCMC Exploration Signal (advisory)\n"
+            f"MCMC accept rate ≈ {self._mcmc_accept_rate:.3f}: {_mcmc_line}\n"
+            f"You can ignore this and continue if your current direction is working.\n"
+        )
+
+    def _advice_hint(self, _advice: str) -> str:
+        rt = self._runtime
+        _prog = rt.last_progress_pct
+        _elapsed = time.time() - rt.start_ts
+        _cur = (
+            self._items_names[rt.item_idx]
+            if rt.item_idx < len(self._items_names)
+            else f"item{rt.item_idx}"
+        )
+        if _advice == "switch":
+            # DeLM 去中心化 task queue: 给 candidate list, agent 自治选, 不强制指定.
+            _cands = []
+            for _i in range(rt.item_idx + 1, min(rt.item_idx + 4, self._items_count)):
+                _name = (
+                    self._items_names[_i]
+                    if _i < len(self._items_names)
+                    else f"item{_i}"
+                )
+                _pat = (
+                    self._items_labels[_i]
+                    if _i < len(self._items_labels)
+                    else "UNLABELED"
+                )
+                _cands.append(f"  - item {_i + 1}: {_name} [{_pat}]")
+            _cand_str = "\n".join(_cands) if _cands else "  (no further items)"
+            return (
+                f"\n\n## Effort Controller Hint (advisory)\n"
+                f"Current: item {rt.item_idx + 1}/{self._items_count} ({_cur}), "
+                f"{_elapsed:.0f}s in, {rt.tool_calls} tool calls, progress {_prog:.0f}%.\n"
+                f"Suggestion: progress plateaued — consider claiming a different item:\n"
+                f"{_cand_str}\n"
+                f"Reason: bandit Q(switch) > Q(continue), cross-task lessons suggest pivot.\n"
+                f"You can ignore this, continue current, or pick any item (not limited above).\n"
+            )
+        if _advice == "requery":
+            return (
+                f"\n\n## Effort Controller Hint (advisory)\n"
+                f"Current: item {rt.item_idx + 1}/{self._items_count} ({_cur}), "
+                f"{_elapsed:.0f}s in, {rt.tool_calls} tool calls, progress {_prog:.0f}%.\n"
+                f"Suggestion: appears stuck — try an alternative approach or re-query KB.\n"
+                f"You can ignore this and continue if you have a clear plan.\n"
+            )
+        return ""

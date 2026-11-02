@@ -44,6 +44,27 @@ C_MIX = "mix_step"
 C_ALIQUOT = "aliquot_step"
 
 
+def _declare_pipette_chain(wa: PhysicalWorkspace, mixer_available: bool) -> None:
+    """声明资源后端与协议步骤依赖链, 并设置资源就绪状态."""
+    # 资源后端 (无 requires, 后端就绪即激活).
+    wa.declare("reagent_backend", provides=(K_REAGENT,))
+    wa.declare("pipette_backend", provides=(K_PIPETTE,))
+    wa.declare("mixer_backend", provides=(K_MIXER,))
+    wa.declare("tube_backend", provides=(K_TUBE,))
+
+    # 协议步骤依赖链.
+    wa.declare(C_ASPIRATE, requires=(K_REAGENT, K_PIPETTE), provides=(K_ASPIRATED,))
+    wa.declare(C_DISPENSE, requires=(K_ASPIRATED, K_TUBE), provides=(K_FILLED,))
+    wa.declare(C_MIX, requires=(K_FILLED, K_MIXER), provides=(K_MIXED,))
+    wa.declare(C_ALIQUOT, requires=(K_MIXED,), provides=(K_ALIQUOTS,))
+
+    # 资源就绪.
+    wa.set_available(K_REAGENT, True)
+    wa.set_available(K_PIPETTE, True)
+    wa.set_available(K_TUBE, True)
+    wa.set_available(K_MIXER, mixer_available)
+
+
 def build_pipette_workflow(
     executor: ActionExecutor,
     world_model: NaiveWorldModel | None = None,
@@ -72,23 +93,7 @@ def build_pipette_workflow(
         surrogate=surrogate,
     )
 
-    # 资源后端 (无 requires, 后端就绪即激活).
-    wa.declare("reagent_backend", provides=(K_REAGENT,))
-    wa.declare("pipette_backend", provides=(K_PIPETTE,))
-    wa.declare("mixer_backend", provides=(K_MIXER,))
-    wa.declare("tube_backend", provides=(K_TUBE,))
-
-    # 协议步骤依赖链.
-    wa.declare(C_ASPIRATE, requires=(K_REAGENT, K_PIPETTE), provides=(K_ASPIRATED,))
-    wa.declare(C_DISPENSE, requires=(K_ASPIRATED, K_TUBE), provides=(K_FILLED,))
-    wa.declare(C_MIX, requires=(K_FILLED, K_MIXER), provides=(K_MIXED,))
-    wa.declare(C_ALIQUOT, requires=(K_MIXED,), provides=(K_ALIQUOTS,))
-
-    # 资源就绪.
-    wa.set_available(K_REAGENT, True)
-    wa.set_available(K_PIPETTE, True)
-    wa.set_available(K_TUBE, True)
-    wa.set_available(K_MIXER, mixer_available)
+    _declare_pipette_chain(wa, mixer_available)
 
     # 感知确认器: 基于执行器日志判断动作确实完成了 (模拟视觉/力觉闭环).
     def done(*types: str) -> bool:

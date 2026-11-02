@@ -11,6 +11,7 @@
 
 最终 EC = 各维度的几何平均 (任一维度为 0 就拉低总分).
 """
+
 from __future__ import annotations
 
 import math
@@ -35,7 +36,16 @@ def _shannon_entropy(items: list[str]) -> float:
 # 覆盖 5 大类, 命中不同类越多 cross_domain 越高
 _DOMAIN_KEYWORDS: list[set[str]] = [
     # 结构
-    {"crystal", "lattice", "symmetry", "space group", "diffraction", "晶格", "晶体", "对称"},
+    {
+        "crystal",
+        "lattice",
+        "symmetry",
+        "space group",
+        "diffraction",
+        "晶格",
+        "晶体",
+        "对称",
+    },
     # 热力学
     {"phase", "energy", "thermodynamic", "enthalpy", "gibbs", "相图", "热力学", "焓"},
     # 电子结构
@@ -75,7 +85,15 @@ def _extract_text(execution_result: Any) -> str:
     if not isinstance(execution_result, dict):
         return str(execution_result)
     parts: list[str] = []
-    for key in ("summary", "description", "result_data", "output", "reasoning", "plan", "hypothesis"):
+    for key in (
+        "summary",
+        "description",
+        "result_data",
+        "output",
+        "reasoning",
+        "plan",
+        "hypothesis",
+    ):
         v = execution_result.get(key)
         if v:
             parts.append(str(v))
@@ -99,41 +117,20 @@ def compute_ec(
 
     # 1. tool diversity: 不同工具数的 Shannon 熵, 归一化到 [0, 1]
     # ponytail: 用 ln 熵 / ln(n) 归一化, n=10 时 ln(10)≈2.3 足够覆盖常见场景
-    tool_names = _extract_tool_names(execution_result)
-    if tool_names:
-        raw_h = _shannon_entropy(tool_names)
-        max_h = math.log(len(set(tool_names))) if len(set(tool_names)) > 1 else 1.0
-        tool_diversity = raw_h / max_h if max_h > 0 else 0.0
-    else:
-        tool_diversity = 0.0
+    tool_diversity = _tool_diversity(execution_result)
 
     # 2. reasoning entropy: 词频分布熵, 高熵 = 非模板化
     # ponytail: 只取 >3 字符的词, 过滤停用词太重, 用 unique_ratio 近似
     words = [w for w in text_lower.split() if len(w) > 3]
-    if words:
-        raw_h = _shannon_entropy(words)
-        # ln(n) 是最大熵, 归一化; n 太小时上限低, 所以 clamp
-        max_h = math.log(len(words))
-        reasoning_entropy = min(1.0, raw_h / max_h) if max_h > 0 else 0.0
-    else:
-        reasoning_entropy = 0.0
+    reasoning_entropy = _reasoning_entropy(words)
 
     # 3. cross_domain: 命中了几个不同的子领域
-    domains_hit = 0
-    for keyword_set in _DOMAIN_KEYWORDS:
-        if any(kw in text_lower for kw in keyword_set):
-            domains_hit += 1
     # 5 个类, 命中 2+ 才算跨域
-    cross_domain = min(1.0, domains_hit / 3.0) if domains_hit >= 2 else 0.0
+    cross_domain, domains_hit = _cross_domain(text_lower)
 
     # 4. novelty: 非常见词的比例 (出现 <= 1 次的词 / 总词数)
     # 高 novelty = 不是在重复已知结论
-    if words:
-        word_counts = Counter(words)
-        novel = sum(1 for c in word_counts.values() if c <= 1)
-        novelty = min(1.0, novel / len(words))
-    else:
-        novelty = 0.0
+    novelty = _novelty(words)
 
     # 几何平均: 任一维度为 0 就大幅拉低总分
     dims = [tool_diversity, reasoning_entropy, cross_domain, novelty]
@@ -148,6 +145,45 @@ def compute_ec(
         "ec_novelty": round(novelty, 4),
         "ec_domains_hit": domains_hit,
     }
+
+
+def _tool_diversity(execution_result: Any) -> float:
+    """1. tool diversity: 不同工具数的 Shannon 熵, 归一化到 [0, 1]."""
+    tool_names = _extract_tool_names(execution_result)
+    if tool_names:
+        raw_h = _shannon_entropy(tool_names)
+        max_h = math.log(len(set(tool_names))) if len(set(tool_names)) > 1 else 1.0
+        return raw_h / max_h if max_h > 0 else 0.0
+    return 0.0
+
+
+def _reasoning_entropy(words: list[str]) -> float:
+    """2. reasoning entropy: 词频分布熵, 高熵 = 非模板化."""
+    if words:
+        raw_h = _shannon_entropy(words)
+        # ln(n) 是最大熵, 归一化; n 太小时上限低, 所以 clamp
+        max_h = math.log(len(words))
+        return min(1.0, raw_h / max_h) if max_h > 0 else 0.0
+    return 0.0
+
+
+def _cross_domain(text_lower: str) -> tuple[float, int]:
+    """3. cross_domain: 命中了几个不同的子领域."""
+    domains_hit = 0
+    for keyword_set in _DOMAIN_KEYWORDS:
+        if any(kw in text_lower for kw in keyword_set):
+            domains_hit += 1
+    cross_domain = min(1.0, domains_hit / 3.0) if domains_hit >= 2 else 0.0
+    return cross_domain, domains_hit
+
+
+def _novelty(words: list[str]) -> float:
+    """4. novelty: 非常见词的比例 (出现 <= 1 次的词 / 总词数)."""
+    if words:
+        word_counts = Counter(words)
+        novel = sum(1 for c in word_counts.values() if c <= 1)
+        return min(1.0, novel / len(words))
+    return 0.0
 
 
 __all__ = ["compute_ec"]

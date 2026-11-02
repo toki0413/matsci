@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # Huginn 技术规格（现状事实记录）
 
 > 本文件由 `praxis/es onboard` 生成，只记录代码中真实存在的事实，不含解释、计划或差距分析。目标：为已存在的代码库提供一份可维护的"living documentation"。以 `docs/architecture.md` 为历史参照，本文件反映当前目录结构的真实状态。
@@ -142,4 +144,4 @@
 
 ### HiLS 分层稀疏 attention（hils_active_inference_p2_spec）
 
-- `huginn/memory/longterm.py` 的 `_hils_attention(query, candidates, top_k, ...)`：把 `_ising_rerank` 的离散贪心升级为连续分层稀疏 attention（地标层 K 个 landmark + 精细层 top-h 下 memory），接口 `(query, candidates, top_k) -> ranked` 不变，仅在 `semantic=True` 路径替代 rerank。N<K 时退化全 attention；embedding 未初始化回退 Ising 贪心。地标缓存 lazy init + 按 `HUGINN_HILS_LANDMARK_REFRESH`（默认 1000 次 retrieve）周期性重算。
+- `huginn/memory/longterm.py` 的 `_hils_attention(query, candidates, top_k, ...)`：把 `_ising_rerank` 的离散贪心升级为连续分层稀疏 attention（地标层 K 个 landmark + 精细层 top-h 下 memory），接口 `(query, candidates, top_k) -> ranked` 不变，仅在 `semantic=True` 路径替代 rerank。N<K 时退化全 attention；embedding 未初始化回退 Ising 贪心。landmark 数与精细层宽度由参数 `n_landmarks` / `top_h` 控制，每次调用内按候选集重算。

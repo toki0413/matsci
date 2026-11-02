@@ -163,16 +163,8 @@ class BotBridge:
         group_id = info.get("group_id")
         is_group = info["is_group"]
 
-        # 群消息: 检查白名单
-        if is_group and self.config.allowed_groups and group_id not in self.config.allowed_groups:
+        if BotBridge._filter_group_message(self, info, group_id, is_group):
             return None
-
-        # 群消息: 检查是否 @了机器人 (bot_id 为空时不限制)
-        if is_group and self.config.bot_id:
-            if not info["at_bot"]:
-                return None
-            # 去掉消息开头的 @bot
-            info["text"] = self._strip_at_mention(info["text"])
 
         text = info["text"].strip()
         if not text:
@@ -185,13 +177,43 @@ class BotBridge:
 
         # 命令处理 (/help /reset /model /persona)
         if text.startswith("/"):
-            response = self._handle_command(text, user_id, group_id)
-            if response:
-                self._stats["commands_handled"] += 1
-                await self._send_response(info, response)
-                return response
-            return None
+            return await BotBridge._handle_command_message(
+                self, text, info, user_id, group_id
+            )
 
+        return await BotBridge._run_agent_message(self, text, info)
+
+    def _filter_group_message(
+        self, info: dict[str, Any], group_id: Any, is_group: bool
+    ) -> bool:
+        """群消息: 白名单 / @bot 检查; 返回 True 表示丢弃."""
+        # 群消息: 检查白名单
+        if (
+            is_group
+            and self.config.allowed_groups
+            and group_id not in self.config.allowed_groups
+        ):
+            return True
+
+        # 群消息: 检查是否 @了机器人 (bot_id 为空时不限制)
+        if is_group and self.config.bot_id:
+            if not info["at_bot"]:
+                return True
+            # 去掉消息开头的 @bot
+            info["text"] = self._strip_at_mention(info["text"])
+        return False
+
+    async def _handle_command_message(
+        self, text: str, info: dict[str, Any], user_id: Any, group_id: Any
+    ) -> str | None:
+        response = self._handle_command(text, user_id, group_id)
+        if response:
+            self._stats["commands_handled"] += 1
+            await self._send_response(info, response)
+            return response
+        return None
+
+    async def _run_agent_message(self, text: str, info: dict[str, Any]) -> str | None:
         # 调 agent
         thread_id = self._make_thread_id(info)
         try:
@@ -235,9 +257,7 @@ class BotBridge:
         text, at_bot = self._extract_text(message, raw)
 
         sender = event.get("sender", {})
-        sender_name = (
-            sender.get("card") or sender.get("nickname") or user_id
-        )
+        sender_name = sender.get("card") or sender.get("nickname") or user_id
 
         return {
             "user_id": user_id,
@@ -421,8 +441,7 @@ class BotBridge:
 
         # 切换模型需要通过配置系统, 这里只做提示
         return (
-            f"当前模型: {current}\n"
-            f"切换模型请通过 REST API /bot/config 或配置文件修改."
+            f"当前模型: {current}\n切换模型请通过 REST API /bot/config 或配置文件修改."
         )
 
     def _cmd_persona(self, arg: str, is_admin: bool) -> str:
@@ -482,7 +501,11 @@ class BotBridge:
                     msg_type = getattr(msg, "type", "")
                     msg_content = getattr(msg, "content", "")
                     # 只收集 AI 消息的文本内容, 工具消息跳过
-                    if msg_type == "ai" and isinstance(msg_content, str) and msg_content:
+                    if (
+                        msg_type == "ai"
+                        and isinstance(msg_content, str)
+                        and msg_content
+                    ):
                         final_text = msg_content
         return final_text
 
@@ -550,13 +573,13 @@ class BotBridge:
             cut = chunk.rfind("\n")
             if cut > max_length // 2:
                 chunks.append(text[:cut])
-                text = text[cut + 1:]
+                text = text[cut + 1 :]
                 continue
             # 其次在空格处断开
             cut = chunk.rfind(" ")
             if cut > max_length // 2:
                 chunks.append(text[:cut])
-                text = text[cut + 1:]
+                text = text[cut + 1 :]
                 continue
             # 找不到合适的断点, 硬切
             chunks.append(chunk)

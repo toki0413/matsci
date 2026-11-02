@@ -17,40 +17,179 @@ from huginn.tools.base import HuginnTool
 
 # ── 情感关键词，用来扫 results 文本判断结论倾向 ──────────────────
 _POSITIVE_WORDS = {
-    "improve", "improved", "improves", "improving", "improvement",
-    "enhance", "enhanced", "enhances", "enhancement",
-    "increase", "increased", "increases", "increasing",
-    "better", "superior", "excellent", "outstanding",
-    "boost", "boosted", "promote", "promoted",
-    "achieve", "achieved", "gain", "gained",
-    "strengthen", "strengthened", "high", "higher", "highest",
-    "optimal", "optimize", "optimized", "effective", "efficient",
-    "success", "successful", "successfully",
+    "improve",
+    "improved",
+    "improves",
+    "improving",
+    "improvement",
+    "enhance",
+    "enhanced",
+    "enhances",
+    "enhancement",
+    "increase",
+    "increased",
+    "increases",
+    "increasing",
+    "better",
+    "superior",
+    "excellent",
+    "outstanding",
+    "boost",
+    "boosted",
+    "promote",
+    "promoted",
+    "achieve",
+    "achieved",
+    "gain",
+    "gained",
+    "strengthen",
+    "strengthened",
+    "high",
+    "higher",
+    "highest",
+    "optimal",
+    "optimize",
+    "optimized",
+    "effective",
+    "efficient",
+    "success",
+    "successful",
+    "successfully",
 }
 _NEGATIVE_WORDS = {
-    "decrease", "decreased", "decreases", "decreasing",
-    "reduce", "reduced", "reduces", "reduction",
-    "worse", "inferior", "poor", "limited",
-    "decline", "declined", "fail", "failed", "failure",
-    "drop", "dropped", "weaken", "weakened",
-    "low", "lower", "lowest", "suppress", "suppressed",
-    "ineffective", "inefficient", "unstable", "degrade", "degraded",
+    "decrease",
+    "decreased",
+    "decreases",
+    "decreasing",
+    "reduce",
+    "reduced",
+    "reduces",
+    "reduction",
+    "worse",
+    "inferior",
+    "poor",
+    "limited",
+    "decline",
+    "declined",
+    "fail",
+    "failed",
+    "failure",
+    "drop",
+    "dropped",
+    "weaken",
+    "weakened",
+    "low",
+    "lower",
+    "lowest",
+    "suppress",
+    "suppressed",
+    "ineffective",
+    "inefficient",
+    "unstable",
+    "degrade",
+    "degraded",
 }
 
 # 算关键词重叠时用的停用词表，够用就行
 _STOPWORDS = {
-    "the", "a", "an", "and", "or", "but", "of", "in", "on", "at", "to",
-    "for", "with", "by", "from", "as", "is", "are", "was", "were", "be",
-    "been", "being", "this", "that", "these", "those", "it", "its",
-    "we", "our", "their", "they", "i", "you", "he", "she",
-    "study", "studies", "paper", "research", "work", "result", "results",
-    "show", "shows", "showed", "shown", "found", "find",
-    "use", "used", "uses", "using", "based", "via", "through",
-    "which", "who", "whom", "whose", "what", "when", "where", "why", "how",
-    "can", "could", "may", "might", "should", "would", "will", "shall",
-    "not", "no", "yes", "do", "does", "did", "has", "have", "had",
-    "more", "most", "less", "least", "than", "then", "so", "such",
-    "about", "into", "over", "under", "between", "within", "without",
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "but",
+    "of",
+    "in",
+    "on",
+    "at",
+    "to",
+    "for",
+    "with",
+    "by",
+    "from",
+    "as",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "this",
+    "that",
+    "these",
+    "those",
+    "it",
+    "its",
+    "we",
+    "our",
+    "their",
+    "they",
+    "i",
+    "you",
+    "he",
+    "she",
+    "study",
+    "studies",
+    "paper",
+    "research",
+    "work",
+    "result",
+    "results",
+    "show",
+    "shows",
+    "showed",
+    "shown",
+    "found",
+    "find",
+    "use",
+    "used",
+    "uses",
+    "using",
+    "based",
+    "via",
+    "through",
+    "which",
+    "who",
+    "whom",
+    "whose",
+    "what",
+    "when",
+    "where",
+    "why",
+    "how",
+    "can",
+    "could",
+    "may",
+    "might",
+    "should",
+    "would",
+    "will",
+    "shall",
+    "not",
+    "no",
+    "yes",
+    "do",
+    "does",
+    "did",
+    "has",
+    "have",
+    "had",
+    "more",
+    "most",
+    "less",
+    "least",
+    "than",
+    "then",
+    "so",
+    "such",
+    "about",
+    "into",
+    "over",
+    "under",
+    "between",
+    "within",
+    "without",
 }
 
 
@@ -71,6 +210,404 @@ class GapAnalysisInput(BaseModel):
         default_factory=list,
         description="待评估的假设列表，assess_novelty 用",
     )
+
+
+def _no_papers_gaps_result(args: GapAnalysisInput) -> ToolResult:
+    """analyze_gaps: 无论文时的返回。"""
+    return ToolResult(
+        data={
+            "action": "analyze_gaps",
+            "topic": args.topic,
+            "gaps": [],
+            "summary": "没有论文可分析，无法识别研究空白。",
+        },
+        success=True,
+    )
+
+
+def _collect_gap_stats(
+    papers: list[dict[str, Any]],
+) -> tuple[
+    Counter[str],
+    Counter[str],
+    dict[str, list[dict[str, Any]]],
+    set[tuple[str, str]],
+    set[str],
+    set[str],
+]:
+    """统计 method / tag 频次、method→论文映射、已出现的 method×material 组合。"""
+    method_counter: Counter[str] = Counter()
+    tag_counter: Counter[str] = Counter()
+    # 每个 method 对应的论文列表，用来找矛盾
+    method_papers: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    # method × material 已经出现过的组合
+    seen_combos: set[tuple[str, str]] = set()
+    all_methods: set[str] = set()
+    all_materials: set[str] = set()
+
+    for p in papers:
+        methods = GapAnalysisTool._normalize_methods(p)
+        tags = GapAnalysisTool._normalize_tags(p)
+        materials = GapAnalysisTool._extract_materials(p)
+        for m in methods:
+            method_counter[m] += 1
+            method_papers[m].append(p)
+            all_methods.add(m)
+            for mat in materials:
+                seen_combos.add((m, mat))
+                all_materials.add(mat)
+        for t in tags:
+            tag_counter[t] += 1
+
+    return (
+        method_counter,
+        tag_counter,
+        method_papers,
+        seen_combos,
+        all_methods,
+        all_materials,
+    )
+
+
+def _under_studied_gaps(
+    method_counter: Counter[str], n_total: int, papers: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """1) 少被研究的方法（频率 ≤ 总数的 20%）."""
+    gaps: list[dict[str, Any]] = []
+    threshold = max(1, int(n_total * 0.2))
+    for m, cnt in method_counter.items():
+        if cnt <= threshold:
+            gaps.append(
+                {
+                    "description": f"方法 '{m}' 仅在 {cnt}/{n_total} 篇论文中出现，研究较少",
+                    "evidence": [
+                        p.get("title", f"paper#{i}")
+                        for i, p in enumerate(papers)
+                        if m in GapAnalysisTool._normalize_methods(p)
+                    ],
+                    "confidence": round(1.0 - cnt / n_total, 3),
+                    "type": "under_studied_method",
+                    "method": m,
+                }
+            )
+    return gaps
+
+
+def _missing_combination_gaps(
+    all_methods: set[str], all_materials: set[str], seen_combos: set[tuple[str, str]]
+) -> list[dict[str, Any]]:
+    """2) 未出现的 method × material 组合."""
+    gaps: list[dict[str, Any]] = []
+    for m in sorted(all_methods):
+        for mat in sorted(all_materials):
+            if (m, mat) not in seen_combos:
+                gaps.append(
+                    {
+                        "description": f"方法 '{m}' × 材料 '{mat}' 的组合在已有论文中未出现",
+                        "evidence": [],
+                        "confidence": 0.5,
+                        "type": "missing_combination",
+                        "method": m,
+                        "material": mat,
+                    }
+                )
+    return gaps
+
+
+def _contradiction_gaps(
+    method_papers: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """3) 矛盾结果：同一方法在不同论文中给出相反倾向."""
+    gaps: list[dict[str, Any]] = []
+    for m, plist in method_papers.items():
+        if len(plist) < 2:
+            continue
+        sentiments: list[tuple[dict[str, Any], str]] = []
+        for p in plist:
+            s = GapAnalysisTool._sentiment(str(p.get("results", "")))
+            if s != "neutral":
+                sentiments.append((p, s))
+        pos = [x for x in sentiments if x[1] == "positive"]
+        neg = [x for x in sentiments if x[1] == "negative"]
+        if pos and neg:
+            gaps.append(
+                {
+                    "description": (
+                        f"方法 '{m}' 在不同论文中给出相反结论"
+                        f"（{len(pos)} 篇正向 / {len(neg)} 篇负向）"
+                    ),
+                    "evidence": [
+                        {
+                            "title": p.get("title", ""),
+                            "sentiment": s,
+                            "results_snippet": str(p.get("results", ""))[:200],
+                        }
+                        for p, s in sentiments
+                    ],
+                    "confidence": 0.7,
+                    "type": "contradiction",
+                    "method": m,
+                }
+            )
+    return gaps
+
+
+def _apply_kb_coverage(gaps: list[dict[str, Any]], context: ToolContext | None) -> int:
+    """A5: KB 覆盖检查 — 每个 gap 查 KB, 命中的标注 kb_covered=True.
+
+    防止 agent 把已知结论当新发现. KB 不可用时跳过. 返回命中数量.
+    """
+    n_kb_covered = 0
+    for g in gaps:
+        kb_hits = GapAnalysisTool._query_kb_coverage(g.get("description", ""), context)
+        if kb_hits:
+            g["kb_covered"] = True
+            g["kb_references"] = kb_hits
+            n_kb_covered += 1
+        else:
+            g["kb_covered"] = False
+    return n_kb_covered
+
+
+def _analyze_gaps_result(
+    args: GapAnalysisInput,
+    n_total: int,
+    method_counter: Counter[str],
+    tag_counter: Counter[str],
+    gaps: list[dict[str, Any]],
+    n_kb_covered: int,
+) -> ToolResult:
+    """组装 analyze_gaps 的 summary + data."""
+    n_under = sum(1 for g in gaps if g["type"] == "under_studied_method")
+    n_missing = sum(1 for g in gaps if g["type"] == "missing_combination")
+    n_contra = sum(1 for g in gaps if g["type"] == "contradiction")
+    summary = (
+        f"在主题 '{args.topic}' 下分析了 {n_total} 篇论文，"
+        f"识别出 {len(gaps)} 处潜在研究空白"
+        f"（少被研究方法 {n_under}，未出现组合 {n_missing}，矛盾结果 {n_contra}）。"
+        f"其中 {n_kb_covered} 处已被领域 KB 覆盖，建议验证而非重新假设。"
+    )
+
+    data = {
+        "action": "analyze_gaps",
+        "topic": args.topic,
+        "n_papers": n_total,
+        "method_frequency": dict(method_counter.most_common()),
+        "tag_frequency": dict(tag_counter.most_common()),
+        "gaps": gaps,
+        "n_kb_covered": n_kb_covered,
+        "summary": summary,
+    }
+    return ToolResult(data=data, success=True)
+
+
+def _group_by_method(
+    papers: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """按 method 分组."""
+    method_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for p in papers:
+        for m in GapAnalysisTool._normalize_methods(p):
+            method_groups[m].append(p)
+    return method_groups
+
+
+def _paper_conditions(p: dict[str, Any]) -> list[str]:
+    """每篇论文的"条件"——优先 conditions 字段，没有就回退到 tags."""
+    conds = p.get("conditions")
+    if isinstance(conds, str) and conds.strip():
+        return [conds.strip().lower()]
+    if isinstance(conds, list) and conds:
+        return [str(c).strip().lower() for c in conds if str(c).strip()]
+    return GapAnalysisTool._normalize_tags(p)
+
+
+def _condition_performance(
+    plist: list[dict[str, Any]],
+    conditions_per_paper: list[list[str]],
+) -> dict[str, list[str]]:
+    """每个条件下的表现分布."""
+    cond_perf: dict[str, list[str]] = defaultdict(list)
+    for p, conds in zip(plist, conditions_per_paper):
+        s = GapAnalysisTool._sentiment(str(p.get("results", "")))
+        for c in conds:
+            cond_perf[c].append(s)
+    return cond_perf
+
+
+def _summarize_conditions(cond_perf: dict[str, list[str]]) -> dict[str, str]:
+    """每个条件的整体倾向."""
+    cond_summary: dict[str, str] = {}
+    for c, sentiments in cond_perf.items():
+        pos = sentiments.count("positive")
+        neg = sentiments.count("negative")
+        if pos > neg:
+            cond_summary[c] = "positive"
+        elif neg > pos:
+            cond_summary[c] = "negative"
+        else:
+            cond_summary[c] = "neutral"
+    return cond_summary
+
+
+def _condition_gap_description(m: str, cond_summary: dict[str, str]) -> str:
+    """边界条件：同一方法在不同条件下表现相反."""
+    pos_conds = [c for c, s in cond_summary.items() if s == "positive"]
+    neg_conds = [c for c, s in cond_summary.items() if s == "negative"]
+    if pos_conds and neg_conds:
+        return (
+            f"方法 '{m}' 在条件 {pos_conds} 下表现正向，但在条件 {neg_conds} 下表现负向"
+        )
+    return "未发现明显的条件边界"
+
+
+def _condition_boundaries(cond_perf: dict[str, list[str]]) -> list[dict[str, Any]]:
+    """每个条件是否混合表现."""
+    boundaries: list[dict[str, Any]] = []
+    for c, sentiments in cond_perf.items():
+        has_pos = "positive" in sentiments
+        has_neg = "negative" in sentiments
+        if has_pos and has_neg:
+            boundaries.append(
+                {
+                    "condition": c,
+                    "mixed_performance": True,
+                    "sentiments": sentiments,
+                }
+            )
+        else:
+            boundaries.append(
+                {
+                    "condition": c,
+                    "performance": sentiments[0] if sentiments else "neutral",
+                    "n_papers": len(sentiments),
+                }
+            )
+    return boundaries
+
+
+def _compare_one_method(m: str, plist: list[dict[str, Any]]) -> dict[str, Any]:
+    """单个方法的分组对比结果."""
+    conditions_per_paper = [_paper_conditions(p) for p in plist]
+    cond_perf = _condition_performance(plist, conditions_per_paper)
+    cond_summary = _summarize_conditions(cond_perf)
+    gap_desc = _condition_gap_description(m, cond_summary)
+    boundaries = _condition_boundaries(cond_perf)
+    return {
+        "method": m,
+        "n_papers": len(plist),
+        "conditions": list(cond_perf.keys()),
+        "performance": cond_summary,
+        "boundaries": boundaries,
+        "gap_description": gap_desc,
+    }
+
+
+def _hypothesis_text(
+    gtype: Any, method: str, material: Any, topic: str, freq: int
+) -> tuple[str, str, float] | None:
+    """按 gap 类型生成 (statement, rationale, testability); 不支持的返回 None."""
+    if gtype == "missing_combination" and method and material:
+        statement = (
+            f"如果将 {method} 应用到 {material}，可能获得与现有方法不同的性能表现"
+        )
+        rationale = (
+            f"已有文献中未见 {method} × {material} 的组合，"
+            f"而 {method} 在其他材料上已被验证有效。"
+        )
+        # 方法越成熟（出现次数多）越容易落地测试
+        return statement, rationale, min(0.9, 0.4 + 0.1 * freq)
+    if gtype == "under_studied_method" and method:
+        statement = (
+            f"如果在 {topic} 中进一步应用 {method}，可能揭示被现有主流方法忽略的现象"
+        )
+        rationale = f"{method} 仅在少量论文中出现，研究尚不充分，存在拓展空间。"
+        return statement, rationale, min(0.85, 0.3 + 0.1 * freq)
+    if gtype == "contradiction" and method:
+        statement = (
+            f"对 {method} 在 {topic} 中的矛盾结论进行机理分析，可能识别出决定性边界条件"
+        )
+        rationale = "不同论文对 " + method + " 给出相反结论，暗示存在未控制的关键变量。"
+        return statement, rationale, 0.8
+    return None
+
+
+def _hypothesis_for_gap(
+    gap: dict[str, Any], topic: str, method_counter: dict[str, Any]
+) -> dict[str, Any] | None:
+    """为单个 gap 生成假设条目; 无法生成返回 None."""
+    method = gap.get("method", "")
+    text = _hypothesis_text(
+        gap.get("type"),
+        method,
+        gap.get("material"),
+        topic,
+        method_counter.get(method, 0),
+    )
+    if text is None:
+        return None
+    statement, rationale, testability = text
+    return {
+        "statement": statement,
+        "rationale": rationale,
+        "testability": round(testability, 3),
+        "source_gap": gap.get("description", ""),
+    }
+
+
+def _dedupe_hypotheses(
+    hypotheses: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """按 statement 去重."""
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for h in hypotheses:
+        if h["statement"] in seen:
+            continue
+        seen.add(h["statement"])
+        unique.append(h)
+    return unique
+
+
+def _paper_keywords(papers: list[dict[str, Any]]) -> list[tuple[str, set[str]]]:
+    """预处理每篇论文的关键词集合（title + abstract）."""
+    paper_keywords: list[tuple[str, set[str]]] = []
+    for p in papers:
+        text = " ".join([str(p.get("title", "")), str(p.get("abstract", ""))])
+        paper_keywords.append((p.get("title", ""), GapAnalysisTool._tokenize(text)))
+    return paper_keywords
+
+
+def _assess_one(h: str, paper_keywords: list[tuple[str, set[str]]]) -> dict[str, Any]:
+    """评估单条假设的新颖性."""
+    h_tokens = GapAnalysisTool._tokenize(h)
+    if not h_tokens or not paper_keywords:
+        # 假设里没拿到有效关键词，给个中庸的分数
+        return {
+            "hypothesis": h,
+            "novelty_score": 1.0 if not paper_keywords else 0.5,
+            "max_similarity": 0.0,
+            "similar_works": [],
+        }
+
+    # 和每篇论文算 Jaccard 相似度
+    scored = [
+        (title, GapAnalysisTool._jaccard(h_tokens, kws))
+        for title, kws in paper_keywords
+    ]
+    scored.sort(key=lambda x: -x[1])
+    max_sim = scored[0][1] if scored else 0.0
+    novelty = round(1.0 - max_sim, 3)
+    # 相似度 ≥ 0.1 的算"类似工作"
+    similar = [{"title": t, "similarity": round(s, 3)} for t, s in scored if s >= 0.1][
+        :5
+    ]
+    return {
+        "hypothesis": h,
+        "novelty_score": novelty,
+        "max_similarity": round(max_sim, 3),
+        "similar_works": similar,
+    }
 
 
 class GapAnalysisTool(HuginnTool):
@@ -110,7 +647,9 @@ class GapAnalysisTool(HuginnTool):
             return ToolResult(data=None, success=False, error=str(exc))
 
     @staticmethod
-    def _query_kb_coverage(gap_description: str, context: ToolContext | None) -> list[dict]:
+    def _query_kb_coverage(
+        gap_description: str, context: ToolContext | None
+    ) -> list[dict]:
         """查领域 KB 看这个 gap 是否已被已知结论覆盖. 命中返回 [{text, source}],
         KB 不可用/空/查询失败都返回 [], 不阻断 gap 分析."""
         if context is None:
@@ -207,139 +746,32 @@ class GapAnalysisTool(HuginnTool):
         papers = args.papers or []
         n_total = len(papers)
         if n_total == 0:
-            return ToolResult(
-                data={
-                    "action": "analyze_gaps",
-                    "topic": args.topic,
-                    "gaps": [],
-                    "summary": "没有论文可分析，无法识别研究空白。",
-                },
-                success=True,
-            )
+            return _no_papers_gaps_result(args)
 
-        method_counter: Counter[str] = Counter()
-        tag_counter: Counter[str] = Counter()
-        # 每个 method 对应的论文列表，用来找矛盾
-        method_papers: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        # method × material 已经出现过的组合
-        seen_combos: set[tuple[str, str]] = set()
-        all_methods: set[str] = set()
-        all_materials: set[str] = set()
-
-        for p in papers:
-            methods = self._normalize_methods(p)
-            tags = self._normalize_tags(p)
-            materials = self._extract_materials(p)
-            for m in methods:
-                method_counter[m] += 1
-                method_papers[m].append(p)
-                all_methods.add(m)
-                for mat in materials:
-                    seen_combos.add((m, mat))
-                    all_materials.add(mat)
-            for t in tags:
-                tag_counter[t] += 1
+        (
+            method_counter,
+            tag_counter,
+            method_papers,
+            seen_combos,
+            all_methods,
+            all_materials,
+        ) = _collect_gap_stats(papers)
 
         gaps: list[dict[str, Any]] = []
+        gaps.extend(_under_studied_gaps(method_counter, n_total, papers))
 
-        # 1) 少被研究的方法（频率 ≤ 总数的 20%）
-        threshold = max(1, int(n_total * 0.2))
-        for m, cnt in method_counter.items():
-            if cnt <= threshold:
-                gaps.append(
-                    {
-                        "description": f"方法 '{m}' 仅在 {cnt}/{n_total} 篇论文中出现，研究较少",
-                        "evidence": [
-                            p.get("title", f"paper#{i}")
-                            for i, p in enumerate(papers)
-                            if m in self._normalize_methods(p)
-                        ],
-                        "confidence": round(1.0 - cnt / n_total, 3),
-                        "type": "under_studied_method",
-                        "method": m,
-                    }
-                )
+        # 未出现的 method × material 组合
+        gaps.extend(_missing_combination_gaps(all_methods, all_materials, seen_combos))
 
-        # 2) 未出现的 method × material 组合
-        for m in sorted(all_methods):
-            for mat in sorted(all_materials):
-                if (m, mat) not in seen_combos:
-                    gaps.append(
-                        {
-                            "description": f"方法 '{m}' × 材料 '{mat}' 的组合在已有论文中未出现",
-                            "evidence": [],
-                            "confidence": 0.5,
-                            "type": "missing_combination",
-                            "method": m,
-                            "material": mat,
-                        }
-                    )
+        # 矛盾结果：同一方法在不同论文中给出相反倾向
+        gaps.extend(_contradiction_gaps(method_papers))
 
-        # 3) 矛盾结果：同一方法在不同论文中给出相反倾向
-        for m, plist in method_papers.items():
-            if len(plist) < 2:
-                continue
-            sentiments: list[tuple[dict[str, Any], str]] = []
-            for p in plist:
-                s = self._sentiment(str(p.get("results", "")))
-                if s != "neutral":
-                    sentiments.append((p, s))
-            pos = [x for x in sentiments if x[1] == "positive"]
-            neg = [x for x in sentiments if x[1] == "negative"]
-            if pos and neg:
-                gaps.append(
-                    {
-                        "description": (
-                            f"方法 '{m}' 在不同论文中给出相反结论"
-                            f"（{len(pos)} 篇正向 / {len(neg)} 篇负向）"
-                        ),
-                        "evidence": [
-                            {
-                                "title": p.get("title", ""),
-                                "sentiment": s,
-                                "results_snippet": str(p.get("results", ""))[:200],
-                            }
-                            for p, s in sentiments
-                        ],
-                        "confidence": 0.7,
-                        "type": "contradiction",
-                        "method": m,
-                    }
-                )
+        # A5: KB 覆盖检查 — 命中的 gap 标注 kb_covered=True
+        n_kb_covered = _apply_kb_coverage(gaps, context)
 
-        # A5: KB 覆盖检查 — 每个 gap 查 KB, 命中的标注 kb_covered=True,
-        # 防止 agent 把已知结论当新发现. KB 不可用时跳过.
-        n_kb_covered = 0
-        for g in gaps:
-            kb_hits = self._query_kb_coverage(g.get("description", ""), context)
-            if kb_hits:
-                g["kb_covered"] = True
-                g["kb_references"] = kb_hits
-                n_kb_covered += 1
-            else:
-                g["kb_covered"] = False
-
-        n_under = sum(1 for g in gaps if g["type"] == "under_studied_method")
-        n_missing = sum(1 for g in gaps if g["type"] == "missing_combination")
-        n_contra = sum(1 for g in gaps if g["type"] == "contradiction")
-        summary = (
-            f"在主题 '{args.topic}' 下分析了 {n_total} 篇论文，"
-            f"识别出 {len(gaps)} 处潜在研究空白"
-            f"（少被研究方法 {n_under}，未出现组合 {n_missing}，矛盾结果 {n_contra}）。"
-            f"其中 {n_kb_covered} 处已被领域 KB 覆盖，建议验证而非重新假设。"
+        return _analyze_gaps_result(
+            args, n_total, method_counter, tag_counter, gaps, n_kb_covered
         )
-
-        data = {
-            "action": "analyze_gaps",
-            "topic": args.topic,
-            "n_papers": n_total,
-            "method_frequency": dict(method_counter.most_common()),
-            "tag_frequency": dict(tag_counter.most_common()),
-            "gaps": gaps,
-            "n_kb_covered": n_kb_covered,
-            "summary": summary,
-        }
-        return ToolResult(data=data, success=True)
 
     # ── action: compare_methods ────────────────────────────────────
 
@@ -357,96 +789,18 @@ class GapAnalysisTool(HuginnTool):
             )
 
         # 按 method 分组
-        method_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for p in papers:
-            for m in self._normalize_methods(p):
-                method_groups[m].append(p)
+        method_groups = _group_by_method(papers)
 
-        comparison: list[dict[str, Any]] = []
-        for m, plist in method_groups.items():
-            # 每篇论文的"条件"——优先 conditions 字段，没有就回退到 tags
-            conditions_per_paper: list[list[str]] = []
-            for p in plist:
-                conds = p.get("conditions")
-                if isinstance(conds, str) and conds.strip():
-                    conditions_per_paper.append([conds.strip().lower()])
-                elif isinstance(conds, list) and conds:
-                    conditions_per_paper.append(
-                        [str(c).strip().lower() for c in conds if str(c).strip()]
-                    )
-                else:
-                    conditions_per_paper.append(self._normalize_tags(p))
-
-            # 每个条件下的表现分布
-            cond_perf: dict[str, list[str]] = defaultdict(list)
-            for p, conds in zip(plist, conditions_per_paper):
-                s = self._sentiment(str(p.get("results", "")))
-                for c in conds:
-                    cond_perf[c].append(s)
-
-            # 每个条件的整体倾向
-            cond_summary: dict[str, str] = {}
-            for c, sentiments in cond_perf.items():
-                pos = sentiments.count("positive")
-                neg = sentiments.count("negative")
-                if pos > neg:
-                    cond_summary[c] = "positive"
-                elif neg > pos:
-                    cond_summary[c] = "negative"
-                else:
-                    cond_summary[c] = "neutral"
-
-            # 边界条件：同一方法在不同条件下表现相反
-            pos_conds = [c for c, s in cond_summary.items() if s == "positive"]
-            neg_conds = [c for c, s in cond_summary.items() if s == "negative"]
-            if pos_conds and neg_conds:
-                gap_desc = (
-                    f"方法 '{m}' 在条件 {pos_conds} 下表现正向，"
-                    f"但在条件 {neg_conds} 下表现负向"
-                )
-            else:
-                gap_desc = "未发现明显的条件边界"
-
-            boundaries: list[dict[str, Any]] = []
-            for c, sentiments in cond_perf.items():
-                has_pos = "positive" in sentiments
-                has_neg = "negative" in sentiments
-                if has_pos and has_neg:
-                    boundaries.append(
-                        {
-                            "condition": c,
-                            "mixed_performance": True,
-                            "sentiments": sentiments,
-                        }
-                    )
-                else:
-                    boundaries.append(
-                        {
-                            "condition": c,
-                            "performance": sentiments[0] if sentiments else "neutral",
-                            "n_papers": len(sentiments),
-                        }
-                    )
-
-            comparison.append(
-                {
-                    "method": m,
-                    "n_papers": len(plist),
-                    "conditions": list(cond_perf.keys()),
-                    "performance": cond_summary,
-                    "boundaries": boundaries,
-                    "gap_description": gap_desc,
-                }
-            )
+        comparison = [
+            _compare_one_method(m, plist) for m, plist in method_groups.items()
+        ]
 
         # 按论文数从多到少排
         comparison.sort(key=lambda x: -x["n_papers"])
         n_boundary = sum(
             1 for c in comparison if c["gap_description"] != "未发现明显的条件边界"
         )
-        summary = (
-            f"对比了 {len(method_groups)} 种方法，发现 {n_boundary} 处条件边界。"
-        )
+        summary = f"对比了 {len(method_groups)} 种方法，发现 {n_boundary} 处条件边界。"
         data = {
             "action": "compare_methods",
             "topic": args.topic,
@@ -468,61 +822,12 @@ class GapAnalysisTool(HuginnTool):
 
         hypotheses: list[dict[str, Any]] = []
         for gap in gaps:
-            gtype = gap.get("type")
-            method = gap.get("method", "")
-            material = gap.get("material")
-            freq = method_counter.get(method, 0)
-
-            if gtype == "missing_combination" and method and material:
-                statement = (
-                    f"如果将 {method} 应用到 {material}，"
-                    f"可能获得与现有方法不同的性能表现"
-                )
-                rationale = (
-                    f"已有文献中未见 {method} × {material} 的组合，"
-                    f"而 {method} 在其他材料上已被验证有效。"
-                )
-                # 方法越成熟（出现次数多）越容易落地测试
-                testability = min(0.9, 0.4 + 0.1 * freq)
-            elif gtype == "under_studied_method" and method:
-                statement = (
-                    f"如果在 {args.topic} 中进一步应用 {method}，"
-                    f"可能揭示被现有主流方法忽略的现象"
-                )
-                rationale = (
-                    f"{method} 仅在少量论文中出现，研究尚不充分，存在拓展空间。"
-                )
-                testability = min(0.85, 0.3 + 0.1 * freq)
-            elif gtype == "contradiction" and method:
-                statement = (
-                    f"对 {method} 在 {args.topic} 中的矛盾结论进行机理分析，"
-                    f"可能识别出决定性边界条件"
-                )
-                rationale = (
-                    "不同论文对 " + method + " 给出相反结论，"
-                    "暗示存在未控制的关键变量。"
-                )
-                testability = 0.8
-            else:
-                continue
-
-            hypotheses.append(
-                {
-                    "statement": statement,
-                    "rationale": rationale,
-                    "testability": round(testability, 3),
-                    "source_gap": gap.get("description", ""),
-                }
-            )
+            hypothesis = _hypothesis_for_gap(gap, args.topic, method_counter)
+            if hypothesis is not None:
+                hypotheses.append(hypothesis)
 
         # 按 statement 去重
-        seen: set[str] = set()
-        unique: list[dict[str, Any]] = []
-        for h in hypotheses:
-            if h["statement"] in seen:
-                continue
-            seen.add(h["statement"])
-            unique.append(h)
+        unique = _dedupe_hypotheses(hypotheses)
 
         if unique:
             avg_test = sum(h["testability"] for h in unique) / len(unique)
@@ -558,50 +863,9 @@ class GapAnalysisTool(HuginnTool):
             )
 
         # 预处理每篇论文的关键词集合（title + abstract）
-        paper_keywords: list[tuple[str, set[str]]] = []
-        for p in papers:
-            text = " ".join(
-                [str(p.get("title", "")), str(p.get("abstract", ""))]
-            )
-            paper_keywords.append((p.get("title", ""), self._tokenize(text)))
+        paper_keywords = _paper_keywords(papers)
 
-        assessments: list[dict[str, Any]] = []
-        for h in hypotheses:
-            h_tokens = self._tokenize(h)
-            if not h_tokens or not paper_keywords:
-                # 假设里没拿到有效关键词，给个中庸的分数
-                assessments.append(
-                    {
-                        "hypothesis": h,
-                        "novelty_score": 1.0 if not paper_keywords else 0.5,
-                        "max_similarity": 0.0,
-                        "similar_works": [],
-                    }
-                )
-                continue
-
-            # 和每篇论文算 Jaccard 相似度
-            scored = [
-                (title, self._jaccard(h_tokens, kws))
-                for title, kws in paper_keywords
-            ]
-            scored.sort(key=lambda x: -x[1])
-            max_sim = scored[0][1] if scored else 0.0
-            novelty = round(1.0 - max_sim, 3)
-            # 相似度 ≥ 0.1 的算"类似工作"
-            similar = [
-                {"title": t, "similarity": round(s, 3)}
-                for t, s in scored
-                if s >= 0.1
-            ][:5]
-            assessments.append(
-                {
-                    "hypothesis": h,
-                    "novelty_score": novelty,
-                    "max_similarity": round(max_sim, 3),
-                    "similar_works": similar,
-                }
-            )
+        assessments = [_assess_one(h, paper_keywords) for h in hypotheses]
 
         avg_novelty = (
             sum(a["novelty_score"] for a in assessments) / len(assessments)

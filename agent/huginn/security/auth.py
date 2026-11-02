@@ -48,10 +48,9 @@ _BEARER_PREFIX = "Bearer "
 # (tool registry, circuit-breaker state, telemetry spans, plugins, PID) and is
 # a fingerprinting aid. It now requires the same auth as any other API route;
 # same-machine dev-mode (loopback) callers are still exempt via _dev_mode_exempt.
-_hide_docs = (
-    os.environ.get("HUGINN_ENV", "").lower() == "production"
-    or os.environ.get("HUGINN_HIDE_DOCS", "").lower() in ("1", "true", "yes")
-)
+_hide_docs = os.environ.get("HUGINN_ENV", "").lower() == "production" or os.environ.get(
+    "HUGINN_HIDE_DOCS", ""
+).lower() in ("1", "true", "yes")
 
 _PUBLIC_PATHS: set[str] = {
     "/health",
@@ -78,7 +77,9 @@ _singleton_lock = threading.Lock()
 
 
 def _jwt_secret() -> str | None:
-    return os.environ.get("HUGINN_JWT_SECRET") or os.environ.get("HUGINN_API_KEY") or None
+    return (
+        os.environ.get("HUGINN_JWT_SECRET") or os.environ.get("HUGINN_API_KEY") or None
+    )
 
 
 def get_user_store():
@@ -88,6 +89,7 @@ def get_user_store():
         with _singleton_lock:
             if _user_store is None:
                 from huginn.security.user_store import UserStore
+
                 _user_store = UserStore()
     return _user_store
 
@@ -160,6 +162,7 @@ def _dev_mode_exempt(request: Request | WebSocket) -> bool:
 # JWT helpers for route handlers
 # ---------------------------------------------------------------------------
 
+
 def create_token(
     user: User,
     *,
@@ -172,7 +175,9 @@ def create_token(
     """
     secret = _jwt_secret()
     if secret is None:
-        raise RuntimeError("No JWT secret configured (set HUGINN_JWT_SECRET or HUGINN_API_KEY)")
+        raise RuntimeError(
+            "No JWT secret configured (set HUGINN_JWT_SECRET or HUGINN_API_KEY)"
+        )
     payload = {
         "sub": user.user_id,
         "username": user.username,
@@ -227,13 +232,14 @@ def _extract_bearer(conn: Request | WebSocket) -> str | None:
     if isinstance(auth, bytes):
         auth = auth.decode("utf-8", errors="replace")
     if auth.startswith(_BEARER_PREFIX):
-        return auth[len(_BEARER_PREFIX):]
+        return auth[len(_BEARER_PREFIX) :]
     return None
 
 
 # ---------------------------------------------------------------------------
 # Request context — carries user info through the request lifecycle
 # ---------------------------------------------------------------------------
+
 
 class RequestContext:
     """Lightweight bag attached to each request by the auth dependency."""
@@ -257,40 +263,20 @@ class RequestContext:
 # FastAPI dependencies
 # ---------------------------------------------------------------------------
 
-def require_api_key(
-    request: Request = None,  # type: ignore[assignment]
-    websocket: WebSocket = None,  # type: ignore[assignment]
-) -> str:
-    """Require a valid API key **or** JWT for the request.
 
-    In dev mode (``HUGINN_API_KEY`` unset and no JWT secret) this dependency
-    allows any request.  In production either a matching API key or a valid
-    JWT must be presented.
-    """
-    conn = request or websocket
-    if conn is None:
-        return ""
-
+def _inject_ws_query_token(conn: Any) -> None:
     # WebSocket upgrade requests can't set custom headers — FastAPI's global
     # app-level require_api_key dependency runs for every route *before* the
     # ws route's own ws_auth_and_track, so a ?token= URL cursor must be
     # interpreted here or a key-only desktop app is rejected at the handshake.
-    if isinstance(conn, WebSocket):
-        ws_token = getattr(conn, "query_params", None)
-        ws_token = ws_token.get("token") if ws_token is not None else None
-        if ws_token:
-            _inject_token_auth(conn, ws_token)
+    ws_token = getattr(conn, "query_params", None)
+    ws_token = ws_token.get("token") if ws_token is not None else None
+    if ws_token:
+        _inject_token_auth(conn, ws_token)
 
-    if _public_path(conn):
-        return ""
 
-    # Dev mode bypass: only same-machine (loopback) requests are exempt.
-    # This is used by the desktop app to allow unauthenticated local access
-    # even after the user configures an API key for the LLM provider.
-    if _dev_mode_exempt(conn):
-        return ""
-
-    # --- try JWT first ---------------------------------------------------
+def _try_jwt_auth(conn: Any, request: Request | None) -> str | None:
+    """--- try JWT first ---; returns the bearer on success, None otherwise."""
     bearer = _extract_bearer(conn)
     if bearer:
         try:
@@ -314,9 +300,14 @@ def require_api_key(
                 _enforce_write_capability(conn)
                 return bearer
         except (ValueError, KeyError):
-            logger.debug("best-effort op failed", exc_info=True)  # fall through to API key check
+            logger.debug(
+                "best-effort op failed", exc_info=True
+            )  # fall through to API key check
+    return None
 
-    # --- fall back to API key ---------------------------------------------
+
+def _api_key_auth(conn: Any, request: Request | None) -> str:
+    """--- fall back to API key ---"""
     configured = _configured_api_key()
     if configured is None:
         # Development mode: auth is not enforced, but only when explicitly
@@ -360,6 +351,41 @@ def require_api_key(
     )
 
 
+def require_api_key(
+    request: Request = None,  # type: ignore[assignment]
+    websocket: WebSocket = None,  # type: ignore[assignment]
+) -> str:
+    """Require a valid API key **or** JWT for the request.
+
+    In dev mode (``HUGINN_API_KEY`` unset and no JWT secret) this dependency
+    allows any request.  In production either a matching API key or a valid
+    JWT must be presented.
+    """
+    conn = request or websocket
+    if conn is None:
+        return ""
+
+    if isinstance(conn, WebSocket):
+        _inject_ws_query_token(conn)
+
+    if _public_path(conn):
+        return ""
+
+    # Dev mode bypass: only same-machine (loopback) requests are exempt.
+    # This is used by the desktop app to allow unauthenticated local access
+    # even after the user configures an API key for the LLM provider.
+    if _dev_mode_exempt(conn):
+        return ""
+
+    # --- try JWT first ---------------------------------------------------
+    bearer = _try_jwt_auth(conn, request)
+    if bearer is not None:
+        return bearer
+
+    # --- fall back to API key ---------------------------------------------
+    return _api_key_auth(conn, request)
+
+
 def _enforce_write_capability(conn: Any) -> None:
     """对写操作 (POST/PUT/PATCH/DELETE) 强制 capability 检查.
 
@@ -368,7 +394,11 @@ def _enforce_write_capability(conn: Any) -> None:
     在 require_api_key 成功认证后立即调用此函数, 集中管控.
     可通过 HUGINN_ENFORCE_WRITE_CAPABILITY=0 关闭 (默认开).
     """
-    if os.environ.get("HUGINN_ENFORCE_WRITE_CAPABILITY", "1").lower() not in ("1", "true", "yes"):
+    if os.environ.get("HUGINN_ENFORCE_WRITE_CAPABILITY", "1").lower() not in (
+        "1",
+        "true",
+        "yes",
+    ):
         return
     # 只对 Request 检查, WebSocket 跳过 (WS 有自己的鉴权流程)
     method = getattr(conn, "method", None)
@@ -377,7 +407,10 @@ def _enforce_write_capability(conn: Any) -> None:
     path = getattr(getattr(conn, "url", None), "path", "") or ""
     norm = path[4:] if path.startswith("/v1/") else path
     # 公开路径豁免
-    if any(norm.startswith(p) for p in ("/auth/", "/health", "/metrics", "/diagnostics", "/ready")):
+    if any(
+        norm.startswith(p)
+        for p in ("/auth/", "/health", "/metrics", "/diagnostics", "/ready")
+    ):
         return
     ctx = getattr(getattr(conn, "state", None), "auth", None)
     if ctx is None:
@@ -392,20 +425,8 @@ def _enforce_write_capability(conn: Any) -> None:
         )
 
 
-def require_admin_key(
-    request: Request,
-    api_key: str | None = Security(API_KEY_HEADER),
-) -> str:
-    """Require the admin API key **or** an admin-role JWT for sensitive endpoints.
-
-    In dev mode (no admin and no regular API key configured) auth is not
-    enforced.
-    """
-    # Dev mode bypass: only same-machine (loopback) requests are exempt.
-    if _dev_mode_exempt(request):
-        return ""
-
-    # Check JWT admin role first
+def _try_admin_jwt(request: Request) -> str | None:
+    """Check JWT admin role first; returns the bearer on success."""
     bearer = _extract_bearer(request)
     if bearer:
         try:
@@ -424,6 +445,26 @@ def require_admin_key(
                 return bearer
         except (ValueError, KeyError):
             logger.debug("best-effort op failed", exc_info=True)
+    return None
+
+
+def require_admin_key(
+    request: Request,
+    api_key: str | None = Security(API_KEY_HEADER),
+) -> str:
+    """Require the admin API key **or** an admin-role JWT for sensitive endpoints.
+
+    In dev mode (no admin and no regular API key configured) auth is not
+    enforced.
+    """
+    # Dev mode bypass: only same-machine (loopback) requests are exempt.
+    if _dev_mode_exempt(request):
+        return ""
+
+    # Check JWT admin role first
+    admin_bearer = _try_admin_jwt(request)
+    if admin_bearer is not None:
+        return admin_bearer
 
     configured = _configured_admin_key()
     if configured is None:
@@ -448,6 +489,36 @@ def require_admin_key(
             "via the X-HUGINN-ADMIN-API-KEY header.",
         )
     return provided
+
+
+def _capability_ctx_auth(ctx: RequestContext | None, capability: str) -> str | None:
+    """JWT path — check user capability; returns the credential when allowed."""
+    if ctx and ctx.user:
+        if not ctx.user.active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User account is deactivated",
+            )
+        # 纵深防御: 即使 require_api_key 已查过吊销, 这里再查一次 jti,
+        # 防止有路由单独挂 require_capability 而不挂 require_api_key.
+        if ctx.token:
+            try:
+                claims = _decode_token(ctx.token)
+                jti = claims.get("jti")
+                if jti and TokenRevocationList.shared().is_revoked(jti):
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Token has been revoked",
+                    )
+            except (ValueError, KeyError):
+                logger.debug("best-effort op failed", exc_info=True)
+        if not ctx.user.can(capability):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Role '{ctx.user.role.value}' lacks capability '{capability}'",
+            )
+        return ctx.token or ctx.api_key
+    return None
 
 
 def require_capability(capability: str) -> Callable[..., Any]:
@@ -475,31 +546,9 @@ def require_capability(capability: str) -> Callable[..., Any]:
         ctx: RequestContext | None = getattr(request.state, "auth", None)
 
         # JWT path — check user capability
-        if ctx and ctx.user:
-            if not ctx.user.active:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="User account is deactivated",
-                )
-            # 纵深防御: 即使 require_api_key 已查过吊销, 这里再查一次 jti,
-            # 防止有路由单独挂 require_capability 而不挂 require_api_key.
-            if ctx.token:
-                try:
-                    claims = _decode_token(ctx.token)
-                    jti = claims.get("jti")
-                    if jti and TokenRevocationList.shared().is_revoked(jti):
-                        raise HTTPException(
-                            status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="Token has been revoked",
-                        )
-                except (ValueError, KeyError):
-                    logger.debug("best-effort op failed", exc_info=True)
-            if not ctx.user.can(capability):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Role '{ctx.user.role.value}' lacks capability '{capability}'",
-                )
-            return ctx.token or ctx.api_key
+        credential = _capability_ctx_auth(ctx, capability)
+        if credential is not None:
+            return credential
 
         # Dev mode (no auth configured)
         if _configured_api_key() is None and _jwt_secret() is None:
@@ -562,7 +611,10 @@ async def get_api_key_with_swr(
         # create_task 可能在 _refresh_api_key 完成前被 GC 静默取消,
         # 后续请求拿到的还是旧 key 直到 TTL 再次触发刷新.
         from huginn.utils.concurrency import track_task
-        track_task(_refresh_api_key(source, helper, ttl), name=f"refresh-api-key-{source}")
+
+        track_task(
+            _refresh_api_key(source, helper, ttl), name=f"refresh-api-key-{source}"
+        )
         return key
     # 无缓存 — 同步刷新
     async with _api_key_lock:

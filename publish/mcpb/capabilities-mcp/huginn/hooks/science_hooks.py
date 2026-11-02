@@ -740,6 +740,37 @@ def register_science_hooks(hm: HookManager) -> None:
     if getattr(hm, "_science_hooks_registered", False):
         return
 
+    _register_core_tool_hooks(hm)
+    _register_pipeline_hooks(hm)
+    _register_rag_feedback_hooks(hm)
+    _register_snapshot_and_precheck_hooks(hm)
+    _register_unit_and_lint_hooks(hm)
+    _register_test_and_gate_hooks(hm)
+    _register_budget_hook(hm)
+
+    hm._science_hooks_registered = True
+    logger.info(
+        "Science hooks registered: vasp_convergence, lammps_stability, "
+        "structure_sanity, qe_convergence, cp2k_convergence, "
+        "gaussian_termination, orca_termination, gromacs_stability, "
+        "fem_solver, openfoam_residual, mechanical_property, "
+        "packing_success, energy_bound, output_file_existence, "
+        "vina_docking, openmm_stability, "
+        "fep_validation, enhanced_sampling, msm_validation, "
+        "inverse_design, motif_mining, consensus_scoring, "
+        "rdkit_validation, neb_convergence, gp_model, "
+        "pipeline, "
+        "rag_provenance, workflow_guidance, calculation_ingest, "
+        "hook_failure, rag_track, rag_feedback, "
+        "physical_precheck (warn+force_proceed). "
+        "Pipeline stages: structure→relax→static→properties→"
+        "mechanical→md→cheminfo→docking/biomd→"
+        "free_energy/enhanced_sampling→kinetics/motif/inverse→"
+        "consensus→analysis"
+    )
+
+def _register_core_tool_hooks(hm: HookManager) -> None:
+    """core POST_TOOL_USE hooks: vasp/structure/pattern rules/physical/bio/cross-domain."""
     # 原有三个 hook (vasp/structure 保留, 其余模式匹配走规则表)
     hm.register(POST_TOOL_USE, vasp_convergence_hook)
     hm.register(POST_TOOL_USE, structure_sanity_hook)
@@ -765,6 +796,9 @@ def register_science_hooks(hm: HookManager) -> None:
     hm.register(POST_TOOL_USE, neb_convergence_hook)
     hm.register(POST_TOOL_USE, gp_model_hook)
 
+
+def _register_pipeline_hooks(hm: HookManager) -> None:
+    """event pipeline / RAG provenance / workflow guidance / auto-ingest hooks."""
     # 事件驱动管线 hook — 成功完成后建议下一步
     try:
         from huginn.provenance import pipeline_hook
@@ -797,6 +831,9 @@ def register_science_hooks(hm: HookManager) -> None:
     except ImportError:
         logger.debug("auto_ingest hooks not available (non-fatal)")
 
+
+def _register_rag_feedback_hooks(hm: HookManager) -> None:
+    """RAG retrieval quality feedback hooks."""
     # 检索质量反馈循环: rag_tool 搜索结果 -> 后续工具成败 -> 文档置信度调权
     try:
         from huginn.rag.feedback import rag_feedback_hook, rag_track_hook
@@ -806,6 +843,9 @@ def register_science_hooks(hm: HookManager) -> None:
     except ImportError:
         logger.debug("rag feedback hooks not available (non-fatal)")
 
+
+def _register_snapshot_and_precheck_hooks(hm: HookManager) -> None:
+    """snapshot undo + physical precheck hooks."""
     # 文件系统级 undo: 仿真/文件工具执行前后拍快照, 支持 revert/unrevert.
     # 幂等由 register_snapshot_hooks 内部的 _snapshot_hooks_registered 守护.
     try:
@@ -822,6 +862,9 @@ def register_science_hooks(hm: HookManager) -> None:
     except ImportError:
         logger.debug("physical_precheck hooks not available (non-fatal)")
 
+
+def _register_unit_and_lint_hooks(hm: HookManager) -> None:
+    """dimensional consistency + lint hooks."""
     # 量纲一致性 hook — POST_TOOL_USE, 检查输出值物理范围
     try:
         from huginn.hooks.unit_check import register_dimensional_hook
@@ -836,6 +879,9 @@ def register_science_hooks(hm: HookManager) -> None:
     except ImportError:
         logger.debug("lint_hook not available (non-fatal)")
 
+
+def _register_test_and_gate_hooks(hm: HookManager) -> None:
+    """test stop hook + browser gate + research safety gates."""
     # test hook — STOP, 一轮回复后跑 pytest
     try:
         from huginn.hooks import STOP
@@ -858,31 +904,13 @@ def register_science_hooks(hm: HookManager) -> None:
     except ImportError:
         logger.debug("research_safety_hook not available (non-fatal)")
 
+
+def _register_budget_hook(hm: HookManager) -> None:
+    """research budget tracking hook."""
     # 研究预算追踪 — POST_TOOL_USE, 按会话限制昂贵工具
     try:
         from huginn.research_budget import research_budget_hook
         hm.register(POST_TOOL_USE, research_budget_hook)
     except ImportError:
         logger.debug("research_budget_hook not available (non-fatal)")
-
-    hm._science_hooks_registered = True
-    logger.info(
-        "Science hooks registered: vasp_convergence, lammps_stability, "
-        "structure_sanity, qe_convergence, cp2k_convergence, "
-        "gaussian_termination, orca_termination, gromacs_stability, "
-        "fem_solver, openfoam_residual, mechanical_property, "
-        "packing_success, energy_bound, output_file_existence, "
-        "vina_docking, openmm_stability, "
-        "fep_validation, enhanced_sampling, msm_validation, "
-        "inverse_design, motif_mining, consensus_scoring, "
-        "rdkit_validation, neb_convergence, gp_model, "
-        "pipeline, "
-        "rag_provenance, workflow_guidance, calculation_ingest, "
-        "hook_failure, rag_track, rag_feedback, "
-        "physical_precheck (warn+force_proceed). "
-        "Pipeline stages: structure→relax→static→properties→"
-        "mechanical→md→cheminfo→docking/biomd→"
-        "free_energy/enhanced_sampling→kinetics/motif/inverse→"
-        "consensus→analysis"
-    )
 

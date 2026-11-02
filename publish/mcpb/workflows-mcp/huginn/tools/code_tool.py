@@ -17,6 +17,7 @@ import logging
 import os
 import shutil
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
@@ -29,6 +30,7 @@ from huginn.security import (
     SandboxConfig,
     SandboxError,
     SandboxExecutor,
+    SandboxResult,
     get_executor,
 )
 from huginn.security.restricted_python import RestrictedPythonError, validate_code
@@ -64,7 +66,6 @@ def _is_heavy_task(input_data) -> tuple[bool, str]:
     return False, ""
 
 
-
 class CodeToolInput(BaseModel):
     action: Literal["execute", "analyze", "generate"] = Field(default="execute")
     code: str = Field(..., description="Code snippet to execute or analyze")
@@ -82,13 +83,16 @@ class CodeToolInput(BaseModel):
         default=None, description="Variable to serialize and return"
     )
     timeout: float = Field(
-        default=60.0, gt=0, le=1800, description="Execution timeout in seconds (max 1800 for training runs)"
+        default=60.0,
+        gt=0,
+        le=1800,
+        description="Execution timeout in seconds (max 1800 for training runs)",
     )
     self_check: str | None = Field(
         default=None,
         description="Optional assert-based check code run AFTER main code succeeds. "
         "Use to verify rubric requirements: 'assert tok.value_embed(torch.tensor([1.0])).shape[0]==d_value'. "
-        "Failure returns success=False with the AssertionError message."
+        "Failure returns success=False with the AssertionError message.",
     )
 
 
@@ -114,7 +118,9 @@ class CodeTool(HuginnTool):
     ) -> ToolResult:
         input_data = CodeToolInput(**args)
         work_dir = (
-            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+            Path(input_data.working_dir)
+            if input_data.working_dir
+            else self.default_work_dir()
         )
         work_dir.mkdir(parents=True, exist_ok=True)
 
@@ -128,9 +134,12 @@ class CodeTool(HuginnTool):
                 from huginn.tools.persistent_terminal import (
                     resolve_persistent_terminal_flag,
                 )
+
                 if resolve_persistent_terminal_flag(None):
                     dispatched = _dispatch_to_support_persistent(
-                        input_data.code, context, reason,
+                        input_data.code,
+                        context,
+                        reason,
                     )
                     if dispatched is not None:
                         return dispatched
@@ -149,7 +158,9 @@ class CodeTool(HuginnTool):
             return self._execute(input_data, work_dir, context=context)
         except Exception as e:
             return ToolResult(
-                data=None, success=False, error=f"Code tool failed: {e}",
+                data=None,
+                success=False,
+                error=f"Code tool failed: {e}",
                 error_kind=ErrorKind.FATAL,
             )
 
@@ -171,6 +182,38 @@ class CodeTool(HuginnTool):
         analyze: bool = False,
         context: ToolContext | None = None,
     ) -> ToolResult:
+        invalid = self._ct_validate_args(args)
+        if invalid is not None:
+            return invalid
+
+        script_path, before_files = self._ct_prepare_script(args, work_dir, analyze)
+
+        executor, blocked = self._ct_select_executor()
+        if blocked is not None:
+            return blocked
+
+        result, dispose_rollback = self._ct_run_code(
+            executor, script_path, work_dir, args
+        )
+        output_paths = self._ct_collect_outputs(args, work_dir, before_files)
+        output_paths = self._ct_rollback_outputs(result, dispose_rollback, output_paths)
+
+        tool_result = self._ct_build_result(args, result, output_paths)
+
+        # 主代码成功后跑 self_check (assert-based rubric 对照)
+        # 失败返回 success=False + AssertionError 消息, agent 能看到具体哪条没过
+        if result.success and args.self_check:
+            check_result = self._run_self_check(args.self_check, work_dir, context)
+            if check_result is not None:
+                tool_result.data["self_check"] = check_result
+                tool_result.success = False
+                tool_result.data["message"] = f"Self-check FAILED: {check_result}"
+
+        self._audit_execution(args, tool_result, context)
+        return tool_result
+
+    def _ct_validate_args(self, args: CodeToolInput) -> ToolResult | None:
+        """参数预处理: 校验语言与代码安全性, 失败时返回错误结果."""
         if args.language != "python":
             return ToolResult(
                 data=None,
@@ -184,25 +227,45 @@ class CodeTool(HuginnTool):
             return ToolResult(
                 data=None, success=False, error=f"Code security check failed: {exc}"
             )
+        return None
 
+    def _ct_prepare_script(
+        self, args: CodeToolInput, work_dir: Path, analyze: bool
+    ) -> tuple[Path, set[Path]]:
+        """代码预处理: 写脚本并快照工作目录, 用于后续识别新产物."""
         script_path = work_dir / "_code_tool_script.py"
         full_code = self._wrap_code(args.code, args.result_variable, analyze)
         script_path.write_text(full_code, encoding="utf-8")
 
         # Snapshot existing files to detect new outputs
         before_files = set(work_dir.iterdir())
+        return script_path, before_files
 
+    def _ct_select_executor(
+        self,
+    ) -> tuple[SandboxExecutor | ContainerExecutor | None, ToolResult | None]:
+        """执行后端选择: 返回 executor, 或策略拒绝时的错误结果."""
         try:
             executor = get_executor()
         except SandboxError as exc:
-            return ToolResult(
-                data=None, success=False, error=f"Execution blocked: {exc}",
+            return None, ToolResult(
+                data=None,
+                success=False,
+                error=f"Execution blocked: {exc}",
                 error_kind=ErrorKind.DENIED,
             )
+        return executor, None
 
+    def _ct_run_code(
+        self,
+        executor: SandboxExecutor | ContainerExecutor | None,
+        script_path: Path,
+        work_dir: Path,
+        args: CodeToolInput,
+    ) -> tuple[SandboxResult, Callable[[], None] | None]:
+        """超时/资源限制 + 运行捕获: 按后端类型执行脚本, 返回结果与回滚句柄."""
         # RevertibleEffect (Cordis 时间可组合性): 失败的工具执行不留副作用.
         # 非容器路径用 run_revertible 登记"删除本次新建文件"的逆, 失败时回滚.
-        dispose_rollback = None
         if isinstance(executor, ContainerExecutor):
             result = executor.run(
                 ["python", script_path.name],
@@ -211,33 +274,41 @@ class CodeTool(HuginnTool):
                 capture_output=True,
                 text=True,
             )
-        else:
-            cfg = SandboxConfig(
-                dry_run=False,
-                allowed_executables=self.sandbox.config.allowed_executables
-                | {"python", "python3"},
-                default_timeout=args.timeout,
-            )
-            # sidecar 打包后 PATH 里可能没有 python, shutil.which 返回 None
-            # fallback 到 sys.executable (当前解释器绝对路径), PyInstaller 环境也有效
-            # 这样 sandbox._resolve_executable 能拿到真实路径, 不会抛 FileNotFoundError
-            python_exe = (
-                shutil.which("python")
-                or shutil.which("python3")
-                or sys.executable
-                or "python"
-            )
-            result, dispose_rollback = self.sandbox.run_revertible(
-                [python_exe, str(script_path)],
-                cwd=work_dir,
-                poll_dir=work_dir,
-                config=cfg,
-                capture_output=True,
-                text=True,
-                timeout=args.timeout,
-            )
+            return result, None
 
-        # Collect requested or auto-detected output files
+        cfg = SandboxConfig(
+            dry_run=False,
+            allowed_executables=self.sandbox.config.allowed_executables
+            | {"python", "python3"},
+            default_timeout=args.timeout,
+        )
+        # sidecar 打包后 PATH 里可能没有 python, shutil.which 返回 None
+        # fallback 到 sys.executable (当前解释器绝对路径), PyInstaller 环境也有效
+        # 这样 sandbox._resolve_executable 能拿到真实路径, 不会抛 FileNotFoundError
+        python_exe = (
+            shutil.which("python")
+            or shutil.which("python3")
+            or sys.executable
+            or "python"
+        )
+        result, dispose_rollback = self.sandbox.run_revertible(
+            [python_exe, str(script_path)],
+            cwd=work_dir,
+            poll_dir=work_dir,
+            config=cfg,
+            capture_output=True,
+            text=True,
+            timeout=args.timeout,
+        )
+        return result, dispose_rollback
+
+    def _ct_collect_outputs(
+        self,
+        args: CodeToolInput,
+        work_dir: Path,
+        before_files: set[Path],
+    ) -> dict[str, str]:
+        """产物收集: 合并显式声明的输出与本次新生成的已知类型文件."""
         after_files = set(work_dir.iterdir())
         new_files = after_files - before_files
         output_paths: dict[str, str] = {}
@@ -259,33 +330,74 @@ class CodeTool(HuginnTool):
                 ".data",
             ):
                 output_paths[path.name] = str(path)
+        return output_paths
 
+    def _ct_rollback_outputs(
+        self,
+        result: SandboxResult,
+        dispose_rollback: Callable[[], None] | None,
+        output_paths: dict[str, str],
+    ) -> dict[str, str]:
+        """失败回滚: 删除本次新建文件并清掉指向已删文件的产物引用."""
         # RevertibleEffect (Cordis 时间可组合性): 执行失败 → 回滚本次新建文件,
         # 沙箱恢复到执行前状态 (但不删 _code_tool_script.py, 保留给 agent 调试).
         # 成功则保留产物, 由 agent 用 file 工具取用.
         if not result.success and dispose_rollback is not None:
             dispose_rollback()
             # 回滚后, 指向已删文件的 output 引用要清掉, 避免 agent 拿失效路径.
-            output_paths = {
-                k: v for k, v in output_paths.items() if Path(v).exists()
-            }
+            return {k: v for k, v in output_paths.items() if Path(v).exists()}
+        return output_paths
 
-        parsed_result = self._parse_result_marker(result.stdout)
-
+    def _ct_diagnostics(self, result: SandboxResult) -> tuple[str, list[str]]:
+        """stderr/stdout 诊断: 失败修复建议 + stdout 进度行提取."""
         # 失败时附修复建议, 让 agent 知道下一步该做什么
         suggest = ""
         if not result.success:
             from huginn.tools.bash_tool import _suggest_fix
-            suggest = _suggest_fix(result.returncode, result.stderr, result.stdout, ["python"])
+
+            suggest = _suggest_fix(
+                result.returncode, result.stderr, result.stdout, ["python"]
+            )
 
         # 从 stdout 提取进度行 (loss/epoch/step/error), 让 agent 快速看训练曲线
         from huginn.tools.bash_tool import _extract_progress
+
         progress = _extract_progress(result.stdout)
+        return suggest, progress
+
+    def _ct_timeout_state(
+        self, args: CodeToolInput, result: SandboxResult
+    ) -> tuple[bool, str | None]:
+        """超时语义: 返回 timed_out 标记与面向 agent 的预算耗尽错误文案."""
+        _timed_out = bool(getattr(result, "timed_out", False))
+        # 超时是"算力预算耗尽", 不是崩溃. 不给显式 error 时, adapter 会把它
+        # 译成 "silent failure — likely a sandbox/process crash", agent 就会
+        # 换方法而不是砍计算量 (ws11: 8 次 60s 超时全部误判).
+        _timeout_error = (
+            f"Execution timed out (> {args.timeout}s): compute budget exhausted, "
+            "not a crash. Reduce iterations/resolution/parameter-grid size or "
+            "split into smaller runs, then retry."
+            if _timed_out
+            else None
+        )
+        return _timed_out, _timeout_error
+
+    def _ct_build_result(
+        self,
+        args: CodeToolInput,
+        result: SandboxResult,
+        output_paths: dict[str, str],
+    ) -> ToolResult:
+        """结果封装: 合并 stdout/stderr、产物、诊断与错误分类."""
+        parsed_result = self._parse_result_marker(result.stdout)
+        suggest, progress = self._ct_diagnostics(result)
 
         # 复用 bash_tool 的结果分类 (本身也是重活/进度 helper 的宿主)
         from huginn.tools.bash_tool import _result_error_kind
 
-        tool_result = ToolResult(
+        _timed_out, _timeout_error = self._ct_timeout_state(args, result)
+
+        return ToolResult(
             data={
                 "returncode": result.returncode,
                 "stdout": result.stdout,
@@ -294,6 +406,8 @@ class CodeTool(HuginnTool):
                 "output_files": output_paths,
                 "suggest_fix": suggest,
                 "stream_progress": progress,
+                "timed_out": _timed_out,
+                "timeout": args.timeout,
                 "message": (
                     "Code executed successfully."
                     if result.success
@@ -301,20 +415,9 @@ class CodeTool(HuginnTool):
                 ),
             },
             success=result.success,
+            error=_timeout_error,
             error_kind=_result_error_kind(result),
         )
-
-        # 主代码成功后跑 self_check (assert-based rubric 对照)
-        # 失败返回 success=False + AssertionError 消息, agent 能看到具体哪条没过
-        if result.success and args.self_check:
-            check_result = self._run_self_check(args.self_check, work_dir, context)
-            if check_result is not None:
-                tool_result.data["self_check"] = check_result
-                tool_result.success = False
-                tool_result.data["message"] = f"Self-check FAILED: {check_result}"
-
-        self._audit_execution(args, tool_result, context)
-        return tool_result
 
     def _run_self_check(
         self, check_code: str, work_dir: Path, context: ToolContext | None
@@ -348,7 +451,8 @@ class CodeTool(HuginnTool):
                 cwd=work_dir,
                 config=SandboxConfig(
                     dry_run=False,
-                    allowed_executables=self.sandbox.config.allowed_executables | {"python"},
+                    allowed_executables=self.sandbox.config.allowed_executables
+                    | {"python"},
                     default_timeout=30.0,
                 ),
                 capture_output=True,
@@ -359,9 +463,9 @@ class CodeTool(HuginnTool):
                 if line.startswith("__SELFCHECK_PASS__"):
                     return None
                 if line.startswith("__SELFCHECK_FAIL__"):
-                    return line[len("__SELFCHECK_FAIL__:"):]
+                    return line[len("__SELFCHECK_FAIL__:") :]
                 if line.startswith("__SELFCHECK_ERROR__"):
-                    return line[len("__SELFCHECK_ERROR__:"):]
+                    return line[len("__SELFCHECK_ERROR__:") :]
             return f"self-check produced no marker. stdout: {r.stdout[:500]}"
         except Exception as e:
             return f"self-check execution error: {e}"
@@ -474,9 +578,20 @@ def _dispatch_to_support(
         )
         return None
 
-    # v14 Task 10: Čech H¹ 一致性检查 — Support finding vs Core context (原 code 作为 proxy).
-    # ponytail: 真正 Core context 拿不到, 用触发 dispatch 的 code 当 claim proxy.
-    # 升级路径: 从 ToolContext.memory_manager 取最近 N 条 Core message 做 core_context.
+    _apply_h1_consistency(result, code, context)
+
+    # 给结果打标, 让 rcb_runner 主循环写 curl trace entry
+    result.metadata["dispatched_to_support"] = True
+    result.metadata["dispatch_reason"] = reason
+    return result
+
+
+def _apply_h1_consistency(result: ToolResult, code: str, context: ToolContext) -> None:
+    """v14 Task 10: Čech H¹ 一致性检查 — Support finding vs Core context (原 code 作为 proxy).
+
+    ponytail: 真正 Core context 拿不到, 用触发 dispatch 的 code 当 claim proxy.
+    升级路径: 从 ToolContext.memory_manager 取最近 N 条 Core message 做 core_context.
+    """
     if result.success and isinstance(result.data, dict):
         finding = result.data.get("summary")
         if finding:
@@ -484,6 +599,7 @@ def _dispatch_to_support(
                 _check_finding_consistency,
                 _write_support_rejection,
             )
+
             h1_zero, h1_reason = _check_finding_consistency(finding, code)
             result.metadata["h1_status"] = "zero" if h1_zero else "nonzero"
             result.metadata["h1_reason"] = h1_reason
@@ -498,11 +614,6 @@ def _dispatch_to_support(
                 }
                 result.metadata["h1_obstruction"] = True
                 result.metadata["rejection_reason"] = h1_reason
-
-    # 给结果打标, 让 rcb_runner 主循环写 curl trace entry
-    result.metadata["dispatched_to_support"] = True
-    result.metadata["dispatch_reason"] = reason
-    return result
 
 
 def _dispatch_to_support_persistent(
@@ -520,24 +631,12 @@ def _dispatch_to_support_persistent(
     升级路径: 跑 SubagentDispatch dispatch 而非裸 code, 让 Support subagent
     生成结构化 finding. 当前先跑裸 code, code 自己负责 print finding JSON.
     """
-    workspace = None
-    if context is not None and getattr(context, "workspace", None):
-        workspace = str(context.workspace)
-    elif context is not None and getattr(context, "session_id", None):
-        # session_id 通常映射到 workspace/<session_id>/, 兜底用 cwd
-        workspace = str(Path.cwd())
+    workspace = _resolve_support_workspace(context)
 
     try:
-        from huginn.tools.persistent_terminal import get_default_terminal
-
-        terminal = get_default_terminal()
-        # -u 强制 stdout/stderr unbuffered, 非 PTY 模式下也能读到 print 输出
-        cmd = [sys.executable, "-u", "-c", code]
-        session_id = terminal.start(cmd, cwd=workspace)
+        session_id = _start_persistent_session(code, workspace)
     except Exception as exc:
-        logger.warning(
-            "PersistentTerminal dispatch failed, falling back: %s", exc
-        )
+        logger.warning("PersistentTerminal dispatch failed, falling back: %s", exc)
         return None
 
     result = ToolResult(
@@ -559,11 +658,28 @@ def _dispatch_to_support_persistent(
     return result
 
 
-def self_check_v14_task9() -> None:
-    """v14 Task 9: 重活识别 self-check.
+def _resolve_support_workspace(context: ToolContext | None) -> str | None:
+    """解析 Support session 的 workspace (session_id 兜底用 cwd)."""
+    if context is not None and getattr(context, "workspace", None):
+        return str(context.workspace)
+    if context is not None and getattr(context, "session_id", None):
+        # session_id 通常映射到 workspace/<session_id>/, 兜底用 cwd
+        return str(Path.cwd())
+    return None
 
-    不调真实 SubagentTool (要 agent_factory), 只验 _is_heavy_task 判据.
-    """
+
+def _start_persistent_session(code: str, workspace: str | None) -> str:
+    """启动 persistent terminal session, 返回 session_id."""
+    from huginn.tools.persistent_terminal import get_default_terminal
+
+    terminal = get_default_terminal()
+    # -u 强制 stdout/stderr unbuffered, 非 PTY 模式下也能读到 print 输出
+    cmd = [sys.executable, "-u", "-c", code]
+    return terminal.start(cmd, cwd=workspace)
+
+
+def _check_heavy_size_and_pdf() -> None:
+    """验证行长 / PDF 判据."""
     # 250 行代码 → 重活
     long_code = "\n".join(f"x{i} = {i}" for i in range(250))
     inp = type("In", (), {"code": long_code, "timeout": 30})()
@@ -583,9 +699,14 @@ def self_check_v14_task9() -> None:
     is_heavy, reason = _is_heavy_task(inp)
     assert is_heavy and "PDF" in reason, f"PDF 解析应识别为重活, got {reason}"
 
+
+def _check_heavy_csv_and_timeout() -> None:
+    """验证 CSV / timeout 判据."""
     # 大 CSV 无 chunksize → 重活
     inp = type(
-        "In", (), {"code": "import pandas as pd\ndf = pd.read_csv('big.csv')", "timeout": 30}
+        "In",
+        (),
+        {"code": "import pandas as pd\ndf = pd.read_csv('big.csv')", "timeout": 30},
     )()
     is_heavy, reason = _is_heavy_task(inp)
     assert is_heavy and "CSV" in reason, f"大 CSV 应识别为重活, got {reason}"
@@ -594,7 +715,10 @@ def self_check_v14_task9() -> None:
     inp = type(
         "In",
         (),
-        {"code": "import pandas as pd\nfor c in pd.read_csv('big.csv', chunksize=1000):\n  pass", "timeout": 30},
+        {
+            "code": "import pandas as pd\nfor c in pd.read_csv('big.csv', chunksize=1000):\n  pass",
+            "timeout": 30,
+        },
     )()
     is_heavy, _ = _is_heavy_task(inp)
     assert not is_heavy, "chunksize 不应识别为重活"
@@ -609,6 +733,14 @@ def self_check_v14_task9() -> None:
     is_heavy, _ = _is_heavy_task(inp)
     assert not is_heavy, "短代码不应识别为重活"
 
+
+def self_check_v14_task9() -> None:
+    """v14 Task 9: 重活识别 self-check.
+
+    不调真实 SubagentTool (要 agent_factory), 只验 _is_heavy_task 判据.
+    """
+    _check_heavy_size_and_pdf()
+    _check_heavy_csv_and_timeout()
     print("[CHECK v14 Task 9] heavy task detection OK")
 
 

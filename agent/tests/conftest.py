@@ -23,7 +23,9 @@ collect_ignore_glob = [
 ]
 
 # Tests run on the local machine without a container runtime by default.
+# CI kernels may lack Landlock, so explicitly accept the degraded local sandbox.
 os.environ.setdefault("HUGINN_ALLOW_LOCAL_BASH", "1")
+os.environ.setdefault("HUGINN_UNSAFE_ENV", "1")
 os.environ.setdefault("HUGINN_ALLOW_UNRESTRICTED_READ", "1")
 os.environ.setdefault("HUGINN_PROMPT_CACHE_CONTROL", "0")
 # Enable dev mode so tests can hit API endpoints without a configured API key.
@@ -64,6 +66,28 @@ def shared_huginn_app():
     from huginn.server import app
 
     return app
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _restore_workspace_env():
+    """Snapshot/restore HUGINN_WORKSPACE around each test module.
+
+    Several API test modules point HUGINN_WORKSPACE at a module-local tmp dir so
+    the server writes into an isolated workspace. That is a process-global env
+    var: without restoring it, later modules in the same process resolve
+    ``default_workspace_dir()`` to an already torn-down module dir, and the
+    sandbox then rejects legitimate work dirs (order-dependent failures such as
+    ``allowed_roots: ['.../audit_ws0']`` in unrelated suites).
+
+    Autouse fixtures are set up before every non-autouse fixture of the same
+    scope, so this teardown runs after all module-scoped fixtures have yielded.
+    """
+    prev = os.environ.get("HUGINN_WORKSPACE")
+    yield
+    if prev is None:
+        os.environ.pop("HUGINN_WORKSPACE", None)
+    else:
+        os.environ["HUGINN_WORKSPACE"] = prev
 
 
 @pytest.fixture(scope="module")

@@ -21,35 +21,54 @@ from huginn.tools.base import HuginnTool
 # ── 内置 benchmark simulator (同 matrix_tool) ────────────────────
 def _get_simulator(task: str):
     if task == "linear_gaussian":
-        def prior(n, rng): return rng.standard_normal((n, 4))
-        def sim(theta, rng): return theta + 0.1 * rng.standard_normal(theta.shape)
+
+        def prior(n, rng):
+            return rng.standard_normal((n, 4))
+
+        def sim(theta, rng):
+            return theta + 0.1 * rng.standard_normal(theta.shape)
+
         return prior, sim, 4, 4
     if task == "two_moons":
-        def prior(n, rng): return rng.uniform(-1, 1, (n, 2))
+
+        def prior(n, rng):
+            return rng.uniform(-1, 1, (n, 2))
+
         def sim(theta, rng):
             a = theta[:, 0] * np.pi
             r = np.abs(theta[:, 1])
             x = np.stack([r * np.cos(a), r * np.sin(a)], axis=1)
             return x + 0.1 * rng.standard_normal(x.shape)
+
         return prior, sim, 2, 2
     if task == "slcp":
-        def prior(n, rng): return rng.uniform(-3, 3, (n, 4))
+
+        def prior(n, rng):
+            return rng.uniform(-3, 3, (n, 4))
+
         def sim(theta, rng):
             n = theta.shape[0]
             means = np.array([[-2, -2], [2, -2], [-2, 2], [2, 2]], dtype=float)
             idx = rng.integers(0, 4, size=n)
             x = means[idx] + 0.3 * rng.standard_normal((n, 2))
             return np.tile(x, (1, 4)) + 0.05 * rng.standard_normal((n, 8))
+
         return prior, sim, 4, 8
     if task == "gaussian_mixture":
-        def prior(n, rng): return rng.uniform(-3, 3, (n, 2))
+
+        def prior(n, rng):
+            return rng.uniform(-3, 3, (n, 2))
+
         def sim(theta, rng):
             n = theta.shape[0]
             mask = rng.random(n) < 0.5
             mu = np.where(mask[:, None], theta, -theta)
             return mu + rng.standard_normal((n, 2))
+
         return prior, sim, 2, 2
-    raise ValueError(f"Unknown task: {task}. Valid: linear_gaussian, two_moons, slcp, gaussian_mixture")
+    raise ValueError(
+        f"Unknown task: {task}. Valid: linear_gaussian, two_moons, slcp, gaussian_mixture"
+    )
 
 
 class MCMCInput(BaseModel):
@@ -60,22 +79,45 @@ class MCMCInput(BaseModel):
     observation: str = Field(
         description="JSON-encoded 1D array — observed data x_obs to condition on"
     )
-    num_samples: int = Field(default=1000, gt=0, description="Number of posterior samples to draw")
+    num_samples: int = Field(
+        default=1000, gt=0, description="Number of posterior samples to draw"
+    )
     method: Literal["abc", "mh"] = Field(
         default="abc",
         description="abc = rejection ABC (faster, coarser); mh = Metropolis-Hastings (slower, finer)",
     )
     epsilon: float = Field(
-        default=0.5, gt=0,
+        default=0.5,
+        gt=0,
         description="ABC: accept if |sim(θ) - x_obs| < epsilon. Smaller = more accurate but slower.",
     )
     proposal_std: float = Field(
-        default=0.5, gt=0,
+        default=0.5,
+        gt=0,
         description="MH: Gaussian proposal std. Tune for ~25% acceptance rate.",
     )
-    burn_in: int = Field(default=200, ge=0, description="MH: burn-in samples to discard")
+    burn_in: int = Field(
+        default=200, ge=0, description="MH: burn-in samples to discard"
+    )
     output_path: str = Field(default="outputs/posterior_samples.json")
     seed: int = Field(default=42)
+
+
+def _save_mcmc_result(result: dict[str, Any], output_path: str) -> Path:
+    out_path = Path(output_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    return out_path
+
+
+def _build_mcmc_response(samples, diagnostics, out_path: Path) -> dict[str, Any]:
+    return {
+        "num_samples": len(samples),
+        "mean": np.mean(samples, axis=0).tolist(),
+        "std": np.std(samples, axis=0).tolist(),
+        "diagnostics": diagnostics,
+        "output_path": str(out_path),
+    }
 
 
 class MCMCSamplerTool(HuginnTool):
@@ -100,7 +142,9 @@ class MCMCSamplerTool(HuginnTool):
         try:
             x_obs = np.array(json.loads(input_data.observation), dtype=float).ravel()
         except (json.JSONDecodeError, ValueError) as e:
-            return ToolResult(data=None, success=False, error=f"Invalid observation JSON: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"Invalid observation JSON: {e}"
+            )
 
         try:
             prior_fn, sim_fn, p_dim, x_dim = _get_simulator(input_data.task)
@@ -109,18 +153,15 @@ class MCMCSamplerTool(HuginnTool):
 
         if x_obs.shape[0] != x_dim:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"observation dim {x_obs.shape[0]} != task {input_data.task} expects {x_dim}",
             )
 
         if input_data.method == "abc":
-            samples, diagnostics = self._abc(
-                prior_fn, sim_fn, x_obs, input_data, rng
-            )
+            samples, diagnostics = self._abc(prior_fn, sim_fn, x_obs, input_data, rng)
         else:
-            samples, diagnostics = self._mh(
-                prior_fn, sim_fn, x_obs, input_data, rng
-            )
+            samples, diagnostics = self._mh(prior_fn, sim_fn, x_obs, input_data, rng)
 
         result = {
             "task": input_data.task,
@@ -131,18 +172,10 @@ class MCMCSamplerTool(HuginnTool):
             "diagnostics": diagnostics,
         }
 
-        out_path = Path(input_data.output_path)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+        out_path = _save_mcmc_result(result, input_data.output_path)
 
         return ToolResult(
-            data={
-                "num_samples": len(samples),
-                "mean": np.mean(samples, axis=0).tolist(),
-                "std": np.std(samples, axis=0).tolist(),
-                "diagnostics": diagnostics,
-                "output_path": str(out_path),
-            },
+            data=_build_mcmc_response(samples, diagnostics, out_path),
             success=True,
             side_effects=[str(out_path)],
         )
@@ -164,7 +197,11 @@ class MCMCSamplerTool(HuginnTool):
                     accepted.append(t.tolist())
             n_tried += batch
 
-        accepted = np.array(accepted[:cfg.num_samples]) if accepted else np.zeros((0, prior_fn(1, rng).shape[1]))
+        accepted = (
+            np.array(accepted[: cfg.num_samples])
+            if accepted
+            else np.zeros((0, prior_fn(1, rng).shape[1]))
+        )
         diagnostics = {
             "acceptance_rate": round(len(accepted) / max(n_tried, 1), 4),
             "n_tried": n_tried,
@@ -189,7 +226,7 @@ class MCMCSamplerTool(HuginnTool):
             prop_dist = np.linalg.norm(x_prop - x_obs)
             # accept if closer (ABC-MCMC: 接受概率 = min(1, exp(-(prop_dist - cur_dist) / T))
             # ponytail: T=epsilon^2, 简化但不离谱
-            T = max(cfg.epsilon ** 2, 1e-6)
+            T = max(cfg.epsilon**2, 1e-6)
             log_ratio = -(prop_dist - cur_dist) / T
             if np.log(rng.random()) < log_ratio:
                 theta = theta_prop
@@ -217,30 +254,38 @@ if __name__ == "__main__":
         # 用 linear_gaussian, observation = [1, 0, 0, 0] (真值 θ ≈ [1, 0, 0, 0])
         obs = json.dumps([1.0, 0.0, 0.0, 0.0])
 
-        r1 = await tool.call({
-            "task": "linear_gaussian",
-            "observation": obs,
-            "num_samples": 100,
-            "method": "abc",
-            "epsilon": 0.3,
-            "output_path": "_test_abc.json",
-        })
-        print(f"ABC: n={r1.data['num_samples']}, mean={r1.data['mean']}, acc={r1.data['diagnostics']['acceptance_rate']}")
+        r1 = await tool.call(
+            {
+                "task": "linear_gaussian",
+                "observation": obs,
+                "num_samples": 100,
+                "method": "abc",
+                "epsilon": 0.3,
+                "output_path": "_test_abc.json",
+            }
+        )
+        print(
+            f"ABC: n={r1.data['num_samples']}, mean={r1.data['mean']}, acc={r1.data['diagnostics']['acceptance_rate']}"
+        )
         # posterior 均值应接近 [1, 0, 0, 0]
         mean = np.array(r1.data["mean"])
         assert abs(mean[0] - 1.0) < 0.5, f"ABC mean[0]={mean[0]}, expected ~1.0"
 
-        r2 = await tool.call({
-            "task": "linear_gaussian",
-            "observation": obs,
-            "num_samples": 100,
-            "method": "mh",
-            "epsilon": 0.2,
-            "proposal_std": 0.3,
-            "burn_in": 50,
-            "output_path": "_test_mh.json",
-        })
-        print(f"MH: n={r2.data['num_samples']}, mean={r2.data['mean']}, acc={r2.data['diagnostics']['acceptance_rate']}")
+        r2 = await tool.call(
+            {
+                "task": "linear_gaussian",
+                "observation": obs,
+                "num_samples": 100,
+                "method": "mh",
+                "epsilon": 0.2,
+                "proposal_std": 0.3,
+                "burn_in": 50,
+                "output_path": "_test_mh.json",
+            }
+        )
+        print(
+            f"MH: n={r2.data['num_samples']}, mean={r2.data['mean']}, acc={r2.data['diagnostics']['acceptance_rate']}"
+        )
         mean = np.array(r2.data["mean"])
         assert abs(mean[0] - 1.0) < 0.8, f"MH mean[0]={mean[0]}, expected ~1.0"
 

@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # 托管部署落地方案 + 推广形态分析
 
 > 目标：破「没人下载 agent」的死结。核心思路是从「用户本地下载安装运行」迁移为「用户浏览器访问、服务器托管、Huginn + 自部署 LLM(如 qwen3.8-27B) 做后端」的 SaaS 形态。本文同时给出规模化落地的技术清单与推广形态判断路径。
@@ -41,7 +43,7 @@
 ## 2. 部署落地清单（分里程碑）
 
 ### M0 · 最小可用托管（先跑通获客闭环）
-- 改绑定：`uvicorn.run(app, host="0.0.0.0")`（加 `HUGINN_HOST` env 覆盖，默认仍本机）。
+- 改绑定：`uvicorn.run(app, host="0.0.0.0")`（本机监听；如需对外暴露，在部署层改绑定）。
 - 反向代理：nginx/caddy 终结 TLS（Let's Encrypt），代理到服务器 `127.0.0.1:8000`。
 - 鉴权：启用 `require_api_key`，通过 `/auth/login` 签发 token；前端把 API key/token 带上 `Authorization`/`X-HUGINN-API-KEY`。
 - 静态前端：新增简单 HTML/JS 前端（或复用 ws 清理面）挂到 server/代理，让用户网页对话触发工作流。

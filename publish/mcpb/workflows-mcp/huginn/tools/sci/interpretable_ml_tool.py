@@ -41,7 +41,6 @@ from huginn.tools.sci.gp_tool import NumPyGP
 logger = logging.getLogger(__name__)
 
 
-
 class InterpretableMLInput(BaseModel):
     action: Literal[
         "symbolic_regression",
@@ -69,18 +68,33 @@ class InterpretableMLInput(BaseModel):
         default=None, description="Feature names (auto-detect if None: all but target)"
     )
     # ── symbolic_regression options ──
-    max_order: int = Field(default=2, ge=1, le=5, description="Max polynomial degree (incl. cross terms)")
-    include_trig: bool = Field(default=False, description="Add sin/cos to the candidate library")
-    include_exp: bool = Field(default=False, description="Add exp to the candidate library")
-    threshold: float = Field(default=0.05, ge=0.0, le=1.0, description="Relative sparsity threshold")
+    max_order: int = Field(
+        default=2, ge=1, le=5, description="Max polynomial degree (incl. cross terms)"
+    )
+    include_trig: bool = Field(
+        default=False, description="Add sin/cos to the candidate library"
+    )
+    include_exp: bool = Field(
+        default=False, description="Add exp to the candidate library"
+    )
+    threshold: float = Field(
+        default=0.05, ge=0.0, le=1.0, description="Relative sparsity threshold"
+    )
     # ── gaussian_process options ──
-    X_new: list[list[float]] = Field(default_factory=list, description="Points to predict at (defaults to training X)")
+    X_new: list[list[float]] = Field(
+        default_factory=list,
+        description="Points to predict at (defaults to training X)",
+    )
     length_scale: float = Field(default=1.0, gt=0)
     sigma_f: float = Field(default=1.0, gt=0, description="Signal variance")
     sigma_n: float = Field(default=1e-5, ge=0, description="Observation noise")
     kernel: Literal["rbf", "matern32", "matern52"] = Field(default="rbf")
-    confidence: float = Field(default=0.95, gt=0.0, lt=1.0, description="Confidence level for intervals")
-    use_gpytorch: bool = Field(default=True, description="Prefer gpytorch when installed; else NumPyGP")
+    confidence: float = Field(
+        default=0.95, gt=0.0, lt=1.0, description="Confidence level for intervals"
+    )
+    use_gpytorch: bool = Field(
+        default=True, description="Prefer gpytorch when installed; else NumPyGP"
+    )
     # ── validate_structure options ──
     equation: str = Field(
         default="",
@@ -88,7 +102,8 @@ class InterpretableMLInput(BaseModel):
         "If empty, built from terms + coefficients.",
     )
     terms: list[str] | None = Field(
-        default=None, description="Candidate term names (from symbolic_regression output)"
+        default=None,
+        description="Candidate term names (from symbolic_regression output)",
     )
     coefficients: list[float] | None = Field(
         default=None, description="Coefficients aligned to terms"
@@ -101,7 +116,8 @@ class InterpretableMLInput(BaseModel):
         default=None, description="Variable names to test for even/odd symmetry"
     )
     conservation_check: bool = Field(
-        default=False, description="Heuristically check whether the equation encodes a conservation law"
+        default=False,
+        description="Heuristically check whether the equation encodes a conservation law",
     )
 
 
@@ -138,7 +154,9 @@ class InterpretableMLTool(HuginnTool):
             d = args.data_json
             tkey = args.target_column or "y"
             if tkey not in d:
-                raise ValueError(f"target column '{tkey}' not in data_json keys {list(d)}")
+                raise ValueError(
+                    f"target column '{tkey}' not in data_json keys {list(d)}"
+                )
             y = np.asarray(d[tkey], dtype=np.float64)
             feats = args.feature_columns or [k for k in d if k != tkey]
             if not feats:
@@ -169,7 +187,9 @@ class InterpretableMLTool(HuginnTool):
 
     # ── entry point ───────────────────────────────────────────────
 
-    async def call(self, args: InterpretableMLInput, context: ToolContext) -> ToolResult:
+    async def call(
+        self, args: InterpretableMLInput, context: ToolContext
+    ) -> ToolResult:
         if args.action == "symbolic_regression":
             return self._symbolic_regression(args)
         if args.action == "gaussian_process":
@@ -178,7 +198,9 @@ class InterpretableMLTool(HuginnTool):
             return self._validate_structure(args)
         if args.action == "sr_guided_gp":
             return self._sr_guided_gp(args)
-        return ToolResult(data=None, success=False, error=f"unknown action: {args.action}")
+        return ToolResult(
+            data=None, success=False, error=f"unknown action: {args.action}"
+        )
 
     # ── symbolic regression (SINDy on y = f(X)) ───────────────────
 
@@ -186,10 +208,13 @@ class InterpretableMLTool(HuginnTool):
         try:
             X, y, feats = self._load_xy(args)
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"data loading failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"data loading failed: {e}"
+            )
         if X.shape[0] < 3:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"need >=3 samples, got {X.shape[0]}",
             )
 
@@ -197,19 +222,9 @@ class InterpretableMLTool(HuginnTool):
         # always-available default. PySR returns a different schema, so we only
         # surface it when explicitly requested via the env and present.
         try:
-            terms, Theta = self._sindy._build_library(
-                X, args.max_order, args.include_trig, args.include_exp
-            )
-            # SINDy solves dX/dt ≈ Theta @ Xi; here we solve y ≈ Theta @ xi.
-            Xi = self._sindy._sparse_regression(Theta, y.reshape(-1, 1), args.threshold)
+            terms, coefs, r2 = _sindy_fit(self, X, y, args)
         except Exception as e:
             return ToolResult(data=None, success=False, error=f"regression failed: {e}")
-
-        coefs = Xi[:, 0]
-        pred = Theta @ coefs
-        ss_res = float(np.sum((y - pred) ** 2))
-        ss_tot = float(np.sum((y - np.mean(y)) ** 2))
-        r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 1e-15 else 0.0
 
         # Build a human-readable equation from the sparse coefficients.
         equation = self._format_equation(args.target_column or "y", terms, coefs)
@@ -258,16 +273,21 @@ class InterpretableMLTool(HuginnTool):
         try:
             X, y, feats = self._load_xy(args)
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"data loading failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"data loading failed: {e}"
+            )
         if len(X) == 0 or len(y) == 0:
-            return ToolResult(data=None, success=False, error="X and y must be non-empty")
+            return ToolResult(
+                data=None, success=False, error="X and y must be non-empty"
+            )
         if len(X) != len(y):
-            return ToolResult(data=None, success=False, error="X and y must have the same length")
+            return ToolResult(
+                data=None, success=False, error="X and y must have the same length"
+            )
 
         X_new = np.asarray(args.X_new, dtype=float) if args.X_new else X
         z = self._z_score(args.confidence)
 
-        backend = "numpy"
         if args.use_gpytorch:
             res = self._gp_gpytorch(X, y, X_new, args, z)
             if res is not None:
@@ -275,32 +295,14 @@ class InterpretableMLTool(HuginnTool):
 
         # Fallback: in-repo NumPyGP (no heavy deps).
         try:
-            gp = NumPyGP(args.length_scale, args.sigma_f, args.sigma_n, args.kernel)
-            gp.fit(X, y)
-            mu, sigma = gp.predict(X_new)
+            mu, sigma = _numpy_gp_predict(X, y, X_new, args)
         except Exception as e:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"GP fit/predict failed: {e} (check X_new feature count matches training data)",
             )
-        lower = mu - z * sigma
-        upper = mu + z * sigma
-        return ToolResult(
-            data={
-                "backend": backend,
-                "mean": mu.tolist(),
-                "std": sigma.tolist(),
-                "lower": lower.tolist(),
-                "upper": upper.tolist(),
-                "confidence": args.confidence,
-                "z_score": z,
-                "kernel": args.kernel,
-                "n_train": len(X),
-                "n_predict": len(X_new),
-                "features": feats,
-            },
-            success=True,
-        )
+        return _numpy_gp_result(args, X, X_new, feats, z, mu, sigma)
 
     def _gp_gpytorch(self, X, y, X_new, args, z):
         """Fit an ExactGP via gpytorch; return a ToolResult or None to fall back."""
@@ -311,73 +313,26 @@ class InterpretableMLTool(HuginnTool):
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
-        class _ExactGP(gpytorch.models.ExactGP):
-            def __init__(self, train_x, train_y, likelihood):
-                super().__init__(train_x, train_y, likelihood)
-                self.mean_module = gpytorch.means.ConstantMean()
-                self.covar_module = gpytorch.kernels.ScaleKernel(
-                    gpytorch.kernels.RBFKernel(lengthscale=args.length_scale)
-                )
-
-            def forward(self, x):
-                return gpytorch.distributions.MultivariateNormal(
-                    self.mean_module(x), self.covar_module(x)
-                )
-
         device = "cuda" if torch.cuda.is_available() else "cpu"
         try:
             tx = torch.tensor(X, dtype=torch.float32, device=device)
             ty = torch.tensor(y, dtype=torch.float32, device=device)
-            likelihood = gpytorch.likelihoods.GaussianLikelihood(
-                noise_constraint=gpytorch.constraints.GreaterThan(1e-6)
+            model, likelihood = _build_gpytorch_model(gpytorch, args, tx, ty, device)
+            _fit_gpytorch(gpytorch, torch, model, likelihood, tx, ty)
+            mu, sigma = _predict_gpytorch(
+                gpytorch, torch, model, likelihood, X_new, device
             )
-            likelihood.noise = args.sigma_n ** 2
-            model = _ExactGP(tx, ty, likelihood).to(device)
-            model.train()
-            likelihood.train()
-
-            mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
-            opt = torch.optim.Adam(model.parameters(), lr=0.1)
-            for _ in range(50):
-                opt.zero_grad()
-                out = model(tx)
-                loss = -mll(out, ty)
-                loss.backward()
-                opt.step()
-
-            model.eval()
-            likelihood.eval()
-            with torch.no_grad(), gpytorch.settings.fast_pred_var():
-                obs = likelihood(model(torch.tensor(X_new, dtype=torch.float32, device=device)))
-                mu = obs.mean.cpu().numpy()
-                sigma = obs.stddev.cpu().numpy()
         except Exception as exc:
             # gpytorch 依赖 torch 版本兼容, 训练/预测出错时降级到 numpy.
             # 记 warning 方便排查, 不吞异常.
             import logging
+
             logging.getLogger(__name__).warning(
                 "gpytorch GP failed, falling back to numpy: %s", exc
             )
             return None
 
-        lower = mu - z * sigma
-        upper = mu + z * sigma
-        return ToolResult(
-            data={
-                "backend": "gpytorch",
-                "mean": mu.tolist(),
-                "std": sigma.tolist(),
-                "lower": lower.tolist(),
-                "upper": upper.tolist(),
-                "confidence": args.confidence,
-                "z_score": z,
-                "kernel": "rbf",
-                "n_train": len(X),
-                "n_predict": len(X_new),
-                "features": list(X.shape[1:]),
-            },
-            success=True,
-        )
+        return _gpytorch_result(mu, sigma, z, args, X, X_new)
 
     @staticmethod
     def _z_score(confidence: float) -> float:
@@ -404,67 +359,17 @@ class InterpretableMLTool(HuginnTool):
         try:
             X, y, feats = self._load_xy(args)
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"data loading failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"data loading failed: {e}"
+            )
 
-        terms = sr_result.data["terms"]
-        coefs = np.asarray(sr_result.data["coefficients"], dtype=float)
-
-        # The library builder is deterministic, so re-running it with the same
-        # args reproduces the column order SR used — Theta lines up 1:1 with
-        # the stored coefficients, no refit needed.
-        _, Theta = self._sindy._build_library(
-            X, args.max_order, args.include_trig, args.include_exp
-        )
-        sr_pred = Theta @ coefs
-        residuals = y - sr_pred
-
-        # Swap the target column for the residual series and hand the whole
-        # thing back to the existing gaussian_process path — that keeps the
-        # gpytorch/numpy fallback, X_new handling, and CI bookkeeping in one
-        # place instead of duplicating it here.
-        target_key = args.target_column or "y"
-        resid_data = {feat: X[:, i].tolist() for i, feat in enumerate(feats)}
-        resid_data[target_key] = residuals.tolist()
-        gp_args = args.model_copy(update={"data_json": resid_data, "data_file": None})
+        gp_args, coefs = _sr_residual_gp_args(self, args, sr_result, X, y, feats)
         gp_result = self._gaussian_process(gp_args)
         if not gp_result.success:
             return gp_result
 
-        # Combined prediction = SR trend (deterministic) + GP residual
-        # correction (with its uncertainty band). SR contributes no variance,
-        # so the combined CI is just the GP band shifted by the SR mean.
-        X_new = np.asarray(args.X_new, dtype=float) if args.X_new else X
-        _, Theta_new = self._sindy._build_library(
-            X_new, args.max_order, args.include_trig, args.include_exp
-        )
-        sr_mean_new = Theta_new @ coefs
-        gp_mean = np.asarray(gp_result.data["mean"], dtype=float)
-        gp_lower = np.asarray(gp_result.data["lower"], dtype=float)
-        gp_upper = np.asarray(gp_result.data["upper"], dtype=float)
-
-        combined_mean = sr_mean_new + gp_mean
-        combined_lower = sr_mean_new + gp_lower
-        combined_upper = sr_mean_new + gp_upper
-
-        r2 = sr_result.data.get("r2", 0.0)
-        return ToolResult(
-            data={
-                "sr_equation": sr_result.data,
-                "gp_residuals": gp_result.data,
-                "sr_mean": sr_mean_new.tolist(),
-                "combined_mean": combined_mean.tolist(),
-                "combined_lower": combined_lower.tolist(),
-                "combined_upper": combined_upper.tolist(),
-                "combined_approach": "SR mean + GP residual",
-                "interpretation": (
-                    f"SR found {len(terms)} terms (R2={r2:.3f}); "
-                    f"GP models the residual structure with confidence intervals."
-                ),
-                "n_samples": int(X.shape[0]),
-                "n_predict": int(len(X_new)),
-            },
-            success=True,
-        )
+        combined = _sr_gp_combined(self, args, gp_result, coefs, X)
+        return _sr_gp_result(sr_result, gp_result, X, combined)
 
     # ── Bourbaki-style structure validation ──────────────────────
 
@@ -473,7 +378,8 @@ class InterpretableMLTool(HuginnTool):
             import sympy
         except ImportError:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="validate_structure requires sympy. Install with: pip install sympy",
             )
 
@@ -481,34 +387,12 @@ class InterpretableMLTool(HuginnTool):
         rhs_expr, symbols = self._parse_equation(args, sympy, target)
         if rhs_expr is None:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="could not build an equation from equation/ terms+coefficients",
             )
 
-        checks: list[dict[str, Any]] = []
-
-        # 1. Dimensional consistency: every additive term must share a dimension.
-        if args.variable_units:
-            dim_check = self._check_dimensions(rhs_expr, args.variable_units, sympy)
-            checks.append(dim_check)
-
-        # 2. Symmetry: even (f(-x)=f(x)) / odd (f(-x)=-f(x)) in named variables.
-        for vname in args.symmetry_vars or []:
-            checks.append(self._check_symmetry(rhs_expr, vname, symbols, sympy))
-
-        # 3. Conservation: heuristic — does the residual of the full equation
-        #    simplify to zero (an identity), or does it carry a time-derivative +
-        #    divergence structure?
-        if args.conservation_check:
-            checks.append(self._check_conservation(rhs_expr, target, symbols, sympy))
-
-        # Always report parse finiteness — NaN/Inf in the closed form betray a
-        # broken fit regardless of the other checks.
-        checks.append({
-            "name": "parse_ok",
-            "passed": True,
-            "detail": f"parsed {target} = {rhs_expr}",
-        })
+        checks = _structure_checks(self, args, rhs_expr, symbols, target, sympy)
 
         all_passed = all(c.get("passed", False) for c in checks)
         return ToolResult(
@@ -559,13 +443,23 @@ class InterpretableMLTool(HuginnTool):
 
     # Base dimensions (SI). Derived units expand into these.
     _BASE_DIMS = {
-        "m": "L", "kg": "M", "s": "T", "A": "I",
-        "K": "Θ", "mol": "N", "cd": "J",
+        "m": "L",
+        "kg": "M",
+        "s": "T",
+        "A": "I",
+        "K": "Θ",
+        "mol": "N",
+        "cd": "J",
     }
     _DERIVED_DIMS = {
-        "N": "M*L*T**-2", "Pa": "M*L**-1*T**-2", "J": "M*L**2*T**-2",
-        "W": "M*L**2*T**-3", "Hz": "T**-1", "C": "I*T",
-        "V": "M*L**2*T**-3*I**-1", "F": "M**-1*L**-2*T**4*I**2",
+        "N": "M*L*T**-2",
+        "Pa": "M*L**-1*T**-2",
+        "J": "M*L**2*T**-2",
+        "W": "M*L**2*T**-3",
+        "Hz": "T**-1",
+        "C": "I*T",
+        "V": "M*L**2*T**-3*I**-1",
+        "F": "M**-1*L**-2*T**4*I**2",
     }
 
     def _unit_to_dims(self, unit: str) -> dict[str, int]:
@@ -632,10 +526,10 @@ class InterpretableMLTool(HuginnTool):
         return {
             "name": "dimensional_consistency",
             "passed": consistent,
-            "term_dimensions": [
-                {k: v for k, v in d.items() if v != 0} for d in seen
-            ],
-            "detail": "all additive terms share a dimension" if consistent else "terms have mismatched dimensions",
+            "term_dimensions": [{k: v for k, v in d.items() if v != 0} for d in seen],
+            "detail": "all additive terms share a dimension"
+            if consistent
+            else "terms have mismatched dimensions",
         }
 
     def _term_dimension(self, term, units: dict[str, str]) -> dict[str, int]:
@@ -669,10 +563,16 @@ class InterpretableMLTool(HuginnTool):
 
     # ── symmetry check ────────────────────────────────────────────
 
-    def _check_symmetry(self, expr, var_name: str, symbols: dict, sympy) -> dict[str, Any]:
+    def _check_symmetry(
+        self, expr, var_name: str, symbols: dict, sympy
+    ) -> dict[str, Any]:
         sym = symbols.get(var_name)
         if sym is None:
-            return {"name": f"symmetry:{var_name}", "passed": False, "detail": f"variable {var_name} not in equation"}
+            return {
+                "name": f"symmetry:{var_name}",
+                "passed": False,
+                "detail": f"variable {var_name} not in equation",
+            }
         neg = expr.subs(sym, -sym)
         try:
             even = sympy.simplify(neg - expr) == 0
@@ -689,7 +589,9 @@ class InterpretableMLTool(HuginnTool):
 
     # ── conservation heuristic ────────────────────────────────────
 
-    def _check_conservation(self, rhs_expr, target: str, symbols: dict, sympy) -> dict[str, Any]:
+    def _check_conservation(
+        self, rhs_expr, target: str, symbols: dict, sympy
+    ) -> dict[str, Any]:
         """Heuristic: an equation encodes a conservation law when it can be written
         as a total rate of change that balances to zero. We check whether the
         residual (target - rhs) is identically zero (an identity) or whether the
@@ -716,13 +618,259 @@ class InterpretableMLTool(HuginnTool):
             "passed": has_rate,
             "detail": (
                 "rate-like term detected (consistent with a balance law)"
-                if has_rate else "no rate/divergence structure detected"
+                if has_rate
+                else "no rate/divergence structure detected"
             ),
         }
 
     def estimate_cost(self, args: InterpretableMLInput) -> dict[str, float] | None:
         # Local numpy / sympy only; cost is negligible.
         return {"cpu_hours": 0.0, "gpu_hours": 0.0, "walltime_hours": 0.0}
+
+
+# ── Module-level helpers ──────────────────────────────────────
+
+
+def _sindy_fit(tool, X, y, args):
+    """Build the candidate library and solve y ≈ Theta @ xi for SR."""
+    terms, Theta = tool._sindy._build_library(
+        X, args.max_order, args.include_trig, args.include_exp
+    )
+    # SINDy solves dX/dt ≈ Theta @ Xi; here we solve y ≈ Theta @ xi.
+    Xi = tool._sindy._sparse_regression(Theta, y.reshape(-1, 1), args.threshold)
+    coefs = Xi[:, 0]
+    pred = Theta @ coefs
+    ss_res = float(np.sum((y - pred) ** 2))
+    ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+    r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 1e-15 else 0.0
+    return terms, coefs, r2
+
+
+def _numpy_gp_predict(X, y, X_new, args):
+    """Fit the in-repo NumPyGP and predict mean/std (fallback path)."""
+    gp = NumPyGP(args.length_scale, args.sigma_f, args.sigma_n, args.kernel)
+    gp.fit(X, y)
+    return gp.predict(X_new)
+
+
+def _numpy_gp_result(args, X, X_new, feats, z, mu, sigma) -> ToolResult:
+    """Assemble the numpy-backed gaussian_process payload."""
+    backend = "numpy"
+    lower = mu - z * sigma
+    upper = mu + z * sigma
+    return ToolResult(
+        data={
+            "backend": backend,
+            "mean": mu.tolist(),
+            "std": sigma.tolist(),
+            "lower": lower.tolist(),
+            "upper": upper.tolist(),
+            "confidence": args.confidence,
+            "z_score": z,
+            "kernel": args.kernel,
+            "n_train": len(X),
+            "n_predict": len(X_new),
+            "features": feats,
+        },
+        success=True,
+    )
+
+
+def _build_gpytorch_model(gpytorch, args, tx, ty, device):
+    """Construct the ExactGP model and Gaussian likelihood for gpytorch."""
+
+    class _ExactGP(gpytorch.models.ExactGP):
+        def __init__(self, train_x, train_y, likelihood):
+            super().__init__(train_x, train_y, likelihood)
+            self.mean_module = gpytorch.means.ConstantMean()
+            self.covar_module = gpytorch.kernels.ScaleKernel(
+                gpytorch.kernels.RBFKernel(lengthscale=args.length_scale)
+            )
+
+        def forward(self, x):
+            return gpytorch.distributions.MultivariateNormal(
+                self.mean_module(x), self.covar_module(x)
+            )
+
+    likelihood = gpytorch.likelihoods.GaussianLikelihood(
+        noise_constraint=gpytorch.constraints.GreaterThan(1e-6)
+    )
+    likelihood.noise = args.sigma_n**2
+    model = _ExactGP(tx, ty, likelihood).to(device)
+    model.train()
+    likelihood.train()
+    return model, likelihood
+
+
+def _fit_gpytorch(gpytorch, torch, model, likelihood, tx, ty):
+    """Train the ExactGP with Adam for a fixed number of steps."""
+    mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+    opt = torch.optim.Adam(model.parameters(), lr=0.1)
+    for _ in range(50):
+        opt.zero_grad()
+        out = model(tx)
+        loss = -mll(out, ty)
+        loss.backward()
+        opt.step()
+
+
+def _predict_gpytorch(gpytorch, torch, model, likelihood, X_new, device):
+    """Predict mean/std with the trained ExactGP."""
+    model.eval()
+    likelihood.eval()
+    with torch.no_grad(), gpytorch.settings.fast_pred_var():
+        obs = likelihood(model(torch.tensor(X_new, dtype=torch.float32, device=device)))
+        mu = obs.mean.cpu().numpy()
+        sigma = obs.stddev.cpu().numpy()
+    return mu, sigma
+
+
+def _gpytorch_result(mu, sigma, z, args, X, X_new) -> ToolResult:
+    """Assemble the gpytorch-backed gaussian_process payload."""
+    lower = mu - z * sigma
+    upper = mu + z * sigma
+    return ToolResult(
+        data={
+            "backend": "gpytorch",
+            "mean": mu.tolist(),
+            "std": sigma.tolist(),
+            "lower": lower.tolist(),
+            "upper": upper.tolist(),
+            "confidence": args.confidence,
+            "z_score": z,
+            "kernel": "rbf",
+            "n_train": len(X),
+            "n_predict": len(X_new),
+            "features": list(X.shape[1:]),
+        },
+        success=True,
+    )
+
+
+def _sr_residual_gp_args(
+    tool: InterpretableMLTool,
+    args: InterpretableMLInput,
+    sr_result: ToolResult,
+    X: np.ndarray,
+    y: np.ndarray,
+    feats: list[str],
+) -> tuple[InterpretableMLInput, np.ndarray]:
+    """Rebuild the SR design matrix and build GP args for the residual series."""
+    coefs = np.asarray(sr_result.data["coefficients"], dtype=float)
+
+    # The library builder is deterministic, so re-running it with the same
+    # args reproduces the column order SR used — Theta lines up 1:1 with
+    # the stored coefficients, no refit needed.
+    _, Theta = tool._sindy._build_library(
+        X, args.max_order, args.include_trig, args.include_exp
+    )
+    sr_pred = Theta @ coefs
+    residuals = y - sr_pred
+
+    # Swap the target column for the residual series and hand the whole
+    # thing back to the existing gaussian_process path — that keeps the
+    # gpytorch/numpy fallback, X_new handling, and CI bookkeeping in one
+    # place instead of duplicating it here.
+    target_key = args.target_column or "y"
+    resid_data = {feat: X[:, i].tolist() for i, feat in enumerate(feats)}
+    resid_data[target_key] = residuals.tolist()
+    gp_args = args.model_copy(update={"data_json": resid_data, "data_file": None})
+    return gp_args, coefs
+
+
+def _sr_gp_combined(
+    tool: InterpretableMLTool,
+    args: InterpretableMLInput,
+    gp_result: ToolResult,
+    coefs: np.ndarray,
+    X: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Combine the SR trend with the GP residual prediction (mean + CI)."""
+    # Combined prediction = SR trend (deterministic) + GP residual
+    # correction (with its uncertainty band). SR contributes no variance,
+    # so the combined CI is just the GP band shifted by the SR mean.
+    X_new = np.asarray(args.X_new, dtype=float) if args.X_new else X
+    _, Theta_new = tool._sindy._build_library(
+        X_new, args.max_order, args.include_trig, args.include_exp
+    )
+    sr_mean_new = Theta_new @ coefs
+    gp_mean = np.asarray(gp_result.data["mean"], dtype=float)
+    gp_lower = np.asarray(gp_result.data["lower"], dtype=float)
+    gp_upper = np.asarray(gp_result.data["upper"], dtype=float)
+
+    combined_mean = sr_mean_new + gp_mean
+    combined_lower = sr_mean_new + gp_lower
+    combined_upper = sr_mean_new + gp_upper
+    return X_new, sr_mean_new, combined_mean, combined_lower, combined_upper
+
+
+def _sr_gp_result(
+    sr_result: ToolResult,
+    gp_result: ToolResult,
+    X: np.ndarray,
+    combined: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+) -> ToolResult:
+    """Assemble the sr_guided_gp payload."""
+    X_new, sr_mean_new, combined_mean, combined_lower, combined_upper = combined
+    terms = sr_result.data["terms"]
+    r2 = sr_result.data.get("r2", 0.0)
+    return ToolResult(
+        data={
+            "sr_equation": sr_result.data,
+            "gp_residuals": gp_result.data,
+            "sr_mean": sr_mean_new.tolist(),
+            "combined_mean": combined_mean.tolist(),
+            "combined_lower": combined_lower.tolist(),
+            "combined_upper": combined_upper.tolist(),
+            "combined_approach": "SR mean + GP residual",
+            "interpretation": (
+                f"SR found {len(terms)} terms (R2={r2:.3f}); "
+                f"GP models the residual structure with confidence intervals."
+            ),
+            "n_samples": int(X.shape[0]),
+            "n_predict": int(len(X_new)),
+        },
+        success=True,
+    )
+
+
+def _structure_checks(
+    tool: InterpretableMLTool,
+    args: InterpretableMLInput,
+    rhs_expr,
+    symbols: dict,
+    target: str,
+    sympy,
+) -> list[dict[str, Any]]:
+    """Run the requested Bourbaki-style structural checks."""
+    checks: list[dict[str, Any]] = []
+
+    # 1. Dimensional consistency: every additive term must share a dimension.
+    if args.variable_units:
+        dim_check = tool._check_dimensions(rhs_expr, args.variable_units, sympy)
+        checks.append(dim_check)
+
+    # 2. Symmetry: even (f(-x)=f(x)) / odd (f(-x)=-f(x)) in named variables.
+    for vname in args.symmetry_vars or []:
+        checks.append(tool._check_symmetry(rhs_expr, vname, symbols, sympy))
+
+    # 3. Conservation: heuristic — does the residual of the full equation
+    #    simplify to zero (an identity), or does it carry a time-derivative +
+    #    divergence structure?
+    if args.conservation_check:
+        checks.append(tool._check_conservation(rhs_expr, target, symbols, sympy))
+
+    # Always report parse finiteness — NaN/Inf in the closed form betray a
+    # broken fit regardless of the other checks.
+    checks.append(
+        {
+            "name": "parse_ok",
+            "passed": True,
+            "detail": f"parsed {target} = {rhs_expr}",
+        }
+    )
+
+    return checks
 
 
 # ── self-check: SINDy recovers y = 2*x0 + 3 from synthetic data ────────
@@ -734,11 +882,17 @@ if __name__ == "__main__":
     tool = InterpretableMLTool()
     import asyncio
 
-    res = asyncio.run(tool.call(InterpretableMLInput(
-        action="symbolic_regression",
-        data_json={"x0": x0.tolist(), "x1": x1.tolist(), "y": y.tolist()},
-        max_order=1, threshold=0.05,
-    ), ToolContext(session_id="self", workspace=".")))
+    res = asyncio.run(
+        tool.call(
+            InterpretableMLInput(
+                action="symbolic_regression",
+                data_json={"x0": x0.tolist(), "x1": x1.tolist(), "y": y.tolist()},
+                max_order=1,
+                threshold=0.05,
+            ),
+            ToolContext(session_id="self", workspace="."),
+        )
+    )
     assert res.success, res.error
     d = res.data
     coef = dict(zip(d["terms"], d["coefficients"]))
@@ -749,21 +903,41 @@ if __name__ == "__main__":
 
     # structure check: a proportional law y = a*x0 with matching units is
     # dimensionally consistent, but a stray dimensionless constant is not.
-    vres = asyncio.run(tool.call(InterpretableMLInput(
-        action="validate_structure",
-        equation="y = 2.0*x0",
-        variable_units={"x0": "m", "y": "m"},
-        symmetry_vars=["x0"],
-    ), ToolContext(session_id="self", workspace=".")))
+    vres = asyncio.run(
+        tool.call(
+            InterpretableMLInput(
+                action="validate_structure",
+                equation="y = 2.0*x0",
+                variable_units={"x0": "m", "y": "m"},
+                symmetry_vars=["x0"],
+            ),
+            ToolContext(session_id="self", workspace="."),
+        )
+    )
     assert vres.success, vres.error
     assert vres.data["all_passed"], vres.data
-    assert any(c["name"] == "symmetry:x0" and c["symmetry"] == "odd" for c in vres.data["checks"])
+    assert any(
+        c["name"] == "symmetry:x0" and c["symmetry"] == "odd"
+        for c in vres.data["checks"]
+    )
 
-    bres = asyncio.run(tool.call(InterpretableMLInput(
-        action="validate_structure",
-        equation="y = 3.0 + 2.0*x0",
-        variable_units={"x0": "m", "y": "m"},
-    ), ToolContext(session_id="self", workspace=".")))
-    dims = next(c for c in bres.data["checks"] if c["name"] == "dimensional_consistency")
+    bres = asyncio.run(
+        tool.call(
+            InterpretableMLInput(
+                action="validate_structure",
+                equation="y = 3.0 + 2.0*x0",
+                variable_units={"x0": "m", "y": "m"},
+            ),
+            ToolContext(session_id="self", workspace="."),
+        )
+    )
+    dims = next(
+        c for c in bres.data["checks"] if c["name"] == "dimensional_consistency"
+    )
     assert not dims["passed"]
-    print("OK: structure", vres.data["checks"], "| inconsistent caught:", not dims["passed"])
+    print(
+        "OK: structure",
+        vres.data["checks"],
+        "| inconsistent caught:",
+        not dims["passed"],
+    )

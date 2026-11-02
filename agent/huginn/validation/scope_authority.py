@@ -26,6 +26,7 @@ globs (PlanStep.target_files)。改动落在声明集之外的即判越界 —�
 零回归: 授权面为空 (未开 sandbox_mode 且无 path_rules) → `source="unavailable"`,
 ratio=1.0, 调用方据此 no-op; 无改动文件 → ratio=1.0。纯标准库/幂等/可单测。
 """
+
 from __future__ import annotations
 
 import fnmatch
@@ -129,11 +130,7 @@ def compute_authorized_ratio(
         "rules_n": int,
     }
     """
-    paths = [p for p in (_normalize(e) for e in (changed_files or [])) if p]
-    seen: dict[str, None] = {}
-    for p in paths:
-        seen.setdefault(p, None)
-    uniq = list(seen)
+    uniq = _unique_paths(changed_files)
 
     rules = _effective_rules(path_rules, sandbox_mode=sandbox_mode)
     if not rules:
@@ -165,6 +162,13 @@ def compute_authorized_ratio(
         "source": _SOURCE_PERMISSIONS,
         "rules_n": len(rules),
     }
+
+
+def _unique_paths(changed_files: Sequence[Any]) -> list[str]:
+    """归一后去重保序的改动路径."""
+    return list(
+        dict.fromkeys(p for p in (_normalize(e) for e in (changed_files or [])) if p)
+    )
 
 
 def _normalize_globs(intent_globs: Sequence[Any] | None) -> list[str]:
@@ -222,13 +226,27 @@ def compute_intent_ratio(
     零回归: 未声明目标 (globs 为空) → source=unavailable, ratio=1.0, 调用方 no-op。
     声明集存在但无改动文件 → ratio=1.0。
     """
-    paths = [p for p in (_normalize(e) for e in (changed_files or [])) if p]
-    seen: dict[str, None] = {}
-    for p in paths:
-        seen.setdefault(p, None)
-    uniq = list(seen)
+    uniq = _unique_paths(changed_files)
 
     globs = _normalize_globs(intent_globs)
+    early = _intent_early_result(uniq, globs)
+    if early is not None:
+        return early
+
+    violations = [p for p in uniq if not _intent_match(p, globs)]
+    in_scope = len(uniq) - len(violations)
+    return {
+        "authorized_ratio": in_scope / len(uniq),
+        "violations": violations,
+        "total": len(uniq),
+        "in_scope": in_scope,
+        "source": _SOURCE_INTENT,
+        "globs_n": len(globs),
+    }
+
+
+def _intent_early_result(uniq: list[str], globs: list[str]) -> dict[str, Any] | None:
+    """无声明 globs / 无改动文件时的 no-op 结果; 否则返回 None."""
     if not globs:
         return {
             "authorized_ratio": 1.0,
@@ -247,17 +265,7 @@ def compute_intent_ratio(
             "source": _SOURCE_INTENT,
             "globs_n": len(globs),
         }
-
-    violations = [p for p in uniq if not _intent_match(p, globs)]
-    in_scope = len(uniq) - len(violations)
-    return {
-        "authorized_ratio": in_scope / len(uniq),
-        "violations": violations,
-        "total": len(uniq),
-        "in_scope": in_scope,
-        "source": _SOURCE_INTENT,
-        "globs_n": len(globs),
-    }
+    return None
 
 
 __all__ = ["compute_authorized_ratio", "compute_intent_ratio"]

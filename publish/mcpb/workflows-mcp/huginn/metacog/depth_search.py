@@ -109,9 +109,7 @@ class PrematureConvergenceDetector:
     ) -> EffortStatus:
         # 用动态下限替换 min_live_components, 其他两项保持原值
         dyn_components = self._dynamic.current_floor(iteration, total_iterations)
-        effective_floor = replace(
-            self._floor, min_live_components=dyn_components
-        )
+        effective_floor = replace(self._floor, min_live_components=dyn_components)
         return EffortStatus(
             iteration=iteration,
             families_explored=families_explored,
@@ -128,6 +126,7 @@ class PrematureConvergenceDetector:
 
 
 # ── 自检 ─────────────────────────────────────────────────────────
+
 
 def _selfcheck() -> None:
     # 1. MinEffortFloor 默认值
@@ -164,6 +163,12 @@ def _selfcheck() -> None:
     deficits = unsatisfied.deficits()
     assert len(deficits) == 3, f"三项都未达标应有 3 条 deficit, got {deficits}"
 
+    _check_detector()
+
+    print("depth_search selfcheck OK")
+
+
+def _check_detector() -> None:
     # 4. PrematureConvergenceDetector.should_block_return
     det = PrematureConvergenceDetector()
 
@@ -183,8 +188,6 @@ def _selfcheck() -> None:
     blocked2, reason2 = det.should_block_return(ok_status)
     assert not blocked2, f"达标不应阻断, reason={reason2}"
     assert reason2 == ""
-
-    print("depth_search selfcheck OK")
 
 
 if __name__ == "__main__":

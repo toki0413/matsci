@@ -49,12 +49,14 @@ matrix + SVD rank.
 # 定位: hypothesis 域的严格 Čech H¹, 与 task_lifecycle 的感质探针
 # (_pmk_gluing_obstruction, 决策域 cycle_basis 近似) 互补, 两者都活着, 勿合并.
 """
+
 from __future__ import annotations
 
 # 直接跑脚本时把 agent/ 加到 sys.path (被 import 时不执行, rcb_runner 已设好)
 if __name__ == "__main__":
     import sys as _sys
     from pathlib import Path as _Path
+
     _agent_root = str(_Path(__file__).resolve().parents[2])
     if _agent_root not in _sys.path:
         _sys.path.insert(0, _agent_root)
@@ -95,6 +97,7 @@ class Stalk:
     e.g. {"magnetic_order": "altermagnetism"}). 同 key 跨 source 出现就
     构成 overlap, restriction map 检查两 source 的 value 是否一致.
     """
+
     source_id: str
     claims: dict[str, Any]
 
@@ -108,6 +111,7 @@ class Sheaf:
     restriction_maps: (i, j) -> 排序后的共享 keys 列表, i < j
         U_{ij} 上的 stalk basis = 这些 keys (向量空间)
     """
+
     open_sets: list[str]
     stalks: list[Stalk]
     restriction_maps: dict[tuple[int, int], list[str]] = field(default_factory=dict)
@@ -121,6 +125,7 @@ class Sheaf:
 
 
 # ---------- claim 提取 ----------
+
 
 def _extract_claims(text: str) -> dict[str, Any]:
     """从一段文本提取数值 claim + 语义关键词 claim.
@@ -198,9 +203,7 @@ def build_sheaf_from_findings(
     restriction_maps: dict[tuple[int, int], list[str]] = {}
     for i in range(len(stalks)):
         for j in range(i + 1, len(stalks)):
-            shared = sorted(
-                set(stalks[i].claims.keys()) & set(stalks[j].claims.keys())
-            )
+            shared = sorted(set(stalks[i].claims.keys()) & set(stalks[j].claims.keys()))
             if shared:
                 restriction_maps[(i, j)] = shared
 
@@ -213,8 +216,13 @@ def build_sheaf_from_findings(
 
 # ---------- 值比较 ----------
 
+
 def _values_agree(
-    a: Any, b: Any, *, rel_tol: float = 1e-3, abs_tol: float = 1e-2,
+    a: Any,
+    b: Any,
+    *,
+    rel_tol: float = 1e-3,
+    abs_tol: float = 1e-2,
 ) -> bool:
     """两个 claim 值是否一致.
 
@@ -226,8 +234,12 @@ def _values_agree(
     "altermagnet" ↔ "spin-split antiferromagnet") 是已知天花板.
     """
     # 数值 vs 数值
-    if isinstance(a, int | float) and not isinstance(a, bool) \
-            and isinstance(b, int | float) and not isinstance(b, bool):
+    if (
+        isinstance(a, int | float)
+        and not isinstance(a, bool)
+        and isinstance(b, int | float)
+        and not isinstance(b, bool)
+    ):
         if a == 0 and b == 0:
             return True
         if abs(a - b) <= rel_tol * max(abs(a), abs(b)):
@@ -260,6 +272,72 @@ def _check_restriction(sheaf: Sheaf, i: int, j: int) -> bool:
 
 # ---------- Čech coboundary matrix ----------
 
+
+def _build_c0_basis(sheaf: Sheaf) -> tuple[list, dict]:
+    # C^0 basis: 每个 source 的每个 key
+    c0_basis: list[tuple[int, str]] = []
+    for i, stalk in enumerate(sheaf.stalks):
+        for k in sorted(stalk.claims.keys()):
+            c0_basis.append((i, k))
+    return c0_basis, {b: idx for idx, b in enumerate(c0_basis)}
+
+
+def _build_c1_basis(sheaf: Sheaf) -> tuple[list, dict]:
+    # C^1 basis: 每个 pairwise overlap 的每个共享 key
+    c1_basis: list[tuple[int, int, str]] = []
+    pairs = sorted(sheaf.restriction_maps.keys())
+    for i, j in pairs:
+        for k in sheaf.restriction_maps[(i, j)]:
+            c1_basis.append((i, j, k))
+    return c1_basis, {b: idx for idx, b in enumerate(c1_basis)}
+
+
+def _build_c2_basis(sheaf: Sheaf, n: int) -> tuple[list, dict]:
+    # C^2 basis: 每个 triple overlap 的每个共享 key (3 source 都有的 key)
+    c2_basis: list[tuple[int, int, int, str]] = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            for k in range(j + 1, n):
+                shared_triple = (
+                    set(sheaf.stalks[i].claims.keys())
+                    & set(sheaf.stalks[j].claims.keys())
+                    & set(sheaf.stalks[k].claims.keys())
+                )
+                for kk in sorted(shared_triple):
+                    c2_basis.append((i, j, k, kk))
+    return c2_basis, {b: idx for idx, b in enumerate(c2_basis)}
+
+
+def _fill_delta0(dim_c1: int, dim_c0: int, c0_idx: dict, c1_idx: dict) -> np.ndarray:
+    # δ^0: (dim_c1, dim_c0). δ^0(s)_{(i,j), k} = s_j[k] - s_i[k]
+    delta0 = np.zeros((dim_c1, dim_c0), dtype=float)
+    for (i, j, k), row in c1_idx.items():
+        col_i = c0_idx.get((i, k))
+        col_j = c0_idx.get((j, k))
+        if col_i is not None:
+            delta0[row, col_i] = -1.0
+        if col_j is not None:
+            delta0[row, col_j] = +1.0
+    return delta0
+
+
+def _fill_delta1(dim_c2: int, dim_c1: int, c1_idx: dict, c2_idx: dict) -> np.ndarray:
+    # δ^1: (dim_c2, dim_c1). δ^1(t)_{(i,j,k), kk} = t_{ij}[kk] - t_{ik}[kk] + t_{jk}[kk]
+    # 标准 Čech differential, i < j < k 已由构造保证
+    delta1 = np.zeros((dim_c2, dim_c1), dtype=float)
+    for (i, j, k, kk), row in c2_idx.items():
+        col_ij = c1_idx.get((i, j, kk))  # i < j 已保证
+        col_ik = c1_idx.get((i, k, kk))  # i < k 已保证 (k > j > i)
+        col_jk = c1_idx.get((j, k, kk))  # j < k 已保证
+        if col_ij is not None:
+            delta1[row, col_ij] += +1.0
+        if col_ik is not None:
+            delta1[row, col_ik] += -1.0
+        if col_jk is not None:
+            delta1[row, col_jk] += +1.0
+    return delta1
+
+
 def _build_cech_matrices(sheaf: Sheaf) -> tuple[np.ndarray, np.ndarray]:
     """构造 Čech coboundary matrices δ^0: C^0 -> C^1 和 δ^1: C^1 -> C^2.
 
@@ -274,61 +352,12 @@ def _build_cech_matrices(sheaf: Sheaf) -> tuple[np.ndarray, np.ndarray]:
     """
     n = len(sheaf.stalks)
 
-    # C^0 basis: 每个 source 的每个 key
-    c0_basis: list[tuple[int, str]] = []
-    for i, stalk in enumerate(sheaf.stalks):
-        for k in sorted(stalk.claims.keys()):
-            c0_basis.append((i, k))
-    dim_c0 = len(c0_basis)
-    c0_idx = {b: idx for idx, b in enumerate(c0_basis)}
+    c0_basis, c0_idx = _build_c0_basis(sheaf)
+    c1_basis, c1_idx = _build_c1_basis(sheaf)
+    c2_basis, c2_idx = _build_c2_basis(sheaf, n)
 
-    # C^1 basis: 每个 pairwise overlap 的每个共享 key
-    c1_basis: list[tuple[int, int, str]] = []
-    pairs = sorted(sheaf.restriction_maps.keys())
-    for (i, j) in pairs:
-        for k in sheaf.restriction_maps[(i, j)]:
-            c1_basis.append((i, j, k))
-    dim_c1 = len(c1_basis)
-    c1_idx = {b: idx for idx, b in enumerate(c1_basis)}
-
-    # C^2 basis: 每个 triple overlap 的每个共享 key (3 source 都有的 key)
-    c2_basis: list[tuple[int, int, int, str]] = []
-    for i in range(n):
-        for j in range(i + 1, n):
-            for k in range(j + 1, n):
-                shared_triple = (
-                    set(sheaf.stalks[i].claims.keys())
-                    & set(sheaf.stalks[j].claims.keys())
-                    & set(sheaf.stalks[k].claims.keys())
-                )
-                for kk in sorted(shared_triple):
-                    c2_basis.append((i, j, k, kk))
-    dim_c2 = len(c2_basis)
-    c2_idx = {b: idx for idx, b in enumerate(c2_basis)}
-
-    # δ^0: (dim_c1, dim_c0). δ^0(s)_{(i,j), k} = s_j[k] - s_i[k]
-    delta0 = np.zeros((dim_c1, dim_c0), dtype=float)
-    for (i, j, k), row in c1_idx.items():
-        col_i = c0_idx.get((i, k))
-        col_j = c0_idx.get((j, k))
-        if col_i is not None:
-            delta0[row, col_i] = -1.0
-        if col_j is not None:
-            delta0[row, col_j] = +1.0
-
-    # δ^1: (dim_c2, dim_c1). δ^1(t)_{(i,j,k), kk} = t_{ij}[kk] - t_{ik}[kk] + t_{jk}[kk]
-    # 标准 Čech differential, i < j < k 已由构造保证
-    delta1 = np.zeros((dim_c2, dim_c1), dtype=float)
-    for (i, j, k, kk), row in c2_idx.items():
-        col_ij = c1_idx.get((i, j, kk))  # i < j 已保证
-        col_ik = c1_idx.get((i, k, kk))  # i < k 已保证 (k > j > i)
-        col_jk = c1_idx.get((j, k, kk))  # j < k 已保证
-        if col_ij is not None:
-            delta1[row, col_ij] += +1.0
-        if col_ik is not None:
-            delta1[row, col_ik] += -1.0
-        if col_jk is not None:
-            delta1[row, col_jk] += +1.0
+    delta0 = _fill_delta0(len(c1_basis), len(c0_basis), c0_idx, c1_idx)
+    delta1 = _fill_delta1(len(c2_basis), len(c1_basis), c1_idx, c2_idx)
 
     return delta0, delta1
 
@@ -353,7 +382,7 @@ def _count_restriction_failures(sheaf: Sheaf) -> int:
     Returns: 失败的 overlap 数 (>=0). 0 = 全部 pairwise consistent.
     """
     n_failures = 0
-    for (i, j) in sheaf.restriction_maps:
+    for i, j in sheaf.restriction_maps:
         if not _check_restriction(sheaf, i, j):
             n_failures += 1
     return n_failures
@@ -394,18 +423,9 @@ def compute_H1(sheaf: Sheaf) -> int:  # noqa: N802
 
 # ---------- Self-check ----------
 
-def _selfcheck() -> None:
-    """验证 4 个 test case + Phase 1-6 行为一致性 + 数学层 sanity.
 
-    Test 1: Core 跟 Support 一致 -> H^1 = 0
-    Test 2: 数值冲突 (Core Tc=100K, Support Tc=50K) -> H^1 != 0
-    Test 3: 语义冲突 (Core altermagnetism, Support ferromagnetism) -> H^1 != 0
-    Test 4: 跟 Phase 1-6 hint_coordinator 行为一致
-            (H^1=0 时不冲突, H^1!=0 时冲突; sheaf 严格更强 — 检出 Phase 1-6 漏检的语义冲突)
-    """
-    print("=== Phase 7 Open Problem 7.2: Sheaf Cohomology self-check ===\n")
-
-    # Test 1: Core 跟 Support 一致 — 全部 claim 对齐
+def _sc_test_consistent():
+    """Test 1: Core 跟 Support 一致 — 全部 claim 对齐."""
     sheaf1 = build_sheaf_from_findings(
         core_context="Task: reproduce altermagnetism paper, Tc=100K reported",
         support_findings=[
@@ -418,8 +438,11 @@ def _selfcheck() -> None:
     print(f"  Core claims:    {sheaf1.stalks[0].claims}")
     print(f"  Support claims: {sheaf1.stalks[1].claims}")
     print(f"  Overlap keys: {sheaf1.overlap_keys(0, 1)}")
+    return sheaf1, h1_1
 
-    # Test 2: 数值冲突 — Core Tc=100K, Support Tc=50K
+
+def _sc_test_numerical():
+    """Test 2: 数值冲突 — Core Tc=100K, Support Tc=50K."""
     sheaf2 = build_sheaf_from_findings(
         core_context="Task: reproduce Tc=100K altermagnetism paper",
         support_findings=[
@@ -432,8 +455,11 @@ def _selfcheck() -> None:
     print(f"  Core claims:    {sheaf2.stalks[0].claims}")
     print(f"  Support claims: {sheaf2.stalks[1].claims}")
     print(f"  Restriction failures: {_count_restriction_failures(sheaf2)}")
+    return sheaf2, h1_2
 
-    # Test 3: 语义冲突 — Core altermagnetism, Support ferromagnetism
+
+def _sc_test_semantic():
+    """Test 3: 语义冲突 — Core altermagnetism, Support ferromagnetism."""
     sheaf3 = build_sheaf_from_findings(
         core_context="Task: study altermagnetism ordering in MnTe",
         support_findings=[
@@ -442,18 +468,23 @@ def _selfcheck() -> None:
     )
     h1_3 = compute_H1(sheaf3)
     assert h1_3 > 0, f"Test 3 semantic conflict should give H^1>0, got {h1_3}"
-    print(f"\nPASS Test 3 (semantic conflict altermagnetism vs ferromagnetism): H^1={h1_3}")
+    print(
+        f"\nPASS Test 3 (semantic conflict altermagnetism vs ferromagnetism): H^1={h1_3}"
+    )
     print(f"  Core claims:    {sheaf3.stalks[0].claims}")
     print(f"  Support claims: {sheaf3.stalks[1].claims}")
     print(f"  Restriction failures: {_count_restriction_failures(sheaf3)}")
 
-    # Test 4: 跟 Phase 1-6 hint_coordinator 行为一致性
+
+def _sc_test_phase_compat(h1_1, h1_2) -> None:
+    """Test 4: 跟 Phase 1-6 hint_coordinator 行为一致性."""
     # Phase 1-6 _detect_conflict 只能检测特定 keyword 冲突
     # ("按选定方案执行" + "换数学结构"); _keyword_overlap 是 Jaccard.
     # Sheaf H^1 是严格更强的检测器 — 检出 Phase 1-6 漏检的语义/数值冲突.
     # 行为一致性: H^1=0 时 Phase 1-6 也不冲突 (no false positive);
     # H^1!=0 时是真正冲突 (Phase 1-6 可能漏检但不算 false positive).
     from huginn.agent.hint_coordinator import HintCoordinator
+
     _hc = HintCoordinator()
 
     # case 4a: 一致 sources — Phase 1-6 不冲突, sheaf H^1=0. 行为一致.
@@ -463,8 +494,10 @@ def _selfcheck() -> None:
     )
     assert conflict_consistent_huginn is False, "Phase 1-6 should not flag consistent"
     assert h1_1 == 0, "sheaf should give H^1=0 for consistent"
-    print(f"\nPASS Test 4a (consistent): Phase 1-6 _detect_conflict="
-          f"{conflict_consistent_huginn}, sheaf H^1={h1_1} - 行为一致 (no false positive)")
+    print(
+        f"\nPASS Test 4a (consistent): Phase 1-6 _detect_conflict="
+        f"{conflict_consistent_huginn}, sheaf H^1={h1_1} - 行为一致 (no false positive)"
+    )
 
     # case 4b: Phase 1-6 检出的冲突 — sheaf 也检出 (强化检测, 不漏)
     # 这里直接构造一个数值冲突, Phase 1-6 keyword 漏检但 sheaf H^1!=0
@@ -474,8 +507,10 @@ def _selfcheck() -> None:
     )
     assert _no_kw_conflict is False, "Phase 1-6 misses numerical conflict (no keyword)"
     assert h1_2 > 0, "sheaf detects numerical conflict"
-    print(f"PASS Test 4b (numerical conflict): Phase 1-6 _detect_conflict="
-          f"{_no_kw_conflict} (漏检), sheaf H^1={h1_2} - sheaf 严格更强")
+    print(
+        f"PASS Test 4b (numerical conflict): Phase 1-6 _detect_conflict="
+        f"{_no_kw_conflict} (漏检), sheaf H^1={h1_2} - sheaf 严格更强"
+    )
 
     # case 4c: Phase 1-6 keyword 检出冲突时, sheaf 也检出 (不漏)
     # 构造一个既命中 Phase 1-6 keyword 又有数值冲突的 case
@@ -487,25 +522,38 @@ def _selfcheck() -> None:
     _kw_conflict = _hc._detect_conflict("按选定方案执行", "换数学结构")
     assert _kw_conflict is True, "Phase 1-6 should flag keyword conflict"
     assert h1_4c > 0, "sheaf should detect numerical conflict in 4c"
-    print(f"PASS Test 4c (Phase 1-6 keyword + numerical conflict): "
-          f"Phase 1-6 _detect_conflict={_kw_conflict}, sheaf H^1={h1_4c} - 双方都检出")
+    print(
+        f"PASS Test 4c (Phase 1-6 keyword + numerical conflict): "
+        f"Phase 1-6 _detect_conflict={_kw_conflict}, sheaf H^1={h1_4c} - 双方都检出"
+    )
 
-    # 数学层 sanity: 验证 Čech complex 结构
+
+def _sc_math_sanity(sheaf1) -> None:
+    """数学层 sanity: 验证 Čech complex 结构."""
     print("\n--- 数学层 sanity ---")
     delta0_1, delta1_1 = _build_cech_matrices(sheaf1)
     rank_d0_1 = _matrix_rank(delta0_1)
     rank_d1_1 = _matrix_rank(delta1_1)
     nullity_d1_1 = delta0_1.shape[0] - rank_d1_1
     cech_h1_1 = max(0, nullity_d1_1 - rank_d0_1)
-    print(f"  Test 1 sheaf: dim C^0={delta0_1.shape[1]}, dim C^1={delta0_1.shape[0]}, "
-          f"dim C^2={delta1_1.shape[0]}")
-    print(f"  rank(δ^0)={rank_d0_1}, rank(δ^1)={rank_d1_1}, "
-          f"nullity(δ^1)={nullity_d1_1}, Čech H^1={cech_h1_1}")
+    print(
+        f"  Test 1 sheaf: dim C^0={delta0_1.shape[1]}, dim C^1={delta0_1.shape[0]}, "
+        f"dim C^2={delta1_1.shape[0]}"
+    )
+    print(
+        f"  rank(δ^0)={rank_d0_1}, rank(δ^1)={rank_d1_1}, "
+        f"nullity(δ^1)={nullity_d1_1}, Čech H^1={cech_h1_1}"
+    )
     # 2-source + 2 shared keys: C^0 dim=4 (2 sources x 2 keys),
     # C^1 dim=2 (2 shared keys), δ^0 rank=2 (surjective), C^2 dim=0
     # nullity(δ^1) = 2 (no C^2 -> δ^1 trivial), H^1 = 2 - 2 = 0 (consistent)
-    assert cech_h1_1 == 0, f"Čech H^1 for consistent 2-source should be 0, got {cech_h1_1}"
+    assert cech_h1_1 == 0, (
+        f"Čech H^1 for consistent 2-source should be 0, got {cech_h1_1}"
+    )
 
+
+def _sc_bonus_3source() -> None:
+    """Bonus 1/2: 3 source 一致 + pair (0,1) 冲突."""
     # Bonus 1: 3 source 全一致 — 验证 Čech 三 source 复合形
     sheaf_3 = build_sheaf_from_findings(
         core_context="Tc=100K altermagnetism",
@@ -518,8 +566,10 @@ def _selfcheck() -> None:
     assert h1_3src == 0, f"3-source consistent should give H^1=0, got {h1_3src}"
     delta0_3, delta1_3 = _build_cech_matrices(sheaf_3)
     print(f"\n  Bonus 1 (3-source consistent): H^1={h1_3src}")
-    print(f"    dim C^0={delta0_3.shape[1]}, dim C^1={delta0_3.shape[0]}, "
-          f"dim C^2={delta1_3.shape[0]}")
+    print(
+        f"    dim C^0={delta0_3.shape[1]}, dim C^1={delta0_3.shape[0]}, "
+        f"dim C^2={delta1_3.shape[0]}"
+    )
     print(f"    rank(δ^0)={_matrix_rank(delta0_3)}, rank(δ^1)={_matrix_rank(delta1_3)}")
     # 3 sources x 2 keys = 6 in C^0, 3 pairs x 2 keys = 6 in C^1,
     # 1 triple x 2 keys = 2 in C^2. δ^0 rank=4, δ^1 rank=2, nullity(δ^1)=4,
@@ -529,17 +579,21 @@ def _selfcheck() -> None:
     sheaf_twist = build_sheaf_from_findings(
         core_context="Tc=100K altermagnetism",
         support_findings=[
-            "Paper A: Tc=50K altermagnetism",   # 跟 Core Tc 冲突
+            "Paper A: Tc=50K altermagnetism",  # 跟 Core Tc 冲突
             "Paper B: Tc=100K altermagnetism",  # 跟 Core 一致
         ],
     )
     h1_twist = compute_H1(sheaf_twist)
-    assert h1_twist > 0, f"3-source with pair (0,1) conflict should give H^1>0, got {h1_twist}"
+    assert h1_twist > 0, (
+        f"3-source with pair (0,1) conflict should give H^1>0, got {h1_twist}"
+    )
     print(f"\n  Bonus 2 (3-source, pair (0,1) conflict): H^1={h1_twist}")
     print(f"    Restriction failures: {_count_restriction_failures(sheaf_twist)}")
     # Čech H^1 仍 = 0 (constant sheaf), 但 restriction failure = 1 -> 总 H^1 = 1
 
-    # Bonus 3: dict 输入 (预提取 claims, 跳过 regex)
+
+def _sc_bonus_dict() -> None:
+    """Bonus 3: dict 输入 (预提取 claims, 跳过 regex)."""
     sheaf_dict = build_sheaf_from_findings(
         core_context={"tc": 100.0, "magnetic_order": "altermagnetism"},
         support_findings=[{"tc": 100.0, "magnetic_order": "altermagnetism"}],
@@ -552,10 +606,34 @@ def _selfcheck() -> None:
     assert compute_H1(sheaf_dict_conflict) > 0, "dict-input conflict should give H^1>0"
     print("\n  Bonus 3 (dict input): consistent H^1=0, conflict H^1>0 - OK")
 
+
+def _selfcheck() -> None:
+    """验证 4 个 test case + Phase 1-6 行为一致性 + 数学层 sanity.
+
+    Test 1: Core 跟 Support 一致 -> H^1 = 0
+    Test 2: 数值冲突 (Core Tc=100K, Support Tc=50K) -> H^1 != 0
+    Test 3: 语义冲突 (Core altermagnetism, Support ferromagnetism) -> H^1 != 0
+    Test 4: 跟 Phase 1-6 hint_coordinator 行为一致
+            (H^1=0 时不冲突, H^1!=0 时冲突; sheaf 严格更强 — 检出 Phase 1-6 漏检的语义冲突)
+    """
+    print("=== Phase 7 Open Problem 7.2: Sheaf Cohomology self-check ===\n")
+
+    sheaf1, h1_1 = _sc_test_consistent()
+    _, h1_2 = _sc_test_numerical()
+    _sc_test_semantic()
+    _sc_test_phase_compat(h1_1, h1_2)
+    _sc_math_sanity(sheaf1)
+    _sc_bonus_3source()
+    _sc_bonus_dict()
+
     print("\n=== Phase 7 Open Problem 7.2 self-check PASSED ===")
     print("  Sheaf 建模: Core/Support -> open sets + stalks + restriction maps")
-    print("  H^1 计算: Čech coboundary δ^0,δ^1 + nullity-rank + restriction failure proxy")
-    print("  成功判据: H^1=0 一致, H^1!=0 检出数值+语义冲突, 跟 Phase 1-6 行为一致 (no false positive, 严格更强)")
+    print(
+        "  H^1 计算: Čech coboundary δ^0,δ^1 + nullity-rank + restriction failure proxy"
+    )
+    print(
+        "  成功判据: H^1=0 一致, H^1!=0 检出数值+语义冲突, 跟 Phase 1-6 行为一致 (no false positive, 严格更强)"
+    )
     print("  -> Open Problem 7.2 探索成功")
 
 

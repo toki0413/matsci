@@ -3,7 +3,7 @@
 
 import pytest
 
-from huginn.api.event import EventType, LLMRequestEvent, MessageEvent
+from huginn.api.event import EventType, MessageEvent
 from huginn.api.star import Star
 from huginn.plugins.ponytail.main import PonytailStar, _audit_python_tree
 from huginn.plugins.skill_loader import parse_skill_file
@@ -25,78 +25,12 @@ class TestPonytailStar:
     def test_collect_handlers_returns_expected_events(self):
         star = PonytailStar()
         handlers = star.collect_handlers()
-        # Should register for ON_LLM_REQUEST + ON_MESSAGE_RECEIVED (commands)
+        # Commands only: no ON_LLM_REQUEST handler (rules live in SKILL.md).
         event_types = {h.event_type for h in handlers}
-        assert EventType.ON_LLM_REQUEST in event_types
-        assert EventType.ON_MESSAGE_RECEIVED in event_types
+        assert event_types == {EventType.ON_MESSAGE_RECEIVED}
 
     def test_is_star_subclass(self):
         assert issubclass(PonytailStar, Star)
-
-
-class TestLLMInjection:
-    """Verify ponytail rules get injected into the system prompt."""
-
-    @pytest.mark.asyncio
-    async def test_full_mode_appends_rules(self):
-        star = PonytailStar()
-        star._state.mode = "full"
-        event = LLMRequestEvent(
-            type=EventType.ON_LLM_REQUEST,
-            system_prompt="You are a helpful assistant.",
-        )
-        await star.inject_rules(event)
-        assert "Ponytail" in event.system_prompt
-        assert "ladder" in event.system_prompt.lower()
-        assert event.context.get("ponytail_mode") == "full"
-
-    @pytest.mark.asyncio
-    async def test_lite_mode_appends_brief_rules(self):
-        star = PonytailStar()
-        star._state.mode = "lite"
-        event = LLMRequestEvent(
-            type=EventType.ON_LLM_REQUEST,
-            system_prompt="Base prompt.",
-        )
-        await star.inject_rules(event)
-        assert "lite" in event.system_prompt.lower()
-        assert event.context.get("ponytail_mode") == "lite"
-
-    @pytest.mark.asyncio
-    async def test_ultra_mode_includes_yagni_extremist(self):
-        star = PonytailStar()
-        star._state.mode = "ultra"
-        event = LLMRequestEvent(
-            type=EventType.ON_LLM_REQUEST,
-            system_prompt="Base.",
-        )
-        await star.inject_rules(event)
-        assert "YAGNI" in event.system_prompt
-        assert "extremist" in event.system_prompt.lower()
-
-    @pytest.mark.asyncio
-    async def test_off_mode_does_not_inject(self):
-        star = PonytailStar()
-        star._state.mode = "off"
-        event = LLMRequestEvent(
-            type=EventType.ON_LLM_REQUEST,
-            system_prompt="Original prompt.",
-        )
-        await star.inject_rules(event)
-        assert event.system_prompt == "Original prompt."
-        assert "ponytail_mode" not in event.context
-
-    @pytest.mark.asyncio
-    async def test_empty_system_prompt_gets_rules(self):
-        star = PonytailStar()
-        star._state.mode = "full"
-        event = LLMRequestEvent(
-            type=EventType.ON_LLM_REQUEST,
-            system_prompt="",
-        )
-        await star.inject_rules(event)
-        assert "Ponytail" in event.system_prompt
-        assert len(event.system_prompt) > 50
 
 
 class TestModeSwitching:

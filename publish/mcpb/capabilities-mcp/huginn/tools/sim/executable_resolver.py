@@ -167,8 +167,7 @@ class ResolutionRequest:
                 f"请提供安装路径，或告诉我它在哪台机器上。"
             )
         return (
-            f"{spec.name.upper()} 未在本地找到。\n"
-            f"你可以提供安装路径，或让我帮你安装。"
+            f"{spec.name.upper()} 未在本地找到。\n你可以提供安装路径，或让我帮你安装。"
         )
 
     @property
@@ -202,6 +201,63 @@ class ResolutionRequest:
         }
 
 
+def _resolve_unregistered(tool_name: str) -> str | ResolutionRequest:
+    """未注册工具: 直接查 PATH, 缺失时返回提问请求."""
+    exe = shutil.which(tool_name)
+    return (
+        exe
+        if exe
+        else ResolutionRequest(
+            tool_name=tool_name,
+            spec=ToolExecutableSpec(
+                name=tool_name,
+                env_vars=(),
+                basenames=(tool_name,),
+                install_hint=f"请安装 {tool_name}",
+            ),
+        )
+    )
+
+
+def _resolve_from_env(
+    resolver: Any, tool_name: str, spec: ToolExecutableSpec
+) -> tuple[str | None, list[str]]:
+    """按环境变量查找, 返回 (命中路径或 None, 检查记录)."""
+    env_checked: list[str] = []
+    for var in spec.env_vars:
+        val = os.environ.get(var)
+        env_checked.append(f"{var}={val or '(未设置)'}")
+        if val:
+            p = Path(val)
+            if p.exists() and p.is_file():
+                resolver._cache[tool_name] = str(p)
+                resolver._save_cache()
+                return str(p), env_checked
+            # 可能是目录, 尝试拼接 basename
+            for bn in spec.basenames:
+                candidate = p / bn
+                if candidate.exists():
+                    resolver._cache[tool_name] = str(candidate)
+                    resolver._save_cache()
+                    return str(candidate), env_checked
+    return None, env_checked
+
+
+def _resolve_from_path(
+    resolver: Any, tool_name: str, spec: ToolExecutableSpec
+) -> tuple[str | None, list[str]]:
+    """按 PATH 查找, 返回 (命中路径或 None, 检查记录)."""
+    basenames_checked: list[str] = []
+    for bn in spec.basenames:
+        basenames_checked.append(bn)
+        exe = shutil.which(bn)
+        if exe:
+            resolver._cache[tool_name] = exe
+            resolver._save_cache()
+            return exe, basenames_checked
+    return None, basenames_checked
+
+
 class ExecutableResolver:
     """统一可执行文件发现 + 用户路径缓存."""
 
@@ -221,9 +277,7 @@ class ExecutableResolver:
     def _save_cache(self) -> None:
         try:
             _CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            _CACHE_FILE.write_text(
-                json.dumps(self._cache, indent=2), encoding="utf-8"
-            )
+            _CACHE_FILE.write_text(json.dumps(self._cache, indent=2), encoding="utf-8")
         except Exception:  # 防御: 缓存保存失败仅记录继续
             logger.debug("failed to save executable cache", exc_info=True)
 
@@ -235,14 +289,7 @@ class ExecutableResolver:
         spec = _REGISTRY.get(tool_name)
         if spec is None:
             # 未注册的工具, 直接走 PATH
-            exe = shutil.which(tool_name)
-            return exe if exe else ResolutionRequest(
-                tool_name=tool_name,
-                spec=ToolExecutableSpec(
-                    name=tool_name, env_vars=(), basenames=(tool_name,),
-                    install_hint=f"请安装 {tool_name}",
-                ),
-            )
+            return _resolve_unregistered(tool_name)
 
         # 1. 用户缓存
         cached = self._cache.get(tool_name)
@@ -250,33 +297,14 @@ class ExecutableResolver:
             return cached
 
         # 2. 环境变量
-        env_checked: list[str] = []
-        for var in spec.env_vars:
-            val = os.environ.get(var)
-            env_checked.append(f"{var}={val or '(未设置)'}")
-            if val:
-                p = Path(val)
-                if p.exists() and p.is_file():
-                    self._cache[tool_name] = str(p)
-                    self._save_cache()
-                    return str(p)
-                # 可能是目录, 尝试拼接 basename
-                for bn in spec.basenames:
-                    candidate = p / bn
-                    if candidate.exists():
-                        self._cache[tool_name] = str(candidate)
-                        self._save_cache()
-                        return str(candidate)
+        found, env_checked = _resolve_from_env(self, tool_name, spec)
+        if found:
+            return found
 
         # 3. PATH
-        basenames_checked: list[str] = []
-        for bn in spec.basenames:
-            basenames_checked.append(bn)
-            exe = shutil.which(bn)
-            if exe:
-                self._cache[tool_name] = exe
-                self._save_cache()
-                return exe
+        found, basenames_checked = _resolve_from_path(self, tool_name, spec)
+        if found:
+            return found
 
         # 都没找到, 返回提问请求
         return ResolutionRequest(

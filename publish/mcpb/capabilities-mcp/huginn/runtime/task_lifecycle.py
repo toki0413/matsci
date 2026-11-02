@@ -21,7 +21,7 @@ class TaskState(StrEnum):
     CREATED = "created"
     RUNNING = "running"
     PAUSED_WAITING_APPROVAL = "paused_waiting_approval"  # G71: 被动等待审批
-    PAUSED_ASKING_DECISION = "paused_asking_decision"    # G71: 主动请求决策
+    PAUSED_ASKING_DECISION = "paused_asking_decision"  # G71: 主动请求决策
     RESUMED = "resumed"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -49,7 +49,9 @@ ALLOWED_TRANSITIONS: dict[TaskState, set[TaskState]] = {
     TaskState.FAILED: set(),
 }
 
-_PAUSED_STATES = frozenset({TaskState.PAUSED_WAITING_APPROVAL, TaskState.PAUSED_ASKING_DECISION})
+_PAUSED_STATES = frozenset(
+    {TaskState.PAUSED_WAITING_APPROVAL, TaskState.PAUSED_ASKING_DECISION}
+)
 _TERMINAL_STATES = frozenset({TaskState.COMPLETED, TaskState.FAILED})
 
 
@@ -80,9 +82,7 @@ class TaskLifecycle:
         """状态转换，非法转换 raise ValueError。"""
         allowed = ALLOWED_TRANSITIONS.get(self.state, set())
         if new_state not in allowed:
-            raise ValueError(
-                f"非法状态转换: {self.state.value} -> {new_state.value}"
-            )
+            raise ValueError(f"非法状态转换: {self.state.value} -> {new_state.value}")
         self.state = new_state
         self.updated_at = time.time()
         # 进入暂停态时记一下时间和原因，方便审计/持久化
@@ -127,7 +127,9 @@ class TaskLifecycle:
             "updated_at": self.updated_at,
             "paused_at": self.paused_at,
             "pause_reason": self.pause_reason,
-            "decision_request": asdict(self.decision_request) if self.decision_request else None,
+            "decision_request": asdict(self.decision_request)
+            if self.decision_request
+            else None,
         }
 
     @classmethod
@@ -239,15 +241,42 @@ def _options_from_intention(desc: str) -> list[dict]:
 
 
 # 显式推荐词 — 出现表示该路"主张 X"
-_RECOMMEND_WORDS = frozenset({
-    "推荐", "应该", "建议", "用", "采用", "选择", "倾向", "偏好", "走",
-    "recommend", "should", "suggest", "use", "prefer",
-})
+_RECOMMEND_WORDS = frozenset(
+    {
+        "推荐",
+        "应该",
+        "建议",
+        "用",
+        "采用",
+        "选择",
+        "倾向",
+        "偏好",
+        "走",
+        "recommend",
+        "should",
+        "suggest",
+        "use",
+        "prefer",
+    }
+)
 # 显式反对词 — 出现表示该路"反对 X"
-_OPPOSE_WORDS = frozenset({
-    "反对", "不行", "不要", "别用", "避免", "错", "不可", "拒绝",
-    "oppose", "avoid", "don't", "wrong", "refuse",
-})
+_OPPOSE_WORDS = frozenset(
+    {
+        "反对",
+        "不行",
+        "不要",
+        "别用",
+        "避免",
+        "错",
+        "不可",
+        "拒绝",
+        "oppose",
+        "avoid",
+        "don't",
+        "wrong",
+        "refuse",
+    }
+)
 
 
 def _extract_pmk_stance(text: str) -> tuple[str, str]:
@@ -272,15 +301,48 @@ def _extract_pmk_stance(text: str) -> tuple[str, str]:
         return ("neutral", "")
     # 抓立场对象: 推荐/反对词后 30 字内的中文/英文短语
     import re as _re
+
     for w in list(_OPPOSE_WORDS) + list(_RECOMMEND_WORDS):
         idx = text_lower.find(w)
         if idx >= 0:
-            tail = text[idx + len(w):].strip()[:30]
+            tail = text[idx + len(w) :].strip()[:30]
             # 去标点
             tail = _re.sub(r"[，。、,.;:!?()\s]+", " ", tail).strip()
             if tail:
                 return (stance, tail)
     return (stance, "")
+
+
+# 常见动词/修饰词 + 英文冠词 — 不参与 subject 相似度判定.
+_PMK_STOP_TOKENS = frozenset(
+    {
+        "用",
+        "采用",
+        "选择",
+        "走",
+        "倾向",
+        "偏好",
+        "历史",
+        "上",
+        "失败",
+        "过",
+        "的",
+        "是",
+        "在",
+        "方法",
+        "该",
+        "此",
+        "this",
+        "the",
+        "method",
+        "a",
+        "an",
+        "is",
+        "to",
+        "for",
+        "of",
+    }
+)
 
 
 def _pmk_subject_tokens(text: str) -> set[str]:
@@ -298,13 +360,11 @@ def _pmk_subject_tokens(text: str) -> set[str]:
     if not text:
         return set()
     import re as _re
-    _STOP = {"用", "采用", "选择", "走", "倾向", "偏好", "历史", "上", "失败",
-             "过", "的", "是", "在", "方法", "该", "此", "this", "the", "method",
-             "a", "an", "is", "to", "for", "of"}
+
     tokens: set[str] = set()
     for m in _re.finditer(r"[A-Za-z0-9]+|[\u4e00-\u9fa5]{2,}", text):
         tok = m.group(0).lower()
-        if tok in _STOP:
+        if tok in _PMK_STOP_TOKENS:
             continue
         # 长度 1 的 token 只保留原始大写形式 (X/Y/Z 风格), 小写单字母过滤
         if len(tok) == 1:
@@ -342,6 +402,74 @@ def _pmk_subjects_similar(sub1: str, sub2: str) -> bool:
     return bool(t1 & t2)
 
 
+def _pmk_conflict_edges(
+    active: dict[str, tuple[str, str]], sources: list[str]
+) -> tuple[list[tuple[str, str]], list[tuple[str, str, str, str, str, str]]]:
+    """构造 overlap 神经网的边 + 显式对立冲突列表."""
+    n = len(sources)
+    nerve_edges: list[tuple[str, str]] = []
+    conflicts: list[tuple[str, str, str, str, str, str]] = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            s1, (st1, sub1) = sources[i], active[sources[i]]
+            s2, (st2, sub2) = sources[j], active[sources[j]]
+            if not sub1 or not sub2:
+                continue
+            if not _pmk_subjects_similar(sub1, sub2):
+                continue
+            nerve_edges.append((s1, s2))
+            # 显式对立: 一个 recommend 一个 oppose, 或两个都 oppose
+            if (
+                (st1 == "oppose" and st2 == "recommend")
+                or (st1 == "recommend" and st2 == "oppose")
+                or (st1 == "oppose" and st2 == "oppose")
+            ):
+                conflicts.append((s1, st1, sub1, s2, st2, sub2))
+    return nerve_edges, conflicts
+
+
+def _pmk_beta1(sources: list[str], nerve_edges: list[tuple[str, str]]) -> int:
+    # β₁: overlap 神经网的独立环路数. networkx 缺失时回退 0 (保守).
+    try:
+        import networkx as nx
+
+        g = nx.Graph()
+        g.add_nodes_from(sources)
+        g.add_edges_from(nerve_edges)
+        return len(nx.cycle_basis(g))
+    except Exception:
+        return 0
+
+
+def _pmk_obstruction_reason(
+    conflicts: list[tuple[str, str, str, str, str, str]],
+    self_sources: set[str] | frozenset[str],
+    beta1: int,
+) -> str:
+    """拼装冲突 reason, 并标记是否命中自指固定点 (感质探针)."""
+    # 感质探针: 冲突里是否有一方是自指路 (self). 当"世界主张"(kb/memory/persona)
+    # 与"系统自我状态"(self_eval) 对同一 subject 冲突 → 同一直由度既当世界事实
+    # 又当自指状态, 在此深度不可拆分 = 自指固定点. 该标记随 reason 返回, 不改变
+    # 返回签名 (is_obstructed/reason/beta1).
+    _has_self_conflict = any(
+        (s1 in self_sources) != (s2 in self_sources)
+        for (s1, _st1, _sub1, s2, _st2, _sub2) in conflicts
+    )
+
+    s1, st1, sub1, s2, st2, sub2 = conflicts[0]
+    _tag = " [qualia-probe: 自指固定点]" if _has_self_conflict else ""
+    if beta1 > 0:
+        return (
+            f"{s1}({st1} '{sub1}') vs {s2}({st2} '{sub2}') — 对同一 subject "
+            f"立场冲突, 且落在 overlap 神经网的 H¹ 环路上 (β₁={beta1}, 粘合障碍)"
+            f"{_tag}"
+        )
+    return (
+        f"{s1}({st1} '{sub1}') vs {s2}({st2} '{sub2}') — "
+        f"对同一 subject 立场冲突 (H⁰ 局部矛盾){_tag}"
+    )
+
+
 def _pmk_gluing_obstruction(
     active: dict[str, tuple[str, str]],
     *,
@@ -376,60 +504,62 @@ def _pmk_gluing_obstruction(
     if n < 2:
         return (False, "", 0)
 
-    nerve_edges: list[tuple[str, str]] = []
-    conflicts: list[tuple[str, str, str, str, str, str]] = []
-    for i in range(n):
-        for j in range(i + 1, n):
-            s1, (st1, sub1) = sources[i], active[sources[i]]
-            s2, (st2, sub2) = sources[j], active[sources[j]]
-            if not sub1 or not sub2:
-                continue
-            if not _pmk_subjects_similar(sub1, sub2):
-                continue
-            nerve_edges.append((s1, s2))
-            # 显式对立: 一个 recommend 一个 oppose, 或两个都 oppose
-            if (st1 == "oppose" and st2 == "recommend") or \
-               (st1 == "recommend" and st2 == "oppose") or \
-               (st1 == "oppose" and st2 == "oppose"):
-                conflicts.append((s1, st1, sub1, s2, st2, sub2))
+    nerve_edges, conflicts = _pmk_conflict_edges(active, sources)
 
     if not conflicts:
         return (False, "", 0)
 
-    # β₁: overlap 神经网的独立环路数. networkx 缺失时回退 0 (保守).
-    beta1 = 0
-    try:
-        import networkx as nx
-        g = nx.Graph()
-        g.add_nodes_from(sources)
-        g.add_edges_from(nerve_edges)
-        beta1 = len(nx.cycle_basis(g))
-    except Exception:
-        beta1 = 0
+    # β₁: overlap 神经网的独立环路数 (networkx 缺失时保守回退 0).
+    beta1 = _pmk_beta1(sources, nerve_edges)
+    return (True, _pmk_obstruction_reason(conflicts, self_sources, beta1), beta1)
 
-    # 感质探针: 冲突里是否有一方是自指路 (self). 当"世界主张"(kb/memory/persona)
-    # 与"系统自我状态"(self_eval) 对同一 subject 冲突 → 同一直由度既当世界事实
-    # 又当自指状态, 在此深度不可拆分 = 自指固定点. 该标记随 reason 返回, 不改变
-    # 返回签名 (is_obstructed/reason/beta1).
-    _has_self_conflict = any(
-        (s1 in self_sources) != (s2 in self_sources) for
-        (s1, _st1, _sub1, s2, _st2, _sub2) in conflicts
-    )
 
-    s1, st1, sub1, s2, st2, sub2 = conflicts[0]
-    _tag = " [qualia-probe: 自指固定点]" if _has_self_conflict else ""
-    if beta1 > 0:
-        reason = (
-            f"{s1}({st1} '{sub1}') vs {s2}({st2} '{sub2}') — 对同一 subject "
-            f"立场冲突, 且落在 overlap 神经网的 H¹ 环路上 (β₁={beta1}, 粘合障碍)"
-            f"{_tag}"
-        )
-    else:
-        reason = (
-            f"{s1}({st1} '{sub1}') vs {s2}({st2} '{sub2}') — "
-            f"对同一 subject 立场冲突 (H⁰ 局部矛盾){_tag}"
-        )
-    return (True, reason, beta1)
+def _pmk_timeseries_stance(pmk_state: dict) -> tuple[str, str]:
+    """P3 结合: timeseries 路从 trend 关键词构造 stance.
+
+    decaying → oppose "束缚/stable/bound", recommend "扩散/diffusion"
+    rising → oppose "稳定/stable", recommend "增长/increase"
+    ponytail: 关键词匹配, 不调 LLM. 升级路径: 物理含义解析.
+    """
+    text = pmk_state.get("timeseries", "") or ""
+    if not text:
+        return ("neutral", "")
+    lower = text.lower()
+    if "decaying" in lower:
+        return ("oppose", "束缚 stable bound")
+    if "rising" in lower:
+        return ("oppose", "稳定 stable")
+    if "flat" in lower:
+        return ("recommend", "平衡 equilibrium")
+    return ("neutral", "")
+
+
+def _pmk_self_stance(pmk_state: dict) -> tuple[str, str]:
+    """自指路: self_eval 从同一 stance 引擎提取 subject."""
+    text = pmk_state.get("self_eval", "") or ""
+    return _extract_pmk_stance(text) if text else ("neutral", "")
+
+
+def _pmk_active_stances(pmk_state: dict) -> dict[str, tuple[str, str]]:
+    """收集四路立场 (含 timeseries / self_eval), 过滤掉 neutral."""
+    # P3 结合: timeseries 路从 trend 关键词构造 stance.
+    # ponytail: 关键词匹配, 不调 LLM. 升级路径: 物理含义解析.
+    _ts_stance = _pmk_timeseries_stance(pmk_state)
+
+    # 世界路: persona/memory/kb 是对客观世界的立场主张.
+    stances = {
+        source: _extract_pmk_stance(text)
+        for source, text in pmk_state.items()
+        if source in ("persona", "memory", "kb")
+    }
+    if _ts_stance[0] != "neutral":
+        stances["timeseries"] = _ts_stance
+    # 自指路: self_eval 是系统对自身状态的报告, 从同一 stance 引擎提取 subject.
+    _self_stance = _pmk_self_stance(pmk_state)
+    if _self_stance[0] != "neutral":
+        stances["self_eval"] = _self_stance
+    # 过滤掉 neutral
+    return {src: (st, sub) for src, (st, sub) in stances.items() if st != "neutral"}
 
 
 def _check_pmk_consistency(pmk_state: dict) -> tuple[bool, str]:
@@ -458,36 +588,7 @@ def _check_pmk_consistency(pmk_state: dict) -> tuple[bool, str]:
     if not pmk_state:
         return (False, "")
 
-    # P3 结合: timeseries 路从 trend 关键词构造 stance.
-    # decaying → oppose "束缚/stable/bound", recommend "扩散/diffusion"
-    # rising → oppose "稳定/stable", recommend "增长/increase"
-    # ponytail: 关键词匹配, 不调 LLM. 升级路径: 物理含义解析.
-    _ts_text = pmk_state.get("timeseries", "") or ""
-    _ts_stance = ("neutral", "")
-    if _ts_text:
-        _ts_lower = _ts_text.lower()
-        if "decaying" in _ts_lower:
-            _ts_stance = ("oppose", "束缚 stable bound")
-        elif "rising" in _ts_lower:
-            _ts_stance = ("oppose", "稳定 stable")
-        elif "flat" in _ts_lower:
-            _ts_stance = ("recommend", "平衡 equilibrium")
-
-    # 世界路: persona/memory/kb 是对客观世界的立场主张.
-    stances = {
-        source: _extract_pmk_stance(text)
-        for source, text in pmk_state.items()
-        if source in ("persona", "memory", "kb")
-    }
-    if _ts_stance[0] != "neutral":
-        stances["timeseries"] = _ts_stance
-    # 自指路: self_eval 是系统对自身状态的报告, 从同一 stance 引擎提取 subject.
-    _self_text = pmk_state.get("self_eval", "") or ""
-    _self_stance = _extract_pmk_stance(_self_text) if _self_text else ("neutral", "")
-    if _self_stance[0] != "neutral":
-        stances["self_eval"] = _self_stance
-    # 过滤掉 neutral
-    active = {src: (st, sub) for src, (st, sub) in stances.items() if st != "neutral"}
+    active = _pmk_active_stances(pmk_state)
     if len(active) < 2:
         return (False, "")  # 少于两路有立场, 不可能冲突
 
@@ -495,6 +596,154 @@ def _check_pmk_consistency(pmk_state: dict) -> tuple[bool, str]:
         active, self_sources={"self_eval"}
     )
     return (is_obstructed, reason)
+
+
+def _grill_pause(grill_state: dict | None) -> tuple[bool, str, list[dict]] | None:
+    # 条件 0: grill-me 风格开工前澄清 — 优先级最高, 先于其他检查
+    # 详见 pre_plan_grill.should_start_grill. 触发后 Engine 切 LLM system prompt.
+    if grill_state:
+        from huginn.runtime.pre_plan_grill import (
+            grill_pause_options,
+            should_start_grill,
+        )
+
+        should_grill, grill_reason = should_start_grill(**grill_state)
+        if should_grill:
+            return (
+                True,
+                f"GRILL 模式建议启动: {grill_reason}",
+                grill_pause_options(),
+            )
+    return None
+
+
+def _pmk_pause(pmk_state: dict | None) -> tuple[bool, str, list[dict]] | None:
+    # 条件 5: PMK 一致性障碍 — 三路立场冲突 → 局部模型无法粘合成全局
+    # 高阶网络 H¹ proxy: sheaf gluing 失败的启发式判定, 非严格 Čech cohomology.
+    if pmk_state:
+        inconsistent, pmk_reason = _check_pmk_consistency(pmk_state)
+        if inconsistent:
+            opts = [
+                _option("A", "遵从 Persona", "保持方法品味一致性", "可能忽视经验/知识"),
+                _option("B", "遵从 Memory", "复用历史成功经验", "可能不适合当前情境"),
+                _option("C", "遵从 Knowledge", "用领域规则接地", "可能过于保守"),
+            ]
+            return (True, f"PMK 一致性障碍: {pmk_reason}", opts)
+    return None
+
+
+def _intention_pause(
+    fired_intentions: list | None,
+) -> tuple[bool, str, list[dict]] | None:
+    # 条件 4 不依赖 step_evaluations, 先单独检查 fired intentions
+    if fired_intentions:
+        for it in fired_intentions:
+            desc = str(_intention_attr(it, "description", "") or "")
+            if "用户决策" in desc or "user decision" in desc.lower():
+                return (
+                    True,
+                    f"Prospective Memory 触发需用户决策: {desc}",
+                    _options_from_intention(desc),
+                )
+    return None
+
+
+def _deviation_pause(recent: list) -> tuple[bool, str, list[dict]] | None:
+    # 条件 1: 连续 3 步 on_track=="false" → 重定向
+    if len(recent) >= 3 and all(e.on_track == "false" for e in recent):
+        opts = [
+            _option("A", "换方法", "可能突破当前瓶颈", "前期工作可能浪费"),
+            _option("B", "补数据", "更充分的输入可能改善结果", "耗时"),
+            _option("C", "重定向目标链", "调整目标更贴合实际", "需要重新规划"),
+        ]
+        return (True, "连续 3 步脱轨, 需决策换路线", opts)
+    return None
+
+
+def _target_chain_pause(
+    target_chains: list | None, recent: list
+) -> tuple[bool, str, list[dict]] | None:
+    # 条件 2: TargetChain 验证失败 (required_results 全完成但结构检查 failed)
+    for tc in target_chains or []:
+        if not _tc_is_complete(tc):
+            continue
+        tid = _tc_attr(tc, "target_id", None)
+        # 最近一步匹配该 target 且结构硬失败 → 验证不达标
+        for ev in recent:
+            if ev.target_chain_ref == tid and ev.structure_check == "failed":
+                opts = [
+                    _option("A", f"重做 {tid}", "重新执行可能修复", "耗时"),
+                    _option("B", "换方法", "换路线绕过问题", "前期工作可能浪费"),
+                    _option("C", "接受部分结果", "保住已有进展", "结果不完整"),
+                ]
+                return (
+                    True,
+                    f"TargetChain {tid} 验证失败 (结构检查 failed)",
+                    opts,
+                )
+    return None
+
+
+def _evidence_pause(
+    recent: list, kb_recall_empty: bool
+) -> tuple[bool, str, list[dict]] | None:
+    # 条件 3: 连续 3 步 evidence_quality=="low" 且 kb_recall_empty
+    if (
+        len(recent) >= 3
+        and kb_recall_empty
+        and all(e.evidence_quality == "low" for e in recent)
+    ):
+        opts = [
+            _option("A", "补文献", "增强理论依据", "耗时"),
+            _option("B", "换数据源", "更高质数据可能改善证据", "需要重新采集"),
+            _option("C", "接受低证据", "推进任务", "结论可信度低"),
+        ]
+        return (True, "证据质量持续低且 KB 无召回, 需决策补强", opts)
+    return None
+
+
+def _decision_pause(
+    step_evaluations: list,
+    target_chains: list,
+    kb_recall_empty: bool,
+    fired_intentions: list | None,
+    pmk_state: dict | None,
+    grill_state: dict | None,
+) -> tuple[bool, str, list[dict]]:
+    """按优先级依次检查各 pause 条件, 返回首个命中的 (pause, reason, options)."""
+    # 条件 0: grill-me 风格开工前澄清 — 优先级最高, 先于其他检查
+    result = _grill_pause(grill_state)
+    if result is not None:
+        return result
+
+    # 条件 5: PMK 一致性障碍 — 三路立场冲突 → 局部模型无法粘合成全局
+    result = _pmk_pause(pmk_state)
+    if result is not None:
+        return result
+
+    # 条件 4 不依赖 step_evaluations, 先单独检查 fired intentions
+    result = _intention_pause(fired_intentions)
+    if result is not None:
+        return result
+
+    if not step_evaluations:
+        return (False, "", [])
+
+    recent = step_evaluations[-3:]
+
+    result = _deviation_pause(recent)
+    if result is not None:
+        return result
+
+    result = _target_chain_pause(target_chains, recent)
+    if result is not None:
+        return result
+
+    result = _evidence_pause(recent, kb_recall_empty)
+    if result is not None:
+        return result
+
+    return (False, "", [])
 
 
 def should_pause_for_decision(
@@ -535,90 +784,14 @@ def should_pause_for_decision(
     避免过度暂停. fired_intentions 当前只做文本匹配, 升级路径是 intention 分类.
     """
     # 条件 0: grill-me 风格开工前澄清 — 优先级最高, 先于其他检查
-    # 详见 pre_plan_grill.should_start_grill. 触发后 Engine 切 LLM system prompt.
-    if grill_state:
-        from huginn.runtime.pre_plan_grill import (
-            grill_pause_options,
-            should_start_grill,
-        )
-        should_grill, grill_reason = should_start_grill(**grill_state)
-        if should_grill:
-            return (
-                True,
-                f"GRILL 模式建议启动: {grill_reason}",
-                grill_pause_options(),
-            )
-
-    # 条件 5: PMK 一致性障碍 — 三路立场冲突 → 局部模型无法粘合成全局
-    # 高阶网络 H¹ proxy: sheaf gluing 失败的启发式判定, 非严格 Čech cohomology.
-    if pmk_state:
-        inconsistent, pmk_reason = _check_pmk_consistency(pmk_state)
-        if inconsistent:
-            opts = [
-                _option("A", "遵从 Persona", "保持方法品味一致性", "可能忽视经验/知识"),
-                _option("B", "遵从 Memory", "复用历史成功经验", "可能不适合当前情境"),
-                _option("C", "遵从 Knowledge", "用领域规则接地", "可能过于保守"),
-            ]
-            return (True, f"PMK 一致性障碍: {pmk_reason}", opts)
-
-    # 条件 4 不依赖 step_evaluations, 先单独检查 fired intentions
-    if fired_intentions:
-        for it in fired_intentions:
-            desc = str(_intention_attr(it, "description", "") or "")
-            if "用户决策" in desc or "user decision" in desc.lower():
-                return (
-                    True,
-                    f"Prospective Memory 触发需用户决策: {desc}",
-                    _options_from_intention(desc),
-                )
-
-    if not step_evaluations:
-        return (False, "", [])
-
-    recent = step_evaluations[-3:]
-
-    # 条件 1: 连续 3 步 on_track=="false" → 重定向
-    if len(recent) >= 3 and all(e.on_track == "false" for e in recent):
-        opts = [
-            _option("A", "换方法", "可能突破当前瓶颈", "前期工作可能浪费"),
-            _option("B", "补数据", "更充分的输入可能改善结果", "耗时"),
-            _option("C", "重定向目标链", "调整目标更贴合实际", "需要重新规划"),
-        ]
-        return (True, "连续 3 步脱轨, 需决策换路线", opts)
-
-    # 条件 2: TargetChain 验证失败 (required_results 全完成但结构检查 failed)
-    for tc in target_chains or []:
-        if not _tc_is_complete(tc):
-            continue
-        tid = _tc_attr(tc, "target_id", None)
-        # 最近一步匹配该 target 且结构硬失败 → 验证不达标
-        for ev in recent:
-            if ev.target_chain_ref == tid and ev.structure_check == "failed":
-                opts = [
-                    _option("A", f"重做 {tid}", "重新执行可能修复", "耗时"),
-                    _option("B", "换方法", "换路线绕过问题", "前期工作可能浪费"),
-                    _option("C", "接受部分结果", "保住已有进展", "结果不完整"),
-                ]
-                return (
-                    True,
-                    f"TargetChain {tid} 验证失败 (结构检查 failed)",
-                    opts,
-                )
-
-    # 条件 3: 连续 3 步 evidence_quality=="low" 且 kb_recall_empty
-    if (
-        len(recent) >= 3
-        and kb_recall_empty
-        and all(e.evidence_quality == "low" for e in recent)
-    ):
-        opts = [
-            _option("A", "补文献", "增强理论依据", "耗时"),
-            _option("B", "换数据源", "更高质数据可能改善证据", "需要重新采集"),
-            _option("C", "接受低证据", "推进任务", "结论可信度低"),
-        ]
-        return (True, "证据质量持续低且 KB 无召回, 需决策补强", opts)
-
-    return (False, "", [])
+    return _decision_pause(
+        step_evaluations,
+        target_chains,
+        kb_recall_empty,
+        fired_intentions,
+        pmk_state,
+        grill_state,
+    )
 
 
 if __name__ == "__main__":
@@ -627,12 +800,14 @@ if __name__ == "__main__":
     # 1. 合法转换：CREATED → RUNNING → PAUSED_ASKING_DECISION → RESUMED → RUNNING → COMPLETED
     lc = TaskLifecycle(task_id="t1")
     lc.transition(TaskState.RUNNING)
-    lc.pause_for_decision(DecisionRequest(
-        step_id=1,
-        question="继续吗?",
-        options=[{"id": "A", "label": "继续", "pros": "推进", "cons": "耗资源"}],
-        context_summary="跑到第 1 步",
-    ))
+    lc.pause_for_decision(
+        DecisionRequest(
+            step_id=1,
+            question="继续吗?",
+            options=[{"id": "A", "label": "继续", "pros": "推进", "cons": "耗资源"}],
+            context_summary="跑到第 1 步",
+        )
+    )
     assert lc.state == TaskState.PAUSED_ASKING_DECISION
     lc.resume(answer="A")
     assert lc.state == TaskState.RESUMED
@@ -675,7 +850,9 @@ if __name__ == "__main__":
     assert lc3.state == TaskState.PAUSED_WAITING_APPROVAL
     lc3.resume()
     lc3.transition(TaskState.RUNNING)
-    lc3.pause_for_decision(DecisionRequest(step_id=1, question="q", options=[], context_summary="c"))
+    lc3.pause_for_decision(
+        DecisionRequest(step_id=1, question="q", options=[], context_summary="c")
+    )
     assert is_paused(lc3.state)
     assert lc3.state == TaskState.PAUSED_ASKING_DECISION
     # 非暂停态返回 False
@@ -685,12 +862,14 @@ if __name__ == "__main__":
     # 5. to_dict / from_dict 往返一致
     lc4 = TaskLifecycle(task_id="t4")
     lc4.transition(TaskState.RUNNING)
-    lc4.pause_for_decision(DecisionRequest(
-        step_id=5,
-        question="决策问题?",
-        options=[{"id": "A", "label": "选项A", "pros": "好处", "cons": "坏处"}],
-        context_summary="上下文",
-    ))
+    lc4.pause_for_decision(
+        DecisionRequest(
+            step_id=5,
+            question="决策问题?",
+            options=[{"id": "A", "label": "选项A", "pros": "好处", "cons": "坏处"}],
+            context_summary="上下文",
+        )
+    )
     d = lc4.to_dict()
     assert d["state"] == "paused_asking_decision"
     assert d["decision_request"]["question"] == "决策问题?"
@@ -703,7 +882,9 @@ if __name__ == "__main__":
     assert lc4_restored.pause_reason == lc4.pause_reason
     assert lc4_restored.decision_request is not None
     assert lc4_restored.decision_request.step_id == 5
-    assert lc4_restored.decision_request.options == [{"id": "A", "label": "选项A", "pros": "好处", "cons": "坏处"}]
+    assert lc4_restored.decision_request.options == [
+        {"id": "A", "label": "选项A", "pros": "好处", "cons": "坏处"}
+    ]
     # decision_request=None 的情况也要能往返
     lc4_empty = TaskLifecycle(task_id="t4_empty")
     d_empty = lc4_empty.to_dict()
@@ -750,17 +931,24 @@ if __name__ == "__main__":
     assert pause, f"3x false → pause, got {pause}"
     assert "脱轨" in reason, f"reason: {reason}"
     assert len(opts) == 3, f"3 options, got {len(opts)}"
-    assert opts[0]["id"] == "A" and "label" in opts[0] and "pros" in opts[0] and "cons" in opts[0]
+    assert (
+        opts[0]["id"] == "A"
+        and "label" in opts[0]
+        and "pros" in opts[0]
+        and "cons" in opts[0]
+    )
 
     # 不触发: 只有 2 步 false (窗口不够)
     pause, _, _ = should_pause_for_decision(
-        [_MockEval(on_track="false") for _ in range(2)], [])
+        [_MockEval(on_track="false") for _ in range(2)], []
+    )
     assert not pause, "2x false → no pause"
 
     # 条件 2: TargetChain 验证失败 (is_complete + structure_check failed)
     tc_done = _MockTC(completed_results={"formation energy"})
     ev_failed = _MockEval(
-        on_track="true", target_chain_ref="T1", structure_check="failed")
+        on_track="true", target_chain_ref="T1", structure_check="failed"
+    )
     pause, reason, opts = should_pause_for_decision([ev_failed], [tc_done])
     assert pause, f"verification fail → pause, got {pause}"
     assert "T1" in reason, f"reason should mention T1: {reason}"
@@ -773,8 +961,7 @@ if __name__ == "__main__":
 
     # 条件 3: 连续 3 步 evidence_quality=="low" + kb_recall_empty
     evals_low = [_MockEval(evidence_quality="low") for _ in range(3)]
-    pause, reason, opts = should_pause_for_decision(
-        evals_low, [], kb_recall_empty=True)
+    pause, reason, opts = should_pause_for_decision(evals_low, [], kb_recall_empty=True)
     assert pause, f"3x low + empty kb → pause, got {pause}"
     assert "证据" in reason or "低" in reason, f"reason: {reason}"
 
@@ -788,16 +975,20 @@ if __name__ == "__main__":
         description: str = "需要用户决策: 是否继续"
 
     pause, reason, opts = should_pause_for_decision(
-        [_MockEval(on_track="true")], [], fired_intentions=[_MockIntention()])
+        [_MockEval(on_track="true")], [], fired_intentions=[_MockIntention()]
+    )
     assert pause, f"用户决策 intention → pause, got {pause}"
-    assert "用户决策" in reason or "user decision" in reason.lower(), \
+    assert "用户决策" in reason or "user decision" in reason.lower(), (
         f"reason: {reason}"
+    )
     assert len(opts) == 3
 
     # 不触发: fired intention 不含 "用户决策"
     pause, _, _ = should_pause_for_decision(
-        [_MockEval(on_track="true")], [],
-        fired_intentions=[_MockIntention(description="just a reminder")])
+        [_MockEval(on_track="true")],
+        [],
+        fired_intentions=[_MockIntention(description="just a reminder")],
+    )
     assert not pause, "non-decision intention → no pause"
 
     # 空 evaluations + 无 fired intentions → 不触发
@@ -805,8 +996,11 @@ if __name__ == "__main__":
     assert not pause, "empty → no pause"
 
     # dict 形式 target_chain 也兼容
-    tc_dict = {"target_id": "T2", "required_results": ["band gap"],
-               "completed_results": {"band gap"}}
+    tc_dict = {
+        "target_id": "T2",
+        "required_results": ["band gap"],
+        "completed_results": {"band gap"},
+    }
     ev_dict = _MockEval(target_chain_ref="T2", structure_check="failed")
     pause, reason, _ = should_pause_for_decision([ev_dict], [tc_dict])
     assert pause and "T2" in reason, f"dict tc → pause, got {pause}/{reason}"
@@ -814,24 +1008,28 @@ if __name__ == "__main__":
     # 条件 0: grill 触发 (优先级最高, 先于 PMK / fired intentions / 等)
     # 高歧义 → grill
     pause, reason, opts = should_pause_for_decision(
-        [], [], grill_state={"ambiguity_score": 0.8})
+        [], [], grill_state={"ambiguity_score": 0.8}
+    )
     assert pause, "grill_state ambiguity=0.8 → pause"
     assert "GRILL" in reason, f"reason 应含 GRILL: {reason}"
     assert len(opts) == 3 and opts[0]["id"] == "A"
 
     # tier A + 歧义 scene → grill
     pause, reason, _ = should_pause_for_decision(
-        [], [], grill_state={"tier": "A", "scene_tag": "ambiguous_req"})
+        [], [], grill_state={"tier": "A", "scene_tag": "ambiguous_req"}
+    )
     assert pause and "GRILL" in reason
 
     # plan 为空 → grill
     pause, reason, _ = should_pause_for_decision(
-        [], [], grill_state={"plan_is_empty": True})
+        [], [], grill_state={"plan_is_empty": True}
+    )
     assert pause and "plan 为空" in reason
 
     # has_grilled=True 不重复触发
     pause, _, _ = should_pause_for_decision(
-        [], [], grill_state={"ambiguity_score": 0.9, "has_grilled": True})
+        [], [], grill_state={"ambiguity_score": 0.9, "has_grilled": True}
+    )
     assert not pause, "已 grill 过不应重复触发"
 
     # grill_state=None 兼容旧调用
@@ -840,9 +1038,14 @@ if __name__ == "__main__":
 
     # grill 优先级高于 PMK: 即使 PMK 冲突也先 grill (grill 期间不应有 PMK)
     pause, reason, _ = should_pause_for_decision(
-        [], [],
-        pmk_state={"persona": "推荐用 GNN", "memory": "反对 GNN",
-                    "kb": "", "deviation": ""},
+        [],
+        [],
+        pmk_state={
+            "persona": "推荐用 GNN",
+            "memory": "反对 GNN",
+            "kb": "",
+            "deviation": "",
+        },
         grill_state={"ambiguity_score": 0.7},
     )
     assert pause and "GRILL" in reason, "grill 优先级高于 PMK"
@@ -850,8 +1053,45 @@ if __name__ == "__main__":
     print("All self-checks passed.")
 
 
+def _pmk_llm_prompt(texts: dict) -> str:
+    return """Judge if these three stances (Persona/Memory/Knowledge) are semantically consistent.
+
+Persona stance: {persona}
+Memory stance: {memory}
+Knowledge stance: {kb}
+
+Two stances CONFLICT if they take opposing positions on the SAME subject (even with different wording, e.g. "use GNN" vs "avoid graph neural networks" = conflict on GNN usage).
+
+Respond JSON only:
+{{"consistent": true/false, "conflict_pair": "persona-vs-memory|persona-vs-kb|memory-vs-kb|none", "reason": "1 sentence why"}}""".format(
+        persona=texts.get("persona", "NONE")[:300],
+        memory=texts.get("memory", "NONE")[:300],
+        kb=texts.get("kb", "NONE")[:300],
+    )
+
+
+def _parse_pmk_llm_response(resp: str) -> tuple[bool, str]:
+    """解析 LLM 的 JSON 裁决; 无 JSON 时按一致处理."""
+    resp = resp.strip()
+    # 提取 JSON
+    import json as _json
+
+    start = resp.find("{")
+    end = resp.rfind("}")
+    if start == -1 or end <= start:
+        return (False, "")
+    data = _json.loads(resp[start : end + 1])
+    is_consistent = bool(data.get("consistent", True))
+    if not is_consistent:
+        pair = data.get("conflict_pair", "unknown")
+        reason = data.get("reason", "LLM detected semantic conflict")
+        return (True, f"LLM: {pair} conflict — {reason}")
+    return (False, "")
+
+
 async def check_pmk_consistency_llm(
-    pmk_state: dict, llm_chat_fn,
+    pmk_state: dict,
+    llm_chat_fn,
 ) -> tuple[bool, str]:
     """v8: LLM 判定 PMK 三路立场语义一致性. 规则版抓显式冲突, LLM 版抓隐式冲突.
 
@@ -868,41 +1108,18 @@ async def check_pmk_consistency_llm(
     """
     if not pmk_state:
         return (False, "")
-    texts = {k: v for k, v in pmk_state.items()
-             if k in ("persona", "memory", "kb") and v and str(v).strip()}
+    texts = {
+        k: v
+        for k, v in pmk_state.items()
+        if k in ("persona", "memory", "kb") and v and str(v).strip()
+    }
     if len(texts) < 2:
         return (False, "")
-    prompt = """Judge if these three stances (Persona/Memory/Knowledge) are semantically consistent.
-
-Persona stance: {persona}
-Memory stance: {memory}
-Knowledge stance: {kb}
-
-Two stances CONFLICT if they take opposing positions on the SAME subject (even with different wording, e.g. "use GNN" vs "avoid graph neural networks" = conflict on GNN usage).
-
-Respond JSON only:
-{{"consistent": true/false, "conflict_pair": "persona-vs-memory|persona-vs-kb|memory-vs-kb|none", "reason": "1 sentence why"}}""".format(
-        persona=texts.get("persona", "NONE")[:300],
-        memory=texts.get("memory", "NONE")[:300],
-        kb=texts.get("kb", "NONE")[:300],
-    )
+    prompt = _pmk_llm_prompt(texts)
     try:
         resp = await llm_chat_fn(prompt)
         if not resp:
             return (False, "")
-        resp = resp.strip()
-        # 提取 JSON
-        import json as _json
-        start = resp.find("{")
-        end = resp.rfind("}")
-        if start == -1 or end <= start:
-            return (False, "")
-        data = _json.loads(resp[start:end + 1])
-        is_consistent = bool(data.get("consistent", True))
-        if not is_consistent:
-            pair = data.get("conflict_pair", "unknown")
-            reason = data.get("reason", "LLM detected semantic conflict")
-            return (True, f"LLM: {pair} conflict — {reason}")
-        return (False, "")
+        return _parse_pmk_llm_response(resp)
     except Exception:
         return (False, "")

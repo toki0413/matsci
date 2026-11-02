@@ -27,13 +27,15 @@ class VariableSpec(BaseModel):
 
 
 class UQToolInput(BaseModel):
-    action: Literal["monte_carlo", "sensitivity", "sobol", "pce", "morris", "propagate"] = Field(
-        default="monte_carlo"
-    )
+    action: Literal[
+        "monte_carlo", "sensitivity", "sobol", "pce", "morris", "propagate"
+    ] = Field(default="monte_carlo")
     expression: str = Field(..., description="SymPy-compatible expression")
     # monte_carlo/sobol/pce/morris 用 list[VariableSpec];
     # propagate (GUM) 用 dict[str, {value, uncertainty}]
-    variables: list[VariableSpec] | dict[str, dict[str, float]] = Field(default_factory=list)
+    variables: list[VariableSpec] | dict[str, dict[str, float]] = Field(
+        default_factory=list
+    )
     n_samples: int = Field(default=1000, ge=10)
     seed: int | None = Field(default=None)
     # PCE settings
@@ -48,7 +50,9 @@ class UQToolInput(BaseModel):
         description="相关系数, 如 {'a_b': 0.5}; 不传默认独立",
     )
     confidence: float = Field(
-        default=0.95, ge=0.0, le=1.0,
+        default=0.95,
+        ge=0.0,
+        le=1.0,
         description="置信水平, 用于算扩展不确定度 k 因子",
     )
 
@@ -167,12 +171,10 @@ class UQTool(HuginnTool):
             success=True,
         )
 
-    def _sensitivity(self, args: UQToolInput) -> ToolResult:
-        sp, expr, symbols = self._parse_expression(args.expression, args.variables)
-
-        # Nominal point: use mean for normal/lognormal, midpoint for uniform
+    @staticmethod
+    def _nominal_point(variables: list[VariableSpec]) -> dict[str, float]:
         nominal: dict[str, float] = {}
-        for v in args.variables:
+        for v in variables:
             if v.distribution == "uniform":
                 low = v.low if v.low is not None else 0.0
                 high = v.high if v.high is not None else 1.0
@@ -181,36 +183,55 @@ class UQTool(HuginnTool):
                 nominal[v.name] = v.mean if v.mean is not None else 0.0
             else:
                 nominal[v.name] = 0.0
+        return nominal
+
+    @staticmethod
+    def _local_sensitivity(
+        ctx: tuple,
+        v: VariableSpec,
+        idx: int,
+        nominal_values: list[float],
+        nominal_output: float,
+    ) -> dict[str, float | None]:
+        sp, expr, symbols, f = ctx
+        symbol = symbols[v.name]
+        deriv = sp.diff(expr, symbol)
+        df = sp.lambdify(list(symbols.values()), deriv, modules="numpy")
+        derivative_value = float(df(*nominal_values))
+
+        # Perturbation size: 1% of nominal or 1e-6 if zero
+        x0 = nominal_values[idx]
+        dx = abs(x0) * 0.01 if x0 != 0 else 1e-6
+        perturbed = nominal_values.copy()
+        perturbed[idx] = x0 + dx
+        finite_diff = (float(f(*perturbed)) - nominal_output) / dx
+
+        return {
+            "symbolic_derivative": derivative_value,
+            "finite_difference": finite_diff,
+            "nominal": x0,
+            "elasticity": (
+                derivative_value * x0 / nominal_output if nominal_output != 0 else None
+            ),
+        }
+
+    def _sensitivity(self, args: UQToolInput) -> ToolResult:
+        sp, expr, symbols = self._parse_expression(args.expression, args.variables)
+
+        # Nominal point: use mean for normal/lognormal, midpoint for uniform
+        nominal = self._nominal_point(args.variables)
 
         f = sp.lambdify(list(symbols.values()), expr, modules="numpy")
         nominal_values = [nominal[v.name] for v in args.variables]
         nominal_output = float(f(*nominal_values))
 
-        sensitivities: dict[str, dict[str, float]] = {}
-        for v in args.variables:
-            symbol = symbols[v.name]
-            deriv = sp.diff(expr, symbol)
-            df = sp.lambdify(list(symbols.values()), deriv, modules="numpy")
-            derivative_value = float(df(*nominal_values))
-
-            # Perturbation size: 1% of nominal or 1e-6 if zero
-            x0 = nominal[v.name]
-            dx = abs(x0) * 0.01 if x0 != 0 else 1e-6
-            perturbed = nominal_values.copy()
-            idx = args.variables.index(v)
-            perturbed[idx] = x0 + dx
-            finite_diff = (float(f(*perturbed)) - nominal_output) / dx
-
-            sensitivities[v.name] = {
-                "symbolic_derivative": derivative_value,
-                "finite_difference": finite_diff,
-                "nominal": x0,
-                "elasticity": (
-                    derivative_value * x0 / nominal_output
-                    if nominal_output != 0
-                    else None
-                ),
-            }
+        ctx = (sp, expr, symbols, f)
+        sensitivities = {
+            v.name: self._local_sensitivity(
+                ctx, v, args.variables.index(v), nominal_values, nominal_output
+            )
+            for v in args.variables
+        }
 
         return ToolResult(
             data={
@@ -310,26 +331,13 @@ class UQTool(HuginnTool):
             return self._pce_numpy(args, f)
         return self._pce_chaospy(args, f)
 
-    def _pce_numpy(self, args: UQToolInput, f) -> ToolResult:
-        import math
-        from itertools import product
-
-        from numpy.polynomial.hermite_e import hermeval
-        from numpy.polynomial.legendre import legval
-
-        n_inputs = len(args.variables)
-        order = args.order
-        n_samples = (order + 1) ** n_inputs
-
-        # Draw samples in the original parameter space, then map each
-        # coordinate to its standard distribution (U[-1,1] or N(0,1)) so the
-        # orthogonal polynomials are evaluated on the right support.
-        X = self._sample_matrix(args.variables, n_samples, args.seed)
-        y = np.array([float(f(*X[i])) for i in range(n_samples)])
-
+    @staticmethod
+    def _pce_standardize(
+        variables: list[VariableSpec], X: np.ndarray
+    ) -> tuple[np.ndarray, list[str]]:
         std_X = np.empty_like(X)
         poly_types: list[str] = []
-        for j, v in enumerate(args.variables):
+        for j, v in enumerate(variables):
             if v.distribution == "normal":
                 mean = v.mean if v.mean is not None else 0.0
                 std = v.std if v.std is not None else 1.0
@@ -345,46 +353,64 @@ class UQTool(HuginnTool):
                 else:
                     std_X[:, j] = 2.0 * (X[:, j] - low) / (high - low) - 1.0
                 poly_types.append("legendre")
+        return std_X, poly_types
+
+    @staticmethod
+    def _pce_multi_indices(order: int, n_inputs: int) -> list[np.ndarray]:
+        from itertools import product
 
         # Total-order multi-index set: {alpha in N^n : sum(alpha) <= order}
-        indices = [
+        return [
             np.array(alpha, dtype=int)
             for alpha in product(range(order + 1), repeat=n_inputs)
             if sum(alpha) <= order
         ]
-        n_basis = len(indices)
 
+    @staticmethod
+    def _pce_orthonormal(poly_type: str, deg: int, x: np.ndarray) -> np.ndarray:
+        import math
+
+        from numpy.polynomial.hermite_e import hermeval
+        from numpy.polynomial.legendre import legval
+
+        c = np.zeros(deg + 1)
+        c[deg] = 1.0
+        if poly_type == "hermite":
+            return hermeval(x, c) / math.sqrt(math.factorial(deg))
+        return legval(x, c) * np.sqrt(2 * deg + 1)
+
+    @staticmethod
+    def _pce_design_matrix(
+        std_X: np.ndarray, poly_types: list[str], indices: list[np.ndarray]
+    ) -> np.ndarray:
         # Assemble the design matrix from tensor products of 1D orthonormal
         # polynomials. With orthonormal basis the constant term is the mean
         # and the sum of squared higher-order coeffs is the variance.
-        Psi = np.empty((n_samples, n_basis))
+        n_samples, n_inputs = std_X.shape
+        Psi = np.empty((n_samples, len(indices)))
         for col, alpha in enumerate(indices):
             vals = np.ones(n_samples)
             for j in range(n_inputs):
                 deg = int(alpha[j])
                 if deg == 0:
                     continue
-                if poly_types[j] == "hermite":
-                    c = np.zeros(deg + 1)
-                    c[deg] = 1.0
-                    vals = vals * (hermeval(std_X[:, j], c) / math.sqrt(math.factorial(deg)))
-                else:
-                    c = np.zeros(deg + 1)
-                    c[deg] = 1.0
-                    vals = vals * (legval(std_X[:, j], c) * np.sqrt(2 * deg + 1))
+                poly = UQTool._pce_orthonormal(poly_types[j], deg, std_X[:, j])
+                vals = vals * poly
             Psi[:, col] = vals
+        return Psi
 
-        coeffs, *_ = np.linalg.lstsq(Psi, y, rcond=None)
-
-        mean = float(coeffs[0])
-        variance = float(np.sum(coeffs[1:] ** 2))
-        variance = max(variance, 0.0)
-
+    @staticmethod
+    def _pce_sobol_first(
+        variables: list[VariableSpec],
+        indices: list[np.ndarray],
+        coeffs: np.ndarray,
+        variance: float,
+    ) -> dict[str, float]:
         # First-order Sobol-like indices: variance contributed by each input
         # acting alone (alpha nonzero only in that component).
         sobol: dict[str, float] = {}
         denom = variance if variance > 0 else 1.0
-        for j, v in enumerate(args.variables):
+        for j, v in enumerate(variables):
             var_j = 0.0
             for idx, alpha in enumerate(indices):
                 if idx == 0:
@@ -392,6 +418,32 @@ class UQTool(HuginnTool):
                 if alpha[j] > 0 and int(np.sum(alpha)) == int(alpha[j]):
                     var_j += coeffs[idx] ** 2
             sobol[v.name] = float(var_j / denom) if variance > 0 else 0.0
+        return sobol
+
+    def _pce_numpy(self, args: UQToolInput, f) -> ToolResult:
+        n_inputs = len(args.variables)
+        order = args.order
+        n_samples = (order + 1) ** n_inputs
+
+        # Draw samples in the original parameter space, then map each
+        # coordinate to its standard distribution (U[-1,1] or N(0,1)) so the
+        # orthogonal polynomials are evaluated on the right support.
+        X = self._sample_matrix(args.variables, n_samples, args.seed)
+        y = np.array([float(f(*X[i])) for i in range(n_samples)])
+        std_X, poly_types = self._pce_standardize(args.variables, X)
+
+        indices = self._pce_multi_indices(order, n_inputs)
+        n_basis = len(indices)
+
+        Psi = self._pce_design_matrix(std_X, poly_types, indices)
+
+        coeffs, *_ = np.linalg.lstsq(Psi, y, rcond=None)
+
+        mean = float(coeffs[0])
+        variance = float(np.sum(coeffs[1:] ** 2))
+        variance = max(variance, 0.0)
+
+        sobol = self._pce_sobol_first(args.variables, indices, coeffs, variance)
 
         return ToolResult(
             data={
@@ -410,11 +462,12 @@ class UQTool(HuginnTool):
             success=True,
         )
 
-    def _pce_chaospy(self, args: UQToolInput, f) -> ToolResult:
+    @staticmethod
+    def _chaospy_dists(variables: list[VariableSpec]) -> list:
         import chaospy
 
         dists = []
-        for v in args.variables:
+        for v in variables:
             if v.distribution == "normal":
                 mean = v.mean if v.mean is not None else 0.0
                 std = v.std if v.std is not None else 1.0
@@ -427,7 +480,12 @@ class UQTool(HuginnTool):
                 low = v.low if v.low is not None else 0.0
                 high = v.high if v.high is not None else 1.0
                 dists.append(chaospy.Uniform(low, high))
+        return dists
 
+    def _pce_chaospy(self, args: UQToolInput, f) -> ToolResult:
+        import chaospy
+
+        dists = self._chaospy_dists(args.variables)
         joint = chaospy.J(*dists)
         n_samples = (args.order + 1) ** len(args.variables)
         samples = np.asarray(joint.sample(n_samples))
@@ -470,7 +528,6 @@ class UQTool(HuginnTool):
         _sp, expr, symbols = self._parse_expression(args.expression, args.variables)
         f = _sp.lambdify(list(symbols.values()), expr, modules="numpy")
 
-        k = len(args.variables)
         p = args.levels
         r = args.r
         rng = np.random.default_rng(args.seed)
@@ -485,9 +542,33 @@ class UQTool(HuginnTool):
         # Grid step in [0, 1]^k space.
         delta = p / (2.0 * (p - 1))
 
+        ee_samples = self._morris_effects(args, f, lows, highs, delta, rng)
+        results = self._morris_summary(args.variables, ee_samples)
+
+        return ToolResult(
+            data={
+                "method": "morris",
+                "r": r,
+                "levels": p,
+                "elementary_effects": results,
+                "message": f"Morris screening completed with {r} trajectories.",
+            },
+            success=True,
+        )
+
+    def _morris_effects(
+        self,
+        args: UQToolInput,
+        f,
+        lows: np.ndarray,
+        highs: np.ndarray,
+        delta: float,
+        rng: np.random.Generator,
+    ) -> list[list[float]]:
+        k = len(args.variables)
         ee_samples: list[list[float]] = [[] for _ in range(k)]
-        for _ in range(r):
-            Bstar = self._morris_trajectory(k, p, delta, rng)
+        for _ in range(args.r):
+            Bstar = self._morris_trajectory(k, args.levels, delta, rng)
             X = lows + Bstar * (highs - lows)
             y_vals = np.array([float(f(*X[i])) for i in range(k + 1)])
 
@@ -502,9 +583,14 @@ class UQTool(HuginnTool):
                 actual_step = step * (highs[changed] - lows[changed])
                 ee = (y_vals[i + 1] - y_vals[i]) / actual_step
                 ee_samples[changed].append(float(ee))
+        return ee_samples
 
+    @staticmethod
+    def _morris_summary(
+        variables: list[VariableSpec], ee_samples: list[list[float]]
+    ) -> dict[str, dict[str, float]]:
         results: dict[str, dict[str, float]] = {}
-        for j, v in enumerate(args.variables):
+        for j, v in enumerate(variables):
             arr = np.array(ee_samples[j])
             if arr.size == 0:
                 results[v.name] = {"mu": 0.0, "mu_star": 0.0, "sigma": 0.0}
@@ -514,17 +600,7 @@ class UQTool(HuginnTool):
                 "mu_star": float(np.mean(np.abs(arr))),
                 "sigma": float(np.std(arr, ddof=1)) if arr.size > 1 else 0.0,
             }
-
-        return ToolResult(
-            data={
-                "method": "morris",
-                "r": r,
-                "levels": p,
-                "elementary_effects": results,
-                "message": f"Morris screening completed with {r} trajectories.",
-            },
-            success=True,
-        )
+        return results
 
     @staticmethod
     def _morris_trajectory(
@@ -556,36 +632,39 @@ class UQTool(HuginnTool):
 
     # ── GUM first-order uncertainty propagation ────────────────────────
 
-    def _propagate(self, args: UQToolInput) -> ToolResult:
-        """GUM 法线性误差传播.
-
-        u_c² = Σ_i (∂f/∂x_i)² u_xi²             (无相关)
-        u_c² = Σ_i Σ_j (∂f/∂x_i)(∂f/∂x_j) u_xi u_xj r_ij   (有相关)
-
-        偏导用 sympy 算, 在标称点求值. k 因子按 confidence 近似:
-        95% → 2, 99% → 3, 其它用正态分位近似.
-        """
+    @staticmethod
+    def _require_sympy():
         try:
             import sympy as sp
         except ImportError as exc:
             raise RuntimeError(
                 "UQ tool requires sympy. Install with: pip install sympy"
             ) from exc
+        return sp
 
-        # variables 在 propagate 模式下是 dict[str, {value, uncertainty}]
-        var_dict = args.variables
+    @staticmethod
+    def _gum_validate(var_dict) -> ToolResult | None:
         if not isinstance(var_dict, dict):
             return ToolResult(
-                data=None, success=False,
-                error="propagate action requires variables as "
-                      "dict[str, {value, uncertainty}]",
+                data=None,
+                success=False,
+                error=(
+                    "propagate action requires variables as "
+                    "dict[str, {value, uncertainty}]"
+                ),
             )
         if not var_dict:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="propagate action requires at least one variable",
             )
+        return None
 
+    @staticmethod
+    def _gum_variables(
+        sp, var_dict: dict[str, dict[str, float]]
+    ) -> tuple[list[str], dict, dict[str, float], dict[str, float]]:
         # 拆出标称值和不确定度
         names = list(var_dict.keys())
         symbols = {n: sp.Symbol(n) for n in names}
@@ -596,8 +675,17 @@ class UQTool(HuginnTool):
             nominal[n] = float(spec.get("value", 0.0))
             u = spec.get("uncertainty")
             uncertainties[n] = float(u) if u is not None else 0.0
+        return names, symbols, nominal, uncertainties
 
-        expr = sp.sympify(args.expression, locals=symbols)
+    @staticmethod
+    def _gum_model(
+        sp,
+        expression: str,
+        symbols: dict,
+        names: list[str],
+        nominal: dict[str, float],
+    ) -> tuple[float, dict[str, float]]:
+        expr = sp.sympify(expression, locals=symbols)
 
         # 标称值下的表达式结果
         f = sp.lambdify([symbols[n] for n in names], expr, modules="numpy")
@@ -609,15 +697,27 @@ class UQTool(HuginnTool):
             deriv = sp.diff(expr, symbols[n])
             df = sp.lambdify([symbols[n] for n in names], deriv, modules="numpy")
             sens[n] = float(df(*[nominal[n] for n in names]))
+        return nominal_value, sens
 
+    def _gum_correlations(
+        self, correlations: dict[str, float] | None, names: list[str]
+    ) -> dict[tuple[str, str], float]:
         # 解析相关系数, 支持 "a_b" / "a-b" / "ab" 这种 key
         corr: dict[tuple[str, str], float] = {}
-        if args.correlations:
-            for key, r_val in args.correlations.items():
+        if correlations:
+            for key, r_val in correlations.items():
                 pair = self._parse_correlation_key(key, names)
                 if pair is not None:
                     corr[pair] = float(r_val)
+        return corr
 
+    @staticmethod
+    def _gum_combine(
+        names: list[str],
+        sens: dict[str, float],
+        uncertainties: dict[str, float],
+        corr: dict[tuple[str, str], float],
+    ) -> tuple[float, list[str], dict[str, float], str | None]:
         # 合成标准不确定度 u_c
         # 无相关: Σ (∂f/∂x_i)² u_i²
         # 有相关: 再加 Σ_{i≠j} (∂f/∂x_i)(∂f/∂x_j) u_i u_j r_ij
@@ -627,13 +727,17 @@ class UQTool(HuginnTool):
         # 相关项 (i<j, 系数 2 因为对称)
         cross_terms: list[str] = []
         for i, ni in enumerate(names):
-            for nj in names[i + 1:]:
+            for nj in names[i + 1 :]:
                 r_ij = corr.get((ni, nj), corr.get((nj, ni), 0.0))
                 if r_ij == 0.0:
                     continue
-                term = 2.0 * sens[ni] * sens[nj] * uncertainties[ni] * uncertainties[nj] * r_ij
+                term = 2.0 * sens[ni] * sens[nj]
+                term = term * uncertainties[ni] * uncertainties[nj] * r_ij
                 uc_sq += term
-                cross_terms.append(f"2*({sens[ni]})*({sens[nj]})*{uncertainties[ni]}*{uncertainties[nj]}*{r_ij}")
+                label = f"2*({sens[ni]})*({sens[nj]})"
+                cross_terms.append(
+                    f"{label}*{uncertainties[ni]}*{uncertainties[nj]}*{r_ij}"
+                )
         uc_sq = max(uc_sq, 0.0)  # 数值噪声可能搞出负的
         uc = float(np.sqrt(uc_sq))
 
@@ -644,19 +748,30 @@ class UQTool(HuginnTool):
             contribution[n] = (contrib_sq / uc_sq * 100.0) if uc_sq > 0 else 0.0
 
         dominant = max(contribution, key=contribution.get) if contribution else None
+        return uc, cross_terms, contribution, dominant
 
-        # 扩展不确定度 U = k * u_c, k 按 confidence 近似
-        k_factor = self._coverage_factor(args.confidence)
-        expanded = k_factor * uc
-
+    @staticmethod
+    def _gum_formula(cross_terms: list[str]) -> str:
         # 用的公式字符串, 方便用户确认
         if cross_terms:
-            formula = (
+            return (
                 "u_c² = Σ (∂f/∂x_i)² u_xi² + Σ_{i≠j} (∂f/∂x_i)(∂f/∂x_j) u_xi u_xj r_ij"
             )
-        else:
-            formula = "u_c² = Σ (∂f/∂x_i)² u_xi²  (变量独立, 无相关项)"
+        return "u_c² = Σ (∂f/∂x_i)² u_xi²  (变量独立, 无相关项)"
 
+    @staticmethod
+    def _gum_result(
+        args: UQToolInput,
+        nominal_value: float,
+        uc: float,
+        expanded: float,
+        k_factor: float,
+        sens: dict[str, float],
+        contribution: dict[str, float],
+        dominant: str | None,
+        corr: dict[tuple[str, str], float],
+        formula: str,
+    ) -> ToolResult:
         return ToolResult(
             data={
                 "method": "propagate",
@@ -669,16 +784,67 @@ class UQTool(HuginnTool):
                 "contribution_percent": contribution,
                 "dominant_variable": dominant,
                 "formula": formula,
-                "correlations_used": {f"{a}_{b}": r for (a, b), r in corr.items()} if corr else None,
-                "message": f"GUM propagation: nominal={nominal_value:.6g}, u_c={uc:.6g}, U={expanded:.6g} (k={k_factor}).",
+                "correlations_used": (
+                    {f"{a}_{b}": r for (a, b), r in corr.items()} if corr else None
+                ),
+                "message": (
+                    f"GUM propagation: nominal={nominal_value:.6g}, "
+                    f"u_c={uc:.6g}, U={expanded:.6g} (k={k_factor})."
+                ),
             },
             success=True,
         )
 
+    def _propagate(self, args: UQToolInput) -> ToolResult:
+        """GUM 法线性误差传播.
+
+        u_c² = Σ_i (∂f/∂x_i)² u_xi²             (无相关)
+        u_c² = Σ_i Σ_j (∂f/∂x_i)(∂f/∂x_j) u_xi u_xj r_ij   (有相关)
+
+        偏导用 sympy 算, 在标称点求值. k 因子按 confidence 近似:
+        95% → 2, 99% → 3, 其它用正态分位近似.
+        """
+        sp = self._require_sympy()
+
+        # variables 在 propagate 模式下是 dict[str, {value, uncertainty}]
+        var_dict = args.variables
+        validation_error = self._gum_validate(var_dict)
+        if validation_error is not None:
+            return validation_error
+
+        names, symbols, nominal, uncertainties = self._gum_variables(sp, var_dict)
+
+        nominal_value, sens = self._gum_model(
+            sp, args.expression, symbols, names, nominal
+        )
+
+        corr = self._gum_correlations(args.correlations, names)
+
+        uc, cross_terms, contribution, dominant = self._gum_combine(
+            names, sens, uncertainties, corr
+        )
+
+        # 扩展不确定度 U = k * u_c, k 按 confidence 近似
+        k_factor = self._coverage_factor(args.confidence)
+        expanded = k_factor * uc
+
+        formula = self._gum_formula(cross_terms)
+
+        return self._gum_result(
+            args,
+            nominal_value,
+            uc,
+            expanded,
+            k_factor,
+            sens,
+            contribution,
+            dominant,
+            corr,
+            formula,
+        )
+
     @staticmethod
-    def _parse_correlation_key(
-        key: str, names: list[str]
-    ) -> tuple[str, str] | None:
+    def _parse_correlation_key(key: str, names: list[str]) -> tuple[str, str] | None:
         """把 'a_b' / 'a-b' / 'ab' 这种 key 拆成 (a, b), 拆不开返回 None.
 
         优先按分隔符拆, 拆不出来再试着在已知变量名里两两组合匹配.
@@ -692,7 +858,7 @@ class UQTool(HuginnTool):
                         return (a, b)
         # 没分隔符, 试着直接匹配两个变量名拼接
         for i, a in enumerate(names):
-            for b in names[i + 1:]:
+            for b in names[i + 1 :]:
                 if key == a + b or key == b + a:
                     return (a, b)
         return None

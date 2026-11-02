@@ -53,6 +53,55 @@ def _rel_dev(a: float, b: float) -> float:
     return abs(a - b) / max(abs(b), 1.0)
 
 
+def _group_units(
+    group_stats: dict[str, dict[str, Any]],
+) -> dict[str, list[tuple[str, float]]]:
+    """按 unit 归集 (组名, 中位数); 缺 unit/median 的组不参与比对."""
+    units: dict[str, list[tuple[str, float]]] = {}
+    for key, st in group_stats.items():
+        unit = st.get("unit")
+        med = st.get("median")
+        if unit is not None and med is not None:
+            units.setdefault(unit, []).append((key, med))
+    return units
+
+
+def _compare_pair(
+    unit: str, item_a: tuple[str, float], item_b: tuple[str, float]
+) -> tuple[str, dict[str, Any]]:
+    """两个同 unit 组的中位数一致性标签 + pair 记录."""
+    k_a, v_a = item_a
+    k_b, v_b = item_b
+    dev = _rel_dev(v_a, v_b)
+    if dev <= _CONSISTENT_REL:
+        label = "consistent"
+    elif dev <= _MODERATE_REL:
+        label = "moderate"
+    else:
+        label = "conflicting"
+    pair = {
+        "unit": unit,
+        "group_a": k_a,
+        "group_b": k_b,
+        "median_a": round(v_a, 6),
+        "median_b": round(v_b, 6),
+        "rel_dev": round(dev, 4),
+        "label": label,
+    }
+    return label, pair
+
+
+def _compat_verdict(stat: dict[str, Any]) -> str:
+    """总体判定; 顺序与原 elif 链一致."""
+    if stat["conflicting"] > 0:
+        return "conflicting_across_groups"
+    if stat["n_pairs"] and stat["consistent"] == stat["n_pairs"]:
+        return "all_compatible"
+    if stat["conflicting"] == 0 and stat["n_pairs"]:
+        return "partially_compatible"
+    return "no_shared_unit_for_compare"
+
+
 def assess_group_compatibility(
     group_stats: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
@@ -64,50 +113,19 @@ def assess_group_compatibility(
 
     返回组间 pairwise 结果 + 总体判定. 只比对同 unit 组; 不同 unit 不混判.
     """
-    units: dict[str, list[tuple[str, float]]] = {}
-    for key, st in group_stats.items():
-        unit = st.get("unit")
-        med = st.get("median")
-        if unit is not None and med is not None:
-            units.setdefault(unit, []).append((key, med))
+    units = _group_units(group_stats)
 
     pairs: list[dict[str, Any]] = []
     stat = {"consistent": 0, "moderate": 0, "conflicting": 0, "n_pairs": 0}
     for unit, items in units.items():
         for i in range(len(items)):
             for j in range(i + 1, len(items)):
-                k_a, v_a = items[i]
-                k_b, v_b = items[j]
-                dev = _rel_dev(v_a, v_b)
-                if dev <= _CONSISTENT_REL:
-                    label = "consistent"
-                elif dev <= _MODERATE_REL:
-                    label = "moderate"
-                else:
-                    label = "conflicting"
+                label, pair = _compare_pair(unit, items[i], items[j])
                 stat[label] += 1
                 stat["n_pairs"] += 1
-                pairs.append(
-                    {
-                        "unit": unit,
-                        "group_a": k_a,
-                        "group_b": k_b,
-                        "median_a": round(v_a, 6),
-                        "median_b": round(v_b, 6),
-                        "rel_dev": round(dev, 4),
-                        "label": label,
-                    }
-                )
+                pairs.append(pair)
 
-    if stat["conflicting"] > 0:
-        verdict = "conflicting_across_groups"
-    elif stat["n_pairs"] and stat["consistent"] == stat["n_pairs"]:
-        verdict = "all_compatible"
-    elif stat["conflicting"] == 0 and stat["n_pairs"]:
-        verdict = "partially_compatible"
-    else:
-        verdict = "no_shared_unit_for_compare"
-    stat["verdict"] = verdict
+    stat["verdict"] = _compat_verdict(stat)
     return {
         "pairs": sorted(pairs, key=lambda p: (p["unit"], p["group_a"], p["group_b"])),
         "overall": stat,

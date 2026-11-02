@@ -148,34 +148,35 @@ class MigrationManager:
         self._conn.commit()
 
         for target_version, func in pending:
-            logger.info(
-                "running migration to v%d on %s", target_version, self.db_path
-            )
-            # Snapshot the pre-migration state so rollback_to() can restore it.
-            self._backup(self._current_version)
-            before = self._snapshot()
-            try:
-                # `with conn` is a transaction context: commit on clean exit,
-                # rollback on exception. We set user_version INSIDE the
-                # transaction so a crash mid-migration doesn't bump the version.
-                with self._conn:
-                    func(self._conn)
-                    _set_user_version(self._conn, target_version)
-                    self._record_migration(target_version)
-            except Exception:
-                logger.exception(
-                    "migration to v%d failed on %s",
-                    target_version,
-                    self.db_path,
-                )
-                raise
-            self._current_version = target_version
-            self._check_integrity(before, target_version)
-            logger.info(
-                "%s migrated to v%d", self.db_path, target_version
-            )
+            MigrationManager._apply_migration(self, target_version, func)
 
         return self._current_version
+
+    def _apply_migration(
+        self, target_version: int, func: Callable[[sqlite3.Connection], None]
+    ) -> None:
+        logger.info("running migration to v%d on %s", target_version, self.db_path)
+        # Snapshot the pre-migration state so rollback_to() can restore it.
+        self._backup(self._current_version)
+        before = self._snapshot()
+        try:
+            # `with conn` is a transaction context: commit on clean exit,
+            # rollback on exception. We set user_version INSIDE the
+            # transaction so a crash mid-migration doesn't bump the version.
+            with self._conn:
+                func(self._conn)
+                _set_user_version(self._conn, target_version)
+                self._record_migration(target_version)
+        except Exception:
+            logger.exception(
+                "migration to v%d failed on %s",
+                target_version,
+                self.db_path,
+            )
+            raise
+        self._current_version = target_version
+        self._check_integrity(before, target_version)
+        logger.info("%s migrated to v%d", self.db_path, target_version)
 
     # -- pre/post migration safety nets (backups + integrity checks) --
 
@@ -233,10 +234,14 @@ class MigrationManager:
         DELETE/WHERE). Warnings only — the migration already committed.
         """
         after = self._snapshot()
-        if before.get("__table_count__", 0) > 0 and after.get("__table_count__", -1) == 0:
+        if (
+            before.get("__table_count__", 0) > 0
+            and after.get("__table_count__", -1) == 0
+        ):
             logger.warning(
                 "v%d on %s: table count dropped to 0 — migration likely wiped schema",
-                version, self.db_path,
+                version,
+                self.db_path,
             )
         for table, old_count in before.items():
             if table == "__table_count__" or not isinstance(old_count, int):
@@ -247,7 +252,11 @@ class MigrationManager:
             if old_count > 0 and new_count < old_count * 0.5:
                 logger.warning(
                     "v%d on %s: %s rows %d -> %d (>50%% drop, accidental DELETE?)",
-                    version, self.db_path, table, old_count, new_count,
+                    version,
+                    self.db_path,
+                    table,
+                    old_count,
+                    new_count,
                 )
 
     # -- schema_meta: app version + migration history --

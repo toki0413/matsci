@@ -1,0 +1,119 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-10-30T22:13:10",
+  "metadata": {
+    "run_id": "loop_11e697aa",
+    "objective": "目标：用一份**真实文献**抽取的 MgH2 脱氢表观活化能数据集，做一次带固定假设的元分析（meta-analysis）：检验\"催化降低 Ea\"在跨研究、跨方法时是否成立，量化文献内部的信号与噪声，并给出可被新测量推翻的定量预测。至少 50 个真实循环，交付代码、结果与报告。\n\n数据（只读，禁止修改）：data/ea_dataset.csv\n- 48 行，来自 20 篇一手论文（每行都逐字回源校",
+    "phases": [
+      "plan",
+      "report"
+    ],
+    "total_time": 7.160310745239258
+  },
+  "spans": [
+    {
+      "name": "control_trace",
+      "span_id": "0a8ed03d9136",
+      "start_time": 1793369583.4400277,
+      "end_time": 1793369583.4401631,
+      "duration_ms": 0.14,
+      "memory_start_mb": 257.36328125,
+      "memory_end_mb": 257.36328125,
+      "memory_peak_mb": 257.36328125,
+      "metadata": {
+        "name": "objective_fixed_protocol",
+        "iteration": 0,
+        "evidence": "action_replaced=plan",
+        "action": "force_route"
+      },
+      "children": []
+    },
+    {
+      "name": "phase:plan",
+      "span_id": "aa08bf23dfa0",
+      "start_time": 1793369583.4412262,
+      "end_time": 1793369590.2234614,
+      "duration_ms": 6782.24,
+      "memory_start_mb": 257.36328125,
+      "memory_end_mb": 362.59375,
+      "memory_peak_mb": 362.59375,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": []
+    },
+    {
+      "name": "control_trace",
+      "span_id": "fb6f27ec1816",
+      "start_time": 1793369590.262012,
+      "end_time": 1793369590.262109,
+      "duration_ms": 0.1,
+      "memory_start_mb": 362.59375,
+      "memory_end_mb": 362.59375,
+      "memory_peak_mb": 362.59375,
+      "metadata": {
+        "name": "llm_unavailable",
+        "iteration": 1,
+        "evidence": "kind=llm_quota source=phase_latch",
+        "action": "stop"
+      },
+      "children": []
+    },
+    {
+      "name": "phase:report",
+      "span_id": "bf679dc81512",
+      "start_time": 1793369590.347698,
+      "end_time": 1793369590.4261,
+      "duration_ms": 78.4,
+      "memory_start_mb": 362.59375,
+      "memory_end_mb": 362.59375,
+      "memory_peak_mb": 362.59375,
+      "metadata": {
+        "status": "completed"
+      },
+      "children": [
+        {
+          "name": "control_trace",
+          "span_id": "909473c66a1e",
+          "start_time": 1793369590.4254918,
+          "end_time": 1793369590.425675,
+          "duration_ms": 0.18,
+          "memory_start_mb": 362.59375,
+          "memory_end_mb": 362.59375,
+          "memory_peak_mb": 362.59375,
+          "metadata": {
+            "name": "exec_exit_classes",
+            "iteration": 1,
+            "evidence": "none",
+            "action": "advisory_hint"
+          },
+          "children": []
+        }
+      ]
+    }
+  ],
+  "tool_calls": [],
+  "summary": {
+    "total_spans": 5,
+    "by_name": {
+      "control_trace": {
+        "count": 3,
+        "duration_ms": 0.42000000000000004,
+        "avg_memory_delta_mb": 0.0,
+        "max_memory_peak_mb": 362.594
+      },
+      "phase:plan": {
+        "count": 1,
+        "duration_ms": 6782.24,
+        "avg_memory_delta_mb": 105.23,
+        "max_memory_peak_mb": 362.594
+      },
+      "phase:report": {
+        "count": 1,
+        "duration_ms": 78.4,
+        "avg_memory_delta_mb": 0.0,
+        "max_memory_peak_mb": 362.594
+      }
+    }
+  }
+}

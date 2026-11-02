@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # Spec: deep_think → CSpace 桥（外部草稿 → 可证伪工作区）
 
 > 状态: **Design / 待实现**。目的: 把 external-thinking 的"写"通道（deep_think 把思维倾入

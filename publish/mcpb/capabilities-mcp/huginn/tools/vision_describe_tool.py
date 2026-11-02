@@ -23,6 +23,7 @@ rich 度的 JSON. 跟调 read_csv 一样, 符合"工具自动触发"原则.
   - 失败降级不抛异常, 返 success=False + error 让 agent 决策.
   - 不进入决策回路, 只做感知前端 (符合"反对黑 box ML 进决策"偏好).
 """
+
 from __future__ import annotations
 
 import io
@@ -59,11 +60,13 @@ def _probe_deepseek_ocr() -> bool:
         return _probed["deepseek_ocr"]
     try:
         import torch
+
         if not torch.cuda.is_available():
             _probed["deepseek_ocr"] = False
             return False
         # 权重路径: 由 HUGINN_DEEPSEEK_OCR_PATH 指向本地下载目录
         import os
+
         path = os.environ.get("HUGINN_DEEPSEEK_OCR_PATH", "")
         if not path or not Path(path).exists():
             _probed["deepseek_ocr"] = False
@@ -81,6 +84,7 @@ def _probe_paddleocr() -> bool:
         return _probed["paddleocr"]
     try:
         import paddleocr  # noqa: F401
+
         _probed["paddleocr"] = True
         return True
     except Exception:
@@ -94,6 +98,7 @@ def _probe_easyocr() -> bool:
         return _probed["easyocr"]
     try:
         import easyocr  # noqa: F401
+
         _probed["easyocr"] = True
         return True
     except Exception:
@@ -107,6 +112,7 @@ def _probe_tesseract() -> bool:
         return _probed["tesseract"]
     try:
         import pytesseract  # noqa: F401
+
         pytesseract.get_tesseract_version()
         _probed["tesseract"] = True
         return True
@@ -140,9 +146,8 @@ def _pick_tier() -> tuple[str, dict[str, bool]]:
 
 # ── Tier 实现 (先 stub, 后续填) ──────────────────────────────
 
-def _tier3_deepseek_ocr(
-    image_bytes: bytes, question: str
-) -> dict[str, Any]:
+
+def _tier3_deepseek_ocr(image_bytes: bytes, question: str) -> dict[str, Any]:
     """Tier 3: DeepSeek-OCR-2 推理.
 
     3B 参数, GPU 推理, ~6GB VRAM. 整页视觉压缩, 保留版式/公式/表格/
@@ -165,9 +170,121 @@ def _tier3_deepseek_ocr(
 _paddleocr_instance: Any = None
 
 
-def _tier2_paddleocr(
-    image_bytes: bytes, question: str
+def _get_paddleocr_instance() -> Any:
+    """加载/复用 PaddleOCR 单例.
+
+    单例: 第一次调用加载, 之后复用. 跨调用共享模型.
+    """
+    global _paddleocr_instance
+    if _paddleocr_instance is None:
+        from paddleocr import PaddleOCR
+
+        _paddleocr_instance = PaddleOCR(
+            use_angle_cls=True,
+            lang="ch",  # 中英混排, ch 模型两者都支持
+            show_log=False,
+            # ponytail: 不开 structure_analysis, 它是另一套模型重.
+            # 升级路径: 加 PPStructureV2 做版面/表格.
+        )
+    return _paddleocr_instance
+
+
+def _paddleocr_text_blocks(ocr_result: Any) -> list[dict[str, Any]]:
+    """PaddleOCR 原始结果 → 按位置排序的文本块列表."""
+    text_blocks: list[dict[str, Any]] = []
+    if ocr_result and ocr_result[0]:
+        for line in ocr_result[0]:
+            # line = [bbox, (text, confidence)]
+            bbox, (text, conf) = line[0], line[1]
+            # bbox 是 4 个 [x,y] 点
+            xs = [p[0] for p in bbox]
+            ys = [p[1] for p in bbox]
+            text_blocks.append(
+                {
+                    "text": text,
+                    "bbox": [min(xs), min(ys), max(xs), max(ys)],
+                    "confidence": float(conf),
+                }
+            )
+
+    # 按位置排序 (上到下, 左到右) 让 LLM 易读
+    text_blocks.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
+    return text_blocks
+
+
+def _paddleocr_scene(question: str) -> str | None:
+    """question 关键词路由: 谱图类问题触发 image_analysis_tool."""
+    q_lower = question.lower() if question else ""
+    scene_map = {
+        "xrd": "plot_extract",
+        "ir": "plot_extract",
+        "raman": "plot_extract",
+        "uv": "plot_extract",
+        "sem": "sem_analysis",
+        "tem": "sem_analysis",
+        "stress": "plot_extract",
+        "strain": "plot_extract",
+        "dsc": "plot_extract",
+        "tga": "plot_extract",
+    }
+    for kw, sc in scene_map.items():
+        if kw in q_lower:
+            return sc
+    return None
+
+
+def _paddleocr_structured(
+    image_bytes: bytes,
+    question: str,
+    scene: str | None,
+    text_blocks: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """命中 scene 且有文本块时, 调 image_analysis_tool 拿结构化结果."""
+    if not scene or not text_blocks:
+        return None
+    try:
+        import base64 as b64
+
+        from huginn.tools.registry import ToolRegistry
+
+        img_tool = ToolRegistry.get("image_analysis_tool")
+        if img_tool:
+            res = img_tool.call(
+                {
+                    "image_base64": b64.b64encode(image_bytes).decode(),
+                    "scene": scene,
+                    "task_description": question,
+                }
+            )
+            if res and getattr(res, "success", False):
+                return res.data if hasattr(res, "data") else res
+    except Exception as exc:
+        logger.debug("image_analysis_tool call failed: %s", exc, exc_info=True)
+    return None
+
+
+def _paddleocr_output(
+    text_blocks: list[dict[str, Any]],
+    img: Any,
+    scene: str | None,
+    structured: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    """组装 Tier 2 输出字典."""
+    out: dict[str, Any] = {
+        "tier": "tier2_paddleocr",
+        "available": True,
+        "text_blocks": text_blocks,
+        "text_concat": " ".join(b["text"] for b in text_blocks),
+        "image_size": list(img.size),
+        "block_count": len(text_blocks),
+    }
+    if structured is not None:
+        out["structured_analysis"] = structured
+        out["scene"] = scene
+    return out
+
+
+def _tier2_paddleocr(image_bytes: bytes, question: str) -> dict[str, Any]:
     """Tier 2: PaddleOCR + image_analysis_tool.
 
     纯 CPU 可跑. 三件套:
@@ -180,23 +297,13 @@ def _tier2_paddleocr(
 
     ponytail: PaddleOCR 加载慢 (几十秒), 用模块级单例避免重复加载.
     """
-    global _paddleocr_instance
     try:
         import io as _io
 
         import numpy as np
         from PIL import Image
 
-        # 单例: 第一次调用加载, 之后复用. 跨调用共享模型.
-        if _paddleocr_instance is None:
-            from paddleocr import PaddleOCR
-            _paddleocr_instance = PaddleOCR(
-                use_angle_cls=True,
-                lang="ch",  # 中英混排, ch 模型两者都支持
-                show_log=False,
-                # ponytail: 不开 structure_analysis, 它是另一套模型重.
-                # 升级路径: 加 PPStructureV2 做版面/表格.
-            )
+        ocr = _get_paddleocr_instance()
 
         img = Image.open(_io.BytesIO(image_bytes))
         if img.mode != "RGB":
@@ -204,74 +311,14 @@ def _tier2_paddleocr(
         arr = np.asarray(img)
 
         # PaddleOCR 推理
-        ocr_result = _paddleocr_instance.ocr(arr, cls=True)
-        text_blocks: list[dict[str, Any]] = []
-        if ocr_result and ocr_result[0]:
-            for line in ocr_result[0]:
-                # line = [bbox, (text, confidence)]
-                bbox, (text, conf) = line[0], line[1]
-                # bbox 是 4 个 [x,y] 点
-                xs = [p[0] for p in bbox]
-                ys = [p[1] for p in bbox]
-                text_blocks.append({
-                    "text": text,
-                    "bbox": [min(xs), min(ys), max(xs), max(ys)],
-                    "confidence": float(conf),
-                })
-
-        # 按位置排序 (上到下, 左到右) 让 LLM 易读
-        text_blocks.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
+        ocr_result = ocr.ocr(arr, cls=True)
+        text_blocks = _paddleocr_text_blocks(ocr_result)
 
         # question 关键词路由: 谱图类问题触发 image_analysis_tool
-        structured: dict[str, Any] | None = None
-        q_lower = question.lower() if question else ""
-        scene_map = {
-            "xrd": "plot_extract",
-            "ir": "plot_extract",
-            "raman": "plot_extract",
-            "uv": "plot_extract",
-            "sem": "sem_analysis",
-            "tem": "sem_analysis",
-            "stress": "plot_extract",
-            "strain": "plot_extract",
-            "dsc": "plot_extract",
-            "tga": "plot_extract",
-        }
-        scene = None
-        for kw, sc in scene_map.items():
-            if kw in q_lower:
-                scene = sc
-                break
+        scene = _paddleocr_scene(question)
+        structured = _paddleocr_structured(image_bytes, question, scene, text_blocks)
 
-        if scene and text_blocks:
-            try:
-                import base64 as b64
-
-                from huginn.tools.registry import ToolRegistry
-                img_tool = ToolRegistry.get("image_analysis_tool")
-                if img_tool:
-                    res = img_tool.call({
-                        "image_base64": b64.b64encode(image_bytes).decode(),
-                        "scene": scene,
-                        "task_description": question,
-                    })
-                    if res and getattr(res, "success", False):
-                        structured = res.data if hasattr(res, "data") else res
-            except Exception as exc:
-                logger.debug("image_analysis_tool call failed: %s", exc, exc_info=True)
-
-        out: dict[str, Any] = {
-            "tier": "tier2_paddleocr",
-            "available": True,
-            "text_blocks": text_blocks,
-            "text_concat": " ".join(b["text"] for b in text_blocks),
-            "image_size": list(img.size),
-            "block_count": len(text_blocks),
-        }
-        if structured is not None:
-            out["structured_analysis"] = structured
-            out["scene"] = scene
-        return out
+        return _paddleocr_output(text_blocks, img, scene, structured)
     except Exception as exc:
         return {
             "tier": "tier2_paddleocr",
@@ -280,9 +327,7 @@ def _tier2_paddleocr(
         }
 
 
-def _tier1_classic_ocr(
-    image_bytes: bytes, question: str
-) -> dict[str, Any]:
+def _tier1_classic_ocr(image_bytes: bytes, question: str) -> dict[str, Any]:
     """Tier 1: EasyOCR/Tesseract + 像素统计.
 
     复用 ocr_loader._ocr_image. 输出: {text_blocks, pixel_stats}.
@@ -328,6 +373,7 @@ def _tier1_classic_ocr(
 
 # ── 统一调度入口 ─────────────────────────────────────────────
 
+
 def _run_tier(image_bytes: bytes, question: str) -> dict[str, Any]:
     """单次 Tier 调度. 不含 consistency 检查.
 
@@ -362,8 +408,13 @@ def _run_tier(image_bytes: bytes, question: str) -> dict[str, Any]:
 # text_blocks 数量差 >20% 或 structured_analysis 计数类字段不一致 → inconsistent.
 # ponytail: 字段级硬比较, 不上语义匹配. ceiling: 同义不同字会误判.
 _COMPARE_FIELDS = (
-    "n_curves", "n_points", "n_particles", "n_elements",
-    "n_defects", "n_phases", "n_fft_spots",
+    "n_curves",
+    "n_points",
+    "n_particles",
+    "n_elements",
+    "n_defects",
+    "n_phases",
+    "n_fft_spots",
 )
 
 
@@ -405,9 +456,13 @@ def _compare_describe_results(r1: dict[str, Any], r2: dict[str, Any]) -> dict[st
     # 3. pixel_stats mean (Tier 1 兜底路径)
     ps1 = (r1.get("pixel_stats") or {}).get("mean")
     ps2 = (r2.get("pixel_stats") or {}).get("mean")
-    if ps1 is not None and ps2 is not None and abs(ps1 - ps2) / max(abs(ps1), abs(ps2), 1.0) > 0.05:
-            inconsistent = True
-            notes.append(f"pixel mean: {ps1:.1f} vs {ps2:.1f}")
+    if (
+        ps1 is not None
+        and ps2 is not None
+        and abs(ps1 - ps2) / max(abs(ps1), abs(ps2), 1.0) > 0.05
+    ):
+        inconsistent = True
+        notes.append(f"pixel mean: {ps1:.1f} vs {ps2:.1f}")
 
     return {
         "inconsistent": inconsistent,
@@ -470,14 +525,20 @@ def describe_image(
     """
     path = Path(image_path)
     if not path.exists():
-        return {"tier": "error", "available": False, "error": f"图像不存在: {image_path}"}
+        return {
+            "tier": "error",
+            "available": False,
+            "error": f"图像不存在: {image_path}",
+        }
 
     try:
         image_bytes = path.read_bytes()
     except Exception as exc:
         return {"tier": "error", "available": False, "error": f"读图失败: {exc}"}
 
-    return describe_image_bytes(image_bytes, question, check_consistency=check_consistency)
+    return describe_image_bytes(
+        image_bytes, question, check_consistency=check_consistency
+    )
 
 
 # ── S3: 多图序列 (in-situ / 原位 / 反应序列) ─────────────────────────────
@@ -485,9 +546,11 @@ def describe_image(
 
 # 帧间一致性阈值 — 超过任一阈值标 low_inter_frame_consistency
 # ponytail: 经验阈值. 升级路径: 按图像类型 (XRD/SEM/TEM) 自适应阈值.
-_INTER_FRAME_HIST_CORR_THRESHOLD = 0.8   # 相邻帧直方图相关 < 0.8 → 不一致
-_INTER_FRAME_TEXT_DELTA_THRESHOLD = 0.5   # text_blocks 数量变化 > 50% → 不一致
-_INTER_FRAME_FIELD_DELTA_THRESHOLD = 0.5  # structured_analysis 字段数变化 > 50% → 不一致
+_INTER_FRAME_HIST_CORR_THRESHOLD = 0.8  # 相邻帧直方图相关 < 0.8 → 不一致
+_INTER_FRAME_TEXT_DELTA_THRESHOLD = 0.5  # text_blocks 数量变化 > 50% → 不一致
+_INTER_FRAME_FIELD_DELTA_THRESHOLD = (
+    0.5  # structured_analysis 字段数变化 > 50% → 不一致
+)
 
 
 def _hist_correlation(h1: list[float], h2: list[float]) -> float:
@@ -514,8 +577,105 @@ def _hist_correlation(h1: list[float], h2: list[float]) -> float:
     return num / (den1 * den2)
 
 
+def _describe_frames(image_paths: list[str], question: str) -> list[dict[str, Any]]:
+    """多帧: 每帧单独 describe."""
+    per_frame: list[dict[str, Any]] = []
+    for i, p in enumerate(image_paths):
+        r = describe_image(
+            p, question, check_consistency=False
+        )  # 帧内不再开 A1, 跨帧才是重点
+        r["frame_index"] = i
+        per_frame.append(r)
+    return per_frame
+
+
+def _inter_frame_check(
+    prev: dict[str, Any], curr: dict[str, Any], i: int
+) -> tuple[dict[str, Any], str | None]:
+    """相邻两帧一致性检查; 返回 (pair_result, 问题摘要)."""
+    issues: list[str] = []
+
+    # 1. histogram 相关
+    prev_hist = (prev.get("pixel_stats") or {}).get("histogram") or []
+    curr_hist = (curr.get("pixel_stats") or {}).get("histogram") or []
+    if prev_hist and curr_hist:
+        corr = _hist_correlation(prev_hist, curr_hist)
+        if corr < _INTER_FRAME_HIST_CORR_THRESHOLD:
+            issues.append(f"hist_corr={corr:.3f}<{_INTER_FRAME_HIST_CORR_THRESHOLD}")
+
+    # 2. text_blocks 数量变化
+    prev_n = len(prev.get("text_blocks") or prev.get("text") or [])
+    curr_n = len(curr.get("text_blocks") or curr.get("text") or [])
+    if prev_n > 0:
+        delta = abs(curr_n - prev_n) / prev_n
+        if delta > _INTER_FRAME_TEXT_DELTA_THRESHOLD:
+            issues.append(
+                f"text_n_delta={delta:.3f}>{_INTER_FRAME_TEXT_DELTA_THRESHOLD}"
+            )
+
+    # 3. structured_analysis 字段数变化
+    prev_sa = prev.get("structured_analysis") or {}
+    curr_sa = curr.get("structured_analysis") or {}
+    if isinstance(prev_sa, dict) and isinstance(curr_sa, dict) and prev_sa:
+        prev_nf = len(prev_sa)
+        curr_nf = len(curr_sa)
+        delta_f = abs(curr_nf - prev_nf) / prev_nf
+        if delta_f > _INTER_FRAME_FIELD_DELTA_THRESHOLD:
+            issues.append(
+                f"field_n_delta={delta_f:.3f}>{_INTER_FRAME_FIELD_DELTA_THRESHOLD}"
+            )
+
+    pair_result = {
+        "frame_pair": (i - 1, i),
+        "issues": issues,
+        "ok": len(issues) == 0,
+    }
+    summary = f"pair({i - 1},{i}): " + ", ".join(issues) if issues else None
+    return pair_result, summary
+
+
+def _inter_frame_checks(
+    per_frame: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """帧间一致性: 相邻两两比较."""
+    inter_frame_issues: list[str] = []
+    pair_results: list[dict] = []
+    for i in range(1, len(per_frame)):
+        pair, summary = _inter_frame_check(per_frame[i - 1], per_frame[i], i)
+        pair_results.append(pair)
+        if summary:
+            inter_frame_issues.append(summary)
+    return pair_results, inter_frame_issues
+
+
+def _sequence_result(
+    per_frame: list[dict[str, Any]],
+    pair_results: list[dict],
+    inter_frame_issues: list[str],
+) -> dict[str, Any]:
+    """组装多帧序列结果 (含视觉-时空耦合提示)."""
+    return {
+        "tier": "multi_frame_sequence",
+        "available": True,
+        "n_frames": len(per_frame),
+        "per_frame": per_frame,
+        "inter_frame_consistency": {
+            "pairs": pair_results,
+            "issues": inter_frame_issues,
+            "low_inter_frame_consistency": len(inter_frame_issues) > 0,
+            "inconsistency_reasons": inter_frame_issues,
+        },
+        # 视觉-时空耦合提示: 让 agent 知道这跟 F(q,t) 衰减对偶
+        "physical_coupling_hint": (
+            "原位 XRD 帧间峰位漂移可视化 ≈ F(q,t) 中间散射函数衰减 — "
+            "若同时有 lammps _physical_timeseries F_q_t 数据, 可交叉验证."
+        ),
+    }
+
+
 def describe_image_sequence(
-    image_paths: list[str], question: str = "",
+    image_paths: list[str],
+    question: str = "",
     check_consistency: bool = True,
 ) -> dict[str, Any]:
     """S3: 多图序列视觉描述 + 帧间一致性检测.
@@ -538,74 +698,17 @@ def describe_image_sequence(
 
     # 单帧走原单图路径 (保留一致性检测语义)
     if len(image_paths) == 1:
-        return describe_image(image_paths[0], question, check_consistency=check_consistency)
+        return describe_image(
+            image_paths[0], question, check_consistency=check_consistency
+        )
 
     # 多帧: 每帧单独 describe
-    per_frame: list[dict[str, Any]] = []
-    for i, p in enumerate(image_paths):
-        r = describe_image(p, question, check_consistency=False)  # 帧内不再开 A1, 跨帧才是重点
-        r["frame_index"] = i
-        per_frame.append(r)
+    per_frame = _describe_frames(image_paths, question)
 
     # 帧间一致性: 相邻两两比较
-    inter_frame_issues: list[str] = []
-    pair_results: list[dict] = []
-    for i in range(1, len(per_frame)):
-        prev = per_frame[i - 1]
-        curr = per_frame[i]
-        issues: list[str] = []
+    pair_results, inter_frame_issues = _inter_frame_checks(per_frame)
 
-        # 1. histogram 相关
-        prev_hist = ((prev.get("pixel_stats") or {}).get("histogram") or [])
-        curr_hist = ((curr.get("pixel_stats") or {}).get("histogram") or [])
-        if prev_hist and curr_hist:
-            corr = _hist_correlation(prev_hist, curr_hist)
-            if corr < _INTER_FRAME_HIST_CORR_THRESHOLD:
-                issues.append(f"hist_corr={corr:.3f}<{_INTER_FRAME_HIST_CORR_THRESHOLD}")
-
-        # 2. text_blocks 数量变化
-        prev_n = len(prev.get("text_blocks") or prev.get("text") or [])
-        curr_n = len(curr.get("text_blocks") or curr.get("text") or [])
-        if prev_n > 0:
-            delta = abs(curr_n - prev_n) / prev_n
-            if delta > _INTER_FRAME_TEXT_DELTA_THRESHOLD:
-                issues.append(f"text_n_delta={delta:.3f}>{_INTER_FRAME_TEXT_DELTA_THRESHOLD}")
-
-        # 3. structured_analysis 字段数变化
-        prev_sa = prev.get("structured_analysis") or {}
-        curr_sa = curr.get("structured_analysis") or {}
-        if isinstance(prev_sa, dict) and isinstance(curr_sa, dict) and prev_sa:
-            prev_nf = len(prev_sa)
-            curr_nf = len(curr_sa)
-            delta_f = abs(curr_nf - prev_nf) / prev_nf
-            if delta_f > _INTER_FRAME_FIELD_DELTA_THRESHOLD:
-                issues.append(f"field_n_delta={delta_f:.3f}>{_INTER_FRAME_FIELD_DELTA_THRESHOLD}")
-
-        pair_results.append({
-            "frame_pair": (i - 1, i),
-            "issues": issues,
-            "ok": len(issues) == 0,
-        })
-        if issues:
-            inter_frame_issues.append(f"pair({i-1},{i}): " + ", ".join(issues))
-
-    return {
-        "tier": "multi_frame_sequence",
-        "available": True,
-        "n_frames": len(per_frame),
-        "per_frame": per_frame,
-        "inter_frame_consistency": {
-            "pairs": pair_results,
-            "issues": inter_frame_issues,
-            "low_inter_frame_consistency": len(inter_frame_issues) > 0,
-            "inconsistency_reasons": inter_frame_issues,
-        },
-        # 视觉-时空耦合提示: 让 agent 知道这跟 F(q,t) 衰减对偶
-        "physical_coupling_hint": (
-            "原位 XRD 帧间峰位漂移可视化 ≈ F(q,t) 中间散射函数衰减 — "
-            "若同时有 lammps _physical_timeseries F_q_t 数据, 可交叉验证."
-        ),
-    }
+    return _sequence_result(per_frame, pair_results, inter_frame_issues)
 
 
 # ── M5: 结构化 captioning ─────────────────────────────────────────────────
@@ -644,8 +747,7 @@ _SCENE_CAPTION_TEMPLATES: dict[str, str] = {
         "Interface fraction={interface_percent}%."
     ),
     "deplot_chart": (
-        "[Chart] Captioned: {chart_caption}. "
-        "Data series identified: {n_series}."
+        "[Chart] Captioned: {chart_caption}. Data series identified: {n_series}."
     ),
 }
 
@@ -661,6 +763,7 @@ def _format_caption(scene: str, structured: dict[str, Any]) -> str:
     try:
         # 安全 format: 缺字段不抛
         from string import Formatter
+
         fields_needed = [
             f for _, f, _, _ in Formatter().parse(template) if f is not None
         ]
@@ -668,6 +771,130 @@ def _format_caption(scene: str, structured: dict[str, Any]) -> str:
         return template.format(**safe_kwargs)
     except (KeyError, IndexError, ValueError):
         return f"[{scene}] analysis completed."
+
+
+def _caption_default_scenes(question: str) -> list[str]:
+    """启发式挑默认 scene 顺序 (question 关键词影响排序)."""
+    # ponytail: plot_extract + sem_analysis 覆盖最常见的谱图 + 形貌.
+    # 升级路径: 用 pixel_stats / 直方图自动判图像类型再选 scene.
+    default_scenes = ["plot_extract", "sem_analysis"]
+    q_lower = question.lower() if question else ""
+    # question 含特定关键词时把对应 scene 提到前面
+    if any(
+        k in q_lower
+        for k in ("xrd", "ir", "raman", "uv", "stress", "strain", "dsc", "tga")
+    ):
+        default_scenes = ["plot_extract"] + [
+            s for s in default_scenes if s != "plot_extract"
+        ]
+    elif any(k in q_lower for k in ("sem", "tem", "particle", "morphology")):
+        default_scenes = ["sem_analysis"] + [
+            s for s in default_scenes if s != "sem_analysis"
+        ]
+    return default_scenes
+
+
+def _scene_module_path(scene: str) -> str:
+    """scene action 对应的模块路径."""
+    mod_path = f"huginn.tools.image_analysis.scenes_{scene.split('_')[0]}"
+    if scene == "plot_extract":
+        mod_path = "huginn.tools.image_analysis.scenes_plot_extract"
+    elif scene == "deplot_chart":
+        mod_path = "huginn.tools.image_analysis.scenes_deplot"
+    elif scene == "particle_stats":
+        mod_path = "huginn.tools.image_analysis.scenes_particles"
+    elif scene == "defect_detect":
+        mod_path = "huginn.tools.image_analysis.scenes_defect"
+    elif scene == "phase_field":
+        mod_path = "huginn.tools.image_analysis.scenes_phase_field"
+    return mod_path
+
+
+def _run_caption_scene(scene: str, image_bytes: bytes, question: str) -> str | None:
+    """跑一个 scene action, 成功则返回 caption; 失败/无结果返 None."""
+    try:
+        # scene 函数接收 ImageAnalysisInput(image_path, action, parameters)
+        # 落盘 image_bytes 到 tmp 文件 — scene 函数需要真实文件路径读图.
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            tmp.write(image_bytes)
+            tmp_path = tmp.name
+        try:
+            from huginn.tools.image_analysis.tool import ImageAnalysisInput
+
+            input_data = ImageAnalysisInput(
+                image_path=tmp_path,
+                action=scene,  # type: ignore[arg-type]
+                parameters={"task_description": question or f"Run {scene} analysis"},
+            )
+            # lazy import 对应 scene 模块, 直接调 sync 函数 (绕开 async ToolRegistry)
+            import importlib
+
+            mod = importlib.import_module(_scene_module_path(scene))
+            fn = getattr(mod, scene)
+            res = fn(input_data)
+            if res and getattr(res, "success", False):
+                structured = res.data if hasattr(res, "data") else res
+                if isinstance(structured, dict):
+                    return _format_caption(scene, structured)
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+    except Exception as exc:
+        logger.debug("caption scene %s failed: %s", scene, exc, exc_info=True)
+    return None
+
+
+def _pixel_stats_caption(base: dict[str, Any]) -> str | None:
+    """Tier 0 兜底: 用 pixel_stats 生成最简 caption."""
+    ps = base.get("pixel_stats") or {}
+    if not ps:
+        return None
+    size = ps.get("size", [0, 0])
+    mean = ps.get("mean", 0)
+    std = ps.get("std", 0)
+    return (
+        f"[Pixel] Image size={size}, gray mean={mean:.1f}, std={std:.1f}. "
+        "No specialized scene analysis available."
+    )
+
+
+def _collect_scene_captions(
+    base: dict[str, Any],
+    image_bytes: bytes,
+    question: str,
+    max_scenes: int,
+) -> tuple[list[str], list[str]]:
+    """收集 scene caption: 已有结构化结果优先, 再启发式补 scene, 最后像素兜底."""
+    scene_captions: list[str] = []
+    scenes_tried: list[str] = []
+
+    # 1. 如果 base 已经有 structured_analysis (Tier 2 question 路由命中), 直接用
+    existing_struct = base.get("structured_analysis")
+    existing_scene = base.get("scene")
+    if isinstance(existing_struct, dict) and existing_scene:
+        cap = _format_caption(existing_scene, existing_struct)
+        scene_captions.append(cap)
+        scenes_tried.append(existing_scene)
+
+    # 2. 启发式补 scene: 如果还不够 max_scenes, 跑默认 2 个最常见 scene
+    for scene in _caption_default_scenes(question):
+        if len(scenes_tried) >= max_scenes:
+            break
+        if scene in scenes_tried:
+            continue
+        cap = _run_caption_scene(scene, image_bytes, question)
+        if cap is not None:
+            scene_captions.append(cap)
+            scenes_tried.append(scene)
+
+    # 3. Tier 0 兜底: 如果啥 scene 都没跑出来, 用 pixel_stats 生成最简 caption
+    if not scene_captions and bool(base.get("available")):
+        cap = _pixel_stats_caption(base)
+        if cap is not None:
+            scene_captions.append(cap)
+            scenes_tried.append("pixel_stats")
+    return scene_captions, scenes_tried
 
 
 def caption_image_bytes(
@@ -703,103 +930,101 @@ def caption_image_bytes(
           - available: 是否拿到任何结构化结果
     """
     base = describe_image_bytes(image_bytes, question)
-    base_tier = base.get("tier", "unknown")
-    base_available = bool(base.get("available"))
 
-    scene_captions: list[str] = []
-    scenes_tried: list[str] = []
-
-    # 1. 如果 base 已经有 structured_analysis (Tier 2 question 路由命中), 直接用
-    existing_struct = base.get("structured_analysis")
-    existing_scene = base.get("scene")
-    if isinstance(existing_struct, dict) and existing_scene:
-        cap = _format_caption(existing_scene, existing_struct)
-        scene_captions.append(cap)
-        scenes_tried.append(existing_scene)
-
-    # 2. 启发式补 scene: 如果还不够 max_scenes, 跑默认 2 个最常见 scene
-    # ponytail: plot_extract + sem_analysis 覆盖最常见的谱图 + 形貌.
-    # 升级路径: 用 pixel_stats / 直方图自动判图像类型再选 scene.
-    default_scenes = ["plot_extract", "sem_analysis"]
-    q_lower = question.lower() if question else ""
-    # question 含特定关键词时把对应 scene 提到前面
-    if any(k in q_lower for k in ("xrd", "ir", "raman", "uv", "stress", "strain", "dsc", "tga")):
-        default_scenes = ["plot_extract"] + [s for s in default_scenes if s != "plot_extract"]
-    elif any(k in q_lower for k in ("sem", "tem", "particle", "morphology")):
-        default_scenes = ["sem_analysis"] + [s for s in default_scenes if s != "sem_analysis"]
-
-    for scene in default_scenes:
-        if len(scenes_tried) >= max_scenes:
-            break
-        if scene in scenes_tried:
-            continue
-        try:
-            # scene 函数接收 ImageAnalysisInput(image_path, action, parameters)
-            # 落盘 image_bytes 到 tmp 文件 — scene 函数需要真实文件路径读图.
-            import tempfile
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-                tmp.write(image_bytes)
-                tmp_path = tmp.name
-            try:
-                from huginn.tools.image_analysis.tool import ImageAnalysisInput
-                input_data = ImageAnalysisInput(
-                    image_path=tmp_path,
-                    action=scene,  # type: ignore[arg-type]
-                    parameters={"task_description": question or f"Run {scene} analysis"},
-                )
-                # lazy import 对应 scene 模块, 直接调 sync 函数 (绕开 async ToolRegistry)
-                mod_path = f"huginn.tools.image_analysis.scenes_{scene.split('_')[0]}"
-                if scene == "plot_extract":
-                    mod_path = "huginn.tools.image_analysis.scenes_plot_extract"
-                elif scene == "deplot_chart":
-                    mod_path = "huginn.tools.image_analysis.scenes_deplot"
-                elif scene == "particle_stats":
-                    mod_path = "huginn.tools.image_analysis.scenes_particles"
-                elif scene == "defect_detect":
-                    mod_path = "huginn.tools.image_analysis.scenes_defect"
-                elif scene == "phase_field":
-                    mod_path = "huginn.tools.image_analysis.scenes_phase_field"
-                import importlib
-                mod = importlib.import_module(mod_path)
-                fn = getattr(mod, scene)
-                res = fn(input_data)
-                if res and getattr(res, "success", False):
-                    structured = res.data if hasattr(res, "data") else res
-                    if isinstance(structured, dict):
-                        cap = _format_caption(scene, structured)
-                        scene_captions.append(cap)
-                        scenes_tried.append(scene)
-            finally:
-                Path(tmp_path).unlink(missing_ok=True)
-        except Exception as exc:
-            logger.debug("caption scene %s failed: %s", scene, exc, exc_info=True)
-
-    # 3. Tier 0 兜底: 如果啥 scene 都没跑出来, 用 pixel_stats 生成最简 caption
-    if not scene_captions and base_available:
-        ps = base.get("pixel_stats") or {}
-        if ps:
-            size = ps.get("size", [0, 0])
-            mean = ps.get("mean", 0)
-            std = ps.get("std", 0)
-            scene_captions.append(
-                f"[Pixel] Image size={size}, gray mean={mean:.1f}, std={std:.1f}. "
-                "No specialized scene analysis available."
-            )
-            scenes_tried.append("pixel_stats")
-
+    scene_captions, scenes_tried = _collect_scene_captions(
+        base, image_bytes, question, max_scenes
+    )
     caption_text = "\n".join(scene_captions) if scene_captions else ""
 
     return {
         "caption": caption_text,
         "scene_captions": scene_captions,
         "scenes_tried": scenes_tried,
-        "base_tier": base_tier,
+        "base_tier": base.get("tier", "unknown"),
         "available": bool(scene_captions),
         "base_result": base,
     }
 
 
+# ── tool 调用辅助 ───────────────────────────────────────────
+
+
+def _vision_write_output(output_path: str | None, result: dict[str, Any]) -> None:
+    """result available 且指定 output_path 时落盘 JSON."""
+    if output_path and result.get("available"):
+        import json
+
+        Path(output_path).write_text(
+            json.dumps(result, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+
+def _vision_tool_result(result: dict[str, Any]) -> ToolResult:
+    """把 describe 结果包成 ToolResult (success 由 available 决定)."""
+    success = bool(result.get("available"))
+    return ToolResult(
+        data=result,
+        success=success,
+        error=None if success else result.get("error", "unknown"),
+    )
+
+
+def _vision_sequence_result(input_data: VisionDescribeInput) -> ToolResult:
+    """S3: 多图序列路径 — describe_image_sequence + 落盘 + 包装."""
+    # S3: 多图默认开跨帧一致性
+    result = describe_image_sequence(
+        input_data.image_paths,
+        input_data.question,
+        check_consistency=True,
+    )
+    _vision_write_output(input_data.output_path, result)
+    return _vision_tool_result(result)
+
+
+def _vision_consistency_enabled(input_data: VisionDescribeInput) -> bool:
+    """P1-4: 量化类图像 (XRD/SEM/TEM/谱/峰/颗粒) 自动开启 A1 Hallu 检测.
+
+    之前 check_consistency 默认 False, 生产路径永不触发 — agent 瞎蒙无感知.
+    """
+    check_consistency = input_data.check_consistency
+    if not check_consistency:
+        q_lower = (input_data.question or "").lower()
+        if any(
+            kw in q_lower
+            for kw in (
+                "xrd",
+                "sem",
+                "tem",
+                "谱",
+                "峰",
+                "颗粒",
+                "分布",
+                "晶格",
+                "d-spacing",
+                "fft",
+                "particle",
+                "lattice",
+                "diffraction",
+            )
+        ):
+            check_consistency = True
+    return check_consistency
+
+
+def _vision_single_result(input_data: VisionDescribeInput) -> ToolResult:
+    """单图路径 — describe_image + 落盘 + 包装."""
+    result = describe_image(
+        input_data.image_path,
+        input_data.question,
+        check_consistency=_vision_consistency_enabled(input_data),
+    )
+    _vision_write_output(input_data.output_path, result)
+    return _vision_tool_result(result)
+
+
 # ── HuginnTool 包装 ──────────────────────────────────────────
+
 
 class VisionDescribeInput(BaseModel):
     image_path: str = Field(..., description="图像文件路径")
@@ -864,64 +1089,28 @@ class VisionDescribeTool(HuginnTool):
     async def validate_input(
         self, args: dict[str, Any], context: ToolContext | None = None
     ) -> ValidationResult:
-        input_data = args if isinstance(args, VisionDescribeInput) else VisionDescribeInput(**args)
+        input_data = (
+            args
+            if isinstance(args, VisionDescribeInput)
+            else VisionDescribeInput(**args)
+        )
         if not Path(input_data.image_path).exists():
             return ValidationResult(
                 result=False, message=f"图片不存在: {input_data.image_path}"
             )
         return ValidationResult(result=True)
 
-    async def call(
-        self, args: dict[str, Any], context: ToolContext
-    ) -> ToolResult:
-        input_data = args if isinstance(args, VisionDescribeInput) else VisionDescribeInput(**args)
+    async def call(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
+        input_data = (
+            args
+            if isinstance(args, VisionDescribeInput)
+            else VisionDescribeInput(**args)
+        )
         try:
             # S3: image_paths 非空走多图序列路径 (in-situ XRD / 原位 TEM)
             if input_data.image_paths:
-                result = describe_image_sequence(
-                    input_data.image_paths, input_data.question,
-                    check_consistency=True,  # 多图默认开跨帧一致性
-                )
-                if input_data.output_path and result.get("available"):
-                    import json
-                    Path(input_data.output_path).write_text(
-                        json.dumps(result, indent=2, ensure_ascii=False),
-                        encoding="utf-8",
-                    )
-                success = bool(result.get("available"))
-                return ToolResult(
-                    data=result,
-                    success=success,
-                    error=None if success else result.get("error", "unknown"),
-                )
-
-            # P1-4: 量化类图像 (XRD/SEM/TEM/谱/峰/颗粒) 自动开启 A1 Hallu 检测.
-            # 之前 check_consistency 默认 False, 生产路径永不触发 — agent 瞎蒙无感知.
-            check_consistency = input_data.check_consistency
-            if not check_consistency:
-                q_lower = (input_data.question or "").lower()
-                if any(kw in q_lower for kw in (
-                    "xrd", "sem", "tem", "谱", "峰", "颗粒", "分布", "晶格", "d-spacing",
-                    "fft", "particle", "lattice", "diffraction",
-                )):
-                    check_consistency = True
-
-            result = describe_image(
-                input_data.image_path, input_data.question,
-                check_consistency=check_consistency,
-            )
-            if input_data.output_path and result.get("available"):
-                import json
-                Path(input_data.output_path).write_text(
-                    json.dumps(result, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
-            success = bool(result.get("available"))
-            return ToolResult(
-                data=result,
-                success=success,
-                error=None if success else result.get("error", "unknown"),
-            )
+                return _vision_sequence_result(input_data)
+            return _vision_single_result(input_data)
         except Exception as exc:
             logger.warning("vision_describe failed: %s", exc, exc_info=True)
             return ToolResult(data=None, success=False, error=str(exc))
@@ -929,22 +1118,21 @@ class VisionDescribeTool(HuginnTool):
 
 # ── self-check (assert-based, 无框架) ────────────────────────
 
-def _selfcheck() -> None:
-    """10 项 assert 验证调度框架核心行为.
 
-    各 Tier 用 monkey-patch 模拟可用/不可用, 验证降级链.
-    """
-    import tempfile
-
-    from PIL import Image
-
-    # 1. 不存在的图像 → error tier
+def _sc_missing_image() -> None:
+    """#1. 不存在的图像 → error tier."""
     out = describe_image("/nonexistent.png", "test")
     assert out["tier"] == "error"
     assert out["available"] is False
     assert "不存在" in out["error"]
 
-    # 2. 真实图像 + 所有 Tier 都 stub/不可用 → tier0_none 或 tier1
+
+def _sc_real_image_tier() -> None:
+    """#2. 真实图像 + 所有 Tier 都 stub/不可用 → tier0_none 或 tier1."""
+    import tempfile
+
+    from PIL import Image
+
     # 先重置缓存让 _pick_tier 重新探测
     _reset_probe_cache()
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
@@ -954,44 +1142,59 @@ def _selfcheck() -> None:
         out = describe_image(tmp_path, "test")
         # 至少能跑到某个 Tier (可能是 tier1 如果 EasyOCR 装了, 否则 tier0)
         assert out["tier"] in (
-            "tier0_none", "tier1_classic_ocr",
-            "tier2_paddleocr", "tier3_deepseek_ocr",
+            "tier0_none",
+            "tier1_classic_ocr",
+            "tier2_paddleocr",
+            "tier3_deepseek_ocr",
         )
         assert "availability" in out
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
-    # 3. _pick_tier 返回 availability dict 含 4 个引擎
+
+def _sc_pick_tier_keys() -> None:
+    """#3. _pick_tier 返回 availability dict 含 4 个引擎."""
     _reset_probe_cache()
-    tier, avail = _pick_tier()
+    _tier, avail = _pick_tier()
     assert set(avail.keys()) == {"deepseek_ocr", "paddleocr", "easyocr", "tesseract"}
 
-    # 4. 探测缓存生效: 第二次调 _probe_* 不重新探测
+
+def _sc_probe_cache() -> None:
+    """#4-5. 探测缓存生效; _reset_probe_cache 真重置."""
     _reset_probe_cache()
     _ = _probe_easyocr()  # 第一次探测
     cached = _probed["easyocr"]
     _ = _probe_easyocr()  # 第二次应走缓存
     assert _probed["easyocr"] == cached
 
-    # 5. _reset_probe_cache 真重置
     _reset_probe_cache()
     assert _probed["deepseek_ocr"] is None
     assert _probed["paddleocr"] is None
 
-    # 6. _tier3_deepseek_ocr stub 返结构化 unavailable
+
+def _sc_tier3_stub() -> None:
+    """#6. _tier3_deepseek_ocr stub 返结构化 unavailable."""
     out = _tier3_deepseek_ocr(b"", "test")
     assert out["tier"] == "tier3_deepseek_ocr"
     assert out["available"] is False
     assert "stub" in out["error"]
 
-    # 7. _tier2_paddleocr: 没装时返 unavailable, 装了时返结构化结果
+
+def _sc_tier2_paddle() -> None:
+    """#7. _tier2_paddleocr: 没装时返 unavailable, 装了时返结构化结果."""
     out = _tier2_paddleocr(b"\x89PNG fake", "test")
     assert out["tier"] == "tier2_paddleocr"
     # 没装或假图片都走 except, 返 unavailable
     if not out["available"]:
         assert "PaddleOCR" in out["error"] or "推理失败" in out["error"]
 
-    # 8. _tier1_classic_ocr 真实跑 (EasyOCR/Tesseract 装了的话)
+
+def _sc_tier1_classic() -> None:
+    """#8. _tier1_classic_ocr 真实跑 (EasyOCR/Tesseract 装了的话)."""
+    import tempfile
+
+    from PIL import Image
+
     # 不强制 assert available, 只验返结构正确
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         Image.new("RGB", (10, 10), (255, 255, 255)).save(tmp.name)
@@ -1007,7 +1210,11 @@ def _selfcheck() -> None:
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
-    # 9. describe_image 顶层不抛 (失败也返 dict)
+
+def _sc_top_level_no_raise() -> None:
+    """#9. describe_image 顶层不抛 (失败也返 dict)."""
+    import tempfile
+
     # 用一个非图像文件触发 Tier 1 失败
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         tmp.write(b"not an image")
@@ -1019,64 +1226,121 @@ def _selfcheck() -> None:
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
-    # 10. VisionDescribeTool name/category 正确
+
+def _sc_tool_meta() -> None:
+    """#10. VisionDescribeTool name/category 正确."""
     tool = VisionDescribeTool()
     assert tool.name == "vision_describe"
     assert tool.category == "cv"
     assert tool.read_only is True
 
-    # 11. A1: check_consistency 默认 False, 行为不变 (向后兼容)
+
+def _sc_consistency_default() -> None:
+    """#11. A1: check_consistency 默认 False, 行为不变 (向后兼容)."""
+    import tempfile
+
+    from PIL import Image
+
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         Image.new("RGB", (10, 10), (128, 128, 128)).save(tmp.name)
         tmp_path = tmp.name
     try:
         out_default = describe_image(tmp_path, "test")
-        assert "low_confidence" not in out_default, "default should not add low_confidence"
+        assert "low_confidence" not in out_default, (
+            "default should not add low_confidence"
+        )
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
-    # 12. A1: check_consistency=True 时返回 low_confidence 字段
+
+def _sc_consistency_enabled() -> None:
+    """#12. A1: check_consistency=True 时返回 low_confidence 字段."""
+    import tempfile
+
+    from PIL import Image
+
     _reset_probe_cache()
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         Image.new("RGB", (10, 10), (128, 128, 128)).save(tmp.name)
         tmp_path = tmp.name
     try:
         out_consistency = describe_image(tmp_path, "test", check_consistency=True)
-        assert "low_confidence" in out_consistency, "check_consistency=True must add low_confidence"
-        assert "consistency_note" in out_consistency, "check_consistency=True must add consistency_note"
+        assert "low_confidence" in out_consistency, (
+            "check_consistency=True must add low_confidence"
+        )
+        assert "consistency_note" in out_consistency, (
+            "check_consistency=True must add consistency_note"
+        )
         # 同图同引擎两次调用, 结果应该一致 → low_confidence=False
         # (除非 Tier 不稳定, 那 exactly 是 Hallu 检测要抓的)
         assert isinstance(out_consistency["low_confidence"], bool)
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
-    # 13. A1: _compare_describe_results 三级比较
+
+def _sc_compare_results() -> None:
+    """#13. A1: _compare_describe_results 三级比较 (13a-13d)."""
     # 13a. text_blocks 数量差异 >20% → inconsistent
     r1 = {"text_blocks": [1, 2, 3, 4, 5]}
     r2 = {"text_blocks": [1, 2]}
     diff = _compare_describe_results(r1, r2)
-    assert diff["inconsistent"] is True, f"5 vs 2 text_blocks should be inconsistent: {diff}"
+    assert diff["inconsistent"] is True, (
+        f"5 vs 2 text_blocks should be inconsistent: {diff}"
+    )
     assert "text_blocks" in diff["note"]
 
     # 13b. structured_analysis 计数字段不一致 → inconsistent
     r1 = {"structured_analysis": {"n_particles": 10}}
     r2 = {"structured_analysis": {"n_particles": 5}}
     diff = _compare_describe_results(r1, r2)
-    assert diff["inconsistent"] is True, f"n_particles 10 vs 5 should be inconsistent: {diff}"
+    assert diff["inconsistent"] is True, (
+        f"n_particles 10 vs 5 should be inconsistent: {diff}"
+    )
     assert "n_particles" in diff["note"]
 
     # 13c. pixel_stats mean 差异 >5% → inconsistent
     r1 = {"pixel_stats": {"mean": 100.0}}
     r2 = {"pixel_stats": {"mean": 50.0}}
     diff = _compare_describe_results(r1, r2)
-    assert diff["inconsistent"] is True, f"mean 100 vs 50 should be inconsistent: {diff}"
+    assert diff["inconsistent"] is True, (
+        f"mean 100 vs 50 should be inconsistent: {diff}"
+    )
 
     # 13d. 一致结果 → inconsistent=False
-    r1 = {"text_blocks": [1, 2, 3], "structured_analysis": {"n_particles": 5}, "pixel_stats": {"mean": 100.0}}
-    r2 = {"text_blocks": [1, 2, 3], "structured_analysis": {"n_particles": 5}, "pixel_stats": {"mean": 100.0}}
+    r1 = {
+        "text_blocks": [1, 2, 3],
+        "structured_analysis": {"n_particles": 5},
+        "pixel_stats": {"mean": 100.0},
+    }
+    r2 = {
+        "text_blocks": [1, 2, 3],
+        "structured_analysis": {"n_particles": 5},
+        "pixel_stats": {"mean": 100.0},
+    }
     diff = _compare_describe_results(r1, r2)
-    assert diff["inconsistent"] is False, f"identical results should be consistent: {diff}"
+    assert diff["inconsistent"] is False, (
+        f"identical results should be consistent: {diff}"
+    )
     assert diff["note"] == "consistent"
+
+
+def _selfcheck() -> None:
+    """10 项 assert 验证调度框架核心行为.
+
+    各 Tier 用 monkey-patch 模拟可用/不可用, 验证降级链.
+    """
+    _sc_missing_image()
+    _sc_real_image_tier()
+    _sc_pick_tier_keys()
+    _sc_probe_cache()
+    _sc_tier3_stub()
+    _sc_tier2_paddle()
+    _sc_tier1_classic()
+    _sc_top_level_no_raise()
+    _sc_tool_meta()
+    _sc_consistency_default()
+    _sc_consistency_enabled()
+    _sc_compare_results()
 
     print("all self-checks passed (A1 Hallu detection OK)")
 

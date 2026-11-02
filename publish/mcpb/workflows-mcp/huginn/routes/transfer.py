@@ -186,6 +186,31 @@ async def transfer_download(req: TransferRequest) -> dict[str, Any]:
     }
 
 
+def _list_remote_entries(
+    sftp: Any, expanded: str, show_hidden: bool
+) -> list[dict[str, Any]]:
+    """列出远端目录条目 (name/size/mtime/权限), 目录在前按名字排序。"""
+    entries: list[dict[str, Any]] = []
+    for item in sftp.listdir_attr(expanded):
+        name = item.filename
+        if not show_hidden and name.startswith("."):
+            continue
+        entries.append(
+            {
+                "name": name,
+                "size": item.st_size or 0,
+                "mtime": item.st_mtime or 0,
+                "is_dir": _is_dir_attr(item),
+                "permissions": _mode_to_str(item.st_mode or 0),
+                "path": f"{expanded.rstrip('/')}/{name}",
+            }
+        )
+
+    # 目录排前面, 文件排后面, 各自按名字排
+    entries.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
+    return entries
+
+
 @router.get("/transfer/browse")
 async def transfer_browse(
     credential_id: str,
@@ -210,23 +235,7 @@ async def transfer_browse(
             sftp = client._sftp
             # ~ 之类的主目录符号, 先 expand 一下
             expanded = _expand_remote_path(sftp, path)
-
-            entries: list[dict[str, Any]] = []
-            for item in sftp.listdir_attr(expanded):
-                name = item.filename
-                if not show_hidden and name.startswith("."):
-                    continue
-                entries.append({
-                    "name": name,
-                    "size": item.st_size or 0,
-                    "mtime": item.st_mtime or 0,
-                    "is_dir": _is_dir_attr(item),
-                    "permissions": _mode_to_str(item.st_mode or 0),
-                    "path": f"{expanded.rstrip('/')}/{name}",
-                })
-
-            # 目录排前面, 文件排后面, 各自按名字排
-            entries.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
+            entries = _list_remote_entries(sftp, expanded, show_hidden)
 
             return {
                 "success": True,
@@ -240,6 +249,156 @@ async def transfer_browse(
     except Exception as exc:
         logger.warning("浏览远端目录 %s 失败: %s", path, exc)
         return {"success": False, "error": str(exc)}
+
+
+def _collect_sync_files(
+    local_root: Path, include_patterns: list[str], exclude_patterns: list[str]
+) -> list[Path]:
+    """遍历本地目录树, 按 include/exclude 模式过滤出待同步文件."""
+    local_files: list[Path] = []
+    for fp in local_root.rglob("*"):
+        if not fp.is_file():
+            continue
+        rel = fp.relative_to(local_root).as_posix()
+        if include_patterns and not any(
+            fnmatch.fnmatch(rel, pat) for pat in include_patterns
+        ):
+            continue
+        if any(fnmatch.fnmatch(rel, pat) for pat in exclude_patterns):
+            continue
+        local_files.append(fp)
+    return local_files
+
+
+def _remote_is_current(sftp: Any, fp: Path, remote_path: str) -> bool:
+    """远端存在且 size 相同 + mtime 不旧 → 无需重传."""
+    try:
+        rstat = sftp.stat(remote_path)
+        local_size = fp.stat().st_size
+        local_mtime = int(fp.stat().st_mtime)
+        return rstat.st_size == local_size and (rstat.st_mtime or 0) >= local_mtime
+    except FileNotFoundError:
+        logger.debug("best-effort op failed", exc_info=True)  # 远端没有, 必须传
+        return False
+
+
+def _sync_one_local_file(
+    sftp: Any, fp: Path, local_root: Path, remote_dir: str
+) -> dict[str, Any]:
+    """同步单个文件, 返回 {status: uploaded|skipped|error, rel_path, remote_path, ...}."""
+    rel = fp.relative_to(local_root).as_posix()
+    remote_path = f"{remote_dir.rstrip('/')}/{rel}"
+    try:
+        if _remote_is_current(sftp, fp, remote_path):
+            return {"status": "skipped", "rel_path": rel, "remote_path": remote_path}
+        # 确保远端父目录存在
+        remote_parent = str(Path(remote_path).parent).replace("\\", "/")
+        _ensure_remote_dir(sftp, remote_parent)
+        size = fp.stat().st_size
+        sftp.put(str(fp), remote_path)
+        return {
+            "status": "uploaded",
+            "rel_path": rel,
+            "remote_path": remote_path,
+            "size": size,
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "rel_path": rel,
+            "remote_path": remote_path,
+            "error": f"{rel}: {exc}",
+        }
+
+
+def _sync_and_prune(
+    sftp: Any,
+    local_files: list[Path],
+    local_root: Path,
+    remote_dir: str,
+    uploaded: list[dict[str, Any]],
+    errors: list[str],
+    *,
+    delete: bool,
+) -> tuple[int, int, int]:
+    """上传需要更新的文件 (就地填充 uploaded/errors), 可选清理远端多余文件。
+
+    返回 (skipped, total_bytes, deleted)。
+    """
+    skipped = 0
+    total_bytes = 0
+    remote_file_map: dict[str, str] = {}
+    for fp in local_files:
+        outcome = _sync_one_local_file(sftp, fp, local_root, remote_dir)
+        remote_file_map[outcome["rel_path"]] = outcome["remote_path"]
+        if outcome["status"] == "skipped":
+            skipped += 1
+            continue
+        if outcome["status"] == "error":
+            errors.append(outcome["error"])
+            continue
+        uploaded.append(
+            {
+                "rel_path": outcome["rel_path"],
+                "remote_path": outcome["remote_path"],
+                "size": outcome["size"],
+            }
+        )
+        total_bytes += outcome["size"]
+
+    # 3. 可选: 删掉远端多余的文件
+    deleted = 0
+    if delete:
+        deleted = _delete_extra_remote_files(
+            sftp, remote_dir, set(remote_file_map.keys())
+        )
+    return skipped, total_bytes, deleted
+
+
+def _sync_to_remote(
+    cfg: Any,
+    local_root: Path,
+    remote_dir: str,
+    include_patterns: list[str],
+    exclude_patterns: list[str],
+    *,
+    delete: bool,
+) -> dict[str, Any]:
+    """连上远端执行同步, 返回同步汇总 dict; 失败时回 {success: False, error}。"""
+    uploaded: list[dict[str, Any]] = []
+    errors: list[str] = []
+    try:
+        with HPCClient(cfg) as client:
+            client._ensure_connected()
+            sftp = client._sftp
+
+            # 1. 遍历本地文件, 逐个判断要不要传
+            local_files = _collect_sync_files(
+                local_root, include_patterns, exclude_patterns
+            )
+
+            # 2. 上传需要更新的文件
+            skipped, total_bytes, deleted = _sync_and_prune(
+                sftp,
+                local_files,
+                local_root,
+                remote_dir,
+                uploaded,
+                errors,
+                delete=delete,
+            )
+    except Exception as exc:
+        logger.warning("同步失败 %s -> %s: %s", local_root, remote_dir, exc)
+        return {"success": False, "error": str(exc)}
+
+    return {
+        "success": True,
+        "uploaded": uploaded,
+        "skipped": skipped,
+        "deleted": deleted,
+        "total_bytes": total_bytes,
+        "errors": errors,
+    }
 
 
 @router.post("/transfer/sync")
@@ -261,81 +420,17 @@ async def transfer_sync(req: SyncRequest) -> dict[str, Any]:
     if err or cfg is None:
         return {"success": False, "error": err or "无法解析 HPC 配置"}
 
-    uploaded: list[dict[str, Any]] = []
-    skipped = 0
-    deleted = 0
-    errors: list[str] = []
-    total_bytes = 0
     start = time.time()
-
-    try:
-        with HPCClient(cfg) as client:
-            client._ensure_connected()
-            sftp = client._sftp
-
-            # 1. 遍历本地文件, 逐个判断要不要传
-            local_files: list[Path] = []
-            for fp in local_root.rglob("*"):
-                if not fp.is_file():
-                    continue
-                rel = fp.relative_to(local_root).as_posix()
-                # include/exclude 过滤
-                if req.include_patterns and not any(
-                    fnmatch.fnmatch(rel, pat) for pat in req.include_patterns
-                ):
-                    continue
-                if any(fnmatch.fnmatch(rel, pat) for pat in req.exclude_patterns):
-                    continue
-                local_files.append(fp)
-
-            # 2. 上传需要更新的文件
-            remote_file_map: dict[str, str] = {}
-            for fp in local_files:
-                rel = fp.relative_to(local_root).as_posix()
-                remote_path = f"{req.remote_dir.rstrip('/')}/{rel}"
-                remote_file_map[rel] = remote_path
-                try:
-                    # 比对远端文件: 不存在 / 大小不同 / mtime 更新 -> 传
-                    need_upload = True
-                    try:
-                        rstat = sftp.stat(remote_path)
-                        local_size = fp.stat().st_size
-                        local_mtime = int(fp.stat().st_mtime)
-                        if (
-                            rstat.st_size == local_size
-                            and (rstat.st_mtime or 0) >= local_mtime
-                        ):
-                            need_upload = False
-                    except FileNotFoundError:
-                        logger.debug("best-effort op failed", exc_info=True)  # 远端没有, 必须传
-
-                    if not need_upload:
-                        skipped += 1
-                        continue
-
-                    # 确保远端父目录存在
-                    remote_parent = str(Path(remote_path).parent).replace("\\", "/")
-                    _ensure_remote_dir(sftp, remote_parent)
-
-                    sftp.put(str(fp), remote_path)
-                    uploaded.append({
-                        "rel_path": rel,
-                        "remote_path": remote_path,
-                        "size": fp.stat().st_size,
-                    })
-                    total_bytes += fp.stat().st_size
-                except Exception as exc:
-                    errors.append(f"{rel}: {exc}")
-
-            # 3. 可选: 删掉远端多余的文件
-            if req.delete:
-                deleted = _delete_extra_remote_files(
-                    sftp, req.remote_dir, set(remote_file_map.keys())
-                )
-
-    except Exception as exc:
-        logger.warning("同步失败 %s -> %s: %s", local_root, req.remote_dir, exc)
-        return {"success": False, "error": str(exc)}
+    outcome = _sync_to_remote(
+        cfg,
+        local_root,
+        req.remote_dir,
+        req.include_patterns,
+        req.exclude_patterns,
+        delete=req.delete,
+    )
+    if not outcome["success"]:
+        return outcome
 
     elapsed = time.time() - start
     return {
@@ -343,12 +438,12 @@ async def transfer_sync(req: SyncRequest) -> dict[str, Any]:
         "host": cfg.host,
         "local_dir": str(local_root),
         "remote_dir": req.remote_dir,
-        "uploaded": uploaded,
-        "uploaded_count": len(uploaded),
-        "skipped": skipped,
-        "deleted": deleted,
-        "total_bytes": total_bytes,
-        "errors": errors,
+        "uploaded": outcome["uploaded"],
+        "uploaded_count": len(outcome["uploaded"]),
+        "skipped": outcome["skipped"],
+        "deleted": outcome["deleted"],
+        "total_bytes": outcome["total_bytes"],
+        "errors": outcome["errors"],
         "elapsed_sec": round(elapsed, 2),
     }
 
@@ -358,6 +453,40 @@ async def transfer_sync(req: SyncRequest) -> dict[str, Any]:
 # FilesPanel 的「上传」「下载」按钮拿到的是浏览器 `File` / `Blob`, 没有服务端
 # 本地路径, 套不上 `/transfer/upload|download` 的 `local_path` 契约, 故单独给
 # 浏览器一套: 上传收 multipart 上传体直接写进 SFTP, 下载把远端内容流式吐回。
+
+
+def _upload_body_size(file: UploadFile) -> int:
+    """量上传体大小 (Starlette 已把 multipart 落进 spooled 临时文件)。"""
+    try:
+        file.file.seek(0, 2)
+        size = file.file.tell()
+        file.file.seek(0)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=f"读取上传体失败: {e}") from e
+    return size
+
+
+def _put_upload_stream(cfg: Any, file: UploadFile, remote_dir: str, name: str) -> str:
+    """把上传体分块写进远端 remote_dir/<name>, 返回远端目标路径 (失败清残留)。"""
+    with HPCClient(cfg) as client:
+        client._ensure_connected()
+        sftp = client._sftp
+        expanded = _expand_remote_path(sftp, remote_dir)
+        _ensure_remote_dir(sftp, expanded)
+        dest = f"{expanded.rstrip('/')}/{name}"
+        try:
+            with sftp.file(dest, "wb") as rf:
+                while True:
+                    buf = file.file.read(_WEB_TRANSFER_CHUNK_BYTES)
+                    if not buf:
+                        break
+                    rf.write(buf)
+        except Exception:
+            # 写一半失败 → 清掉远端半截文件, 不留垃圾
+            with contextlib.suppress(Exception):
+                sftp.remove(dest)
+            raise
+        return dest
 
 
 @router.post("/transfer/web/upload")
@@ -384,41 +513,15 @@ async def transfer_web_upload(
         raise HTTPException(status_code=400, detail=err or "无法解析 HPC 配置")
 
     # Starlette 已把 multipart 落进 spooled 临时文件, 定位到尾部量一下大小
-    try:
-        file.file.seek(0, 2)
-        size = file.file.tell()
-        file.file.seek(0)
-    except OSError as e:
-        raise HTTPException(status_code=400, detail=f"读取上传体失败: {e}") from e
+    size = _upload_body_size(file)
     if size > _WEB_UPLOAD_MAX_BYTES:
         raise HTTPException(
             status_code=413,
             detail=f"文件过大: {size} bytes (上限 {_WEB_UPLOAD_MAX_BYTES} bytes)",
         )
 
-    def _put() -> tuple[str, str]:
-        with HPCClient(cfg) as client:
-            client._ensure_connected()
-            sftp = client._sftp
-            expanded = _expand_remote_path(sftp, remote_dir)
-            _ensure_remote_dir(sftp, expanded)
-            dest = f"{expanded.rstrip('/')}/{name}"
-            try:
-                with sftp.file(dest, "wb") as rf:
-                    while True:
-                        buf = file.file.read(_WEB_TRANSFER_CHUNK_BYTES)
-                        if not buf:
-                            break
-                        rf.write(buf)
-            except Exception:
-                # 写一半失败 → 清掉远端半截文件, 不留垃圾
-                with contextlib.suppress(Exception):
-                    sftp.remove(dest)
-                raise
-            return dest, expanded
-
     try:
-        dest, _expanded = await asyncio.to_thread(_put)
+        dest = await asyncio.to_thread(_put_upload_stream, cfg, file, remote_dir, name)
     except Exception as exc:
         logger.warning("浏览器上传 %s -> %s 失败: %s", name, remote_dir, exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -523,9 +626,17 @@ def _mode_to_str(mode: int) -> str:
     if mode == 0:
         return "---------"
     parts = []
-    for who in (_stat.S_IRUSR, _stat.S_IWUSR, _stat.S_IXUSR,
-                _stat.S_IRGRP, _stat.S_IWGRP, _stat.S_IXGRP,
-                _stat.S_IROTH, _stat.S_IWOTH, _stat.S_IXOTH):
+    for who in (
+        _stat.S_IRUSR,
+        _stat.S_IWUSR,
+        _stat.S_IXUSR,
+        _stat.S_IRGRP,
+        _stat.S_IWGRP,
+        _stat.S_IXGRP,
+        _stat.S_IROTH,
+        _stat.S_IWOTH,
+        _stat.S_IXOTH,
+    ):
         parts.append(bool(mode & who))
     perms = ["r", "w", "x"]
     return "".join(p if b else "-" for b, p in zip(parts, perms))
@@ -548,9 +659,7 @@ def _ensure_remote_dir(sftp: Any, remote_dir: str) -> None:
                 sftp.mkdir(cur)
 
 
-def _delete_extra_remote_files(
-    sftp: Any, remote_root: str, keep_rels: set[str]
-) -> int:
+def _delete_extra_remote_files(sftp: Any, remote_root: str, keep_rels: set[str]) -> int:
     """删掉远端目录里本地已不存在的文件, 返回删除数量。
 
     只删文件不删目录, 避免误删整个目录结构。

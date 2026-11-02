@@ -191,3 +191,46 @@ class TestBoundaryEvolution:
         output = another.invoke({"command": "run"})
         assert "error" in output
         assert "blocked by dynamic boundary" in output["error"]
+
+
+# ── 参数形状修复: 命令行字符串 → argv ──────────────────────────────
+
+
+def test_coerce_argv_string_to_list():
+    """模型给 list[str] 字段传 "python3 run.py" 时切成 argv (ws31/ws32 实测)."""
+    from huginn.tools.adapter import _coerce_tool_args
+
+    class _BashLike(BaseModel):
+        command: list[str] | None = None
+
+    class _T(HuginnTool):
+        name = "bash_tool"
+        description = "fake"
+        input_schema = _BashLike
+
+        async def call(self, args, context):  # pragma: no cover - 不执行
+            return ToolResult(data=None)
+
+    out, notes = _coerce_tool_args(_T(), {"command": "python3 -c \"print('hi')\""})
+    assert out["command"] == ["python3", "-c", "print('hi')"]
+    assert notes
+
+
+def test_coerce_leaves_shell_string_alone():
+    """带 shell 元字符的字符串是脚本, 不是 argv —— 不猜语义, 交给严格校验报错."""
+    from huginn.tools.adapter import _coerce_tool_args
+
+    class _BashLike(BaseModel):
+        command: list[str] | None = None
+
+    class _T(HuginnTool):
+        name = "bash_tool"
+        description = "fake"
+        input_schema = _BashLike
+
+        async def call(self, args, context):  # pragma: no cover - 不执行
+            return ToolResult(data=None)
+
+    out, notes = _coerce_tool_args(_T(), {"command": "cd /tmp && python3 run.py 2>&1"})
+    assert out["command"] == "cd /tmp && python3 run.py 2>&1"
+    assert notes == []

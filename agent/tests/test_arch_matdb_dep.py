@@ -1,3 +1,4 @@
+# governance-gate
 """制度化闭环：mat-db MCP 真实 Materials Project 路径可达性。
 
 mat-db server 无 MP_API_KEY 时会回退 mock；真实路径要走 mp-api 包。本门禁保证：

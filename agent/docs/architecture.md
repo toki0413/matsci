@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # Huginn Architecture
 
 > 本文件为架构导览，反映当前真实代码结构。最新且完整的技术事实以

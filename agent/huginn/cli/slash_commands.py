@@ -10,12 +10,12 @@ import json
 import logging
 import os
 import subprocess
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
 
 
 def _get_console(console: Any | None = None):
@@ -283,43 +283,39 @@ def _detect_server_url() -> str | None:
     return None
 
 
-def _undo_via_routes_api(console: Any) -> bool:
-    """走 HTTP routes API 回滚最近一个 checkpoint。
-
-    成功返回 True, 服务器不可用或没 checkpoint 返回 False。
-    调用的是 routes/checkpoints.py 里的 reject 端点。
-    """
-    base = _detect_server_url()
-    if base is None:
-        return False
-
+def _last_checkpoint_id(base: str) -> str | None:
+    """列 /checkpoints 并取最后一个 id; 服务不可用或无记录返回 None."""
     import urllib.error
     import urllib.request
 
     try:
         # 先列所有 checkpoint, 找最后一个 (没法直接拿最后一个, 只能 list)
-        # routes 里没有 list all 端点, 但 server_core._checkpoints 是 dict,
-        # 我们直接走内存路径就行。这里试一下 GET /checkpoints 看有没有 list 端点
-        # 没有就走 _undo_via_memory
         with urllib.request.urlopen(
             urllib.request.Request(f"{base}/checkpoints", method="GET"),
             timeout=2.0,
         ) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError):
+    except (
+        urllib.error.URLError,
+        urllib.error.HTTPError,
+        json.JSONDecodeError,
+        OSError,
+    ):
         logger.debug("best-effort op failed", exc_info=True)
-        return False
+        return None
 
-    # 如果 server 返回了 checkpoint 列表, 拿最后一个 reject
     items = data if isinstance(data, list) else data.get("checkpoints", [])
     if not items:
-        return False
-
+        return None
     # 列表项可能是 str (id) 或 dict (含 id)
     last = items[-1]
     cp_id = last if isinstance(last, str) else last.get("id")
-    if not cp_id:
-        return False
+    return cp_id or None
+
+
+def _reject_checkpoint(console: Any, base: str, cp_id: str) -> bool:
+    """POST reject 端点回滚指定 checkpoint, 返回是否走通 API."""
+    import urllib.request
 
     try:
         req = urllib.request.Request(
@@ -329,16 +325,30 @@ def _undo_via_routes_api(console: Any) -> bool:
         )
         with urllib.request.urlopen(req, timeout=5.0) as resp:
             result = json.loads(resp.read().decode("utf-8"))
-        if result.get("success"):
-            console.print(
-                f"[green]✓[/green] 已通过 routes API 回滚到 checkpoint {cp_id}"
-            )
-            return True
-        console.print(f"[yellow]routes API 返回: {result}[/yellow]")
-        return True
     except Exception as e:
         console.print(f"[yellow]routes API 调用失败: {e}[/yellow]")
         return False
+
+    if result.get("success"):
+        console.print(f"[green]✓[/green] 已通过 routes API 回滚到 checkpoint {cp_id}")
+    else:
+        console.print(f"[yellow]routes API 返回: {result}[/yellow]")
+    return True
+
+
+def _undo_via_routes_api(console: Any) -> bool:
+    """走 HTTP routes API 回滚最近一个 checkpoint。
+
+    成功返回 True, 服务器不可用或没 checkpoint 返回 False。
+    调用的是 routes/checkpoints.py 里的 reject 端点。
+    """
+    base = _detect_server_url()
+    if base is None:
+        return False
+    cp_id = _last_checkpoint_id(base)
+    if not cp_id:
+        return False
+    return _reject_checkpoint(console, base, cp_id)
 
 
 def _undo_via_memory_checkpoints(console: Any) -> bool:
@@ -496,8 +506,7 @@ def _handle_undo(agent: Any, console: Any, ctx: Any | None = None) -> None:
         return
 
     console.print(
-        "[yellow]没有可撤销的内容[/yellow] "
-        "(无 checkpoint / 非 git 仓库 / session 为空)"
+        "[yellow]没有可撤销的内容[/yellow] (无 checkpoint / 非 git 仓库 / session 为空)"
     )
 
 
@@ -515,7 +524,9 @@ def _snapshot_directory_for_cli(base):
             continue
         # 跳过 .git / __pycache__ / .venv 之类噪音目录
         parts = path.relative_to(base).parts
-        if any(p.startswith(".git") or p == "__pycache__" or p == ".venv" for p in parts):
+        if any(
+            p.startswith(".git") or p == "__pycache__" or p == ".venv" for p in parts
+        ):
             continue
         try:
             snapshot[str(path.relative_to(base)).replace("\\", "/")] = path.read_text(
@@ -646,6 +657,89 @@ def _handle_map(command: str, console: Any, ctx: Any | None = None) -> None:
 _BG_SUBCOMMANDS = frozenset({"list", "status", "stop", "result"})
 
 
+def _bg_list(manager: Any, _arg: str, console: Any) -> None:
+    """/bg list — 列出所有后台任务."""
+    tasks = manager.list_tasks()
+    if not tasks:
+        console.print("[yellow]没有后台任务[/yellow]")
+        return
+    console.print(f"[bold]后台任务 (共 {len(tasks)} 个):[/bold]")
+    for t in tasks:
+        status = t.get("status", "?")
+        console.print(
+            f"  [cyan]{t.get('task_id', '')}[/cyan]  "
+            f"[{status}]  "
+            f"{t.get('objective', '')[:40]}"
+        )
+
+
+def _bg_status(manager: Any, arg: str, console: Any) -> None:
+    """/bg status <id> — 查看任务状态."""
+    if not arg:
+        console.print("[yellow]用法: /bg status <task_id>[/yellow]")
+        return
+    task = manager.get_status(arg)
+    if task is None:
+        console.print(f"[red]任务 {arg} 不存在[/red]")
+        return
+    for k, v in task.items():
+        console.print(f"[cyan]{k}[/cyan]: {v}")
+
+
+def _bg_stop(manager: Any, arg: str, console: Any) -> None:
+    """/bg stop <id> — 停止任务."""
+    if not arg:
+        console.print("[yellow]用法: /bg stop <task_id>[/yellow]")
+        return
+    ok, msg = manager.stop(arg)
+    if ok:
+        console.print(f"[green]✓[/green] 任务 {arg} {msg}")
+    else:
+        console.print(f"[yellow]任务 {arg}: {msg}[/yellow]")
+
+
+def _bg_result(manager: Any, arg: str, console: Any) -> None:
+    """/bg result <id> — 查看任务结果."""
+    if not arg:
+        console.print("[yellow]用法: /bg result <task_id>[/yellow]")
+        return
+    text = manager.get_result(arg)
+    if text is None:
+        console.print(f"[yellow]任务 {arg} 还没有结果[/yellow]")
+        return
+    console.print(text)
+
+
+def _bg_usage(console: Any) -> None:
+    """/bg 无 objective 时的用法说明."""
+    console.print(
+        "[yellow]用法:[/yellow]\n"
+        "  [cyan]/bg <objective>[/cyan]      启动后台任务\n"
+        "  [cyan]/bg list[/cyan]             列出所有任务\n"
+        "  [cyan]/bg status <id>[/cyan]      查看状态\n"
+        "  [cyan]/bg stop <id>[/cyan]        停止任务\n"
+        "  [cyan]/bg result <id>[/cyan]      查看结果"
+    )
+
+
+def _bg_start(manager: Any, objective: str, agent: Any, console: Any) -> None:
+    """/bg <objective> — 用当前 agent 启动后台任务."""
+    task_id = manager.start(objective, agent=agent)
+    console.print(f"[green]✓[/green] 后台任务已启动, id={task_id}")
+    console.print(
+        f"[dim]用 [cyan]/bg status {task_id}[/cyan] 查看进度, "
+        f"[cyan]/bg result {task_id}[/cyan] 看结果[/dim]"
+    )
+
+
+_BG_HANDLERS: dict[str, Callable[[Any, str, Any], None]] = {
+    "list": _bg_list,
+    "status": _bg_status,
+    "stop": _bg_stop,
+    "result": _bg_result,
+}
+
+
 def _handle_bg(command: str, agent: Any, console: Any) -> None:
     """处理 /bg 快捷方式, 转发到 BackgroundTaskManager。
 
@@ -659,85 +753,28 @@ def _handle_bg(command: str, agent: Any, console: Any) -> None:
 
     body = command.lstrip("/")
     parts = body.split(None, 2)
-    # parts[0] == "bg"
     sub = parts[1].lower() if len(parts) > 1 else ""
     arg = parts[2] if len(parts) > 2 else ""
 
     manager = BackgroundTaskManager.get_instance()
 
-    if sub == "list":
-        tasks = manager.list_tasks()
-        if not tasks:
-            console.print("[yellow]没有后台任务[/yellow]")
-            return
-        console.print(f"[bold]后台任务 (共 {len(tasks)} 个):[/bold]")
-        for t in tasks:
-            status = t.get("status", "?")
-            console.print(
-                f"  [cyan]{t.get('task_id', '')}[/cyan]  "
-                f"[{status}]  "
-                f"{t.get('objective', '')[:40]}"
-            )
-        return
-
-    if sub == "status":
-        if not arg:
-            console.print("[yellow]用法: /bg status <task_id>[/yellow]")
-            return
-        task = manager.get_status(arg)
-        if task is None:
-            console.print(f"[red]任务 {arg} 不存在[/red]")
-            return
-        for k, v in task.items():
-            console.print(f"[cyan]{k}[/cyan]: {v}")
-        return
-
-    if sub == "stop":
-        if not arg:
-            console.print("[yellow]用法: /bg stop <task_id>[/yellow]")
-            return
-        ok, msg = manager.stop(arg)
-        if ok:
-            console.print(f"[green]✓[/green] 任务 {arg} {msg}")
-        else:
-            console.print(f"[yellow]任务 {arg}: {msg}[/yellow]")
-        return
-
-    if sub == "result":
-        if not arg:
-            console.print("[yellow]用法: /bg result <task_id>[/yellow]")
-            return
-        text = manager.get_result(arg)
-        if text is None:
-            console.print(f"[yellow]任务 {arg} 还没有结果[/yellow]")
-            return
-        console.print(text)
+    handler = _BG_HANDLERS.get(sub)
+    if handler is not None:
+        handler(manager, arg, console)
         return
 
     # 不是已知子命令, 把 sub + arg 拼起来当 objective
     # 即 /bg 筛选100种钙钛矿材料 -> objective = "筛选100种钙钛矿材料"
     objective = " ".join(parts[1:]).strip()
     if not objective:
-        console.print(
-            "[yellow]用法:[/yellow]\n"
-            "  [cyan]/bg <objective>[/cyan]      启动后台任务\n"
-            "  [cyan]/bg list[/cyan]             列出所有任务\n"
-            "  [cyan]/bg status <id>[/cyan]      查看状态\n"
-            "  [cyan]/bg stop <id>[/cyan]        停止任务\n"
-            "  [cyan]/bg result <id>[/cyan]      查看结果"
-        )
+        _bg_usage(console)
         return
 
     if agent is None:
         console.print("[yellow]Agent 未初始化, 无法启动后台任务[/yellow]")
         return
 
-    task_id = manager.start(objective, agent=agent)
-    console.print(f"[green]✓[/green] 后台任务已启动, id={task_id}")
-    console.print(
-        f"[dim]用 [cyan]/bg status {task_id}[/cyan] 查看进度, "
-        f"[cyan]/bg result {task_id}[/cyan] 看结果[/dim]"
-    )
+    _bg_start(manager, objective, agent, console)
 
 
 # ── 自定义命令 ───────────────────────────────────────────────────────
@@ -781,6 +818,7 @@ def _handle_subgoal(command: str, agent: Any, console: Any) -> None:
         console.print("[dim]例: /subgoal 所有修改不改动原有接口[/dim]")
         # show existing
         from huginn.autoloop.goal_store import get_goal_store
+
         store = get_goal_store()
         active = store.get_active()
         if active and active.sub_goals:
@@ -797,21 +835,110 @@ def _handle_subgoal(command: str, agent: Any, console: Any) -> None:
 
     text = parts[1].strip()
     from huginn.autoloop.goal_store import get_goal_store
+
     store = get_goal_store()
     active = store.get_active()
     if active:
         store.add_sub_goal(active.id, text)
-        console.print(f"[green]✓[/green] 子目标已追加到 goal {active.id} ({len(active.sub_goals)}): {text}")
+        console.print(
+            f"[green]✓[/green] 子目标已追加到 goal {active.id} ({len(active.sub_goals)}): {text}"
+        )
     else:
         # no active goal, store locally on agent
         if agent is not None:
             if not hasattr(agent, "_sub_goals"):
                 agent._sub_goals = []
             agent._sub_goals.append(text)
-            console.print(f"[green]✓[/green] 子目标已追加 ({len(agent._sub_goals)}): {text}")
-            console.print("[dim]提示: 用 /goal <text> 创建持久目标, 子目标会跨会话保存[/dim]")
+            console.print(
+                f"[green]✓[/green] 子目标已追加 ({len(agent._sub_goals)}): {text}"
+            )
+            console.print(
+                "[dim]提示: 用 /goal <text> 创建持久目标, 子目标会跨会话保存[/dim]"
+            )
         else:
             console.print("[yellow]Agent 未初始化[/yellow]")
+
+
+def _goal_status(store: Any, console: Any) -> None:
+    """/goal status — 查看当前目标状态."""
+    active = store.get_active()
+    if active:
+        console.print(f"[green]● Active Goal: {active.id}[/green]")
+        console.print(f"  [dim]Text: {active.text}[/dim]")
+        console.print(f"  [dim]Iterations: {active.iteration}[/dim]")
+        console.print(f"  [dim]Created: {active.created_at}[/dim]")
+        if active.sub_goals:
+            console.print(f"  [dim]Sub-goals ({len(active.sub_goals)}):[/dim]")
+            for i, sg in enumerate(active.sub_goals, 1):
+                console.print(f"    [dim]{i}. {sg}[/dim]")
+        return
+
+    paused = store.list_goals("paused")
+    if paused:
+        console.print(f"[yellow]○ Paused goals: {len(paused)}[/yellow]")
+        for g in paused:
+            console.print(f"  [dim]{g.id}: {g.text[:60]} (iter {g.iteration})[/dim]")
+    else:
+        console.print("[yellow]无活跃目标. 用 /goal <text> 创建[/yellow]")
+
+
+def _goal_pause(store: Any, console: Any) -> None:
+    """/goal pause — 暂停当前目标."""
+    active = store.get_active()
+    if not active:
+        console.print("[yellow]无活跃目标可暂停[/yellow]")
+        return
+    store.pause(active.id)
+    console.print(
+        f"[yellow]○ Goal {active.id} 已暂停 (iter {active.iteration})[/yellow]"
+    )
+    console.print("[dim]用 /goal resume 恢复[/dim]")
+
+
+def _goal_resume(store: Any, console: Any) -> None:
+    """/goal resume — 恢复最近一个暂停的目标."""
+    paused = store.list_goals("paused")
+    if not paused:
+        console.print("[yellow]无暂停的目标可恢复[/yellow]")
+        return
+    # resume the most recently paused
+    g = paused[-1]
+    store.resume(g.id)
+    console.print(f"[green]● Goal {g.id} 已恢复 (iter {g.iteration})[/green]")
+    console.print(f"  [dim]{g.text}[/dim]")
+
+
+def _goal_clear(store: Any, console: Any) -> None:
+    """/goal clear — 清除当前目标."""
+    active = store.get_active()
+    if not active:
+        console.print("[yellow]无活跃目标[/yellow]")
+        return
+    store.clear(active.id)
+    console.print("[green]✓ 目标已清除[/green]")
+
+
+def _goal_create(store: Any, text: str, console: Any) -> None:
+    """创建并激活新目标; 已有活跃目标先标记完成."""
+    active = store.get_active()
+    if active:
+        store.complete(active.id)
+        console.print(f"[dim]上一个 goal {active.id} 已标记完成[/dim]")
+
+    goal = store.create_goal(text)
+    console.print(f"[green]● Goal {goal.id} 已创建并激活[/green]")
+    console.print(f"  [dim]{goal.text}[/dim]")
+    console.print(
+        "[dim]用 /subgoal 追加约束, /goal pause 暂停, /goal status 查看[/dim]"
+    )
+
+
+_GOAL_HANDLERS: dict[str, Callable[[Any, Any], None]] = {
+    "status": _goal_status,
+    "pause": _goal_pause,
+    "resume": _goal_resume,
+    "clear": _goal_clear,
+}
 
 
 def _handle_goal(command: str, agent: Any, console: Any) -> None:
@@ -830,87 +957,20 @@ def _handle_goal(command: str, agent: Any, console: Any) -> None:
 
     store = get_goal_store()
 
-    if sub == "status":
-        active = store.get_active()
-        if active:
-            console.print(f"[green]● Active Goal: {active.id}[/green]")
-            console.print(f"  [dim]Text: {active.text}[/dim]")
-            console.print(f"  [dim]Iterations: {active.iteration}[/dim]")
-            console.print(f"  [dim]Created: {active.created_at}[/dim]")
-            if active.sub_goals:
-                console.print(f"  [dim]Sub-goals ({len(active.sub_goals)}):[/dim]")
-                for i, sg in enumerate(active.sub_goals, 1):
-                    console.print(f"    [dim]{i}. {sg}[/dim]")
-        else:
-            paused = store.list_goals("paused")
-            if paused:
-                console.print(f"[yellow]○ Paused goals: {len(paused)}[/yellow]")
-                for g in paused:
-                    console.print(f"  [dim]{g.id}: {g.text[:60]} (iter {g.iteration})[/dim]")
-            else:
-                console.print("[yellow]无活跃目标. 用 /goal <text> 创建[/yellow]")
-        return
-
-    if sub == "pause":
-        active = store.get_active()
-        if active:
-            store.pause(active.id)
-            console.print(f"[yellow]○ Goal {active.id} 已暂停 (iter {active.iteration})[/yellow]")
-            console.print("[dim]用 /goal resume 恢复[/dim]")
-        else:
-            console.print("[yellow]无活跃目标可暂停[/yellow]")
-        return
-
-    if sub == "resume":
-        paused = store.list_goals("paused")
-        if not paused:
-            console.print("[yellow]无暂停的目标可恢复[/yellow]")
-            return
-        # resume the most recently paused
-        g = paused[-1]
-        store.resume(g.id)
-        console.print(f"[green]● Goal {g.id} 已恢复 (iter {g.iteration})[/green]")
-        console.print(f"  [dim]{g.text}[/dim]")
-        return
-
-    if sub == "clear":
-        active = store.get_active()
-        if active:
-            store.clear(active.id)
-            console.print("[green]✓ 目标已清除[/green]")
-        else:
-            console.print("[yellow]无活跃目标[/yellow]")
+    handler = _GOAL_HANDLERS.get(sub)
+    if handler is not None:
+        handler(store, console)
         return
 
     # default: create new goal
-    # if there's an active goal, complete it first
-    active = store.get_active()
-    if active:
-        store.complete(active.id)
-        console.print(f"[dim]上一个 goal {active.id} 已标记完成[/dim]")
-
-    goal = store.create_goal(sub)
-    console.print(f"[green]● Goal {goal.id} 已创建并激活[/green]")
-    console.print(f"  [dim]{goal.text}[/dim]")
-    console.print("[dim]用 /subgoal 追加约束, /goal pause 暂停, /goal status 查看[/dim]")
+    _goal_create(store, sub, console)
 
 
-def _handle_flow(command: str, agent: Any, console: Any) -> None:
-    """/flow — 查看当前会话的信息流状态.
-
-    显示 memory/KB/KG/goal/surprise 的当前状态,
-    帮助理解信息在系统中的流向.
-    """
-    from rich.table import Table
-
-    table = Table(title="Information Flow Status")
-    table.add_column("Layer", style="cyan")
-    table.add_column("Status", style="green")
-    table.add_column("Details", style="dim")
-
-    # Goal layer
+def _flow_goal_row(table: Any, _agent: Any) -> None:
+    """Goal 层: 活跃目标或暂停计数."""
     try:
         from huginn.autoloop.goal_store import get_goal_store
+
         store = get_goal_store()
         active = store.get_active()
         if active:
@@ -929,33 +989,43 @@ def _handle_flow(command: str, agent: Any, console: Any) -> None:
     except Exception:
         table.add_row("Goal", "? unknown", "")
 
-    # Sub-goals
+
+def _flow_subgoal_row(table: Any, agent: Any) -> None:
+    """Sub-goals 层: 本地 _sub_goals 计数."""
     sgs = getattr(agent, "_sub_goals", [])
     if sgs:
         table.add_row("Sub-goals", f"{len(sgs)} active", sgs[0][:40])
     else:
         table.add_row("Sub-goals", "0", "")
 
-    # Memory layer
+
+def _flow_memory_row(table: Any, agent: Any) -> None:
+    """Memory 层: entries 计数."""
     try:
         from huginn.memory.manager import MemoryManager
+
         mm = getattr(agent, "_memory", None) or MemoryManager()
         count = len(mm._entries) if hasattr(mm, "_entries") else "?"
         table.add_row("Memory", f"{count} entries", "process logs")
     except Exception:
         table.add_row("Memory", "? unknown", "")
 
-    # KB layer
+
+def _flow_kb_row(table: Any, _agent: Any) -> None:
+    """KB 层: 固定展示可用性."""
     try:
         table.add_row("KB", "available", "vector search")
     except Exception:
         table.add_row("KB", "? check /tools", "")
 
-    # KG layer — 显示真实统计而非硬编码
+
+def _flow_kg_row(table: Any, _agent: Any) -> None:
+    """KG 层: 真实统计 (节点/边数 + top-3 类型)."""
     try:
         from pathlib import Path
 
         from huginn.kg.graph import ProjectKnowledgeGraph
+
         kg = ProjectKnowledgeGraph(Path("."))
         kstats = kg.stats()
         n_nodes = kstats.get("nodes", 0)
@@ -968,9 +1038,13 @@ def _handle_flow(command: str, agent: Any, console: Any) -> None:
     except Exception:
         table.add_row("KG", "? not initialized", "use /graph to build")
 
-    # Surprise signal — v31 统一: 同 episodic/路由, 用秩归一信号
+
+def _flow_surprise_row(table: Any, agent: Any) -> None:
+    """Surprise 层: v31 统一用秩归一信号 (无 autoloop 显示 "—")."""
+    # v31 统一: 同 episodic/路由, 用秩归一信号
     # (0.6/0.3 截止仍在 [0,1] 刻度; 无 autoloop 的 stub agent 仍显示 "—").
     from huginn.autoloop.signals import routing_surprise
+
     if hasattr(agent, "_last_surprise_rel") or hasattr(agent, "_last_surprise"):
         surprise = routing_surprise(agent)
         level = "high" if surprise > 0.6 else "low" if surprise < 0.3 else "medium"
@@ -978,11 +1052,89 @@ def _handle_flow(command: str, agent: Any, console: Any) -> None:
     else:
         table.add_row("Surprise", "—", "no autoloop iteration yet")
 
+
+_FLOW_ROW_BUILDERS: tuple[Callable[[Any, Any], None], ...] = (
+    _flow_goal_row,
+    _flow_subgoal_row,
+    _flow_memory_row,
+    _flow_kb_row,
+    _flow_kg_row,
+    _flow_surprise_row,
+)
+
+
+def _handle_flow(command: str, agent: Any, console: Any) -> None:
+    """/flow — 查看当前会话的信息流状态.
+
+    显示 memory/KB/KG/goal/surprise 的当前状态,
+    帮助理解信息在系统中的流向.
+    """
+    from rich.table import Table
+
+    table = Table(title="Information Flow Status")
+    table.add_column("Layer", style="cyan")
+    table.add_column("Status", style="green")
+    table.add_column("Details", style="dim")
+
+    for build_row in _FLOW_ROW_BUILDERS:
+        build_row(table, agent)
+
     console.print(table)
     console.print(
-        "[dim]信息流: tool→result→memory/KB/KG→prompt→tool "
-        "(有向循环, 非平衡稳态)[/dim]"
+        "[dim]信息流: tool→result→memory/KB/KG→prompt→tool (有向循环, 非平衡稳态)[/dim]"
     )
+
+
+def _graph_stats(kg: Any, console: Any) -> None:
+    """/graph stats — 只显示统计, 不画图."""
+    s = kg.stats()
+    console.print("[bold]KG Statistics[/bold]")
+    console.print(f"  Nodes: {s.get('nodes', 0)}")
+    console.print(f"  Edges: {s.get('edges', 0)}")
+    types = s.get("node_types", {})
+    if types:
+        console.print("  Node types:")
+        for t, c in sorted(types.items(), key=lambda x: x[1], reverse=True):
+            console.print(f"    {t}: {c}")
+
+
+def _graph_query(kg: Any, seed: str, console: Any) -> None:
+    """/graph query <seed> — 查询种子实体周围的子图."""
+    result = kg.query(seed, depth=1, top_k=10)
+    nodes = result.get("nodes", [])
+    edges = result.get("edges", [])
+    console.print(
+        f"[green]Query '{seed}': {len(nodes)} nodes, {len(edges)} edges[/green]"
+    )
+    if not nodes:
+        return
+    # 取节点 id 集合, 用 to_mermaid 画子图
+    node_ids = {n.get("id", "") for n in nodes if n.get("id")}
+    if not node_ids:
+        return
+    sub_graph = kg._graph.subgraph(node_ids).copy()
+    # 临时替换 _graph 来画子图
+    orig = kg._graph
+    kg._graph = sub_graph
+    mermaid = kg.to_mermaid(max_nodes=20)
+    kg._graph = orig
+    console.print(f"\n```mermaid\n{mermaid}\n```")
+
+
+def _graph_render_all(kg: Any, console: Any) -> None:
+    """默认分支: 画完整 KG 的 Mermaid 图."""
+    s = kg.stats()
+    n = s.get("nodes", 0)
+    if n == 0:
+        console.print(
+            "[yellow]KG 为空. 运行 autoloop 或 /research 模式后会自动构建.[/yellow]"
+        )
+        return
+    mermaid = kg.to_mermaid()
+    console.print(
+        f"[bold]Knowledge Graph ({n} nodes, {s.get('edges', 0)} edges)[/bold]"
+    )
+    console.print(f"\n```mermaid\n{mermaid}\n```")
 
 
 def _handle_graph(command: str, agent: Any, console: Any) -> None:
@@ -1005,15 +1157,7 @@ def _handle_graph(command: str, agent: Any, console: Any) -> None:
     sub = parts[1].strip().lower() if len(parts) > 1 else ""
 
     if sub == "stats":
-        s = kg.stats()
-        console.print("[bold]KG Statistics[/bold]")
-        console.print(f"  Nodes: {s.get('nodes', 0)}")
-        console.print(f"  Edges: {s.get('edges', 0)}")
-        types = s.get("node_types", {})
-        if types:
-            console.print("  Node types:")
-            for t, c in sorted(types.items(), key=lambda x: x[1], reverse=True):
-                console.print(f"    {t}: {c}")
+        _graph_stats(kg, console)
         return
 
     if sub.startswith("query"):
@@ -1021,37 +1165,73 @@ def _handle_graph(command: str, agent: Any, console: Any) -> None:
         if not seed:
             console.print("[yellow]用法: /graph query <seed entity>[/yellow]")
             return
-        result = kg.query(seed, depth=1, top_k=10)
-        nodes = result.get("nodes", [])
-        edges = result.get("edges", [])
-        console.print(
-            f"[green]Query '{seed}': {len(nodes)} nodes, {len(edges)} edges[/green]"
-        )
-        # 画查询子图的 Mermaid
-        if nodes:
-            # 取节点 id 集合, 用 to_mermaid 画子图
-            node_ids = {n.get("id", "") for n in nodes if n.get("id")}
-            if node_ids:
-                sub_graph = kg._graph.subgraph(node_ids).copy()
-                # 临时替换 _graph 来画子图
-                orig = kg._graph
-                kg._graph = sub_graph
-                mermaid = kg.to_mermaid(max_nodes=20)
-                kg._graph = orig
-                console.print(f"\n```mermaid\n{mermaid}\n```")
+        _graph_query(kg, seed, console)
         return
 
-    # 默认: 画完整 KG
-    s = kg.stats()
-    n = s.get("nodes", 0)
-    if n == 0:
-        console.print(
-            "[yellow]KG 为空. 运行 autoloop 或 /research 模式后会自动构建.[/yellow]"
-        )
+    _graph_render_all(kg, console)
+
+
+# 模式切换命令 → 成功提示文案 (命令名同时是 set_mode 的参数)
+_MODE_MESSAGES: dict[str, str] = {
+    "plan": "[green]✓[/green] Plan mode: write tools require confirmation",
+    "chat": "[green]✓[/green] Chat mode: default tools, no confirmation required",
+    "research": "[green]✓[/green] Research mode: all tools, math depth guide, Deli pipeline",
+}
+
+# 只需 console 的命令
+_CONSOLE_COMMANDS: dict[str, Callable[[Any], None]] = {
+    "help": _print_help,
+    "sessions": _handle_sessions,
+}
+
+# 需要 (agent, console) 的命令
+_AGENT_COMMANDS: dict[str, Callable[[Any, Any], None]] = {
+    "clear": _handle_clear,
+    "context": _handle_context,
+    "cost": _handle_cost,
+    "tools": _handle_tools,
+}
+
+# 需要 (command, agent, console, ctx) 的命令
+_FULL_COMMANDS: dict[str, Callable[[str, Any, Any, Any], None]] = {
+    "compact": lambda command, agent, con, _ctx: _handle_compact(command, agent, con),
+    "undo": lambda _command, agent, con, ctx: _handle_undo(agent, con, ctx=ctx),
+    "map": lambda command, _agent, con, ctx: _handle_map(command, con, ctx=ctx),
+    "bg": lambda command, agent, con, _ctx: _handle_bg(command, agent, con),
+    "subgoal": lambda command, agent, con, _ctx: _handle_subgoal(command, agent, con),
+    "goal": lambda command, agent, con, _ctx: _handle_goal(command, agent, con),
+    "flow": lambda command, agent, con, _ctx: _handle_flow(command, agent, con),
+    "graph": lambda command, agent, con, _ctx: _handle_graph(command, agent, con),
+}
+
+
+def _handle_mode_switch(name: str, agent: Any, con: Any) -> None:
+    """切 agent 运行模式 (plan/chat/research)."""
+    if agent is None or not hasattr(agent, "set_mode"):
+        con.print("[yellow]Agent 未初始化[/yellow]")
         return
-    mermaid = kg.to_mermaid()
-    console.print(f"[bold]Knowledge Graph ({n} nodes, {s.get('edges', 0)} edges)[/bold]")
-    console.print(f"\n```mermaid\n{mermaid}\n```")
+    # 保留 set_mode("<mode>") 字面量: contract_audit 的"模式面"按字面量抽取
+    # 生产者, 表驱动传变量会让 chat 变成"死提示词"假阳性.
+    if name == "plan":
+        agent.set_mode("plan")
+    elif name == "chat":
+        agent.set_mode("chat")
+    elif name == "research":
+        agent.set_mode("research")
+    else:
+        raise KeyError(name)
+    con.print(_MODE_MESSAGES[name])
+
+
+def _handle_unknown_command(name: str, command: str, ctx: Any, con: Any) -> str | None:
+    """非内置命令: 先试自定义命令, 都失败则打印未知命令提示."""
+    if name and name not in _BUILTIN_COMMANDS:
+        expanded = _try_custom_command(command, ctx=ctx, console=con)
+        if expanded is not None:
+            return expanded
+    con.print(f"[yellow]未知命令: /{name}[/yellow]")
+    con.print("[dim]输入 /help 查看可用命令[/dim]")
+    return None
 
 
 def handle_slash_command(
@@ -1071,104 +1251,34 @@ def handle_slash_command(
     body = command.lstrip("/")
     parts = body.split(None, 1)
     name = parts[0].lower() if parts else ""
-    # args = parts[1] if len(parts) > 1 else ""
+    arg = parts[1] if len(parts) > 1 else ""
 
-    if name == "help":
-        _print_help(con)
+    if name in _MODE_MESSAGES:
+        _handle_mode_switch(name, agent, con)
         return None
 
-    if name == "compact":
-        _handle_compact(command, agent, con)
+    con_handler = _CONSOLE_COMMANDS.get(name)
+    if con_handler is not None:
+        con_handler(con)
         return None
 
-    if name == "clear":
-        _handle_clear(agent, con)
-        return None
-
-    if name == "context":
-        _handle_context(agent, con)
-        return None
-
-    if name == "cost":
-        _handle_cost(agent, con)
-        return None
-
-    if name == "undo":
-        _handle_undo(agent, con, ctx=ctx)
-        return None
-
-    if name == "tools":
-        _handle_tools(agent, con)
-        return None
-
-    if name == "sessions":
-        _handle_sessions(con)
-        return None
-
-    if name == "bg":
-        _handle_bg(command, agent, con)
+    agent_handler = _AGENT_COMMANDS.get(name)
+    if agent_handler is not None:
+        agent_handler(agent, con)
         return None
 
     if name == "step":
         # /step on | /step off | /step
-        arg = parts[1] if len(parts) > 1 else ""
         _handle_step(agent, arg, con)
         return None
 
-    if name == "map":
-        _handle_map(command, con, ctx=ctx)
-        return None
-
-    if name == "plan":
-        if agent is not None and hasattr(agent, "set_mode"):
-            agent.set_mode("plan")
-            con.print("[green]✓[/green] Plan mode: write tools require confirmation")
-        else:
-            con.print("[yellow]Agent 未初始化[/yellow]")
-        return None
-
-    if name == "chat":
-        # 切回 chat mode: plan/research 切回默认, 释放权限限制.
-        if agent is not None and hasattr(agent, "set_mode"):
-            agent.set_mode("chat")
-            con.print("[green]✓[/green] Chat mode: default tools, no confirmation required")
-        else:
-            con.print("[yellow]Agent 未初始化[/yellow]")
-        return None
-
-    if name == "research":
-        if agent is not None and hasattr(agent, "set_mode"):
-            agent.set_mode("research")
-            con.print("[green]✓[/green] Research mode: all tools, math depth guide, Deli pipeline")
-        else:
-            con.print("[yellow]Agent 未初始化[/yellow]")
-        return None
-
-    if name == "subgoal":
-        _handle_subgoal(command, agent, con)
-        return None
-
-    if name == "goal":
-        _handle_goal(command, agent, con)
-        return None
-
-    if name == "flow":
-        _handle_flow(command, agent, con)
-        return None
-
-    if name == "graph":
-        _handle_graph(command, agent, con)
+    full_handler = _FULL_COMMANDS.get(name)
+    if full_handler is not None:
+        full_handler(command, agent, con, ctx)
         return None
 
     # 不在内置命令里, 试自定义命令
-    if name and name not in _BUILTIN_COMMANDS:
-        expanded = _try_custom_command(command, ctx=ctx, console=con)
-        if expanded is not None:
-            return expanded
-
-    con.print(f"[yellow]未知命令: /{name}[/yellow]")
-    con.print("[dim]输入 /help 查看可用命令[/dim]")
-    return None
+    return _handle_unknown_command(name, command, ctx, con)
 
 
 __all__ = ["handle_slash_command"]

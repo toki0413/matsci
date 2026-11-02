@@ -18,6 +18,8 @@ import time
 import urllib.request
 from pathlib import Path
 
+from huginn.env_access import env_str
+
 logger = logging.getLogger(__name__)
 
 # 本地视觉解码模型的命名规则; 用户可能只拉了 qwen2.5-vl, 前缀匹配取最大版本.
@@ -31,7 +33,7 @@ _HTTP_TIMEOUT = float(os.environ.get("HUGINN_LOCAL_VISION_TIMEOUT", "20"))
 
 
 def _ollama_host() -> str:
-    return os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+    return env_str("OLLAMA_HOST").rstrip("/")
 
 
 # 模块级常驻缓存: (host, model) -> (available_at_ts, model_name|None)

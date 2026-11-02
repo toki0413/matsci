@@ -1,3 +1,4 @@
+# governance-gate
 """防漂移: ponytail 技术债清单 (docs/TECHNICAL_DEBT_PONYTAIL.md) 第 4/5 节
 登记的每条 **open** S1/S2 条目, 都必须在代码里找到对应事实锚点.
 

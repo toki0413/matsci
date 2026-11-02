@@ -85,12 +85,16 @@ class PluginLoader:
             # 也用 get_shared_registry(), 否则 handler 注册到 A、事件从 B
             # 发出, 永远碰不上 (注释见 registry.py:118-121).
             from huginn.plugins.registry import get_shared_registry
+
             self.registry = get_shared_registry()
         if self.permission_checker is None:
             self.permission_checker = PermissionChecker()
 
     def _try_dispatch_plugin_event(
-        self, event_type: Any, plugin_name: str, data: dict | None = None,
+        self,
+        event_type: Any,
+        plugin_name: str,
+        data: dict | None = None,
     ) -> None:
         """best-effort dispatch 插件生命周期事件 (ON_PLUGIN_LOADED/UNLOADED).
 
@@ -111,9 +115,11 @@ class PluginLoader:
                 asyncio.get_running_loop()
                 asyncio.ensure_future(bus.dispatch(ev))
             except RuntimeError:
+
                 def _run() -> None:
                     with contextlib.suppress(Exception):
                         asyncio.run(bus.dispatch(ev))
+
                 threading.Thread(target=_run, daemon=True).start()
         except Exception:
             logger.debug("plugin lifecycle event dispatch failed", exc_info=True)
@@ -148,12 +154,10 @@ class PluginLoader:
     def load_one(self, plugin_dir: str | Path) -> PluginMetadata | None:
         """加载单个插件目录。失败抛异常, 由 load_all 接。"""
         plugin_dir = Path(plugin_dir)
-        meta_path = plugin_dir / "metadata.yaml"
-        if not meta_path.is_file():
-            logger.warning("skip %s: no metadata.yaml", plugin_dir)
+        meta = _read_plugin_metadata(plugin_dir, warn_missing=True)
+        if meta is None:
             return None
 
-        meta = PluginMetadata.from_yaml(meta_path)
         if not meta.name:
             raise ValueError(f"plugin at {plugin_dir} has empty name in metadata.yaml")
 
@@ -173,72 +177,26 @@ class PluginLoader:
         if not main_path.is_file():
             raise FileNotFoundError(f"plugin {meta.name!r}: main.py not found")
 
-        module = self._load_module(meta.name, main_path)
-        star_cls = self._find_star_subclass(module)
-        if star_cls is None:
-            raise RuntimeError(
-                f"plugin {meta.name!r}: no Star subclass found in main.py"
-            )
-
-        # 实例化 + 注入 context
-        context = self.context_factory(meta)
-        # 让 event_bus 可用给插件主动 dispatch
-        if self.event_bus is not None and context.event_bus is None:
-            context.event_bus = self.event_bus
-        instance = star_cls(context=context)
-        # 把 metadata 里的版本/作者回填到 Star 类属性 (方便 registry 排查)
-        instance.name = meta.name
-        instance.version = meta.version
-        instance.author = meta.author
-
-        # 注册权限
-        self.permission_checker.register(meta)
-
-        # 收集 handler 注册到 registry
-        metas = instance.collect_handlers()
-        self.registry.register_iterable(metas)
-
-        # P1: 能力维度 mount — 收集 @capability 注册到 CapabilityRegistry (可逆)
-        self._mount_capabilities(instance)
+        module, instance, metas = _build_plugin_instance(
+            self, meta, main_path, set_author=True
+        )
 
         # 生命周期 on_load
-        try:
-            import asyncio
-            coro = instance.on_load()
-            if asyncio.iscoroutine(coro):
-                # 同步加载上下文里没有 loop, 用 asyncio.run 跑
-                # (注意: 如果调用方已在 event loop 内, 这里会炸, 那种场景应该用 load_one_async)
-                try:
-                    asyncio.get_running_loop()
-                    # 已在 loop 内, 不能 asyncio.run, 创建 task 但不等
-                    logger.warning(
-                        "on_load of %s returned coro but we're in a running loop; "
-                        "schedule without await", meta.name
-                    )
-                    from huginn.utils.concurrency import track_task
-                    track_task(coro, name=f"plugin-onload-{meta.name}")
-                except RuntimeError:
-                    asyncio.run(coro)
-        except Exception as e:
-            logger.exception("on_load of %s failed: %s", meta.name, e)
-            # ON_PLUGIN_ERROR: 插件加载失败时 dispatch (best-effort).
-            # v23 Round 8: 已实际 dispatch, 生命周期监听器可收到.
-            from huginn.api.event import EventType
-            self._try_dispatch_plugin_event(
-                EventType.ON_PLUGIN_ERROR, meta.name,
-                data={"phase": "on_load", "error": str(e)[:200]},
-            )
+        _run_on_load(self, instance, meta)
 
         self._loaded[meta.name] = LoadedPlugin(
             metadata=meta, instance=instance, module=module, plugin_dir=plugin_dir
         )
-        logger.info("loaded plugin %s v%s (%d handlers)",
-                    meta.name, meta.version, len(metas))
+        logger.info(
+            "loaded plugin %s v%s (%d handlers)", meta.name, meta.version, len(metas)
+        )
         # ON_PLUGIN_LOADED: 加载完成后 best-effort dispatch 一次.
         # v23 Round 8: 已实际 dispatch, 生命周期监听器可收到.
         from huginn.api.event import EventType
+
         self._try_dispatch_plugin_event(
-            EventType.ON_PLUGIN_LOADED, meta.name,
+            EventType.ON_PLUGIN_LOADED,
+            meta.name,
             data={"version": meta.version, "handlers": len(metas)},
         )
         return meta
@@ -250,11 +208,10 @@ class PluginLoader:
         load_one 内部 on_load 已经处理了 loop 内场景, 这里给个干净入口。
         """
         plugin_dir = Path(plugin_dir)
-        meta_path = plugin_dir / "metadata.yaml"
-        if not meta_path.is_file():
+        meta = _read_plugin_metadata(plugin_dir, warn_missing=False)
+        if meta is None:
             return None
 
-        meta = PluginMetadata.from_yaml(meta_path)
         if not meta.check_version_compatibility(HUGINN_API_VERSION):
             raise RuntimeError(
                 f"plugin {meta.name!r} requires huginn {meta.huginn_version_range}"
@@ -264,35 +221,29 @@ class PluginLoader:
             self.unload(meta.name)
 
         main_path = plugin_dir / "main.py"
-        module = self._load_module(meta.name, main_path)
-        star_cls = self._find_star_subclass(module)
-        if star_cls is None:
-            raise RuntimeError(f"plugin {meta.name!r}: no Star subclass in main.py")
-
-        context = self.context_factory(meta)
-        if self.event_bus is not None and context.event_bus is None:
-            context.event_bus = self.event_bus
-        instance = star_cls(context=context)
-        instance.name = meta.name
-        instance.version = meta.version
-
-        self.permission_checker.register(meta)
-        metas = instance.collect_handlers()
-        self.registry.register_iterable(metas)
-        self._mount_capabilities(instance)
+        module, instance, metas = _build_plugin_instance(
+            self,
+            meta,
+            main_path,
+            set_author=False,
+            no_cls_message=f"plugin {meta.name!r}: no Star subclass in main.py",
+        )
 
         await instance.on_load()
 
         self._loaded[meta.name] = LoadedPlugin(
             metadata=meta, instance=instance, module=module, plugin_dir=plugin_dir
         )
-        logger.info("loaded plugin %s v%s (%d handlers)",
-                    meta.name, meta.version, len(metas))
+        logger.info(
+            "loaded plugin %s v%s (%d handlers)", meta.name, meta.version, len(metas)
+        )
         # ON_PLUGIN_LOADED: 加载完成后 best-effort dispatch 一次.
         # v23 Round 8: 已实际 dispatch, 生命周期监听器可收到.
         from huginn.api.event import EventType
+
         self._try_dispatch_plugin_event(
-            EventType.ON_PLUGIN_LOADED, meta.name,
+            EventType.ON_PLUGIN_LOADED,
+            meta.name,
             data={"version": meta.version, "handlers": len(metas)},
         )
         return meta
@@ -306,6 +257,7 @@ class PluginLoader:
             return False
         try:
             import asyncio
+
             coro = loaded.instance.on_unload()
             if asyncio.iscoroutine(coro):
                 try:
@@ -317,8 +269,10 @@ class PluginLoader:
             logger.exception("on_unload of %s failed: %s", plugin_name, e)
             # ON_PLUGIN_ERROR: 插件卸载失败时也 dispatch.
             from huginn.api.event import EventType
+
             self._try_dispatch_plugin_event(
-                EventType.ON_PLUGIN_ERROR, plugin_name,
+                EventType.ON_PLUGIN_ERROR,
+                plugin_name,
                 data={"phase": "on_unload", "error": str(e)[:200]},
             )
 
@@ -333,8 +287,10 @@ class PluginLoader:
         logger.info("unloaded plugin %s", plugin_name)
         # ON_PLUGIN_UNLOADED: 与 ON_PLUGIN_LOADED 对称, 卸载后 best-effort 发一次.
         from huginn.api.event import EventType
+
         self._try_dispatch_plugin_event(
-            EventType.ON_PLUGIN_UNLOADED, plugin_name,
+            EventType.ON_PLUGIN_UNLOADED,
+            plugin_name,
         )
         return True
 
@@ -410,6 +366,90 @@ class PluginLoader:
                 "multiple Star subclasses found, using %s", candidates[0].__name__
             )
         return candidates[0]
+
+
+def _read_plugin_metadata(
+    plugin_dir: Path, *, warn_missing: bool
+) -> PluginMetadata | None:
+    meta_path = plugin_dir / "metadata.yaml"
+    if not meta_path.is_file():
+        if warn_missing:
+            logger.warning("skip %s: no metadata.yaml", plugin_dir)
+        return None
+    return PluginMetadata.from_yaml(meta_path)
+
+
+def _build_plugin_instance(
+    loader: PluginLoader,
+    meta: PluginMetadata,
+    main_path: Path,
+    *,
+    set_author: bool,
+    no_cls_message: str = "",
+):
+    module = loader._load_module(meta.name, main_path)
+    star_cls = loader._find_star_subclass(module)
+    if star_cls is None:
+        raise RuntimeError(
+            no_cls_message or f"plugin {meta.name!r}: no Star subclass found in main.py"
+        )
+
+    # 实例化 + 注入 context
+    context = loader.context_factory(meta)
+    # 让 event_bus 可用给插件主动 dispatch
+    if loader.event_bus is not None and context.event_bus is None:
+        context.event_bus = loader.event_bus
+    instance = star_cls(context=context)
+    # 把 metadata 里的版本/作者回填到 Star 类属性 (方便 registry 排查)
+    instance.name = meta.name
+    instance.version = meta.version
+    if set_author:
+        instance.author = meta.author
+
+    # 注册权限
+    loader.permission_checker.register(meta)
+
+    # 收集 handler 注册到 registry
+    metas = instance.collect_handlers()
+    loader.registry.register_iterable(metas)
+
+    # P1: 能力维度 mount — 收集 @capability 注册到 CapabilityRegistry (可逆)
+    loader._mount_capabilities(instance)
+    return module, instance, metas
+
+
+def _run_on_load(loader: PluginLoader, instance: Star, meta: PluginMetadata) -> None:
+    try:
+        import asyncio
+
+        coro = instance.on_load()
+        if asyncio.iscoroutine(coro):
+            # 同步加载上下文里没有 loop, 用 asyncio.run 跑
+            # (注意: 如果调用方已在 event loop 内, 这里会炸, 那种场景应该用 load_one_async)
+            try:
+                asyncio.get_running_loop()
+                # 已在 loop 内, 不能 asyncio.run, 创建 task 但不等
+                logger.warning(
+                    "on_load of %s returned coro but we're in a running loop; "
+                    "schedule without await",
+                    meta.name,
+                )
+                from huginn.utils.concurrency import track_task
+
+                track_task(coro, name=f"plugin-onload-{meta.name}")
+            except RuntimeError:
+                asyncio.run(coro)
+    except Exception as e:
+        logger.exception("on_load of %s failed: %s", meta.name, e)
+        # ON_PLUGIN_ERROR: 插件加载失败时 dispatch (best-effort).
+        # v23 Round 8: 已实际 dispatch, 生命周期监听器可收到.
+        from huginn.api.event import EventType
+
+        loader._try_dispatch_plugin_event(
+            EventType.ON_PLUGIN_ERROR,
+            meta.name,
+            data={"phase": "on_load", "error": str(e)[:200]},
+        )
 
 
 __all__ = ["PluginLoader", "LoadedPlugin", "ContextFactory", "DEFAULT_PLUGINS_DIR"]

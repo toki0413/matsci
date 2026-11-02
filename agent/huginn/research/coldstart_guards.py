@@ -17,6 +17,7 @@
   - `compile_domain_guards(domain)` -> 该域启动守卫清单。
   - harness 冷启动(新域批次前)把清单注入 code_lab 沙箱配置与成文 system prompt。
 """
+
 from __future__ import annotations
 
 import importlib
@@ -81,34 +82,55 @@ DOMAIN_PROFILES: dict[str, dict[str, Any]] = {
     },
     "fracture": {
         "deps": ["numpy", "scipy", "matplotlib"],
-        "imports_extra": [],   # 纯标准库守卫由跨域 GUARD_LIBRARY 兜底
-        "code_retry_budget": 1,   # 倾斜: 书生成码一次失败即回退, 火让给 probe/scan
+        "imports_extra": [],  # 纯标准库守卫由跨域 GUARD_LIBRARY 兜底
+        "code_retry_budget": 1,  # 倾斜: 书生成码一次失败即回退, 火让给 probe/scan
         # 域级 cfg 键别名(书生近义名 → 白名单规范键, 全映射同一份真实数值):
         # 域专用物理别名显式待在域声明里, 不让通用 harness 累积例外(低熵红线).
         "cfg_aliases": {
-            "sigma_0": "bridge_ratio", "sigma0": "bridge_ratio",
-            "sigma0_sigmay": "bridge_ratio", "sigma0_over_sy": "bridge_ratio",
-            "bridge": "bridge_ratio", "bridging_ratio": "bridge_ratio",
-            "n_flaw": "n_flaws", "n_defects": "n_flaws", "defect_count": "n_flaws",
-            "a_over_astar": "flaw_idx", "aastar": "flaw_idx",
-            "aa_star": "flaw_idx", "flaw_size": "flaw_idx",
-            "kic_i": "kic_mat", "kic_idx": "kic_mat", "KIC_mat": "kic_mat",
-            "v_cr": "vcR", "v_cR": "vcR", "v_over_cR": "vcR",
-            "poisson": "nu", "poisson_ratio": "nu",
+            "sigma_0": "bridge_ratio",
+            "sigma0": "bridge_ratio",
+            "sigma0_sigmay": "bridge_ratio",
+            "sigma0_over_sy": "bridge_ratio",
+            "bridge": "bridge_ratio",
+            "bridging_ratio": "bridge_ratio",
+            "n_flaw": "n_flaws",
+            "n_defects": "n_flaws",
+            "defect_count": "n_flaws",
+            "a_over_astar": "flaw_idx",
+            "aastar": "flaw_idx",
+            "aa_star": "flaw_idx",
+            "flaw_size": "flaw_idx",
+            "kic_i": "kic_mat",
+            "kic_idx": "kic_mat",
+            "KIC_mat": "kic_mat",
+            "v_cr": "vcR",
+            "v_cR": "vcR",
+            "v_over_cR": "vcR",
+            "poisson": "nu",
+            "poisson_ratio": "nu",
         },
-        "probes": ["probe_interface", "probe_dbt", "probe_flaw", "probe_weibull",
-                   "probe_bridge", "probe_barrier", "probe_kic"],
+        "probes": [
+            "probe_interface",
+            "probe_dbt",
+            "probe_flaw",
+            "probe_weibull",
+            "probe_bridge",
+            "probe_barrier",
+            "probe_kic",
+        ],
         "note": "断裂力学: IJF2026 七开放问题, scan+probe 主导, 书生成码低频",
     },
     "quantum_critical": {
         "deps": ["numpy", "scipy"],
         "imports_extra": [],
-        "code_retry_budget": 1,   # 倾斜: 解析+数值扫描主导, 书生成码低频(与 fracture 同理)
+        "code_retry_budget": 1,  # 倾斜: 解析+数值扫描主导, 书生成码低频(与 fracture 同理)
         # 探针面 = 通用工具面(dict 逃生口 scipy 仪器 + 书生成码 probe_*), 不再预置物理别名;
         # 成文时出具域无关通用仪器(qc_integrate/root/minimize/curvefit/ode), 不写物理探针.
         "probes": [],
-        "note": ("应变耦合量子相变: 序参量 Landau-Ginzburg + 临界指数/普适类/"
-                 "相图拓扑/材料谱系, 多尺度耦合, 与固体力学零族(泛化验证)"),
+        "note": (
+            "应变耦合量子相变: 序参量 Landau-Ginzburg + 临界指数/普适类/"
+            "相图拓扑/材料谱系, 多尺度耦合, 与固体力学零族(泛化验证)"
+        ),
     },
     # held-out 泛化域: 生态动力学(Lotka-Volterra)。扣出、不并入 in-sample 复用计分,
     # 只用同一机制零改动测其泛化。声明即数据, 不碰任何共享机制代码.
@@ -122,18 +144,23 @@ DOMAIN_PROFILES: dict[str, dict[str, Any]] = {
         # 是**域数据**, 可整块卸载/替换(compile_domain_guards 透出); 共享验证器不吃硬编码键.
         "scientific_contract": {
             "quantities": {
-                "x_star":    {"unit": "count", "domain": {"min": 0.0}},
-                "y_star":    {"unit": "count", "domain": {"min": 0.0}},
-                "trace":     {"unit": "1",     "domain": None},
+                "x_star": {"unit": "count", "domain": {"min": 0.0}},
+                "y_star": {"unit": "count", "domain": {"min": 0.0}},
+                "trace": {"unit": "1", "domain": None},
                 "period_est": {"unit": "time", "domain": {"min": 0.0}},
                 "final_prey": {"unit": "count", "domain": {"min": 0.0}},
                 # 派生量关系(跨量量纲恒等, S3): frequency = 1/period_est ⇒ dim(1/s)=T-1.
-                "frequency": {"unit": "frequency",
-                              "derived_denom": ["period_est"], "domain": {"min": 0.0}},
+                "frequency": {
+                    "unit": "frequency",
+                    "derived_denom": ["period_est"],
+                    "domain": {"min": 0.0},
+                },
             }
         },
-        "note": ("群体生态捕食-被捕食(Lotka-Volterra): 平衡点 Jacobian 稳定性 + "
-                 "数值积分振荡周期, 与凝聚态/固体力学零族(held-out 泛化域)"),
+        "note": (
+            "群体生态捕食-被捕食(Lotka-Volterra): 平衡点 Jacobian 稳定性 + "
+            "数值积分振荡周期, 与凝聚态/固体力学零族(held-out 泛化域)"
+        ),
     },
 }
 
@@ -161,7 +188,17 @@ def _active_categories(domain: str) -> list[str]:
     return list(GUARD_LIBRARY)
 
 
+def _deps_check(deps: list[str]) -> tuple[dict[str, bool], list[str]]:
+    """依赖预检(纯标准库 find_spec, 不 import 触发副作用)."""
+    deps_check: dict[str, bool] = {}
+    for d in deps:
+        deps_check[d] = importlib.util.find_spec(d) is not None
+    missing = [d for d, ok in deps_check.items() if not ok]
+    return deps_check, missing
+
+
 # ═══════════════════════ 编译: 域 → 启动守卫清单 ═══════════════════════
+
 
 def compile_domain_guards(domain: str) -> dict[str, Any]:
     """把跨域 GUARD_LIBRARY + 该域声明编译成可注入的启动清单.
@@ -185,17 +222,12 @@ def compile_domain_guards(domain: str) -> dict[str, Any]:
     pf = get_domain_profile(domain)
     cats = _active_categories(domain)
     summary = {c: GUARD_LIBRARY[c]["guard"] for c in cats}
-    # 依赖预检(纯标准库 find_spec, 不 import 触发副作用)
-    deps_check: dict[str, bool] = {}
-    for d in pf["deps"]:
-        deps_check[d] = importlib.util.find_spec(d) is not None
-    missing = [d for d, ok in deps_check.items() if not ok]
+    deps_check, missing = _deps_check(pf["deps"])
     # 写码重试预算来自域声明(倾斜中心)
     retry = max(0, int(pf["code_retry_budget"]))
     # 成文软提示块(跨域守卫的 prompt 化摘要)
     prompt_guards = [
-        f"[冷启动守卫·{c}] {GUARD_LIBRARY[c]['abstract_fix']}"
-        for c in cats
+        f"[冷启动守卫·{c}] {GUARD_LIBRARY[c]['abstract_fix']}" for c in cats
     ]
     # 量纲/跨量恒等预检(惰性引 sympy, 新域加载时即跑): 域契约的单位是否合法、
     # 派生关系是否量纲自洽. 引擎不可用 → 空(不阻断, 与"纯标准库 import"相容).
@@ -230,6 +262,7 @@ def _dimensional_precheck(scientific_contract: dict) -> dict:
             validate_declared_units,
             validate_derived_dimensions,
         )
+
         decl = validate_declared_units(q)
         derived = validate_derived_dimensions(q)
         ok = all(v["valid"] for v in decl.values())
@@ -267,11 +300,18 @@ def to_markdown(guards: dict[str, Any]) -> str:
     for c, gtxt in (guards.get("summary") or {}).items():
         lines.append(f"| {c} | {gtxt} |")
     lines.append("")
-    lines.append("**依赖预检**: " + ", ".join(
-        f"{k}={'✓' if v else '✗'}" for k, v in (guards.get("deps_check") or {}).items()
-    ) or "无")
+    lines.append(
+        "**依赖预检**: "
+        + ", ".join(
+            f"{k}={'✓' if v else '✗'}"
+            for k, v in (guards.get("deps_check") or {}).items()
+        )
+        or "无"
+    )
     lines.append("")
-    lines.append("**写码重试预算**: " + (str(guards.get("code_retry_budget")) or "默认"))
+    lines.append(
+        "**写码重试预算**: " + (str(guards.get("code_retry_budget")) or "默认")
+    )
     lines.append("**成文探针**: " + ", ".join(guards.get("probes") or ["(无)"]))
     return "\n".join(lines)
 

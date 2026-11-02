@@ -120,6 +120,7 @@ class ToolCallRouter:
         # flag 关掉时直接放行, 不做 sanity check
         try:
             from huginn.feature_flags import FeatureFlags
+
             if not FeatureFlags.shared().is_enabled("tool_call_router"):
                 return True, ""
         except Exception:  # 防御: 开关层异常不拦业务
@@ -145,20 +146,29 @@ class ToolCallRouter:
         # ponytail: removed __confirm_heavy bypass — LLM should not be able to
         # self-authorise heavy tool calls. Light-path attempt is the only gate.
 
-        # 判断轻量路径是否已尝试: 内部记录 + context 里给的
+        if ToolCallRouter._light_path_attempted(self, context):
+            return True, ""
+        return ToolCallRouter._heavy_block_response(self, tool_name)
+
+    def _light_path_attempted(self, context: dict[str, Any]) -> bool:
+        """判断轻量路径是否已尝试: 内部记录 + context 里给的."""
         with self._lock:
             attempted = set(self._attempted_light)
         ext = context.get("attempted_light") if context else None
         if isinstance(ext, list | tuple | set):
             attempted.update(ext)
 
-        if attempted:
-            # 已试过轻量路径, 放行重型仿真
-            return True, ""
+        # 已试过轻量路径, 放行重型仿真
+        return bool(attempted)
 
-        # 没试过轻量路径就上重型 → 拦下, 给替代方案
+    def _heavy_block_response(self, tool_name: str) -> tuple[bool, str]:
+        """没试过轻量路径就上重型 → 拦下, 给替代方案."""
         alternatives = self.get_alternatives(tool_name)
-        alt_text = ", ".join(alternatives) if alternatives else "查 knowledge seed / web_search_tool"
+        alt_text = (
+            ", ".join(alternatives)
+            if alternatives
+            else "查 knowledge seed / web_search_tool"
+        )
         reason = (
             f"Heavy tool {tool_name} requested but no light path attempted. "
             f"Consider: {alt_text}. "
@@ -200,6 +210,4 @@ class ToolCallRouter:
         }
 
     def __repr__(self) -> str:
-        return (
-            f"ToolCallRouter(attempted_light={sorted(self._attempted_light)})"
-        )
+        return f"ToolCallRouter(attempted_light={sorted(self._attempted_light)})"

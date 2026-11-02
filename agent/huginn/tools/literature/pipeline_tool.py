@@ -14,6 +14,7 @@
 
 ponytail: 不重写 KB, 不新建状态存储, 不引新依赖.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -43,16 +44,21 @@ logger = logging.getLogger(__name__)
 
 # ── 输入 schema ───────────────────────────────────────────────────────────────
 
+
 class LiteraturePipelineInput(BaseModel):
     action: Literal["parse_pdf", "extract_schema", "aggregate_entities"] = Field(
         ...,
         description="parse_pdf: MinerU VLM 解析 PDF, 入 KB; "
-                    "extract_schema: 6 块 Schema 抽取 (Material/Structure/Properties/Synthesis/Application/Metadata); "
-                    "aggregate_entities: 跨文献实体聚合 (Union-Find 三级匹配 + KG 集成)",
+        "extract_schema: 6 块 Schema 抽取 (Material/Structure/Properties/Synthesis/Application/Metadata); "
+        "aggregate_entities: 跨文献实体聚合 (Union-Find 三级匹配 + KG 集成)",
     )
     pdf_path: str = Field(default="", description="parse_pdf: 本地 PDF 绝对路径")
-    doc_id: str = Field(default="", description="extract_schema: 已解析文档 id (parse_pdf 返回值)")
-    doc_ids: list[str] = Field(default_factory=list, description="aggregate_entities: 文档 id 列表")
+    doc_id: str = Field(
+        default="", description="extract_schema: 已解析文档 id (parse_pdf 返回值)"
+    )
+    doc_ids: list[str] = Field(
+        default_factory=list, description="aggregate_entities: 文档 id 列表"
+    )
     model_alias: str = Field(
         default="",
         description="extract_schema 用的 LLM alias (空则走 registry.default_alias)",
@@ -64,6 +70,7 @@ class LiteraturePipelineInput(BaseModel):
 
 
 # ── Tool 实现 ─────────────────────────────────────────────────────────────────
+
 
 class LiteraturePipelineTool(HuginnTool):
     """MinerU 文献流水线: PDF → 解析 → Schema 抽取 → 跨文献聚合 → KG."""
@@ -82,7 +89,9 @@ class LiteraturePipelineTool(HuginnTool):
     input_schema = LiteraturePipelineInput
     read_only = False  # parse_pdf 写 KB, aggregate 写 KG
 
-    async def call(self, args: LiteraturePipelineInput, context: ToolContext) -> ToolResult:
+    async def call(
+        self, args: LiteraturePipelineInput, context: ToolContext
+    ) -> ToolResult:
         try:
             if isinstance(args, dict):
                 args = LiteraturePipelineInput(**args)
@@ -92,9 +101,13 @@ class LiteraturePipelineTool(HuginnTool):
                 return await self._do_extract_schema(args, context)
             if args.action == "aggregate_entities":
                 return await self._do_aggregate(args, context)
-            return ToolResult(data=None, success=False, error=f"unknown action: {args.action}")
+            return ToolResult(
+                data=None, success=False, error=f"unknown action: {args.action}"
+            )
         except Exception as exc:
-            logger.exception("literature_pipeline_tool %s failed", getattr(args, "action", "unknown"))
+            logger.exception(
+                "literature_pipeline_tool %s failed", getattr(args, "action", "unknown")
+            )
             return ToolResult(data=None, success=False, error=str(exc))
 
     # ── 共享 helpers ──────────────────────────────────────────────────────
@@ -129,9 +142,11 @@ class LiteraturePipelineTool(HuginnTool):
     def _get_model_for_extract(context: ToolContext, alias: str = "") -> Any:
         """拿 LLM 实例 (走 ModelRegistry, 复用 schema_extractor.resolve_model)."""
         from huginn.models.registry import ModelRegistry
+
         cfg = getattr(context, "config", None)
         if cfg is None:
             from huginn.config import HuginnConfig
+
             cfg = HuginnConfig.from_env()
         registry = ModelRegistry.from_config(cfg)
         return LiteraturePipelineTool._resolve_model(registry, alias)
@@ -141,12 +156,16 @@ class LiteraturePipelineTool(HuginnTool):
         """alias 为空走 default_alias."""
         a = alias or registry.default_alias()
         if not a:
-            raise ValueError("registry 无可用 alias, 请配置 models 或显式传 model_alias")
+            raise ValueError(
+                "registry 无可用 alias, 请配置 models 或显式传 model_alias"
+            )
         return registry.get(a)
 
     # ── action 1: parse_pdf ──────────────────────────────────────────────
 
-    async def _do_parse_pdf(self, args: LiteraturePipelineInput, context: ToolContext) -> ToolResult:
+    async def _do_parse_pdf(
+        self, args: LiteraturePipelineInput, context: ToolContext
+    ) -> ToolResult:
         pdf_path_str = (args.pdf_path or "").strip()
         if not pdf_path_str:
             return ToolResult(data=None, success=False, error="pdf_path is required")
@@ -155,20 +174,13 @@ class LiteraturePipelineTool(HuginnTool):
         # 而不是先抱怨文件不存在 (那会误导调用方以为路径问题).
         keys = self._get_mineru_keys(context)
         if not keys:
-            return ToolResult(
-                data={
-                    "error": "MinerU API key 未配置",
-                    "hint": "设置 MINERU_API_KEYS 环境变量或 HuginnConfig.mineru_api_keys. "
-                            "未配置时 agent 自动退回 PyMuPDF + OCR 路径 (SmartIngester).",
-                    "fallback": "pymupdf_ocr",
-                },
-                success=False,
-                error="MinerU API key 未配置",
-            )
+            return _mineru_keys_missing_result()
 
         pdf_path = Path(pdf_path_str)
         if not pdf_path.exists():
-            return ToolResult(data=None, success=False, error=f"PDF not found: {pdf_path}")
+            return ToolResult(
+                data=None, success=False, error=f"PDF not found: {pdf_path}"
+            )
 
         # doc_id 用文件名 stem
         doc_id = pdf_path.stem
@@ -179,55 +191,12 @@ class LiteraturePipelineTool(HuginnTool):
         if (target_dir / "content_list.json").exists():
             logger.info("parse_pdf cache hit: %s", doc_id)
         else:
-            # 调 MinerU API (阻塞, 放到 thread 避免阻塞 event loop)
-            spec = FileSpec(path=pdf_path, data_id=doc_id, is_ocr=False)
-            try:
-                batch = await asyncio.to_thread(
-                    submit_batch, [spec], api_keys=keys, model_version="vlm",
-                )
-                results = await asyncio.to_thread(
-                    wait_batch, batch.batch_id, api_keys=keys,
-                )
-            except Exception as exc:
-                return ToolResult(
-                    data={"error": f"MinerU API 调用失败: {exc}", "doc_id": doc_id},
-                    success=False, error=str(exc),
-                )
-
-            # 找到 done 的结果, 下载 zip
-            ok = next((r for r in results if r.get("state") == "done" and r.get("full_zip_url")), None)
-            if not ok:
-                failed = [r for r in results if r.get("state") == "failed"]
-                err_msg = failed[0].get("err_msg", "unknown") if failed else "no done result"
-                return ToolResult(
-                    data={"error": f"MinerU 解析失败: {err_msg}", "doc_id": doc_id,
-                          "results": results},
-                    success=False, error=err_msg,
-                )
-            try:
-                await asyncio.to_thread(download_and_extract, ok["full_zip_url"], target_dir)
-            except Exception as exc:
-                return ToolResult(
-                    data={"error": f"MinerU zip 下载/解压失败: {exc}", "doc_id": doc_id},
-                    success=False, error=str(exc),
-                )
+            error_result = await _run_mineru_parse(pdf_path, doc_id, keys, target_dir)
+            if error_result is not None:
+                return error_result
 
         # 入 KB: 读 content_list.json 拼全文, 通过 kb.add_text 入 ChromaDB
-        kb_written = 0
-        try:
-            from huginn.knowledge.store import get_knowledge_base
-            doc = parse_document(target_dir)
-            kb = get_knowledge_base()
-            if doc.full_text:
-                meta = {
-                    "doc_id": doc_id,
-                    "source": "mineru_pipeline",
-                    "abstract": doc.abstract or "",
-                }
-                kb.add_text(doc.full_text, filename=doc_id, metadata=meta)
-                kb_written = 1
-        except Exception as exc:
-            logger.warning("parse_pdf KB 入库失败 (doc_id=%s): %s", doc_id, exc)
+        kb_written = _ingest_parsed_doc(target_dir, doc_id)
 
         return ToolResult(
             data={
@@ -240,48 +209,28 @@ class LiteraturePipelineTool(HuginnTool):
 
     # ── action 2: extract_schema ─────────────────────────────────────────
 
-    async def _do_extract_schema(self, args: LiteraturePipelineInput, context: ToolContext) -> ToolResult:
+    async def _do_extract_schema(
+        self, args: LiteraturePipelineInput, context: ToolContext
+    ) -> ToolResult:
         doc_id = (args.doc_id or "").strip()
         if not doc_id:
             return ToolResult(data=None, success=False, error="doc_id is required")
         target_dir = parsed_dir_for(doc_id, self._parsed_root(context))
         if not (target_dir / "content_list.json").exists():
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"doc_id {doc_id} 未解析, 请先调用 parse_pdf",
             )
 
-        try:
-            model = self._get_model_for_extract(context, args.model_alias)
-        except Exception as exc:
-            return ToolResult(
-                data=None, success=False,
-                error=f"LLM 初始化失败: {exc}",
-            )
-
-        # 调 schema_extractor (同步, 放到 thread)
-        try:
-            schema: MaterialSchema = await asyncio.to_thread(
-                extract_from_parsed_dir, target_dir, model, True,
-            )
-        except Exception as exc:
-            return ToolResult(
-                data=None, success=False,
-                error=f"Schema 抽取失败: {exc}",
-            )
+        schema, error_result = await _extract_schema_via_llm(args, context, target_dir)
+        if error_result is not None:
+            return error_result
 
         schema_dict = schema.to_dict()
 
         # 落盘到 data/extracted/{doc_id}.json (供 aggregate_entities 读)
-        try:
-            extracted_dir = self._extracted_root(context)
-            extracted_dir.mkdir(parents=True, exist_ok=True)
-            (extracted_dir / f"{doc_id}.json").write_text(
-                json.dumps(schema_dict, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-        except Exception as exc:
-            logger.warning("Schema 落盘失败 (doc_id=%s): %s", doc_id, exc)
+        _persist_schema(self._extracted_root(context), doc_id, schema_dict)
 
         # 校验报告: 非法 PropertyCategory + invalid_original_texts 已在 extract 内部处理
         invalid_cats = schema.invalid_property_categories()
@@ -297,29 +246,23 @@ class LiteraturePipelineTool(HuginnTool):
 
     # ── action 3: aggregate_entities ─────────────────────────────────────
 
-    async def _do_aggregate(self, args: LiteraturePipelineInput, context: ToolContext) -> ToolResult:
+    async def _do_aggregate(
+        self, args: LiteraturePipelineInput, context: ToolContext
+    ) -> ToolResult:
         doc_ids = args.doc_ids or []
         if not doc_ids:
-            return ToolResult(data=None, success=False, error="doc_ids is required (non-empty list)")
+            return ToolResult(
+                data=None, success=False, error="doc_ids is required (non-empty list)"
+            )
 
         # 读所有 doc_id 的 schema_dict
         extracted_dir = self._extracted_root(context)
-        extracted: dict[str, dict] = {}
-        missing: list[str] = []
-        for did in doc_ids:
-            p = extracted_dir / f"{did}.json"
-            if not p.exists():
-                missing.append(did)
-                continue
-            try:
-                extracted[did] = json.loads(p.read_text(encoding="utf-8"))
-            except Exception as exc:
-                logger.warning("读取 %s 失败: %s", p, exc)
-                missing.append(did)
+        extracted, missing = _load_schemas(doc_ids, extracted_dir)
 
         if not extracted:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"无可用 schema (doc_ids={doc_ids}, missing={missing})",
             )
 
@@ -333,14 +276,7 @@ class LiteraturePipelineTool(HuginnTool):
         # 可选: 自动喂给 huginn KG
         kg_stats = {"entities_added": 0, "relations_added": 0}
         if args.ingest_to_kg:
-            try:
-                from huginn.kg.graph import get_knowledge_graph
-                kg = get_knowledge_graph()
-                kg_stats = ingest_into_kg(kg, result)
-            except Exception as exc:
-                # KG 集成失败不阻塞聚合结果返回
-                logger.warning("KG 集成失败: %s", exc)
-                kg_stats = {"error": str(exc)}
+            kg_stats = _ingest_kg(result)
 
         return ToolResult(
             data={
@@ -353,6 +289,201 @@ class LiteraturePipelineTool(HuginnTool):
             },
             success=True,
         )
+
+
+def _mineru_keys_missing_result() -> ToolResult:
+    """MinerU API key 未配置: 返回明确错误 + fallback 提示."""
+    return ToolResult(
+        data={
+            "error": "MinerU API key 未配置",
+            "hint": "设置 MINERU_API_KEYS 环境变量或 HuginnConfig.mineru_api_keys. "
+            "未配置时 agent 自动退回 PyMuPDF + OCR 路径 (SmartIngester).",
+            "fallback": "pymupdf_ocr",
+        },
+        success=False,
+        error="MinerU API key 未配置",
+    )
+
+
+async def _extract_schema_via_llm(
+    args: LiteraturePipelineInput, context: ToolContext, target_dir: Path
+) -> tuple[MaterialSchema | None, ToolResult | None]:
+    """初始化 LLM 并抽 schema; 失败返回 (None, 失败结果), 成功返回 (schema, None)."""
+    try:
+        model = LiteraturePipelineTool._get_model_for_extract(context, args.model_alias)
+    except Exception as exc:
+        return None, ToolResult(
+            data=None,
+            success=False,
+            error=f"LLM 初始化失败: {exc}",
+        )
+
+    # 调 schema_extractor (同步, 放到 thread)
+    try:
+        schema: MaterialSchema = await asyncio.to_thread(
+            extract_from_parsed_dir,
+            target_dir,
+            model,
+            True,
+        )
+    except Exception as exc:
+        return None, ToolResult(
+            data=None,
+            success=False,
+            error=f"Schema 抽取失败: {exc}",
+        )
+    return schema, None
+
+
+async def _run_mineru_parse(
+    pdf_path: Path,
+    doc_id: str,
+    keys: list[str],
+    target_dir: Path,
+) -> ToolResult | None:
+    """调 MinerU API 解析 PDF 并下载 zip; 出错返回 ToolResult, 成功返回 None."""
+    # 调 MinerU API (阻塞, 放到 thread 避免阻塞 event loop)
+    spec = FileSpec(path=pdf_path, data_id=doc_id, is_ocr=False)
+    results, error_result = await _submit_and_wait_mineru(spec, keys, doc_id)
+    if error_result is not None:
+        return error_result
+
+    # 找到 done 的结果, 下载 zip
+    ok, error_result = _pick_mineru_result(results, doc_id)
+    if error_result is not None:
+        return error_result
+
+    return await _download_mineru_zip(ok, target_dir, doc_id)
+
+
+async def _submit_and_wait_mineru(
+    spec: FileSpec, keys: list[str], doc_id: str
+) -> tuple[list[dict[str, Any]], ToolResult | None]:
+    """提交 MinerU 批量任务并等待完成; API 异常时返回 (空列表, 失败结果)."""
+    # 调 MinerU API (阻塞, 放到 thread 避免阻塞 event loop)
+    try:
+        batch = await asyncio.to_thread(
+            submit_batch,
+            [spec],
+            api_keys=keys,
+            model_version="vlm",
+        )
+        results = await asyncio.to_thread(
+            wait_batch,
+            batch.batch_id,
+            api_keys=keys,
+        )
+    except Exception as exc:
+        return [], ToolResult(
+            data={"error": f"MinerU API 调用失败: {exc}", "doc_id": doc_id},
+            success=False,
+            error=str(exc),
+        )
+    return results, None
+
+
+def _pick_mineru_result(
+    results: list[dict[str, Any]], doc_id: str
+) -> tuple[dict[str, Any], ToolResult | None]:
+    """找到 done 的结果; 无 done 结果时返回 ({}, 失败结果)."""
+    # 找到 done 的结果, 下载 zip
+    ok = next(
+        (r for r in results if r.get("state") == "done" and r.get("full_zip_url")),
+        None,
+    )
+    if not ok:
+        failed = [r for r in results if r.get("state") == "failed"]
+        err_msg = failed[0].get("err_msg", "unknown") if failed else "no done result"
+        return {}, ToolResult(
+            data={
+                "error": f"MinerU 解析失败: {err_msg}",
+                "doc_id": doc_id,
+                "results": results,
+            },
+            success=False,
+            error=err_msg,
+        )
+    return ok, None
+
+
+async def _download_mineru_zip(
+    ok: dict[str, Any], target_dir: Path, doc_id: str
+) -> ToolResult | None:
+    """下载并解压 MinerU zip; 失败返回 ToolResult, 成功返回 None."""
+    try:
+        await asyncio.to_thread(download_and_extract, ok["full_zip_url"], target_dir)
+    except Exception as exc:
+        return ToolResult(
+            data={"error": f"MinerU zip 下载/解压失败: {exc}", "doc_id": doc_id},
+            success=False,
+            error=str(exc),
+        )
+    return None
+
+
+def _ingest_parsed_doc(target_dir: Path, doc_id: str) -> int:
+    """入 KB: 读 content_list.json 拼全文, 通过 kb.add_text 入 ChromaDB; 返回写入条数."""
+    kb_written = 0
+    try:
+        from huginn.knowledge.store import get_knowledge_base
+
+        doc = parse_document(target_dir)
+        kb = get_knowledge_base()
+        if doc.full_text:
+            meta = {
+                "doc_id": doc_id,
+                "source": "mineru_pipeline",
+                "abstract": doc.abstract or "",
+            }
+            kb.add_text(doc.full_text, filename=doc_id, metadata=meta)
+            kb_written = 1
+    except Exception as exc:
+        logger.warning("parse_pdf KB 入库失败 (doc_id=%s): %s", doc_id, exc)
+    return kb_written
+
+
+def _persist_schema(extracted_dir: Path, doc_id: str, schema_dict: dict) -> None:
+    """落盘到 data/extracted/{doc_id}.json (供 aggregate_entities 读)."""
+    try:
+        extracted_dir.mkdir(parents=True, exist_ok=True)
+        (extracted_dir / f"{doc_id}.json").write_text(
+            json.dumps(schema_dict, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        logger.warning("Schema 落盘失败 (doc_id=%s): %s", doc_id, exc)
+
+
+def _load_schemas(
+    doc_ids: list[str], extracted_dir: Path
+) -> tuple[dict[str, dict], list[str]]:
+    """读所有 doc_id 的 schema_dict; 返回 (extracted, missing)."""
+    extracted: dict[str, dict] = {}
+    missing: list[str] = []
+    for did in doc_ids:
+        p = extracted_dir / f"{did}.json"
+        if not p.exists():
+            missing.append(did)
+            continue
+        try:
+            extracted[did] = json.loads(p.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("读取 %s 失败: %s", p, exc)
+            missing.append(did)
+    return extracted, missing
+
+
+def _ingest_kg(result: dict) -> dict:
+    """把聚合结果喂给 huginn ProjectKnowledgeGraph; 失败不阻塞聚合结果返回."""
+    try:
+        from huginn.kg.graph import get_knowledge_graph
+
+        kg = get_knowledge_graph()
+        return ingest_into_kg(kg, result)
+    except Exception as exc:
+        # KG 集成失败不阻塞聚合结果返回
+        logger.warning("KG 集成失败: %s", exc)
+        return {"error": str(exc)}
 
 
 if __name__ == "__main__":
@@ -375,24 +506,29 @@ if __name__ == "__main__":
 
     ctx = _Ctx(workspace=".", config=None)
 
-    async def _run():
+    # 构造带 fake mineru_api_keys 的 context, 用于走到文件存在性检查
+    @dataclass
+    class _CfgWithKeys:
+        mineru_api_keys: list = None
+
+    _cfg_keys = _CfgWithKeys(mineru_api_keys=["fake_key_for_test"])
+    ctx_with_keys = _Ctx(workspace=".", config=_cfg_keys)
+
+    async def _check_parse_pdf(tool, ctx, ctx_with_keys) -> None:
         # 1. parse_pdf 缺 pdf_path
         r = await tool.call(LiteraturePipelineInput(action="parse_pdf"), ctx)
         assert r.success is False
         assert "pdf_path" in (r.error or "")
 
         # 2. parse_pdf 未配置 mineru_api_keys → 明确错误 + fallback 提示
-        r = await tool.call(LiteraturePipelineInput(action="parse_pdf", pdf_path="x.pdf"), ctx)
+        r = await tool.call(
+            LiteraturePipelineInput(action="parse_pdf", pdf_path="x.pdf"), ctx
+        )
         assert r.success is False
         assert "MinerU API key" in (r.error or "")
         assert (r.data or {}).get("fallback") == "pymupdf_ocr"
 
         # 3. parse_pdf PDF 不存在 (需要先有 keys 才能走到文件检查)
-        @dataclass
-        class _CfgWithKeys:
-            mineru_api_keys: list = None
-        _cfg_keys = _CfgWithKeys(mineru_api_keys=["fake_key_for_test"])
-        ctx_with_keys = _Ctx(workspace=".", config=_cfg_keys)
         r = await tool.call(
             LiteraturePipelineInput(action="parse_pdf", pdf_path="nonexistent.pdf"),
             ctx_with_keys,
@@ -400,6 +536,7 @@ if __name__ == "__main__":
         assert r.success is False
         assert "not found" in (r.error or "").lower()
 
+    async def _check_extract_and_aggregate(tool, ctx) -> None:
         # 4. extract_schema 缺 doc_id
         r = await tool.call(LiteraturePipelineInput(action="extract_schema"), ctx)
         assert r.success is False
@@ -430,14 +567,22 @@ if __name__ == "__main__":
         r = await tool.call({"action": "unknown"}, ctx)  # type: ignore[arg-type]
         assert r.success is False
 
+    async def _run():
+        await _check_parse_pdf(tool, ctx, ctx_with_keys)
+        await _check_extract_and_aggregate(tool, ctx)
+
     asyncio.run(_run())
 
     # 路径 helpers
     ctx_ws = _Ctx(workspace="/tmp/huginn_test", config=None)
-    assert str(LiteraturePipelineTool._parsed_root(ctx_ws)).endswith("data" + "\\" + "parsed") or \
-           str(LiteraturePipelineTool._parsed_root(ctx_ws)).endswith("data/parsed")
-    assert str(LiteraturePipelineTool._aggregated_root(ctx_ws)).endswith("data" + "\\" + "aggregated") or \
-           str(LiteraturePipelineTool._aggregated_root(ctx_ws)).endswith("data/aggregated")
+    assert str(LiteraturePipelineTool._parsed_root(ctx_ws)).endswith(
+        "data" + "\\" + "parsed"
+    ) or str(LiteraturePipelineTool._parsed_root(ctx_ws)).endswith("data/parsed")
+    assert str(LiteraturePipelineTool._aggregated_root(ctx_ws)).endswith(
+        "data" + "\\" + "aggregated"
+    ) or str(LiteraturePipelineTool._aggregated_root(ctx_ws)).endswith(
+        "data/aggregated"
+    )
 
     # _get_mineru_keys: config=None 时返回空
     assert LiteraturePipelineTool._get_mineru_keys(_Ctx(config=None)) == []
@@ -446,6 +591,8 @@ if __name__ == "__main__":
     class _Cfg:
         mineru_api_keys: list[str]
 
-    assert LiteraturePipelineTool._get_mineru_keys(_Ctx(config=_Cfg(mineru_api_keys=["k1"]))) == ["k1"]
+    assert LiteraturePipelineTool._get_mineru_keys(
+        _Ctx(config=_Cfg(mineru_api_keys=["k1"]))
+    ) == ["k1"]
 
     print("C6 self-check OK")

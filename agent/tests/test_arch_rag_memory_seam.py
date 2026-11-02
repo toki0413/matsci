@@ -1,3 +1,4 @@
+# governance-gate
 """数据层(rag/memory)的依赖方向 — 不得上探运行时编排层.
 
 对齐 ApxInf 的依赖单向原则, 但落在其反向: 检索数据层 `rag/` 与记忆数据层

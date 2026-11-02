@@ -48,6 +48,38 @@ class AuditEvent:
     trace_id: str = ""  # P2-6: 统一 trace_id, 从 TraceContext 读
 
 
+def _aggregate_key(record: dict[str, Any], group_by: str) -> str:
+    """按 group_by 取分组 key (tool / event_type / session)。"""
+    details = record.get("details", {})
+    if group_by == "tool":
+        return details.get("tool", "unknown")
+    if group_by == "event_type":
+        return record.get("event_type", "unknown")
+    if group_by == "session":
+        return details.get("session_id") or record.get("session_id") or "unknown"
+    return "unknown"
+
+
+def _aggregate_group_stats(
+    group_by: str, key: str, recs: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """单组统计: count / success / fail / success_rate / 首末事件时间。"""
+    count = len(recs)
+    success_count = sum(1 for r in recs if r.get("details", {}).get("success") is True)
+    fail_count = sum(1 for r in recs if r.get("details", {}).get("success") is False)
+    success_rate = (success_count / count) if count else 0.0
+    timestamps = [r.get("timestamp", "") for r in recs if r.get("timestamp")]
+    return {
+        group_by: key,
+        "count": count,
+        "success_count": success_count,
+        "fail_count": fail_count,
+        "success_rate": success_rate,
+        "first_event": min(timestamps) if timestamps else None,
+        "last_event": max(timestamps) if timestamps else None,
+    }
+
+
 class AuditLogger:
     """Thread-safe append-only audit logger with optional HMAC signing.
 
@@ -67,6 +99,7 @@ class AuditLogger:
             # 落在 runtime home 下, 不散落在 CWD
             try:
                 from huginn.utils.runtime import get_runtime_home
+
                 log_path = get_runtime_home() / "huginn_audit.jsonl"
             except Exception:
                 log_path = Path("huginn_audit.jsonl")
@@ -94,7 +127,9 @@ class AuditLogger:
                 for line in f:
                     line = line.strip()
                     if line:
-                        last_hash = hashlib.sha256(line.encode("utf-8")).hexdigest()[:32]
+                        last_hash = hashlib.sha256(line.encode("utf-8")).hexdigest()[
+                            :32
+                        ]
         except OSError:
             logger.warning(
                 "audit log %s exists but could not be read; hash chain will restart",
@@ -118,11 +153,13 @@ class AuditLogger:
         """Scan dict values for secrets and redact them before logging."""
         try:
             from huginn.privacy.scanner import SecretScanner
+
             scanner = SecretScanner()
         except Exception as exc:
             # 扫描器不可用时必须警告 — 不能静默放过未脱敏数据
             logger.warning(
-                "SecretScanner unavailable (%s), details NOT redacted", exc,
+                "SecretScanner unavailable (%s), details NOT redacted",
+                exc,
             )
             return details
 
@@ -138,8 +175,10 @@ class AuditLogger:
                 redacted[key] = self._redact_details(value)
             elif isinstance(value, list):
                 redacted[key] = [
-                    self._redact_details({"_": item}).get("_", item) if isinstance(item, dict)
-                    else scanner.redact(item) if isinstance(item, str)
+                    self._redact_details({"_": item}).get("_", item)
+                    if isinstance(item, dict)
+                    else scanner.redact(item)
+                    if isinstance(item, str)
                     else item
                     for item in value
                 ]
@@ -147,18 +186,16 @@ class AuditLogger:
                 redacted[key] = value
         return redacted
 
-    def log(
+    def _prepare_event(
         self,
         event_type: str,
         actor: str,
         action: str,
-        details: dict[str, Any] | None = None,
-        input_data: str | bytes | None = None,
-        output_data: str | bytes | None = None,
-    ) -> AuditEvent:
-        """Record an audit event."""
-        details = self._redact_details(details or {})
-
+        details: dict[str, Any],
+        input_data: str | bytes | None,
+        output_data: str | bytes | None,
+    ) -> tuple[dict[str, Any], str]:
+        """算输入/输出 hash、组装事件 dict 并签名 (签名前的 dict 不含 signature)。"""
         input_hash = None
         if input_data is not None:
             input_hash = self._hash_data(input_data)
@@ -185,6 +222,32 @@ class AuditLogger:
         sig = self._sign_line(canonical)
         if sig:
             event_dict["signature"] = sig
+        return event_dict, sig
+
+    def _append_event_line(self, line: str) -> None:
+        """加锁追加一行并推进 hash 链 (flush + fsync 保证落盘)。"""
+        with self._lock:
+            self._last_hash = hashlib.sha256(line.encode("utf-8")).hexdigest()[:32]
+            with open(self.log_path, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+
+    def log(
+        self,
+        event_type: str,
+        actor: str,
+        action: str,
+        details: dict[str, Any] | None = None,
+        input_data: str | bytes | None = None,
+        output_data: str | bytes | None = None,
+    ) -> AuditEvent:
+        """Record an audit event."""
+        details = self._redact_details(details or {})
+
+        event_dict, sig = self._prepare_event(
+            event_type, actor, action, details, input_data, output_data
+        )
 
         event = AuditEvent(
             timestamp=event_dict["timestamp"],
@@ -192,21 +255,15 @@ class AuditLogger:
             actor=actor,
             action=action,
             details=details,
-            input_hash=input_hash,
-            output_hash=output_hash,
-            prev_hash=self._last_hash,
+            input_hash=event_dict["input_hash"],
+            output_hash=event_dict["output_hash"],
+            prev_hash=event_dict["prev_hash"],
             signature=sig or None,
             trace_id=event_dict["trace_id"],
         )
 
         line = json.dumps(event_dict, sort_keys=True, default=str)
-
-        with self._lock:
-            self._last_hash = hashlib.sha256(line.encode("utf-8")).hexdigest()[:32]
-            with open(self.log_path, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
-                f.flush()
-                os.fsync(f.fileno())
+        self._append_event_line(line)
 
         return event
 
@@ -336,6 +393,44 @@ class AuditLogger:
                 except json.JSONDecodeError:
                     continue
 
+    def _filtered_records(
+        self,
+        *,
+        event_type: str | None = None,
+        actor: str | None = None,
+        action: str | None = None,
+        session_id: str | None = None,
+        tool: str | None = None,
+        since_unix: float | None = None,
+        until_unix: float | None = None,
+    ):
+        """按过滤条件 yield 命中的记录 (字段/子串/时间窗)。"""
+        for record in self._iter_records():
+            if event_type and record.get("event_type") != event_type:
+                continue
+            if actor and record.get("actor") != actor:
+                continue
+            if action and action.lower() not in record.get("action", "").lower():
+                continue
+
+            details = record.get("details", {})
+            if session_id is not None:
+                rec_session = details.get("session_id") or record.get("session_id")
+                if rec_session != session_id:
+                    continue
+            if tool is not None and details.get("tool") != tool:
+                continue
+
+            if since_unix is not None:
+                rec_unix = self._ts_to_unix(record.get("timestamp", ""))
+                if rec_unix is None or rec_unix < since_unix:
+                    continue
+            if until_unix is not None:
+                rec_unix = self._ts_to_unix(record.get("timestamp", ""))
+                if rec_unix is None or rec_unix > until_unix:
+                    continue
+            yield record
+
     def query(
         self,
         *,
@@ -365,36 +460,40 @@ class AuditLogger:
         until_unix = self._ts_to_unix(until)
         results: list[dict[str, Any]] = []
 
-        for record in self._iter_records():
-            if event_type and record.get("event_type") != event_type:
-                continue
-            if actor and record.get("actor") != actor:
-                continue
-            if action and action.lower() not in record.get("action", "").lower():
-                continue
-
-            details = record.get("details", {})
-            if session_id is not None:
-                rec_session = details.get("session_id") or record.get("session_id")
-                if rec_session != session_id:
-                    continue
-            if tool is not None and details.get("tool") != tool:
-                continue
-
-            if since_unix is not None:
-                rec_unix = self._ts_to_unix(record.get("timestamp", ""))
-                if rec_unix is None or rec_unix < since_unix:
-                    continue
-            if until_unix is not None:
-                rec_unix = self._ts_to_unix(record.get("timestamp", ""))
-                if rec_unix is None or rec_unix > until_unix:
-                    continue
-
+        for record in self._filtered_records(
+            event_type=event_type,
+            actor=actor,
+            action=action,
+            session_id=session_id,
+            tool=tool,
+            since_unix=since_unix,
+            until_unix=until_unix,
+        ):
             results.append(record)
             if len(results) >= limit:
                 break
 
         return results
+
+    def _in_aggregate_scope(
+        self,
+        record: dict[str, Any],
+        session_id: str | None,
+        since_unix: float | None,
+    ) -> bool:
+        """判断记录是否落在 aggregate 的 session / since 过滤范围内。"""
+        details = record.get("details", {})
+        # session_id 过滤
+        if session_id is not None:
+            rec_session = details.get("session_id") or record.get("session_id")
+            if rec_session != session_id:
+                return False
+        # since 过滤
+        if since_unix is not None:
+            rec_unix = self._ts_to_unix(record.get("timestamp", ""))
+            if rec_unix is None or rec_unix < since_unix:
+                return False
+        return True
 
     def aggregate(
         self,
@@ -415,56 +514,13 @@ class AuditLogger:
         groups: dict[str, list[dict[str, Any]]] = {}
 
         for record in self._iter_records():
-            details = record.get("details", {})
-            # session_id 过滤
-            if session_id is not None:
-                rec_session = details.get("session_id") or record.get("session_id")
-                if rec_session != session_id:
-                    continue
-            # since 过滤
-            if since_unix is not None:
-                rec_unix = self._ts_to_unix(record.get("timestamp", ""))
-                if rec_unix is None or rec_unix < since_unix:
-                    continue
+            if not self._in_aggregate_scope(record, session_id, since_unix):
+                continue
+            groups.setdefault(_aggregate_key(record, group_by), []).append(record)
 
-            # 分组 key
-            if group_by == "tool":
-                key = details.get("tool", "unknown")
-            elif group_by == "event_type":
-                key = record.get("event_type", "unknown")
-            elif group_by == "session":
-                key = (
-                    details.get("session_id")
-                    or record.get("session_id")
-                    or "unknown"
-                )
-            else:
-                key = "unknown"
-
-            groups.setdefault(key, []).append(record)
-
-        results: list[dict[str, Any]] = []
-        for key, recs in groups.items():
-            count = len(recs)
-            success_count = sum(
-                1 for r in recs if r.get("details", {}).get("success") is True
-            )
-            fail_count = sum(
-                1 for r in recs if r.get("details", {}).get("success") is False
-            )
-            success_rate = (success_count / count) if count else 0.0
-            timestamps = [
-                r.get("timestamp", "") for r in recs if r.get("timestamp")
-            ]
-            results.append({
-                group_by: key,
-                "count": count,
-                "success_count": success_count,
-                "fail_count": fail_count,
-                "success_rate": success_rate,
-                "first_event": min(timestamps) if timestamps else None,
-                "last_event": max(timestamps) if timestamps else None,
-            })
+        results = [
+            _aggregate_group_stats(group_by, key, recs) for key, recs in groups.items()
+        ]
 
         # 按 count 降序，方便先看调用最多的
         results.sort(key=lambda x: x["count"], reverse=True)
@@ -513,6 +569,7 @@ class AuditLogger:
 # Log rotation
 # ---------------------------------------------------------------------------
 
+
 class AuditLogRotator:
     """Size- and time-based log rotation with optional gzip compression.
 
@@ -525,7 +582,7 @@ class AuditLogRotator:
     def __init__(
         self,
         logger: AuditLogger,
-        max_size: int = 10_000_000,       # 10 MB
+        max_size: int = 10_000_000,  # 10 MB
         max_age_days: float = 30.0,
         compress: bool = True,
         max_archives: int = 10,

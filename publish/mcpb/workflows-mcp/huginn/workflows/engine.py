@@ -43,6 +43,310 @@ __all__ = [
 ]
 
 
+def _scaled_walltime_hours(
+    tool_lower: str, inp: dict[str, Any], walltime_hours: float
+) -> float:
+    """Scale a base walltime estimate by tool-specific workload hints."""
+    if "vasp" in tool_lower:
+        # Larger k-grid / encut / MD steps scale CPU work
+        encut = float(inp.get("encut", 520))
+        kpts = inp.get("kpoints", "1 1 1")
+        n_kpts = 1
+        if isinstance(kpts, str):
+            try:
+                parts = [int(x) for x in kpts.split() if x.isdigit()]
+                n_kpts = max(
+                    1, (parts[1] * parts[2] * parts[3]) if len(parts) >= 4 else 1
+                )
+            except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
+                n_kpts = 1
+        walltime_hours *= max(1.0, encut / 520.0) * max(1.0, n_kpts / 8.0)
+    elif "lammps" in tool_lower:
+        n_steps = int(inp.get("n_steps", 1000))
+        walltime_hours *= max(1.0, n_steps / 1000.0)
+    elif "aimd" in tool_lower or "md" in tool_lower:
+        n_steps = int(inp.get("n_steps", inp.get("md_steps", 1000)))
+        walltime_hours *= max(1.0, n_steps / 1000.0)
+    return walltime_hours
+
+
+def _prepare_tool_input(
+    tool: Any, stage: ComputationalStage, tool_input: dict[str, Any]
+) -> tuple[dict[str, Any], ToolResult | None]:
+    """Convert dict input to the tool's Pydantic schema when one exists."""
+    if hasattr(tool, "input_schema") and tool.input_schema:
+        try:
+            return tool.input_schema(**tool_input), None
+        except Exception as e:
+            stage.completed_at = datetime.now()
+            return tool_input, ToolResult(
+                data=None,
+                success=False,
+                error=f"Invalid input for '{stage.tool}': {e}",
+            )
+    return tool_input, None
+
+
+def _snapshot_stage_files(context: ToolContext) -> tuple[Path, set[Path]]:
+    """Capture the files present in the stage workspace before execution."""
+    exec_ws = getattr(context, "workspace", None) or "."
+    snap_dir = Path(exec_ws)
+    before = (
+        {p for p in snap_dir.iterdir() if p.is_file()} if snap_dir.is_dir() else set()
+    )
+    return snap_dir, before
+
+
+def _rollback_new_stage_files(rev: Any, snap_dir: Path, before: set[Path]) -> None:
+    """Delete files created by a failed stage and revert the tracked effects."""
+    after = (
+        {p for p in snap_dir.iterdir() if p.is_file()} if snap_dir.is_dir() else set()
+    )
+    new_files = after - before
+    if new_files:
+        dispose = rev.composite(
+            *[lambda fp=fp: fp.unlink(missing_ok=True) for fp in new_files]
+        )
+        rev.track(dispose)
+        rev.revert_all()
+
+
+def _apply_stage_result(
+    engine: WorkflowEngine,
+    stage: ComputationalStage,
+    result: ToolResult,
+    rev: Any,
+    snap_dir: Path,
+    before: set[Path],
+) -> None:
+    """Record completion, apply validation, and roll back failed stages."""
+    stage.completed_at = datetime.now()
+
+    # Apply validation
+    if result.success and stage.validation:
+        valid = engine._validate(result.data, stage.validation)
+        if not valid:
+            result.success = False
+            result.error = f"Validation failed: {stage.validation.check}"
+
+    # 失败 → 回滚本次 stage 新建的文件 (时间可组合, 不留失败副作用).
+    if not result.success:
+        _rollback_new_stage_files(rev, snap_dir, before)
+
+
+def _update_stage_progress(
+    tracker: ProgressTracker,
+    task_id: str,
+    completed: set[str],
+    failed: set[str],
+    stage: ComputationalStage,
+) -> None:
+    """Push the settled-stage counters into the progress tracker."""
+    tracker.update(
+        task_id,
+        current_step=len(completed) + len(failed),
+        current_label=f"stage {stage.id}: {stage.status}",
+        metadata={
+            "completed": sorted(completed),
+            "failed": sorted(failed),
+        },
+    )
+
+
+def _filter_by_skill_context(
+    stage: ComputationalStage, skill_registry: Any
+) -> str | None:
+    """Enforce the skill whitelist; return an error string when disallowed."""
+    # skill 白名单: stage.tool 必须在所列 skill 的 required_tools 集合里.
+    # skill 名查不到就忽略 — 不卡 stage, 避免改名后老 workflow 挂掉.
+    if stage.skill_context and skill_registry is not None:
+        allowed_tools: set[str] = set()
+        for skill_name in stage.skill_context:
+            skill = skill_registry.get(skill_name)
+            if skill is not None:
+                allowed_tools.update(getattr(skill, "required_tools", []) or [])
+        if allowed_tools and stage.tool not in allowed_tools:
+            return (
+                f"Stage tool '{stage.tool}' not allowed by skill_context "
+                f"(allowed: {sorted(allowed_tools)})"
+            )
+    return None
+
+
+def _inject_persona_prompt(
+    stage: ComputationalStage, tool_input: dict[str, Any], persona_manager: Any
+) -> None:
+    """Attach the persona system prompt to tool_input when configured."""
+    # persona: 取 system prompt, 作为附加上下文塞进 tool_input.
+    # 工具自己决定要不要消费 (跟 __diagnosis 一个套路).
+    if stage.persona and persona_manager is not None:
+        try:
+            persona = persona_manager.get(stage.persona)
+            if persona and persona.system_prompt:
+                tool_input["__persona_prompt"] = persona.system_prompt
+        except Exception:
+            # persona 找不到不要把 stage 整个挂掉, 跟现有诊断钩子的容错一致
+            logger.debug("best-effort op failed", exc_info=True)
+
+
+def _inject_emotion_context(
+    engine: WorkflowEngine, stage: ComputationalStage, tool_input: dict[str, Any]
+) -> None:
+    """Attach the emotion prompt snippet to tool_input when configured."""
+    # emotion_state: dict 转 EmotionState, 生成情绪片段注入.
+    # 不走持久化, 只用临时 tracker 复用 context_prompt 的逻辑.
+    if stage.emotion_state:
+        snippet = engine._emotion_state_to_prompt(stage.emotion_state)
+        if snippet:
+            tool_input["__emotion_context"] = snippet
+
+
+def _inject_memory_context(
+    stage: ComputationalStage, tool_input: dict[str, Any], long_term_memory: Any
+) -> None:
+    """Attach retrieved long-term memories to tool_input when configured."""
+    # memory_scope: 从 LongTermMemory 检索相关记忆, 摘要注入.
+    # 走 FTS 即可, 不强求语义检索 (语义检索依赖 vector store, 不一定在线).
+    if stage.memory_scope and long_term_memory is not None:
+        try:
+            memories = long_term_memory.retrieve(
+                stage.memory_scope, top_k=3, semantic=False
+            )
+            if memories:
+                tool_input["__memory_context"] = memories
+        except Exception:
+            logger.debug("retrieve failed", exc_info=True)
+
+
+async def _run_diagnosis_tool(
+    engine: WorkflowEngine,
+    stage: ComputationalStage,
+    error_msg: str,
+    software: str | None,
+    calc_type: str | None,
+    context: ToolContext,
+) -> None:
+    """Query diagnose_tool and apply heuristic fixes to the stage."""
+    diagnose_tool = engine.registry.get("diagnose_tool")
+    if diagnose_tool:
+        try:
+            from huginn.tools.diagnose_tool import (
+                DiagnoseInput as DiagnoseToolInput,
+            )
+
+            diag_input = DiagnoseToolInput(
+                error_message=error_msg,
+                software=software,
+                calculation_type=calc_type,
+                context=json.dumps(stage.tool_input, ensure_ascii=False)[:500],
+            )
+            diag_result = await diagnose_tool.call(diag_input, context)
+
+            if diag_result.success and diag_result.data:
+                report = diag_result.data
+                findings = report.get("findings", [])
+                general_advice = report.get("general_advice", [])
+                next_steps = report.get("recommended_next_steps", [])
+
+                # Store diagnosis in stage metadata for logging
+                stage.tool_input["__diagnosis"] = {
+                    "findings": findings[:3],
+                    "advice": general_advice[:3],
+                    "next_steps": next_steps[:3],
+                }
+
+                # Apply heuristic auto-fixes based on findings
+                if stage.retry_policy.apply_auto_fix:
+                    fixes = engine._extract_fixes_from_diagnosis(report, software)
+                    if fixes:
+                        engine._apply_fixes_to_stage(stage, fixes, software)
+
+        except Exception:
+            logger.debug(
+                "diagnose and fix failed", exc_info=True
+            )  # Silently ignore diagnosis errors
+
+
+async def _query_sobko_hints(
+    engine: WorkflowEngine,
+    stage: ComputationalStage,
+    software: str | None,
+    error_msg: str,
+    context: ToolContext,
+) -> None:
+    """Query the Sobko knowledge base and attach hints to the stage."""
+    rag_tool = engine.registry.get("rag_tool")
+    if rag_tool:
+        try:
+            from huginn.rag.rag_tool import RAGToolInput
+
+            rag_input = RAGToolInput(
+                action="search",
+                query=f"{software} {error_msg[:100]} 解决方法",
+                top_k=3,
+            )
+            rag_result = await rag_tool.call(rag_input, context)
+            if rag_result.success and rag_result.data:
+                results = rag_result.data.get("results", [])
+                if results:
+                    kb_hints = [r.get("text", "")[:200] for r in results[:2]]
+                    stage.tool_input["__sobko_hints"] = kb_hints
+        except Exception:
+            logger.debug("diagnose and fix failed", exc_info=True)
+
+
+async def _wf_run_loop(
+    engine: WorkflowEngine,
+    stages: list[ComputationalStage],
+    context: ToolContext,
+    checkpoint_path: str | Path | None,
+    budget_policy: BudgetPolicy | None,
+    stage_map: dict[str, ComputationalStage],
+    completed: set[str],
+    failed: set[str],
+    outputs: dict[str, Any],
+    tracker: ProgressTracker,
+    task_id: str,
+) -> WorkflowResult | None:
+    """Run stages until all settle; return a result early when blocked."""
+    while len(completed) + len(failed) < len(stages):
+        ready = engine._wf_ready(stages, completed, failed)
+        if not ready:
+            return engine._wf_blocked(
+                stages,
+                completed,
+                failed,
+                stage_map,
+                outputs,
+                checkpoint_path,
+                tracker,
+                task_id,
+            )
+
+        allowed_ready = engine._wf_filter_budget(
+            ready, budget_policy or engine.budget_policy, failed
+        )
+        if not allowed_ready:
+            engine._wf_checkpoint(stage_map, outputs, checkpoint_path)
+            continue
+
+        results = await engine._wf_run_stages(allowed_ready, context, outputs)
+        await engine._wf_apply_results(
+            allowed_ready,
+            results,
+            completed,
+            failed,
+            outputs,
+            tracker,
+            task_id,
+            stage_map,
+            checkpoint_path,
+            context,
+        )
+    return None
+
+
 class WorkflowEngine:
     """Engine for executing computational workflows."""
 
@@ -83,148 +387,224 @@ class WorkflowEngine:
         If ``checkpoint_path`` is provided, the engine writes a snapshot after
         every stage transition so the workflow can be resumed later.
         """
-
-        stage_map = {s.id: s for s in stages}
-        completed: set[str] = {s.id for s in stages if s.status == "completed"}
-        failed: set[str] = {s.id for s in stages if s.status == "failed"}
-        outputs: dict[str, Any] = {
-            s.id: s.result.data
-            for s in stages
-            if s.status == "completed" and s.result is not None
-        }
-
+        stage_map, completed, failed, outputs = self._wf_initial_state(stages)
         start_time = datetime.now()
 
         # 登记进度任务: 用 session_id + uuid 区分, 避免跟其它 workflow 撞
         tracker = self.progress_tracker or get_progress_tracker()
-        progress_task_id = f"{context.session_id}:workflow:{uuid.uuid4().hex[:8]}"
-        stage_labels = [s.id for s in stages]
+        task_id = self._wf_start_progress(tracker, stages, context)
+
+        blocked = await _wf_run_loop(
+            self,
+            stages,
+            context,
+            checkpoint_path,
+            budget_policy,
+            stage_map,
+            completed,
+            failed,
+            outputs,
+            tracker,
+            task_id,
+        )
+        if blocked is not None:
+            return blocked
+
+        return self._wf_finish(
+            stage_map, outputs, failed, start_time, tracker, task_id, checkpoint_path
+        )
+
+    @staticmethod
+    def _wf_initial_state(
+        stages: list[ComputationalStage],
+    ) -> tuple[dict[str, ComputationalStage], set[str], set[str], dict[str, Any]]:
+        """从 stages 恢复 stage_map / completed / failed / outputs."""
+        stage_map = {s.id: s for s in stages}
+        completed = {s.id for s in stages if s.status == "completed"}
+        failed = {s.id for s in stages if s.status == "failed"}
+        outputs = {
+            s.id: s.result.data
+            for s in stages
+            if s.status == "completed" and s.result is not None
+        }
+        return stage_map, completed, failed, outputs
+
+    @staticmethod
+    def _wf_start_progress(
+        tracker: ProgressTracker,
+        stages: list[ComputationalStage],
+        context: ToolContext,
+    ) -> str:
+        """登记进度任务, 返回 task id."""
+        task_id = f"{context.session_id}:workflow:{uuid.uuid4().hex[:8]}"
         tracker.start_task(
-            task_id=progress_task_id,
+            task_id=task_id,
             description=f"workflow with {len(stages)} stages",
             total_steps=len(stages),
-            stage_labels=stage_labels,
+            stage_labels=[s.id for s in stages],
             engine_kind="workflow",
             metadata={"session_id": context.session_id},
         )
+        return task_id
 
-        def _maybe_checkpoint() -> None:
-            if checkpoint_path is not None:
-                WorkflowCheckpoint(
-                    stages=list(stage_map.values()), outputs=outputs
-                ).save(checkpoint_path)
+    @staticmethod
+    def _wf_ready(
+        stages: list[ComputationalStage],
+        completed: set[str],
+        failed: set[str],
+    ) -> list[ComputationalStage]:
+        """依赖全部完成的待执行 stage."""
+        return [
+            s
+            for s in stages
+            if s.id not in completed
+            and s.id not in failed
+            and all(dep in completed for dep in s.dependencies)
+        ]
 
-        while len(completed) + len(failed) < len(stages):
-            # Find stages whose dependencies are all satisfied
-            ready = [
-                s
-                for s in stages
-                if s.id not in completed
-                and s.id not in failed
-                and all(dep in completed for dep in s.dependencies)
-            ]
+    @staticmethod
+    def _wf_checkpoint(
+        stage_map: dict[str, ComputationalStage],
+        outputs: dict[str, Any],
+        checkpoint_path: str | Path | None,
+    ) -> None:
+        """checkpoint_path 有值时落一份快照."""
+        if checkpoint_path is not None:
+            WorkflowCheckpoint(stages=list(stage_map.values()), outputs=outputs).save(
+                checkpoint_path
+            )
 
-            if not ready:
-                # Deadlock or all remaining blocked by failures
-                remaining = [
-                    s.id for s in stages if s.id not in completed and s.id not in failed
-                ]
-                _maybe_checkpoint()
-                tracker.fail(
-                    progress_task_id,
-                    f"Workflow blocked: stages {remaining} have unsatisfied dependencies",
-                )
-                return WorkflowResult(
-                    success=False,
-                    stages=stage_map,
-                    outputs=outputs,
-                    error=f"Workflow blocked: stages {remaining} have unsatisfied dependencies",
-                )
+    def _wf_blocked(
+        self,
+        stages: list[ComputationalStage],
+        completed: set[str],
+        failed: set[str],
+        stage_map: dict[str, ComputationalStage],
+        outputs: dict[str, Any],
+        checkpoint_path: str | Path | None,
+        tracker: ProgressTracker,
+        task_id: str,
+    ) -> WorkflowResult:
+        """无 ready stage → 死锁/被失败阻塞, 落快照返回失败结果."""
+        remaining = [
+            s.id for s in stages if s.id not in completed and s.id not in failed
+        ]
+        self._wf_checkpoint(stage_map, outputs, checkpoint_path)
+        message = f"Workflow blocked: stages {remaining} have unsatisfied dependencies"
+        tracker.fail(task_id, message)
+        return WorkflowResult(
+            success=False,
+            stages=stage_map,
+            outputs=outputs,
+            error=message,
+        )
 
-            # Budget check for ready stages
-            effective_budget = budget_policy or self.budget_policy
-            allowed_ready: list[ComputationalStage] = []
-            for stage in ready:
-                if effective_budget is None:
-                    allowed_ready.append(stage)
-                    continue
-                estimate = self._estimate_stage_cost(stage)
-                decision, reason = effective_budget.check(estimate)
-                if decision == BudgetDecision.DENY:
-                    stage.status = "failed"
-                    stage.result = ToolResult(
-                        data=None,
-                        success=False,
-                        error=f"Budget denied: {reason}",
-                    )
-                    failed.add(stage.id)
-                elif decision == BudgetDecision.WARN:
-                    # Proceed but surface the warning
-                    stage.tool_input.setdefault("__budget_warnings", []).append(reason)
-                    allowed_ready.append(stage)
-                else:
-                    allowed_ready.append(stage)
-
-            if not allowed_ready:
-                _maybe_checkpoint()
+    def _wf_filter_budget(
+        self,
+        ready: list[ComputationalStage],
+        effective_budget: BudgetPolicy | None,
+        failed: set[str],
+    ) -> list[ComputationalStage]:
+        """按预算过滤 ready; DENY 直接标 failed, WARN 只记警告后放行."""
+        allowed_ready: list[ComputationalStage] = []
+        for stage in ready:
+            if effective_budget is None:
+                allowed_ready.append(stage)
                 continue
-
-            # Execute ready stages in parallel, optionally through a task backend.
-            if self.task_backend is not None:
-                results = await self._dispatch_stages(allowed_ready, context, outputs)
+            estimate = self._estimate_stage_cost(stage)
+            decision, reason = effective_budget.check(estimate)
+            if decision == BudgetDecision.DENY:
+                stage.status = "failed"
+                stage.result = ToolResult(
+                    data=None,
+                    success=False,
+                    error=f"Budget denied: {reason}",
+                )
+                failed.add(stage.id)
+            elif decision == BudgetDecision.WARN:
+                # Proceed but surface the warning
+                stage.tool_input.setdefault("__budget_warnings", []).append(reason)
+                allowed_ready.append(stage)
             else:
-                tasks = [
-                    self._execute_stage(s, context, outputs) for s in allowed_ready
-                ]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
+                allowed_ready.append(stage)
+        return allowed_ready
 
-            for stage, result in zip(allowed_ready, results):
-                if isinstance(result, Exception):
+    async def _wf_run_stages(
+        self,
+        allowed_ready: list[ComputationalStage],
+        context: ToolContext,
+        outputs: dict[str, Any],
+    ) -> list[Any]:
+        """并行执行 ready stages, 可选走 task backend."""
+        if self.task_backend is not None:
+            return await self._dispatch_stages(allowed_ready, context, outputs)
+        tasks = [self._execute_stage(s, context, outputs) for s in allowed_ready]
+        return await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _wf_apply_results(
+        self,
+        allowed_ready: list[ComputationalStage],
+        results: list[Any],
+        completed: set[str],
+        failed: set[str],
+        outputs: dict[str, Any],
+        tracker: ProgressTracker,
+        task_id: str,
+        stage_map: dict[str, ComputationalStage],
+        checkpoint_path: str | Path | None,
+        context: ToolContext,
+    ) -> None:
+        """逐 stage 落定状态 (失败/重试), 落快照并更新进度."""
+        for stage, result in zip(allowed_ready, results):
+            if isinstance(result, Exception):
+                stage.status = "failed"
+                failed.add(stage.id)
+            elif result.success:
+                stage.status = "completed"
+                stage.result = result
+                outputs[stage.id] = result.data
+                completed.add(stage.id)
+            else:
+                # Check retry policy
+                if self._should_retry(stage, result.error):
+                    stage.status = "pending"
+                    stage.attempts += 1
+
+                    # Auto-diagnose and apply fixes if enabled
+                    if stage.retry_policy.auto_diagnose:
+                        await self._diagnose_and_fix(stage, result, context)
+
+                    # Backoff delay
+                    delay = stage.retry_policy.backoff_factor**stage.attempts
+                    await asyncio.sleep(min(delay, 30))  # Cap at 30s
+                else:
                     stage.status = "failed"
                     failed.add(stage.id)
-                elif result.success:
-                    stage.status = "completed"
-                    stage.result = result
-                    outputs[stage.id] = result.data
-                    completed.add(stage.id)
-                else:
-                    # Check retry policy
-                    if self._should_retry(stage, result.error):
-                        stage.status = "pending"
-                        stage.attempts += 1
 
-                        # Auto-diagnose and apply fixes if enabled
-                        if stage.retry_policy.auto_diagnose:
-                            await self._diagnose_and_fix(stage, result, context)
+            self._wf_checkpoint(stage_map, outputs, checkpoint_path)
+            # 每个 stage 落定后更新进度 (含失败和重试中的)
+            _update_stage_progress(tracker, task_id, completed, failed, stage)
 
-                        # Backoff delay
-                        delay = stage.retry_policy.backoff_factor**stage.attempts
-                        await asyncio.sleep(min(delay, 30))  # Cap at 30s
-                    else:
-                        stage.status = "failed"
-                        failed.add(stage.id)
-
-                _maybe_checkpoint()
-                # 每个 stage 落定后更新进度 (含失败和重试中的)
-                tracker.update(
-                    progress_task_id,
-                    current_step=len(completed) + len(failed),
-                    current_label=f"stage {stage.id}: {stage.status}",
-                    metadata={
-                        "completed": sorted(completed),
-                        "failed": sorted(failed),
-                    },
-                )
-
-        _maybe_checkpoint()
+    def _wf_finish(
+        self,
+        stage_map: dict[str, ComputationalStage],
+        outputs: dict[str, Any],
+        failed: set[str],
+        start_time: datetime,
+        tracker: ProgressTracker,
+        task_id: str,
+        checkpoint_path: str | Path | None,
+    ) -> WorkflowResult:
+        """收尾: 落快照 + 标记进度完成/失败 + 打包结果."""
+        self._wf_checkpoint(stage_map, outputs, checkpoint_path)
         total_time = (datetime.now() - start_time).total_seconds()
         success = len(failed) == 0
 
         # 标记整个 workflow 完成 / 失败
         if success:
-            tracker.complete(progress_task_id, result={"outputs": list(outputs.keys())})
+            tracker.complete(task_id, result={"outputs": list(outputs.keys())})
         else:
-            tracker.fail(progress_task_id, f"Stages failed: {sorted(failed)}")
+            tracker.fail(task_id, f"Stages failed: {sorted(failed)}")
 
         return WorkflowResult(
             success=success,
@@ -332,27 +712,7 @@ class WorkflowEngine:
         memory_gb = float(inp.get("memory_gb", nodes * ntasks * 2))
         storage_gb = float(inp.get("storage_gb", 1.0))
 
-        if "vasp" in tool_lower:
-            # Larger k-grid / encut / MD steps scale CPU work
-            encut = float(inp.get("encut", 520))
-            kpts = inp.get("kpoints", "1 1 1")
-            n_kpts = 1
-            if isinstance(kpts, str):
-                try:
-                    parts = [int(x) for x in kpts.split() if x.isdigit()]
-                    n_kpts = max(
-                        1, (parts[1] * parts[2] * parts[3]) if len(parts) >= 4 else 1
-                    )
-                except Exception:
-                    logger.debug("best-effort op failed", exc_info=True)
-                    n_kpts = 1
-            walltime_hours *= max(1.0, encut / 520.0) * max(1.0, n_kpts / 8.0)
-        elif "lammps" in tool_lower:
-            n_steps = int(inp.get("n_steps", 1000))
-            walltime_hours *= max(1.0, n_steps / 1000.0)
-        elif "aimd" in tool_lower or "md" in tool_lower:
-            n_steps = int(inp.get("n_steps", inp.get("md_steps", 1000)))
-            walltime_hours *= max(1.0, n_steps / 1000.0)
+        walltime_hours = _scaled_walltime_hours(tool_lower, inp, walltime_hours)
 
         cpu_hours = nodes * ntasks * walltime_hours
         gpu_hours = (
@@ -394,16 +754,9 @@ class WorkflowEngine:
             )
 
         # Convert dict to tool's Pydantic input schema
-        if hasattr(tool, "input_schema") and tool.input_schema:
-            try:
-                tool_input = tool.input_schema(**tool_input)
-            except Exception as e:
-                stage.completed_at = datetime.now()
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"Invalid input for '{stage.tool}': {e}",
-                )
+        tool_input, schema_error = _prepare_tool_input(tool, stage, tool_input)
+        if schema_error is not None:
+            return schema_error
 
         # RevertibleEffect (Cordis 时间可组合性): stage 是编排的原子单元 —
         # 失败时回滚本次 stage 在 workspace 新建的文件副作用 (与技能层同构).
@@ -411,39 +764,13 @@ class WorkflowEngine:
         # stage 失败 (含 validation 失败). 与 checkpoint 快照互补.
         from huginn.security.revertible import RevertibleContext
 
-        exec_ws = getattr(context, "workspace", None) or "."
-        snap_dir = Path(exec_ws)
         rev = RevertibleContext()
-        before = (
-            {p for p in snap_dir.iterdir() if p.is_file()}
-            if snap_dir.is_dir() else set()
-        )
+        snap_dir, before = _snapshot_stage_files(context)
 
         # Validate and execute
         result = await tool.call(tool_input, context)
 
-        stage.completed_at = datetime.now()
-
-        # Apply validation
-        if result.success and stage.validation:
-            valid = self._validate(result.data, stage.validation)
-            if not valid:
-                result.success = False
-                result.error = f"Validation failed: {stage.validation.check}"
-
-        # 失败 → 回滚本次 stage 新建的文件 (时间可组合, 不留失败副作用).
-        if not result.success:
-            after = (
-                {p for p in snap_dir.iterdir() if p.is_file()}
-                if snap_dir.is_dir() else set()
-            )
-            new_files = after - before
-            if new_files:
-                dispose = rev.composite(
-                    *[lambda fp=fp: fp.unlink(missing_ok=True) for fp in new_files]
-                )
-                rev.track(dispose)
-                rev.revert_all()
+        _apply_stage_result(self, stage, result, rev, snap_dir, before)
 
         return result
 
@@ -539,49 +866,15 @@ class WorkflowEngine:
         四个字段全是 opt-in: stage 不设或引擎没装对应组件, 就完全跳过,
         老 workflow 的执行路径不变.
         """
-        # skill 白名单: stage.tool 必须在所列 skill 的 required_tools 集合里.
-        # skill 名查不到就忽略 — 不卡 stage, 避免改名后老 workflow 挂掉.
-        if stage.skill_context and self.skill_registry is not None:
-            allowed_tools: set[str] = set()
-            for skill_name in stage.skill_context:
-                skill = self.skill_registry.get(skill_name)
-                if skill is not None:
-                    allowed_tools.update(getattr(skill, "required_tools", []) or [])
-            if allowed_tools and stage.tool not in allowed_tools:
-                return tool_input, (
-                    f"Stage tool '{stage.tool}' not allowed by skill_context "
-                    f"(allowed: {sorted(allowed_tools)})"
-                )
+        ctx_error = _filter_by_skill_context(stage, self.skill_registry)
+        if ctx_error is not None:
+            return tool_input, ctx_error
 
-        # persona: 取 system prompt, 作为附加上下文塞进 tool_input.
-        # 工具自己决定要不要消费 (跟 __diagnosis 一个套路).
-        if stage.persona and self.persona_manager is not None:
-            try:
-                persona = self.persona_manager.get(stage.persona)
-                if persona and persona.system_prompt:
-                    tool_input["__persona_prompt"] = persona.system_prompt
-            except Exception:
-                # persona 找不到不要把 stage 整个挂掉, 跟现有诊断钩子的容错一致
-                logger.debug("best-effort op failed", exc_info=True)
+        _inject_persona_prompt(stage, tool_input, self.persona_manager)
 
-        # emotion_state: dict 转 EmotionState, 生成情绪片段注入.
-        # 不走持久化, 只用临时 tracker 复用 context_prompt 的逻辑.
-        if stage.emotion_state:
-            snippet = self._emotion_state_to_prompt(stage.emotion_state)
-            if snippet:
-                tool_input["__emotion_context"] = snippet
+        _inject_emotion_context(self, stage, tool_input)
 
-        # memory_scope: 从 LongTermMemory 检索相关记忆, 摘要注入.
-        # 走 FTS 即可, 不强求语义检索 (语义检索依赖 vector store, 不一定在线).
-        if stage.memory_scope and self.long_term_memory is not None:
-            try:
-                memories = self.long_term_memory.retrieve(
-                    stage.memory_scope, top_k=3, semantic=False
-                )
-                if memories:
-                    tool_input["__memory_context"] = memories
-            except Exception:
-                logger.debug("retrieve failed", exc_info=True)
+        _inject_memory_context(stage, tool_input, self.long_term_memory)
 
         return tool_input, None
 
@@ -628,62 +921,10 @@ class WorkflowEngine:
         calc_type = self._detect_calculation_type_from_stage(stage)
 
         # Call diagnose_tool with error message
-        diagnose_tool = self.registry.get("diagnose_tool")
-        if diagnose_tool:
-            try:
-                from huginn.tools.diagnose_tool import (
-                    DiagnoseInput as DiagnoseToolInput,
-                )
-
-                diag_input = DiagnoseToolInput(
-                    error_message=error_msg,
-                    software=software,
-                    calculation_type=calc_type,
-                    context=json.dumps(stage.tool_input, ensure_ascii=False)[:500],
-                )
-                diag_result = await diagnose_tool.call(diag_input, context)
-
-                if diag_result.success and diag_result.data:
-                    report = diag_result.data
-                    findings = report.get("findings", [])
-                    general_advice = report.get("general_advice", [])
-                    next_steps = report.get("recommended_next_steps", [])
-
-                    # Store diagnosis in stage metadata for logging
-                    stage.tool_input["__diagnosis"] = {
-                        "findings": findings[:3],
-                        "advice": general_advice[:3],
-                        "next_steps": next_steps[:3],
-                    }
-
-                    # Apply heuristic auto-fixes based on findings
-                    if stage.retry_policy.apply_auto_fix:
-                        fixes = self._extract_fixes_from_diagnosis(report, software)
-                        if fixes:
-                            self._apply_fixes_to_stage(stage, fixes, software)
-
-            except Exception:
-                logger.debug("diagnose and fix failed", exc_info=True)  # Silently ignore diagnosis errors
+        await _run_diagnosis_tool(self, stage, error_msg, software, calc_type, context)
 
         # Also query Sobko knowledge base for additional context
-        rag_tool = self.registry.get("rag_tool")
-        if rag_tool:
-            try:
-                from huginn.rag.rag_tool import RAGToolInput
-
-                rag_input = RAGToolInput(
-                    action="search",
-                    query=f"{software} {error_msg[:100]} 解决方法",
-                    top_k=3,
-                )
-                rag_result = await rag_tool.call(rag_input, context)
-                if rag_result.success and rag_result.data:
-                    results = rag_result.data.get("results", [])
-                    if results:
-                        kb_hints = [r.get("text", "")[:200] for r in results[:2]]
-                        stage.tool_input["__sobko_hints"] = kb_hints
-            except Exception:
-                logger.debug("diagnose and fix failed", exc_info=True)
+        await _query_sobko_hints(self, stage, software, error_msg, context)
 
     def _detect_software_from_stage(self, stage: ComputationalStage) -> str | None:
         """Detect which software this stage uses."""

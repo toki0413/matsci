@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import re
+import time
 import urllib.parse
 from pathlib import Path
 from typing import Any
@@ -238,107 +239,38 @@ async def _auth_login(provider: str, timeout_sec: int = 300) -> dict[str, Any]:
     cfg = _PROVIDERS[provider]
     login_url = cfg["login_url"]
     success_pattern = cfg.get("success_pattern")
-
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError as exc:
-        raise RuntimeError(
-            "Playwright 未安装. 装: pip install playwright && playwright install chromium"
-        ) from exc
+    async_playwright = _auth_import_playwright()
 
     profile_dir = _session_dir(provider)
     profile_dir.mkdir(parents=True, exist_ok=True)
 
-    import time
-
     async with async_playwright() as pw:
-        # headless=False 让用户看到浏览器窗口操作
-        context = await pw.chromium.launch_persistent_context(
-            user_data_dir=str(profile_dir),
-            headless=False,
-            user_agent=_USER_AGENT,
-            viewport={"width": 1280, "height": 800},
-            args=["--disable-blink-features=AutomationControlled"],  # 降低被检测概率
-        )
+        context = await _auth_open_context(pw, profile_dir)
         page = context.pages[0] if context.pages else await context.new_page()
         await page.goto(login_url, wait_until="domcontentloaded", timeout=30000)
 
-        start = time.time()
-        result = "timeout"
-        last_url = login_url
-        # 机器人验证页特征 (与 crawl_direct 的 bot_indicators 对齐)
-        # 校园网场景下用户不需要真登录账号, 过了 Cloudflare/滑块就算成功
-        bot_keywords = (
-            "are you a robot", "please confirm you are not a robot",
-            "verify you are human", "checking your browser",
-            "captcha", "enable javascript and cookies to continue",
-            "安全验证", "向右滑动", "滑动验证",
-        )
-        cloudflare_title_keywords = ("just a moment", "请稍候", "attention required")
-        while time.time() - start < timeout_sec:
-            # 检测 context 是否被用户关掉
-            try:
-                _ = context.pages  # 抛异常说明关了
-            except Exception:
-                result = "user_closed"
-                break
-            try:
-                current_url = page.url
-                last_url = current_url
-            except Exception:
-                # page 可能被关, 看看还有没有其他页
-                if not context.pages:
-                    result = "user_closed"
-                    break
-                page = context.pages[0]
-                continue
+        result, last_url = await _auth_poll(
+            context, page, login_url, success_pattern, timeout_sec)
+        return await _auth_finalize(provider, cfg, result, last_url, context, profile_dir)
 
-            # 抓页面 title 和正文前 3KB, 判断是否还在机器人验证页
-            page_title = ""
-            page_text_lower = ""
-            try:
-                page_title = (await page.title()) or ""
-                page_text_lower = ((await page.content()) or "").lower()[:3000]
-            except Exception:
-                logger.debug("读取页面 title/content 失败", exc_info=True)
-            title_lower = page_title.lower()
-            is_bot_page = (
-                any(k in page_text_lower for k in bot_keywords)
-                or any(k in title_lower for k in cloudflare_title_keywords)
-                or "cdn-cgi/challenge" in current_url.lower()
-            )
 
-            # 成功检测 1: URL 命中 success_pattern (用户真登录了账号)
-            if success_pattern and re.search(success_pattern, current_url):
-                result = "success"
-                break
+async def _auth_finalize(
+    provider: str, cfg: dict[str, Any], result: str, last_url: str,
+    context: Any, profile_dir: Path,
+) -> dict[str, Any]:
+    """存 session meta + 关浏览器, 返回登录结果 dict."""
+    # 存 meta 不管结果
+    _save_session_meta(
+        provider,
+        last_auth_at=now_iso(),
+        last_url=last_url,
+        auth_result=result,
+    )
 
-            # 成功检测 2: 机器人验证页已过 + 停留 15s 以上
-            # 校园网场景: IP 已认证, 用户过了 Cloudflare 就能看到真实页面,
-            # 不需要真登录. 给 15s 让用户手动过验证.
-            if not is_bot_page and time.time() - start > 15:
-                result = "success"
-                break
-
-            # 成功检测 3: 没 success_pattern 的 provider, 停在非登录页 10s 也算成功
-            if (not success_pattern and time.time() - start > 10) and ("login" not in current_url.lower() and "signin" not in current_url.lower()):
-                    result = "success"
-                    break
-
-            await asyncio.sleep(2)
-
-        # 存 meta 不管结果
-        _save_session_meta(
-            provider,
-            last_auth_at=now_iso(),
-            last_url=last_url,
-            auth_result=result,
-        )
-
-        try:
-            await context.close()
-        except Exception:
-            logger.debug("context.close 收尾失败", exc_info=True)
+    try:
+        await context.close()
+    except Exception:
+        logger.debug("context.close 收尾失败", exc_info=True)
 
     return {
         "provider": provider,
@@ -347,6 +279,121 @@ async def _auth_login(provider: str, timeout_sec: int = 300) -> dict[str, Any]:
         "last_url": last_url,
         "profile_dir": str(profile_dir),
     }
+
+
+def _auth_import_playwright() -> Any:
+    """懒加载 playwright async API; 未安装时抛安装提示."""
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError as exc:
+        raise RuntimeError(
+            "Playwright 未安装. 装: pip install playwright && playwright install chromium"
+        ) from exc
+    return async_playwright
+
+
+async def _auth_open_context(pw: Any, profile_dir: Path) -> Any:
+    """headless=False 让用户看到浏览器窗口操作."""
+    return await pw.chromium.launch_persistent_context(
+        user_data_dir=str(profile_dir),
+        headless=False,
+        user_agent=_USER_AGENT,
+        viewport={"width": 1280, "height": 800},
+        args=["--disable-blink-features=AutomationControlled"],  # 降低被检测概率
+    )
+
+
+async def _auth_poll(
+    context: Any, page: Any, login_url: str, success_pattern: str | None,
+    timeout_sec: int,
+) -> tuple[str, str]:
+    """轮询登录状态, 返回 (result, last_url)."""
+    start = time.time()
+    last_url = login_url
+    # 机器人验证页特征 (与 crawl_direct 的 bot_indicators 对齐)
+    # 校园网场景下用户不需要真登录账号, 过了 Cloudflare/滑块就算成功
+    bot_keywords = (
+        "are you a robot", "please confirm you are not a robot",
+        "verify you are human", "checking your browser",
+        "captcha", "enable javascript and cookies to continue",
+        "安全验证", "向右滑动", "滑动验证",
+    )
+    cloudflare_title_keywords = ("just a moment", "请稍候", "attention required")
+    while time.time() - start < timeout_sec:
+        status, page, last_url = await _auth_probe(
+            context, page, success_pattern, start, last_url,
+            bot_keywords, cloudflare_title_keywords,
+        )
+        if status in ("user_closed", "success"):
+            return status, last_url
+        if status == "sleep":
+            await asyncio.sleep(2)
+    return "timeout", last_url
+
+
+async def _auth_probe(
+    context: Any, page: Any, success_pattern: str | None, start: float,
+    last_url: str, bot_keywords: tuple[str, ...],
+    cloudflare_title_keywords: tuple[str, ...],
+) -> tuple[str, Any, str]:
+    """单次轮询: 返回 (status, page, last_url).
+
+    status ∈ sleep (正常再等 2s) / retry (page 失效, 立即重试) /
+             user_closed / success.
+    """
+    # 检测 context 是否被用户关掉
+    try:
+        _ = context.pages  # 抛异常说明关了
+    except Exception:
+        return "user_closed", page, last_url
+    try:
+        current_url = page.url
+        last_url = current_url
+    except Exception:
+        # page 可能被关, 看看还有没有其他页
+        if not context.pages:
+            return "user_closed", page, last_url
+        return "retry", context.pages[0], last_url
+
+    is_bot_page = await _auth_is_bot_page(
+        page, current_url, bot_keywords, cloudflare_title_keywords)
+
+    # 成功检测 1: URL 命中 success_pattern (用户真登录了账号)
+    if success_pattern and re.search(success_pattern, current_url):
+        return "success", page, last_url
+
+    # 成功检测 2: 机器人验证页已过 + 停留 15s 以上
+    # 校园网场景: IP 已认证, 用户过了 Cloudflare 就能看到真实页面,
+    # 不需要真登录. 给 15s 让用户手动过验证.
+    if not is_bot_page and time.time() - start > 15:
+        return "success", page, last_url
+
+    # 成功检测 3: 没 success_pattern 的 provider, 停在非登录页 10s 也算成功
+    if (not success_pattern and time.time() - start > 10) and (
+            "login" not in current_url.lower() and "signin" not in current_url.lower()):
+        return "success", page, last_url
+
+    return "sleep", page, last_url
+
+
+async def _auth_is_bot_page(
+    page: Any, current_url: str, bot_keywords: tuple[str, ...],
+    cloudflare_title_keywords: tuple[str, ...],
+) -> bool:
+    """抓页面 title 和正文前 3KB, 判断是否还在机器人验证页."""
+    page_title = ""
+    page_text_lower = ""
+    try:
+        page_title = (await page.title()) or ""
+        page_text_lower = ((await page.content()) or "").lower()[:3000]
+    except Exception:
+        logger.debug("读取页面 title/content 失败", exc_info=True)
+    title_lower = page_title.lower()
+    return (
+        any(k in page_text_lower for k in bot_keywords)
+        or any(k in title_lower for k in cloudflare_title_keywords)
+        or "cdn-cgi/challenge" in current_url.lower()
+    )
 
 
 async def _auth_logout(provider: str) -> dict[str, Any]:
@@ -389,57 +436,89 @@ async def crawl_direct(url: str, max_results: int) -> ToolResult:
     session_dir = _session_dir(provider) if provider else None
     used_session = bool(provider and session_dir and session_dir.exists())
 
-    fetcher = "crawl4ai"
+    fetcher, md, title, links, err = await _cd_fetch(
+        final_url, session_dir, used_session, max_results)
+    if err is not None:
+        return err
+
+    err = _cd_guard(md, used_session, provider, url)
+    if err is not None:
+        return err
+
+    _cd_bump_session_meta(used_session, provider)
+    data = _cd_build_data(
+        url, final_url, title, md, links, fetcher,
+        used_session=used_session, provider=provider,
+        ezproxy_applied=ezproxy_applied,
+    )
+    return ToolResult(data=data, success=True)
+
+
+async def _cd_fetch(
+    final_url: str, session_dir: Path | None, used_session: bool, max_results: int,
+) -> tuple[str, str, str, list, ToolResult | None]:
+    """三级 fetch 链: crawl4ai → playwright → anti-bot 降级.
+
+    Returns: (fetcher, md, title, links, err); err 非 None 表示全部失败.
+    """
+    data_dir = str(session_dir) if used_session else None
     try:
         md, title, links = await _crawl4ai_fetch(
             final_url, max_links=max_results,
-            user_data_dir=str(session_dir) if used_session else None,
+            user_data_dir=data_dir,
             headless=True,
         )
     except _Crawl4aiUnavailable:
         # crawl4ai 没装: 直接走 Playwright (比 urllib 强, 能渲染 JS)
         try:
             md, title, links = await _playwright_fetch(
-                final_url,
-                user_data_dir=str(session_dir) if used_session else None,
-                max_links=max_results,
-            )
-            fetcher = "playwright"
+                final_url, user_data_dir=data_dir, max_links=max_results)
         except Exception as exc2:
-            return ToolResult(
+            return "", "", "", [], ToolResult(
                 data=None, success=False,
                 error=f"crawl_web direct 失败 (crawl4ai 和 playwright 都失败): {exc2}",
             )
+        return "playwright", md, title, links, None
     except Exception as exc:
-        # crawl4ai 报错: 看是不是 anti-bot 误判, 是就降级 Playwright
-        err_str = str(exc).lower()
-        is_antibot_false_positive = any(
-            k in err_str for k in ("anti-bot", "minimal_text", "no_content_elements",
-                                    "script_heavy_shell", "blocked by")
-        )
-        if is_antibot_false_positive:
-            logger.info("crawl4ai 判 anti-bot, 降级 Playwright: %s", exc)
-            try:
-                md, title, links = await _playwright_fetch(
-                    final_url,
-                    user_data_dir=str(session_dir) if used_session else None,
-                    max_links=max_results,
-                    wait_sec=4.0,  # JS 重的多等会
-                )
-                fetcher = "playwright_fallback"
-            except Exception as exc2:
-                return ToolResult(
-                    data=None, success=False,
-                    error=f"crawl_web direct 失败: crawl4ai='{exc}' playwright='{exc2}'",
-                )
-        else:
-            logger.warning("crawl_web direct 失败: %s", exc)
-            return ToolResult(
-                data=None, success=False,
-                error=f"crawl_web direct 失败: {exc}",
-            )
+        return await _cd_fetch_antibot(exc, final_url, data_dir, max_results)
+    return "crawl4ai", md, title, links, None
 
-    # 登录跳转检测: 命中订阅源但内容像登录页 → session 过期
+
+async def _cd_fetch_antibot(
+    exc: Exception, final_url: str, data_dir: str | None, max_results: int,
+) -> tuple[str, str, str, list, ToolResult | None]:
+    """crawl4ai 报错: 看是不是 anti-bot 误判, 是就降级 Playwright."""
+    err_str = str(exc).lower()
+    is_antibot_false_positive = any(
+        k in err_str for k in ("anti-bot", "minimal_text", "no_content_elements",
+                                "script_heavy_shell", "blocked by")
+    )
+    if not is_antibot_false_positive:
+        logger.warning("crawl_web direct 失败: %s", exc)
+        return "", "", "", [], ToolResult(
+            data=None, success=False,
+            error=f"crawl_web direct 失败: {exc}",
+        )
+    logger.info("crawl4ai 判 anti-bot, 降级 Playwright: %s", exc)
+    try:
+        md, title, links = await _playwright_fetch(
+            final_url,
+            user_data_dir=data_dir,
+            max_links=max_results,
+            wait_sec=4.0,  # JS 重的多等会
+        )
+    except Exception as exc2:
+        return "", "", "", [], ToolResult(
+            data=None, success=False,
+            error=f"crawl_web direct 失败: crawl4ai='{exc}' playwright='{exc2}'",
+        )
+    return "playwright_fallback", md, title, links, None
+
+
+def _cd_guard(
+    md: str, used_session: bool, provider: str | None, url: str,
+) -> ToolResult | None:
+    """登录跳转 / 反机器人检测页守卫; 命中返回失败 ToolResult, 否则 None."""
     login_indicators = (
         "please log in", "please sign in", "login to continue",
         "sign in to continue", "登录", "请登录", "用户登录",
@@ -475,42 +554,57 @@ async def crawl_direct(url: str, max_results: int) -> ToolResult:
         )
     # 机器人检测页 (Cloudflare/CAPTCHA/滑块): headless 过不去
     if is_bot_block:
-        prov = provider or _detect_provider(url)
-        if prov:
-            hint = (
-                f"页面命中反机器人检测 (Cloudflare/CAPTCHA/滑块验证). "
-                f"该站用 Cloudflare 托管挑战 (需交互式点击 I'm not a robot), "
-                f"cf_clearance cookie 绑定浏览器指纹无法跨 session 复用, "
-                f"auth_action=login 也救不了.\n"
-                f"三条出路:\n"
-                f"  1. 配 EZproxy (推荐): 设 HUGINN_EZPROXY_PREFIX=<本校 EZproxy URL>, "
-                f"crawl_web 会自动把 {prov} 域名重写到 EZproxy 走机构 IP 白名单, "
-                f"绕过 Cloudflare.\n"
-                f"  2. fetch_pdf 走 OA 兜底: 该文章可能在 arXiv/Europe PMC/Unpaywall "
-                f"有 OA 版本, fetch_pdf doi=<doi> 会自动找.\n"
-                f"  3. 手动下载: 浏览器打开 {url} 下载 PDF, "
-                f"再 fetch_pdf 用本地文件路径."
-            )
-        else:
-            hint = (
-                "页面命中反机器人检测. 该 URL 不在已知 provider 列表, "
-                "无法自动存 session. 换个 URL 或手动用浏览器访问."
-            )
         return ToolResult(
             data=None, success=False,
-            error=hint,
+            error=_cd_bot_hint(provider, url),
         )
+    return None
 
-    # 更新 crawl 计数
-    if used_session and provider:
-        meta_path = _session_meta_path(provider)
-        if meta_path.exists():
-            try:
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                _save_session_meta(provider, n_crawls=meta.get("n_crawls", 0) + 1)
-            except Exception:
-                logger.debug("更新 crawl 计数失败", exc_info=True)
 
+def _cd_bot_hint(provider: str | None, url: str) -> str:
+    """机器人检测页错误提示 (区分已知 provider / 未知 URL)."""
+    prov = provider or _detect_provider(url)
+    if not prov:
+        return (
+            "页面命中反机器人检测. 该 URL 不在已知 provider 列表, "
+            "无法自动存 session. 换个 URL 或手动用浏览器访问."
+        )
+    return (
+        f"页面命中反机器人检测 (Cloudflare/CAPTCHA/滑块验证). "
+        f"该站用 Cloudflare 托管挑战 (需交互式点击 I'm not a robot), "
+        f"cf_clearance cookie 绑定浏览器指纹无法跨 session 复用, "
+        f"auth_action=login 也救不了.\n"
+        f"三条出路:\n"
+        f"  1. 配 EZproxy (推荐): 设 HUGINN_EZPROXY_PREFIX=<本校 EZproxy URL>, "
+        f"crawl_web 会自动把 {prov} 域名重写到 EZproxy 走机构 IP 白名单, "
+        f"绕过 Cloudflare.\n"
+        f"  2. fetch_pdf 走 OA 兜底: 该文章可能在 arXiv/Europe PMC/Unpaywall "
+        f"有 OA 版本, fetch_pdf doi=<doi> 会自动找.\n"
+        f"  3. 手动下载: 浏览器打开 {url} 下载 PDF, "
+        f"再 fetch_pdf 用本地文件路径."
+    )
+
+
+def _cd_bump_session_meta(used_session: bool, provider: str | None) -> None:
+    """更新 crawl 计数 (读/写失败静默)."""
+    if not (used_session and provider):
+        return
+    meta_path = _session_meta_path(provider)
+    if not meta_path.exists():
+        return
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        _save_session_meta(provider, n_crawls=meta.get("n_crawls", 0) + 1)
+    except Exception:
+        logger.debug("更新 crawl 计数失败", exc_info=True)
+
+
+def _cd_build_data(
+    url: str, final_url: str, title: str, md: str, links: list,
+    fetcher: str, *, used_session: bool, provider: str | None,
+    ezproxy_applied: bool,
+) -> dict[str, Any]:
+    """组装 crawl_web direct 的返回 data (附加 session/ezproxy/provider 提示)."""
     data: dict[str, Any] = {
         "action": "crawl_web",
         "engine": "direct",
@@ -536,7 +630,7 @@ async def crawl_direct(url: str, max_results: int) -> ToolResult:
     if fetcher == "urllib_fallback":
         data["note"] = (data.get("note", "") +
             " crawl4ai 不可用, urllib 简单抽取, JS 页面会丢内容.").strip()
-    return ToolResult(data=data, success=True)
+    return data
 
 
 async def crawl_search_engine(
@@ -547,30 +641,51 @@ async def crawl_search_engine(
 ) -> ToolResult:
     """搜索引擎桥接. 返回结果链接列表, 不爬正文 (正文要再调 direct)."""
     # 构造搜索 URL
-    q = urllib.parse.quote(query)
-    if engine == "google_scholar":
-        search_url = f"https://scholar.google.com/scholar?q={q}&hl=en"
-        site_name = "Google Scholar"
-    elif engine == "google_patents":
-        search_url = f"https://patents.google.com/?q={q}&oq={q}"
-        site_name = "Google Patents"
-    elif engine == "duckduckgo":
-        search_url = f"https://duckduckgo.com/html/?q={q}"
-        site_name = "DuckDuckGo"
-    else:
+    built = _cse_build_url(engine, query)
+    if built is None:
         return ToolResult(
             data=None, success=False,
             error=f"unknown engine: {engine}",
         )
+    search_url, site_name = built
 
     # 先抓搜索结果页
+    md, links, err = await _cse_fetch(
+        engine, query, search_url, site_name, max_results)
+    if err is not None:
+        return err
+
+    results = _cse_collect(links, max_results)
+    return ToolResult(
+        data=_cse_build_data(engine, query, site_name, search_url, results, md),
+        success=True,
+    )
+
+
+def _cse_build_url(engine: str, query: str) -> tuple[str, str] | None:
+    """按 engine 构造搜索 URL; 未知 engine 返回 None."""
+    q = urllib.parse.quote(query)
+    if engine == "google_scholar":
+        return f"https://scholar.google.com/scholar?q={q}&hl=en", "Google Scholar"
+    if engine == "google_patents":
+        return f"https://patents.google.com/?q={q}&oq={q}", "Google Patents"
+    if engine == "duckduckgo":
+        return f"https://duckduckgo.com/html/?q={q}", "DuckDuckGo"
+    return None
+
+
+async def _cse_fetch(
+    engine: str, query: str, search_url: str, site_name: str, max_results: int,
+) -> tuple[str, list, ToolResult | None]:
+    """抓搜索结果页; crawl4ai 不可用/失败时 duckduckgo 走 web_search 兜底."""
     try:
-        md, title, links = await _crawl4ai_fetch(search_url, max_links=max_results * 3)
+        md, _title, links = await _crawl4ai_fetch(search_url, max_links=max_results * 3)
+        return md, links, None
     except _Crawl4aiUnavailable:
         # crawl4ai 没装: duckduckgo 走 web_search_tool 兜底, 其他引擎没法降级
         if engine == "duckduckgo":
-            return await fallback_web_search(query, max_results, site_name)
-        return ToolResult(
+            return "", [], await fallback_web_search(query, max_results, site_name)
+        return "", [], ToolResult(
             data=None, success=False,
             error=f"crawl4ai 不可用, engine={engine} 需要 JS 渲染, 无法降级. "
                   f"装 crawl4ai: pip install crawl4ai-skill",
@@ -580,13 +695,16 @@ async def crawl_search_engine(
         logger.warning("crawl_web %s 抓取失败: %s", engine, exc)
         if engine == "duckduckgo":
             # duckduckgo 直连超时常见 (国内被墙), 走 web_search_tool 兜底
-            return await fallback_web_search(query, max_results, site_name)
-        return ToolResult(
+            return "", [], await fallback_web_search(query, max_results, site_name)
+        return "", [], ToolResult(
             data=None, success=False,
             error=f"crawl_web {engine} 失败: {exc}. "
                   f"可能是网络问题或反爬, 重试或换 engine=duckduckgo",
         )
 
+
+def _cse_collect(links: list, max_results: int) -> list[dict[str, str]]:
+    """从 markdown 里抽结果链接 (去重 + 过滤搜索导航 + EZproxy 重写)."""
     # 从 markdown 里抽结果链接 (搜索引擎结果页链接密度高)
     # 简单策略: 取所有 http(s) 链接, 去重, 截断到 max_results
     # 命中学术域的链接自动 EZproxy 重写
@@ -607,23 +725,27 @@ async def crawl_search_engine(
         results.append({"url": final_link, "original_url": link, "title": ""})
         if len(results) >= max_results:
             break
+    return results
 
-    return ToolResult(
-        data={
-            "action": "crawl_web",
-            "engine": engine,
-            "query": query,
-            "site": site_name,
-            "search_url": search_url,
-            "n_results": len(results),
-            "results": results,
-            "page_markdown": md[:2000],  # 截一段给 agent 看上下文
-            "note": (
-                "搜索引擎只给链接. 要正文用 crawl_web engine=direct url=<具体链接>."
-            ),
-        },
-        success=True,
-    )
+
+def _cse_build_data(
+    engine: str, query: str, site_name: str, search_url: str,
+    results: list[dict[str, str]], md: str,
+) -> dict[str, Any]:
+    """组装 crawl_web search 的返回 data."""
+    return {
+        "action": "crawl_web",
+        "engine": engine,
+        "query": query,
+        "site": site_name,
+        "search_url": search_url,
+        "n_results": len(results),
+        "results": results,
+        "page_markdown": md[:2000],  # 截一段给 agent 看上下文
+        "note": (
+            "搜索引擎只给链接. 要正文用 crawl_web engine=direct url=<具体链接>."
+        ),
+    }
 
 
 async def fallback_web_search(

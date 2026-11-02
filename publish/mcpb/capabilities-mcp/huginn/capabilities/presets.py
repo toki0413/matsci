@@ -27,7 +27,9 @@ class LiteratureResearchInput(BaseModel):
 
     query: str = Field(..., description="文献检索 query")
     system: str | None = Field(default=None, description="体系名 (benchmark_lookup 用)")
-    property: str | None = Field(default=None, description="性质名 (benchmark_lookup 用)")
+    property: str | None = Field(
+        default=None, description="性质名 (benchmark_lookup 用)"
+    )
     max_results: int = Field(default=8, ge=1, le=30)
     min_citations: int | None = Field(default=None, description="引用数下限 (L1b)")
     oa_only: bool = Field(default=False, description="只保留开放获取 (L1b)")
@@ -68,6 +70,42 @@ def _make_lit_cap(action: str) -> AtomicCapability | None:
     return _LitActionCap(action)
 
 
+# 步骤转换: 把文献研究入参分流给各 action
+def _to_search(prev, inp: LiteratureResearchInput):
+    return {
+        "query": inp.query,
+        "max_results": inp.max_results,
+        "min_citations": inp.min_citations,
+        "oa_only": inp.oa_only,
+    }
+
+
+def _to_lookup(prev, inp: LiteratureResearchInput):
+    # 从上一轮 search 结果里取 papers, 喂给 benchmark_lookup 做数值校验
+    search_state = prev.get("search")
+    papers = []
+    if search_state is not None and search_state.success:
+        papers = (search_state.data or {}).get("papers", [])[:10]
+    return {
+        "query": inp.query,
+        "system": inp.system or inp.query,
+        "property": inp.property or "",
+        "papers": papers,
+    }
+
+
+def _to_summarize(prev, inp: LiteratureResearchInput):
+    search_state = prev.get("search")
+    papers = []
+    if search_state is not None and search_state.success:
+        papers = (search_state.data or {}).get("papers", [])[:10]
+    return {
+        "query": inp.query,
+        "papers": papers,
+        "focus": f"{inp.system or ''} {inp.property or ''}".strip() or None,
+    }
+
+
 def register_capability_presets() -> list[str]:
     """注册内置组合能力预设。返回注册的能力名列表。"""
     registered: list[str] = []
@@ -79,39 +117,6 @@ def register_capability_presets() -> list[str]:
     if search_cap is None or lookup_cap is None or summarize_cap is None:
         # literature_tool 未注册时, 组合能力没法构建 — 安静跳过
         return registered
-
-    # 步骤转换: 把文献研究入参分流给各 action
-    def _to_search(prev, inp: LiteratureResearchInput):
-        return {
-            "query": inp.query,
-            "max_results": inp.max_results,
-            "min_citations": inp.min_citations,
-            "oa_only": inp.oa_only,
-        }
-
-    def _to_lookup(prev, inp: LiteratureResearchInput):
-        # 从上一轮 search 结果里取 papers, 喂给 benchmark_lookup 做数值校验
-        search_state = prev.get("search")
-        papers = []
-        if search_state is not None and search_state.success:
-            papers = (search_state.data or {}).get("papers", [])[:10]
-        return {
-            "query": inp.query,
-            "system": inp.system or inp.query,
-            "property": inp.property or "",
-            "papers": papers,
-        }
-
-    def _to_summarize(prev, inp: LiteratureResearchInput):
-        search_state = prev.get("search")
-        papers = []
-        if search_state is not None and search_state.success:
-            papers = (search_state.data or {}).get("papers", [])[:10]
-        return {
-            "query": inp.query,
-            "papers": papers,
-            "focus": f"{inp.system or ''} {inp.property or ''}".strip() or None,
-        }
 
     composite = CompositeCapability(
         name="literature_research_cap",

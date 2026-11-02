@@ -89,6 +89,52 @@ class PyBaMMToolInput(BaseModel):
     working_dir: str | None = Field(default=None)
 
 
+def _fit_validate(args: PyBaMMToolInput) -> ToolResult | None:
+    if not args.time_data or not args.voltage_data:
+        return ToolResult(
+            data=None,
+            success=False,
+            error="fit requires time_data and voltage_data.",
+        )
+    if len(args.time_data) != len(args.voltage_data):
+        return ToolResult(
+            data=None,
+            success=False,
+            error="time_data and voltage_data must have equal length.",
+        )
+    return None
+
+
+def _make_residual(args: PyBaMMToolInput, model, t_exp, v_exp):
+    def residual(x: np.ndarray) -> float:
+        pv = pybamm.ParameterValues(args.parameter_set)
+        for name, val in zip(args.fit_params, x):
+            pv[name] = float(val)
+        sim = pybamm.Simulation(model, parameter_values=pv, experiment=args.experiment)
+        sol = sim.solve()
+        v_sim = np.interp(t_exp, sol["Time [s]"].entries, sol["Voltage [V]"].entries)
+        return float(np.mean((v_sim - v_exp) ** 2))
+
+    return residual
+
+
+def _fit_data(
+    args: PyBaMMToolInput, base_values, x_fit, bounds, mse, n_points
+) -> dict[str, Any]:
+    return {
+        "model": args.model,
+        "parameter_set": args.parameter_set,
+        "fit_params": args.fit_params,
+        "initial_values": base_values,
+        "fitted_values": x_fit.tolist(),
+        "bounds": [list(b) for b in bounds],
+        "mse": mse,
+        "rmse_V": float(np.sqrt(mse)),
+        "n_points": int(n_points),
+        "message": (f"Fit done: RMSE={np.sqrt(mse):.5f} V over {n_points} points."),
+    }
+
+
 class PyBaMMTool(HuginnTool):
     """Battery simulation / parameter fitting via pybamm standard models."""
 
@@ -129,7 +175,9 @@ class PyBaMMTool(HuginnTool):
                 return self._fit(inp)
             return self._parameterize(inp)
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"pybamm tool failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"pybamm tool failed: {e}"
+            )
 
     # ── simulate ──────────────────────────────────────────────
 
@@ -172,16 +220,9 @@ class PyBaMMTool(HuginnTool):
     # ── fit ────────────────────────────────────────────────────
 
     def _fit(self, args: PyBaMMToolInput) -> ToolResult:
-        if not args.time_data or not args.voltage_data:
-            return ToolResult(
-                data=None, success=False,
-                error="fit requires time_data and voltage_data.",
-            )
-        if len(args.time_data) != len(args.voltage_data):
-            return ToolResult(
-                data=None, success=False,
-                error="time_data and voltage_data must have equal length.",
-            )
+        err = _fit_validate(args)
+        if err is not None:
+            return err
 
         t_exp = np.asarray(args.time_data, dtype=float)
         v_exp = np.asarray(args.voltage_data, dtype=float)
@@ -193,43 +234,24 @@ class PyBaMMTool(HuginnTool):
         base_values = [float(params[name]) for name in args.fit_params]
         bounds = args.fit_bounds or [(b * 0.1, b * 10.0) for b in base_values]
 
-        def residual(x: np.ndarray) -> float:
-            pv = pybamm.ParameterValues(args.parameter_set)
-            for name, val in zip(args.fit_params, x):
-                pv[name] = float(val)
-            sim = pybamm.Simulation(
-                model, parameter_values=pv, experiment=args.experiment
-            )
-            sol = sim.solve()
-            v_sim = np.interp(t_exp, sol["Time [s]"].entries, sol["Voltage [V]"].entries)
-            return float(np.mean((v_sim - v_exp) ** 2))
-
         # Local Nelder-Mead from the base values — no gradient needed, robust
         # to pybamm's internal solver noise. Bounded refit happens after if
         # bounds are violated.
         from scipy.optimize import minimize
 
         x0 = np.array(base_values, dtype=float)
-        res = minimize(residual, x0, method="Nelder-Mead", options={"maxiter": 50})
+        res = minimize(
+            _make_residual(args, model, t_exp, v_exp),
+            x0,
+            method="Nelder-Mead",
+            options={"maxiter": 50},
+        )
 
         x_fit = np.clip(res.x, [b[0] for b in bounds], [b[1] for b in bounds])
         mse = float(res.fun)
 
         return ToolResult(
-            data={
-                "model": args.model,
-                "parameter_set": args.parameter_set,
-                "fit_params": args.fit_params,
-                "initial_values": base_values,
-                "fitted_values": x_fit.tolist(),
-                "bounds": [list(b) for b in bounds],
-                "mse": mse,
-                "rmse_V": float(np.sqrt(mse)),
-                "n_points": int(len(t_exp)),
-                "message": (
-                    f"Fit done: RMSE={np.sqrt(mse):.5f} V over {len(t_exp)} points."
-                ),
-            },
+            data=_fit_data(args, base_values, x_fit, bounds, mse, len(t_exp)),
             success=True,
         )
 
@@ -268,7 +290,9 @@ class PyBaMMTool(HuginnTool):
             return pybamm.lithium_ion.SPMe()
         if kind == "DFN":
             return pybamm.lithium_ion.DFN()
-        raise ValueError(f"Unknown model '{kind}'; expected one of {list(_MODEL_KINDS)}")
+        raise ValueError(
+            f"Unknown model '{kind}'; expected one of {list(_MODEL_KINDS)}"
+        )
 
 
 # ── self-check ────────────────────────────────────────────────
@@ -285,12 +309,14 @@ def _selfcheck() -> None:
         return
 
     tool = PyBaMMTool()
-    res = tool.call({
-        "action": "simulate",
-        "model": "SPM",
-        "parameter_set": "Chen2020",
-        "experiment": ["Discharge at 1C until 2.5 V"],
-    })
+    res = tool.call(
+        {
+            "action": "simulate",
+            "model": "SPM",
+            "parameter_set": "Chen2020",
+            "experiment": ["Discharge at 1C until 2.5 V"],
+        }
+    )
     assert res.success, res.error
     d = res.data
     v = np.asarray(d["voltage_V"])

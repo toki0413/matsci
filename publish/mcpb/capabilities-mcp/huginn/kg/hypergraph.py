@@ -42,9 +42,41 @@ MODE_OR = "OR"
 VALID_MODES = {MODE_AND, MODE_OR}
 
 # 影响传播的受影响程度档位
-IMPACT_RECHECK = "recheck"       # AND 超边: 前提被挑战 → 结论需重查
-IMPACT_WEAKENED = "weakened"     # OR 超边: 单前提被挑战 → 结论削弱但保留
-IMPACT_ROOT = "root"             # 被挑战的源头结论自身
+IMPACT_RECHECK = "recheck"  # AND 超边: 前提被挑战 → 结论需重查
+IMPACT_WEAKENED = "weakened"  # OR 超边: 单前提被挑战 → 结论削弱但保留
+IMPACT_ROOT = "root"  # 被挑战的源头结论自身
+
+
+def _empty_impact(challenged_claim: str) -> dict[str, Any]:
+    """无相关超边时的空 ImpactReport."""
+    return {
+        "challenged": challenged_claim,
+        "root": None,
+        "affected": [],
+        "unaffected_count": 0,
+        "hops": 0,
+    }
+
+
+def _impact_report(
+    challenged_claim: str,
+    root_status: str,
+    affected: list[dict[str, Any]],
+    hops: int,
+) -> dict[str, Any]:
+    """组装 ImpactReport."""
+    return {
+        "challenged": challenged_claim,
+        "root": {
+            "claim": challenged_claim,
+            "status": root_status,
+            "impact": IMPACT_ROOT,
+            "depth": 0,
+        },
+        "affected": affected,
+        "unaffected_count": 0,
+        "hops": hops,
+    }
 
 
 @dataclass
@@ -72,7 +104,9 @@ class ClaimHyperedge:
         if self.mode not in VALID_MODES:
             raise ValueError(f"mode 必须是 {sorted(VALID_MODES)}, got {self.mode!r}")
         if self.status not in VALID_STATUSES:
-            raise ValueError(f"status 必须是 {sorted(VALID_STATUSES)}, got {self.status!r}")
+            raise ValueError(
+                f"status 必须是 {sorted(VALID_STATUSES)}, got {self.status!r}"
+            )
         self.premises = [p for p in self.premises if p]
         if not self.premises:
             raise ValueError("premises 至少需要 1 个前提")
@@ -107,9 +141,7 @@ class ClaimHypergraph:
     def load(self) -> None:
         with self._lock:
             data = json.loads(self.path.read_text(encoding="utf-8"))
-            self._edges = [
-                ClaimHyperedge(**e) for e in data.get("edges", [])
-            ]
+            self._edges = [ClaimHyperedge(**e) for e in data.get("edges", [])]
 
     def save(self) -> None:
         with self._lock:
@@ -205,7 +237,9 @@ class ClaimHypergraph:
                             stack.append(p)
             return sorted(seen)
 
-    def downstream_claims(self, claim_id: str, recursive: bool = False) -> list[tuple[str, int]]:
+    def downstream_claims(
+        self, claim_id: str, recursive: bool = False
+    ) -> list[tuple[str, int]]:
         """前向: 返回直接依赖 claim_id 的下游结论 [(claim, depth)].
 
         depth 表示离源头的依赖距离 (直接依赖=1). recursive=True 时继续往下.
@@ -229,7 +263,9 @@ class ClaimHypergraph:
 
     # ── 挑战传播 (debug 人类认知的核心) ──
 
-    def impact_propagation(self, challenged_claim: str, max_hops: int = 10) -> dict[str, Any]:
+    def impact_propagation(
+        self, challenged_claim: str, max_hops: int = 10
+    ) -> dict[str, Any]:
         """挑战源头 → 沿超边前向传播, 计算受影响下游结论.
 
         传播规则 (高阶网络 AND/OR 语义):
@@ -257,67 +293,67 @@ class ClaimHypergraph:
                 e.conclusion == challenged_claim or challenged_claim in e.premises
                 for e in self._edges
             ):
-                return {
-                    "challenged": challenged_claim,
-                    "root": None,
-                    "affected": [],
-                    "unaffected_count": 0,
-                    "hops": 0,
-                }
+                return _empty_impact(challenged_claim)
 
-            root_status = next(
-                (e.status for e in self._edges if e.conclusion == challenged_claim),
-                STATUS_RECHECK,
+            root_status = ClaimHypergraph._root_status(self, challenged_claim)
+            affected, hops = ClaimHypergraph._propagate_impacts(
+                self, challenged_claim, max_hops
             )
-            affected: list[dict[str, Any]] = []
-            visited: set[str] = set()
-            stack: list[tuple[str, int, list[str]]] = [
-                (challenged_claim, 0, [challenged_claim])
-            ]
-            hops = 0
-            while stack and hops < max_hops:
-                node, depth, path = stack.pop()
-                hops += 1
-                for e in self.get_edges_with_premise(node):
-                    if e.conclusion == node or e.conclusion in visited:
-                        continue
-                    if e.mode == MODE_AND:
-                        impact = IMPACT_RECHECK
-                        visited.add(e.conclusion)
-                        affected.append({
+
+            # OR 超边产生的 weakened 不阻断后续 AND 传播: 上面已统一入队,
+            # 这里只需按 depth 排序输出.
+            affected.sort(key=lambda x: (x["depth"], x["claim"]))
+            return _impact_report(challenged_claim, root_status, affected, hops)
+
+    def _root_status(self, challenged_claim: str) -> str:
+        """被挑战源头自身的状态 (无作为结论的边时回退 STATUS_RECHECK)."""
+        return next(
+            (e.status for e in self._edges if e.conclusion == challenged_claim),
+            STATUS_RECHECK,
+        )
+
+    def _propagate_impacts(
+        self, challenged_claim: str, max_hops: int
+    ) -> tuple[list[dict[str, Any]], int]:
+        """沿超边前向传播挑战, 返回 (受影响下游列表, 实际 hops)."""
+        affected: list[dict[str, Any]] = []
+        visited: set[str] = set()
+        stack: list[tuple[str, int, list[str]]] = [
+            (challenged_claim, 0, [challenged_claim])
+        ]
+        hops = 0
+        while stack and hops < max_hops:
+            node, depth, path = stack.pop()
+            hops += 1
+            for e in ClaimHypergraph.get_edges_with_premise(self, node):
+                if e.conclusion == node or e.conclusion in visited:
+                    continue
+                if e.mode == MODE_AND:
+                    impact = IMPACT_RECHECK
+                    visited.add(e.conclusion)
+                    affected.append(
+                        {
                             "claim": e.conclusion,
                             "impact": impact,
                             "depth": depth + 1,
                             "via": path + [e.conclusion],
                             "edge": asdict(e),
-                        })
-                        stack.append((e.conclusion, depth + 1, path + [e.conclusion]))
-                    else:  # OR: 削弱不推翻, 不向下传播
-                        # 仍可能影响但非决定性 — 记录为 weakened
-                        visited.add(e.conclusion)
-                        affected.append({
+                        }
+                    )
+                    stack.append((e.conclusion, depth + 1, path + [e.conclusion]))
+                else:  # OR: 削弱不推翻, 不向下传播
+                    # 仍可能影响但非决定性 — 记录为 weakened
+                    visited.add(e.conclusion)
+                    affected.append(
+                        {
                             "claim": e.conclusion,
                             "impact": IMPACT_WEAKENED,
                             "depth": depth + 1,
                             "via": path + [e.conclusion],
                             "edge": asdict(e),
-                        })
-
-            # OR 超边产生的 weakened 不阻断后续 AND 传播: 上面已统一入队,
-            # 这里只需按 depth 排序输出.
-            affected.sort(key=lambda x: (x["depth"], x["claim"]))
-            return {
-                "challenged": challenged_claim,
-                "root": {
-                    "claim": challenged_claim,
-                    "status": root_status,
-                    "impact": IMPACT_ROOT,
-                    "depth": 0,
-                },
-                "affected": affected,
-                "unaffected_count": 0,
-                "hops": hops,
-            }
+                        }
+                    )
+        return affected, hops
 
     # ── 自指环检测 (β₁ 拓扑签名) ──
 
@@ -374,11 +410,22 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmp:
         chg = ClaimHypergraph(tmp)
         # 合取依赖: 结论X 依赖 假设A + 数据B (AND)
-        chg.add_claim("CLAIM:X", ["CLAIM:A", "Fact:B"], mode="AND",
-                      condition="低温区间", evidence_strength=0.9, source="doi:1")
+        chg.add_claim(
+            "CLAIM:X",
+            ["CLAIM:A", "Fact:B"],
+            mode="AND",
+            condition="低温区间",
+            evidence_strength=0.9,
+            source="doi:1",
+        )
         # OR 依赖: 结论Y 依赖 数据B 或 数据B2
-        chg.add_claim("CLAIM:Y", ["Fact:B", "Fact:B2"], mode="OR",
-                      evidence_strength=0.6, source="doi:2")
+        chg.add_claim(
+            "CLAIM:Y",
+            ["Fact:B", "Fact:B2"],
+            mode="OR",
+            evidence_strength=0.6,
+            source="doi:2",
+        )
         # 结论Z 依赖 结论X (结论依赖结论)
         chg.add_claim("CLAIM:Z", ["CLAIM:X"], mode="AND", source="doi:3")
 

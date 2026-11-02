@@ -12,6 +12,7 @@
 
 toggle: cfg.feature_flags.harness_workflow_evolution (默认 off).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -38,6 +39,7 @@ _PARETO_K = 5
 def _harness_enabled(key: str, default: bool = False) -> bool:
     try:
         from huginn.config import get_config
+
         cfg = get_config()
         ff = getattr(cfg, "feature_flags", None) or {}
         return bool(ff.get(key, default))
@@ -46,7 +48,9 @@ def _harness_enabled(key: str, default: bool = False) -> bool:
 
 
 def _objective_hash(objective: str) -> str:
-    return hashlib.md5(objective.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
+    return hashlib.md5(objective.encode("utf-8"), usedforsecurity=False).hexdigest()[
+        :12
+    ]
 
 
 @dataclass
@@ -56,6 +60,7 @@ class WorkflowBelief:
     复用 ToolBelief 的 ANCCR 数学, key schema 不同 — variant 级不是
     (tool, param, value) 级. fitness 多目标供 Pareto 比较.
     """
+
     variant_id: str
     objective_hash: str
     successes: int = 0
@@ -139,6 +144,7 @@ class WorkflowBelief:
 
 class WorkflowBandit:
     """Thompson sampling bandit. 冷启动随机选, 不断 _MIN_SAMPLES 门槛."""
+
     _instance: WorkflowBandit | None = None
     _lock = threading.Lock()
 
@@ -197,9 +203,7 @@ class WorkflowBandit:
         with self._lock:
             b = self._beliefs.get(key)
             if b is None:
-                b = WorkflowBelief(
-                    variant_id=variant_id, objective_hash=objective_hash
-                )
+                b = WorkflowBelief(variant_id=variant_id, objective_hash=objective_hash)
                 self._beliefs[key] = b
             b.update(
                 success,
@@ -237,15 +241,11 @@ class WorkflowBandit:
                     samples.append((vid, s))
         return max(samples, key=lambda x: x[1])[0]
 
-    def get_belief(
-        self, variant_id: str, objective_hash: str
-    ) -> WorkflowBelief | None:
+    def get_belief(self, variant_id: str, objective_hash: str) -> WorkflowBelief | None:
         with self._lock:
             return self._beliefs.get((objective_hash, variant_id))
 
-    def list_beliefs(
-        self, objective_hash: str | None = None
-    ) -> list[WorkflowBelief]:
+    def list_beliefs(self, objective_hash: str | None = None) -> list[WorkflowBelief]:
         with self._lock:
             bs = list(self._beliefs.values())
         if objective_hash:
@@ -260,6 +260,7 @@ class VariantArchive:
     存 .huginn/workflow_archive/<objective_hash>.json
     fitness = [r_phys, efficiency, novelty] (越大越好)
     """
+
     _instance: VariantArchive | None = None
     _lock = threading.Lock()
 
@@ -317,14 +318,16 @@ class VariantArchive:
             data.setdefault("objective", objective)
             variants = data.setdefault("variants", [])
             variants = [v for v in variants if v.get("variant_id") != variant_id]
-            variants.append({
-                "variant_id": variant_id,
-                "script_dict": script_dict,
-                "fitness": list(fitness),
-                "alpha": alpha,
-                "beta": beta,
-                "created_at": time.time(),
-            })
+            variants.append(
+                {
+                    "variant_id": variant_id,
+                    "script_dict": script_dict,
+                    "fitness": list(fitness),
+                    "alpha": alpha,
+                    "beta": beta,
+                    "created_at": time.time(),
+                }
+            )
             variants = self._pareto_front(variants, k=_PARETO_K)
             data["variants"] = variants
             self._save(objective_hash, data)
@@ -350,9 +353,7 @@ class VariantArchive:
             if not dominated:
                 non_dominated.append(v)
         if len(non_dominated) > k:
-            non_dominated.sort(
-                key=lambda v: v.get("fitness", [0])[0], reverse=True
-            )
+            non_dominated.sort(key=lambda v: v.get("fitness", [0])[0], reverse=True)
             non_dominated = non_dominated[:k]
         return non_dominated if non_dominated else variants[:k]
 
@@ -413,19 +414,8 @@ def compute_novelty(
     return 1.0 - max_overlap
 
 
-def _selfcheck() -> None:
-    """H2 selfcheck: bandit + archive + novelty."""
-    import shutil
-    import tempfile
-
-    import huginn.autoloop.bandit as bd
-
-    tmp = tempfile.mkdtemp()
-    os.environ["HUGINN_CACHE_DIR"] = tmp
-    bd.WorkflowBandit._instance = None
-    bd.VariantArchive._instance = None
-
-    bandit = bd.WorkflowBandit.get_instance()
+def _selfcheck_bandit(bd: Any, bandit: Any) -> None:
+    """selfcheck 步骤 1-3: 冷启动 / 后验均值 / Thompson 采样分布."""
     candidates = ["v1", "v2", "v3"]
     chosen = bandit.select_variant(candidates, "objhash_test")
     assert chosen in candidates, f"cold start failed: {chosen}"
@@ -438,7 +428,9 @@ def _selfcheck() -> None:
     b1 = bandit.get_belief("v1", "objhash_test")
     b2 = bandit.get_belief("v2", "objhash_test")
     assert b1 and b2 and b1.posterior_mean > b2.posterior_mean
-    print(f"2. record + posterior: v1={b1.posterior_mean:.2f} > v2={b2.posterior_mean:.2f} OK")
+    print(
+        f"2. record + posterior: v1={b1.posterior_mean:.2f} > v2={b2.posterior_mean:.2f} OK"
+    )
 
     counts = {"v1": 0, "v2": 0, "v3": 0}
     for _ in range(1000):
@@ -447,7 +439,9 @@ def _selfcheck() -> None:
     assert counts["v1"] > counts["v2"] and counts["v1"] > counts["v3"]
     print(f"3. Thompson 1000x: {counts} OK")
 
-    archive = bd.VariantArchive.get_instance()
+
+def _selfcheck_archive(bd: Any, archive: Any) -> None:
+    """selfcheck 步骤 4-5: 归档增列 + 参数级 novelty."""
     sa = {"subtasks": [{"tool": "vasp", "args": {"encut": 520, "kpoints": "2 2 2"}}]}
     sb = {"subtasks": [{"tool": "vasp", "args": {"encut": 540, "kpoints": "3 3 3"}}]}
     sc = {"subtasks": [{"tool": "vasp", "args": {"encut": 520, "kpoints": "2 2 2"}}]}
@@ -467,11 +461,35 @@ def _selfcheck() -> None:
     assert n_new > 0.5, f"novel should be high: {n_new}"
     print(f"5. compute_novelty: same={n_same:.2f}, new={n_new:.2f} OK")
 
+
+def _selfcheck_persistence(bd: Any) -> None:
+    """selfcheck 步骤 6: 重建单例后从磁盘读回信念."""
     bd.WorkflowBandit._instance = None
     b2r = bd.WorkflowBandit.get_instance()
     b1r = b2r.get_belief("v1", "objhash_test")
     assert b1r and b1r.successes == 2, f"persisted wrong: {b1r}"
     print(f"6. persistence reload OK (v1 successes={b1r.successes})")
+
+
+def _selfcheck() -> None:
+    """H2 selfcheck: bandit + archive + novelty."""
+    import shutil
+    import tempfile
+
+    import huginn.autoloop.bandit as bd
+
+    tmp = tempfile.mkdtemp()
+    os.environ["HUGINN_CACHE_DIR"] = tmp
+    bd.WorkflowBandit._instance = None
+    bd.VariantArchive._instance = None
+
+    bandit = bd.WorkflowBandit.get_instance()
+    _selfcheck_bandit(bd, bandit)
+
+    archive = bd.VariantArchive.get_instance()
+    _selfcheck_archive(bd, archive)
+
+    _selfcheck_persistence(bd)
 
     shutil.rmtree(tmp, ignore_errors=True)
     print("\nH2 bandit selfcheck OK (6/6)")

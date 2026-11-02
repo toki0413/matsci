@@ -138,6 +138,9 @@ _COMPARE_OPS: dict[type[ast.cmpop], Any] = {
 }
 
 
+_MISSING = object()  # 内部哨兵: 表示 helper 未处理该节点
+
+
 class SafeExprWalker:
     """Reusable safe AST evaluator (the single walker for safe_eval / math_eval).
 
@@ -160,7 +163,8 @@ class SafeExprWalker:
         allowed_nodes: set[type[ast.AST]] | None = None,
         name_extra: Callable[[str], tuple[bool, Any]] | None = None,
         resolve_call: Callable[[ast.AST, Callable[[ast.AST], Any]], Any] | None = None,
-        resolve_attribute: Callable[[ast.AST, Callable[[ast.AST], Any]], Any] | None = None,
+        resolve_attribute: Callable[[ast.AST, Callable[[ast.AST], Any]], Any]
+        | None = None,
     ) -> None:
         self._nodes = allowed_nodes if allowed_nodes is not None else _ALLOWED_NODES
         self._name_extra = name_extra
@@ -177,18 +181,13 @@ class SafeExprWalker:
 
         return self._eval(tree, locals_dict)
 
-    def _eval(self, node: ast.AST, locals_dict: dict[str, Any], _depth: int = 0) -> Any:
-        if _depth > 128:
-            raise SafeEvalError("Expression exceeds maximum nesting depth")
-
-        if type(node) not in self._nodes:
-            raise SafeEvalError(
-                f"Forbidden expression construct: {type(node).__name__}"
-            )
-
-        def sub(n: ast.AST) -> Any:
-            return self._eval(n, locals_dict, _depth + 1)
-
+    def _eval_atom(
+        self,
+        node: ast.AST,
+        locals_dict: dict[str, Any],
+        sub: Callable[[ast.AST], Any],
+    ) -> Any:
+        """原子节点: Expression / Constant / (deprecated) Num / Name."""
         if isinstance(node, ast.Expression):
             return sub(node.body)
 
@@ -212,6 +211,10 @@ class SafeExprWalker:
                     return value
             raise SafeEvalError(f"Undefined name: {node.id}")
 
+        return _MISSING
+
+    def _eval_operators(self, node: ast.AST, sub: Callable[[ast.AST], Any]) -> Any:
+        """算术 / 一元 / 布尔 / 比较运算节点."""
         if isinstance(node, ast.BinOp):
             left = sub(node.left)
             right = sub(node.right)
@@ -246,6 +249,10 @@ class SafeExprWalker:
                 left = right
             return True
 
+        return _MISSING
+
+    def _eval_containers(self, node: ast.AST, sub: Callable[[ast.AST], Any]) -> Any:
+        """条件表达式与 tuple/list/dict/set 字面量节点."""
         if isinstance(node, ast.IfExp):
             return sub(node.body) if sub(node.test) else sub(node.orelse)
 
@@ -256,11 +263,17 @@ class SafeExprWalker:
             return [sub(elt) for elt in node.elts]
 
         if isinstance(node, ast.Dict):
-            return {sub(k): sub(v) for k, v in zip(node.keys, node.values) if k is not None}
+            return {
+                sub(k): sub(v) for k, v in zip(node.keys, node.values) if k is not None
+            }
 
         if isinstance(node, ast.Set):
             return {sub(elt) for elt in node.elts}
 
+        return _MISSING
+
+    def _eval_access(self, node: ast.AST, sub: Callable[[ast.AST], Any]) -> Any:
+        """下标 / 调用 / 属性访问节点."""
         if isinstance(node, ast.Subscript):
             value = sub(node.value)
             slice_val: Any
@@ -282,6 +295,33 @@ class SafeExprWalker:
             if self._resolve_attribute is None:
                 raise SafeEvalError("Attribute access is forbidden in safe_eval")
             return self._resolve_attribute(node, sub)
+
+        return _MISSING
+
+    def _eval(self, node: ast.AST, locals_dict: dict[str, Any], _depth: int = 0) -> Any:
+        if _depth > 128:
+            raise SafeEvalError("Expression exceeds maximum nesting depth")
+
+        if type(node) not in self._nodes:
+            raise SafeEvalError(
+                f"Forbidden expression construct: {type(node).__name__}"
+            )
+
+        def sub(n: ast.AST) -> Any:
+            return self._eval(n, locals_dict, _depth + 1)
+
+        value = self._eval_atom(node, locals_dict, sub)
+        if value is not _MISSING:
+            return value
+        value = self._eval_operators(node, sub)
+        if value is not _MISSING:
+            return value
+        value = self._eval_containers(node, sub)
+        if value is not _MISSING:
+            return value
+        value = self._eval_access(node, sub)
+        if value is not _MISSING:
+            return value
 
         raise SafeEvalError(f"Unsupported node: {type(node).__name__}")
 

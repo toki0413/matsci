@@ -1,3 +1,4 @@
+# governance-gate
 """制度化闭环：凭据归口 / 凭据网关门禁。
 
 用户服务凭据（LLM key、MP、MinerU、WeCom、加密 password）允许经 `/config`

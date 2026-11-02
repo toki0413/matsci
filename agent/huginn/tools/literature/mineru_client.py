@@ -12,6 +12,7 @@
   3) GET  /extract-results/batch/{batch_id}  轮询, 所有任务 done / failed 即结束
   4) 下载 full_zip_url, 解压到 data/parsed/{stem}/
 """
+
 from __future__ import annotations
 
 import io
@@ -92,6 +93,7 @@ def _resolve_keys(api_keys: list[str] | None) -> list[str]:
         return [k for k in api_keys if k]
     try:
         from huginn.models.registry import pick_api_key
+
         k = pick_api_key("mineru")
         return [k] if k else []
     except Exception:
@@ -112,6 +114,7 @@ class FileSpec:
     data_id 必须仅含字母数字._-, <=128 字符.
     is_ocr=True 走 OCR 模式 (扫描件), False 走 VLM 版面解析 (默认).
     """
+
     path: Path
     data_id: str
     is_ocr: bool = False
@@ -121,6 +124,7 @@ class FileSpec:
 @dataclass
 class BatchSubmitResult:
     """submit_batch 的返回: batch_id + 每个文件的上传状态."""
+
     batch_id: str
     uploads: dict[str, dict] = field(default_factory=dict)
 
@@ -152,6 +156,33 @@ def submit_batch(
     # ponytail: 简单轮询, 不加锁 — 单进程内 submit_batch 串行调用, 并发由调用方控制.
     token = keys[0] if len(keys) == 1 else keys[int(time.time()) % len(keys)]
 
+    payload = _build_batch_payload(
+        files,
+        model_version=model_version,
+        enable_formula=enable_formula,
+        enable_table=enable_table,
+        language=language,
+        extra_formats=extra_formats,
+    )
+
+    batch_id, upload_urls = _request_upload_urls(token, payload, len(files))
+
+    result = BatchSubmitResult(batch_id=batch_id)
+    for spec, url in zip(files, upload_urls):
+        result.uploads[spec.data_id] = _upload_one(spec, url)
+    return result
+
+
+def _build_batch_payload(
+    files: list[FileSpec],
+    *,
+    model_version: str,
+    enable_formula: bool,
+    enable_table: bool,
+    language: str,
+    extra_formats: list[str] | None,
+) -> dict[str, Any]:
+    """构造申请上传链接的 payload."""
     payload: dict[str, Any] = {
         "files": [
             {
@@ -169,7 +200,13 @@ def submit_batch(
     }
     if extra_formats:
         payload["extra_formats"] = extra_formats
+    return payload
 
+
+def _request_upload_urls(
+    token: str, payload: dict, n_files: int
+) -> tuple[str, list[str]]:
+    """申请上传链接, 返回 (batch_id, upload_urls)."""
     r = _HTTPX.post(
         f"{MINERU_BASE}/file-urls/batch",
         headers=_headers(token),
@@ -183,26 +220,25 @@ def submit_batch(
 
     batch_id = body["data"]["batch_id"]
     upload_urls: list[str] = body["data"]["file_urls"]
-    if len(upload_urls) != len(files):
-        raise RuntimeError(
-            f"上传URL数量不匹配: 申请{len(files)} 返回{len(upload_urls)}"
-        )
+    if len(upload_urls) != n_files:
+        raise RuntimeError(f"上传URL数量不匹配: 申请{n_files} 返回{len(upload_urls)}")
+    return batch_id, upload_urls
 
-    result = BatchSubmitResult(batch_id=batch_id)
-    for spec, url in zip(files, upload_urls):
-        info: dict = {"url": url, "uploaded": False, "err": None}
-        try:
-            with open(spec.path, "rb") as fp:
-                # 文档明确说: 上传时无须设置 Content-Type
-                up = _HTTPX.put(url, content=fp, timeout=300)
-            if up.status_code == 200:
-                info["uploaded"] = True
-            else:
-                info["err"] = f"HTTP {up.status_code}: {up.text[:200]}"
-        except Exception as e:
-            info["err"] = repr(e)
-        result.uploads[spec.data_id] = info
-    return result
+
+def _upload_one(spec: FileSpec, url: str) -> dict:
+    """PUT 上传单个文件, 返回状态 dict."""
+    info: dict = {"url": url, "uploaded": False, "err": None}
+    try:
+        with open(spec.path, "rb") as fp:
+            # 文档明确说: 上传时无须设置 Content-Type
+            up = _HTTPX.put(url, content=fp, timeout=300)
+        if up.status_code == 200:
+            info["uploaded"] = True
+        else:
+            info["err"] = f"HTTP {up.status_code}: {up.text[:200]}"
+    except Exception as e:
+        info["err"] = repr(e)
+    return info
 
 
 def query_batch(
@@ -248,9 +284,7 @@ def wait_batch(
             except Exception:
                 logger.debug("on_progress callback failed", exc_info=True)
         if time.time() - start > timeout:
-            raise TimeoutError(
-                f"batch {batch_id} 等待超过 {timeout}s 仍未完成"
-            )
+            raise TimeoutError(f"batch {batch_id} 等待超过 {timeout}s 仍未完成")
         time.sleep(poll_interval)
 
 
@@ -297,7 +331,9 @@ if __name__ == "__main__":
     assert _MAX_PAGES == 200, f"page limit is 200, got {_MAX_PAGES}"
     assert {"done", "failed"} == _TERMINAL, f"terminal states mismatch: {_TERMINAL}"
     # _resolve_keys: 无 key 时返回空 list
-    assert _resolve_keys(None) == [] or len(_resolve_keys(None)) >= 0  # 无环境变量时为空
+    assert (
+        _resolve_keys(None) == [] or len(_resolve_keys(None)) >= 0
+    )  # 无环境变量时为空
     # chunked 行为
     chunks = list(chunked([1, 2, 3, 4, 5], 2))
     assert chunks == [[1, 2], [3, 4], [5]], f"chunked mismatch: {chunks}"

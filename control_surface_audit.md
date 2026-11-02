@@ -183,6 +183,8 @@ grep -o 'control_trace name=[a-z_]*' run.log | sort | uniq -c | sort -rn
 | `llm_unavailable` | P1/P2 瞬时故障 | `action=retry_in_place`；瞬时 LLM 故障（限流/过载）拦破坏性 redirect。高频 = provider 不稳，非科学停滞 |
 | `exec_exit_classes` | 执行健康（D） | RapidPen 式 exit_class 分布；只落 trace 供触发率，零约束 |
 | `report_soliloquy` | 报告自演探针（C） | EnIGMA 式"声称执行却查无成功回执"；`flagged` 才附诚实告示，不改结论不终止 |
+| `stop_gate` | 交付物硬门·拦 stop（C） | 模型想收结但声明交付物未过确定性验收 → 拒绝 stop，改判继续（`action=force_execute/plan` 或 `advisory_continue`）；高频且交付物长期不补齐 = 验收门被当成唯一推进手段 |
+| `monitor_hold_blocked` | 交付物硬门·拦 hold（C） | Monitor-hold 判 silent 但交付物未验收 → 不许 hold（`action=no_hold`）；高频 = 空观测与验收缺口并存 |
 | `pivot_restore` | P3 pivot 回退（D） | 无 hyp 可转时非破坏性恢复 last-good 快照（消费式防死循环）+ trace |
 | `pivot_skipped` | pivot 空转保护（D） | pivot 未产出新方向 → 保留现状不原地清除；`action=noop` |
 | `frontier_empty_stop` | ARTEX 前沿穷尽（A, 默认关） | 可执行前沿穷尽观测；flag 开时 `action=stop`，但属科学判据，**不入 STOP_ALLOWLIST**（转正须过 §3） |
@@ -193,6 +195,8 @@ grep -o 'control_trace name=[a-z_]*' run.log | sort | uniq -c | sort -rn
 > 的 `MECHANISMS`，计数受 `CONTROL_MECHANISM_BUDGET`（only-shrink）约束，由
 > `tests/test_control_mechanism_governance.py` 强制：**发射未登记 / 登记无发射 /
 > 越预算 / 非白名单的 `effect=stop`** 均测试红。增删机制先改代码登记表，再同步本表。
+> 预算 32 → 34（2026-11-02）：补登交付物硬门的两处既有发射点 `stop_gate` /
+> `monitor_hold_blocked`（C 族 block，不终止），属上界债偿还，非扩张。
 
 ---
 

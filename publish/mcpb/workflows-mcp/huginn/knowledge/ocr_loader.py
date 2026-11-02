@@ -56,6 +56,7 @@ def _llm_ocr_image(image: Any, hint: str = "") -> str:
         return ""
     try:
         from PIL import Image
+
         if not isinstance(image, Image.Image):
             image = Image.open(io.BytesIO(image) if isinstance(image, bytes) else image)
         if image.mode not in ("RGB", "L"):
@@ -99,9 +100,7 @@ def _get_paddle_reader() -> Any | None:
         from paddleocr import PaddleOCR
 
         # show_log=False 关掉 Paddle 启动时那一屏幕的告警.
-        _PADDLE_READER = PaddleOCR(
-            use_angle_cls=True, lang="ch", show_log=False
-        )
+        _PADDLE_READER = PaddleOCR(use_angle_cls=True, lang="ch", show_log=False)
         return _PADDLE_READER
     except Exception as exc:
         logger.debug("PaddleOCR not available: %s", exc)
@@ -195,6 +194,14 @@ def _ocr_image(image: Any, engine: str | None = None) -> str:
 
     chosen_engine = engine or os.environ.get("HUGINN_OCR_ENGINE", "auto").lower()
 
+    text = _ocr_llm_or_paddle(image, chosen_engine)
+    if text is not None:
+        return text
+    return _ocr_easyocr_or_tesseract(image, chosen_engine)
+
+
+def _ocr_llm_or_paddle(image: Any, chosen_engine: str) -> str | None:
+    """LLM-as-OCR → PaddleOCR 两条链路; 无结果时返回 None 交给下一段."""
     # LLM-as-OCR 首选 (DeepSeek-OCR 启发): 解码器就是多模态 LLM, 对扫描件公式/
     # 表格/中文混排比传统 OCR 强, 还能随版式理解。auto 链的最前面; engine=llm 时
     # 也走这里。有 vision LLM 注入 callback 就用它, 没注入或返回空再依次退
@@ -213,7 +220,11 @@ def _ocr_image(image: Any, engine: str | None = None) -> str:
             return text
         if chosen_engine in ("paddle", "paddleocr"):
             return ""
+    return None
 
+
+def _ocr_easyocr_or_tesseract(image: Any, chosen_engine: str) -> str:
+    """EasyOCR → Tesseract 兜底链路; 都失败时返回空串."""
     if chosen_engine in ("auto", "easyocr"):
         reader = _get_easyocr_reader()
         if reader is not None:

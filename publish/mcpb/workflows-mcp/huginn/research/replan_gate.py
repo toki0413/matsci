@@ -24,16 +24,22 @@
 判定, 不发起执行. 判定与 :func:`huginn.research.decision_gate.distill_tool_output`
 同关键词切法, 与 world-model reconcile 同对账容差, 保证全仓治理口径一致.
 """
+
 from __future__ import annotations
 
 import re
 from typing import Any
 
+from huginn.research._scalars import first_scalar as _first_scalar
+
 
 def _kw(text: str) -> set[str]:
     """关键词集合 (与 decision_gate.distill_tool_output 同切法): 只留 >1 字符的词干."""
-    return {w.lower() for w in re.split(r"[^0-9a-zA-Z_\u4e00-\u9fff]+", text or "")
-            if len(w) > 1}
+    return {
+        w.lower()
+        for w in re.split(r"[^0-9a-zA-Z_\u4e00-\u9fff]+", text or "")
+        if len(w) > 1
+    }
 
 
 def _jaccard(a: set[str], b: set[str]) -> float:
@@ -41,30 +47,6 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     if not a or not b:
         return 0.0
     return len(a & b) / len(a | b)
-
-
-def _first_scalar(node: Any) -> float | None:
-    """从任意结构取第一个可量标量 (与 program/decision_gate/law_model 同语义, 不伪造)."""
-    if isinstance(node, bool):
-        return None
-    if isinstance(node, int | float):
-        return float(node)
-    if isinstance(node, dict):
-        for k in ("T_eq_K", "T", "score", "value", "y", "actual", "S_Wm2"):
-            if k in node:
-                v = _first_scalar(node[k])
-                if v is not None:
-                    return v
-        for v in node.values():
-            s = _first_scalar(v)
-            if s is not None:
-                return s
-    elif isinstance(node, list | tuple):
-        for v in node:
-            s = _first_scalar(v)
-            if s is not None:
-                return s
-    return None
 
 
 def decide_replan_skip(
@@ -93,15 +75,41 @@ def decide_replan_skip(
     返回跳过记录格式: {"name", "layer", "reasons": [{rule, with, 证据量}], "decided_after"}.
     """
     if layer_index <= 0 or not prior_experiments:
-        return None                                    # 首层 / 无前序: 无条件执行
+        return None  # 首层 / 无前序: 无条件执行
 
     # 保守红线 #2: 前序层未全部结算 → 放行, 不误伤乱序调度.
     # 结算 = 已执行(在 cache) 或 已被决策(在被重规划跳过名单里) 二者之一.
-    decided = set(cache) | (already_decided or set())
-    for pn in prior_experiments:
-        if pn not in decided:
-            return None
+    if not _all_settled(prior_experiments, cache, already_decided):
+        return None
 
+    reasons = _skip_reasons(prior_experiments, cache, hypotheses, name, similarity, tol)
+    if not reasons:
+        return None
+    return {
+        "name": name,
+        "layer": layer_index,
+        "reasons": reasons,
+        "decided_after": [n for n in prior_experiments if n in cache],
+    }
+
+
+def _all_settled(
+    prior_experiments: list[str],
+    cache: dict[str, dict],
+    already_decided: set[str] | None,
+) -> bool:
+    decided = set(cache) | (already_decided or set())
+    return all(pn in decided for pn in prior_experiments)
+
+
+def _skip_reasons(
+    prior_experiments: list[str],
+    cache: dict[str, dict],
+    hypotheses: dict[str, str],
+    name: str,
+    similarity: float,
+    tol: float,
+) -> list[dict[str, Any]]:
     k_cur = _kw(hypotheses.get(name, ""))
     reasons: list[dict[str, Any]] = []
     for pn in prior_experiments:
@@ -111,22 +119,21 @@ def decide_replan_skip(
         ph = hypotheses.get(pn, "")
         ov = _jaccard(k_cur, _kw(ph))
         if ov >= similarity:
-            reasons.append({"rule": "redundant_direction", "with": pn,
-                            "overlap": round(ov, 3)})
+            reasons.append(
+                {"rule": "redundant_direction", "with": pn, "overlap": round(ov, 3)}
+            )
         pred = _first_scalar(res.get("predicted"))
         actual = _first_scalar(res.get("summary"))
-        err = (abs(pred - actual) / (abs(actual) or 1.0)) if pred is not None and actual is not None else None
+        err = (
+            (abs(pred - actual) / (abs(actual) or 1.0))
+            if pred is not None and actual is not None
+            else None
+        )
         if err is not None and err > tol and ov >= similarity * 0.7:
-            reasons.append({"rule": "falsified_direction", "with": pn,
-                            "rel_err": round(err, 3)})
-    if not reasons:
-        return None
-    return {
-        "name": name,
-        "layer": layer_index,
-        "reasons": reasons,
-        "decided_after": [n for n in prior_experiments if n in cache],
-    }
+            reasons.append(
+                {"rule": "falsified_direction", "with": pn, "rel_err": round(err, 3)}
+            )
+    return reasons
 
 
 def replan_gate(
@@ -156,14 +163,21 @@ def replan_gate(
         prior = [n for j in range(i) for n in layers[j]]
         for name in layer:
             if name in cache:
-                continue                              # 已执行, 不在重规划范围
-            d = decide_replan_skip(name, i, prior, cache, hypotheses,
-                                   already_decided=decided,
-                                   similarity=similarity, tol=tol)
+                continue  # 已执行, 不在重规划范围
+            d = decide_replan_skip(
+                name,
+                i,
+                prior,
+                cache,
+                hypotheses,
+                already_decided=decided,
+                similarity=similarity,
+                tol=tol,
+            )
             considered.append(name)
             if d is not None:
                 skipped.append(d)
-            decided.add(name)                         # 跳过/放行都算已结算, 供后层判定
+            decided.add(name)  # 跳过/放行都算已结算, 供后层判定
     skipped_names = {s["name"] for s in skipped}
     return {
         "layers": len(layers),

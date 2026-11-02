@@ -39,6 +39,28 @@ _INSTALL_HINT = (
 )
 
 
+def _transolver_audit(
+    action: str, data: dict[str, Any], params: dict[str, Any]
+) -> None:
+    """附加物理审计报告，失败不阻断结果返回."""
+    try:
+        from huginn.execution.physics_auditor import PhysicsAuditor
+
+        auditor = PhysicsAuditor()
+        audit_report = auditor.audit("transolver_tool", action, data, params)
+        data["physics_audit"] = audit_report.to_dict()
+    except Exception:  # 防御: 审计失败不阻断结果返回
+        logger.debug("audit failure can't block result delivery", exc_info=True)
+
+
+def _transolver_cond(torch, args: TransolverToolInput, device) -> Any:
+    """构造可选的 per-batch conditioning 张量."""
+    cond = None
+    if args.condition is not None:
+        cond = torch.tensor([args.condition], dtype=torch.float32, device=device)
+    return cond
+
+
 class TransolverToolInput(BaseModel):
     action: Literal["predict", "train", "list_models"] = Field(
         ...,
@@ -82,7 +104,10 @@ class TransolverToolInput(BaseModel):
     # Training hyperparameters
     epochs: int = Field(default=10, ge=1, le=10000)
     learning_rate: float = Field(default=1e-4, gt=0)
-    device: str = Field(default="cuda", description="cuda | cpu (falls back to cpu if cuda is unavailable)")
+    device: str = Field(
+        default="cuda",
+        description="cuda | cpu (falls back to cpu if cuda is unavailable)",
+    )
     checkpoint_dir: str | None = Field(
         default=None,
         description="Override checkpoint dir (defaults to workspace/.huginn/models/transolver)",
@@ -109,7 +134,7 @@ class TransolverTool(HuginnTool):
         constraint_scope="pde",
         light_alternatives=("numerical_tool", "symbolic_math_tool"),
         degradation_chain=(
-            "numerical_tool",           # FEM fallback
+            "numerical_tool",  # FEM fallback
             "materials_database_tool",  # → database lookup
         ),
         quality_tier="ml_surrogate",  # Transolver = ML surrogate
@@ -189,7 +214,11 @@ class TransolverTool(HuginnTool):
         )
         # The model's get_grid hardcodes .cuda() only under unified_pos, which we
         # leave off; cpu is safe otherwise.
-        device = args.device if (args.device == "cpu" or torch.cuda.is_available()) else "cpu"
+        device = (
+            args.device
+            if (args.device == "cpu" or torch.cuda.is_available())
+            else "cpu"
+        )
         return model.to(device), device
 
     @staticmethod
@@ -211,25 +240,60 @@ class TransolverTool(HuginnTool):
             return self._predict(args)
         if args.action == "train":
             return self._train(args)
-        return ToolResult(data=None, success=False, error=f"unknown action: {args.action}")
+        return ToolResult(
+            data=None, success=False, error=f"unknown action: {args.action}"
+        )
 
     # ── actions ───────────────────────────────────────────────────
 
     def _list_models(self, args: TransolverToolInput) -> ToolResult:
         model_dir = self._resolve_model_dir(args)
-        models = sorted({
-            p.stem for pat in ("*.pt", "*.pth") for p in model_dir.glob(pat)
-        })
+        models = sorted(
+            {p.stem for pat in ("*.pt", "*.pth") for p in model_dir.glob(pat)}
+        )
         out = TransolverToolOutput(
             status="ok" if models else "no_models",
             available_models=models,
         )
         return ToolResult(data=out.model_dump(), success=True)
 
+    def _find_checkpoint(self, args: TransolverToolInput) -> Path | None:
+        """在 model 目录里找 .pt / .pth checkpoint, 找不到返回 None."""
+        model_dir = self._resolve_model_dir(args)
+        ckpt_path = model_dir / f"{args.model_name}.pt"
+        if not ckpt_path.exists():
+            ckpt_path = model_dir / f"{args.model_name}.pth"
+        if not ckpt_path.exists():
+            return None
+        return ckpt_path
+
+    @staticmethod
+    def _load_checkpoint(
+        torch, model, ckpt_path: Path, device, eval_model: bool
+    ) -> None:
+        """载入 checkpoint 权重."""
+        state = torch.load(ckpt_path, map_location=device)
+        sd = state.get("model", state) if isinstance(state, dict) else state
+        model.load_state_dict(sd, strict=False)
+        if eval_model:
+            model.eval()
+
+    def _run_inference(
+        self, torch, model, args: TransolverToolInput, device
+    ) -> list[list[float]]:
+        """no_grad 前向一次, 返回展平后的预测场."""
+        x = self._to_tensor(args.features, device, torch.float32).unsqueeze(0)
+        pos = self._to_tensor(args.coords, device, torch.float32).unsqueeze(0)
+        cond = _transolver_cond(torch, args, device)
+        with torch.no_grad():
+            pred = model((x, pos, cond))
+        return pred.squeeze(0).cpu().tolist()
+
     def _predict(self, args: TransolverToolInput) -> ToolResult:
         if not args.coords or not args.features:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="predict needs coords and features",
             )
         if self._load_model_class() is None:
@@ -237,38 +301,30 @@ class TransolverTool(HuginnTool):
 
         try:
             import torch
+
             model, device = self._build_model(args)
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"model build failed: {e}")
-
-        model_dir = self._resolve_model_dir(args)
-        ckpt_path = model_dir / f"{args.model_name}.pt"
-        if not ckpt_path.exists():
-            ckpt_path = model_dir / f"{args.model_name}.pth"
-        if not ckpt_path.exists():
             return ToolResult(
-                data=None, success=False,
+                data=None, success=False, error=f"model build failed: {e}"
+            )
+
+        ckpt_path = self._find_checkpoint(args)
+        if ckpt_path is None:
+            model_dir = self._resolve_model_dir(args)
+            return ToolResult(
+                data=None,
+                success=False,
                 error=f"checkpoint '{args.model_name}' not found in {model_dir}",
             )
         try:
-            state = torch.load(ckpt_path, map_location=device)
-            sd = state.get("model", state) if isinstance(state, dict) else state
-            model.load_state_dict(sd, strict=False)
-            model.eval()
+            self._load_checkpoint(torch, model, ckpt_path, device, eval_model=True)
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"checkpoint load failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"checkpoint load failed: {e}"
+            )
 
         try:
-            x = self._to_tensor(args.features, device, torch.float32).unsqueeze(0)
-            pos = self._to_tensor(args.coords, device, torch.float32).unsqueeze(0)
-            cond = None
-            if args.condition is not None:
-                cond = torch.tensor(
-                    [args.condition], dtype=torch.float32, device=device
-                )
-            with torch.no_grad():
-                pred = model((x, pos, cond))
-            preds = pred.squeeze(0).cpu().tolist()
+            preds = self._run_inference(torch, model, args, device)
         except Exception as e:
             return ToolResult(data=None, success=False, error=f"inference failed: {e}")
 
@@ -280,36 +336,13 @@ class TransolverTool(HuginnTool):
         data = out.model_dump()
 
         # Physics audit — NaN in predictions, checkpoint mismatch
-        try:
-            from huginn.execution.physics_auditor import PhysicsAuditor
-
-            auditor = PhysicsAuditor()
-            audit_report = auditor.audit("transolver_tool", args.action, data, args.model_dump())
-            data["physics_audit"] = audit_report.to_dict()
-        except Exception:  # 防御: 审计失败不阻断结果返回
-            logger.debug("audit failure can't block result delivery", exc_info=True)
+        _transolver_audit(args.action, data, args.model_dump())
 
         return ToolResult(data=data, success=True)
 
-    def _train(self, args: TransolverToolInput) -> ToolResult:
-        if not args.coords or not args.features or not args.target:
-            return ToolResult(
-                data=None, success=False,
-                error="train needs coords, features, and target",
-            )
-        if self._load_model_class() is None:
-            return ToolResult(data=None, success=False, error=_INSTALL_HINT)
-
-        try:
-            import torch
-            import torch.nn as nn
-            model, device = self._build_model(args)
-        except Exception as e:
-            return ToolResult(data=None, success=False, error=f"model build failed: {e}")
-
-        # Warm-start from an existing checkpoint if one exists.
-        model_dir = self._resolve_model_dir(args)
-        ckpt_path = model_dir / f"{args.model_name}.pt"
+    @staticmethod
+    def _warm_start(torch, model, ckpt_path: Path, device) -> bool:
+        """存在 checkpoint 时热启动训练, 返回是否成功热启动."""
         warm_started = False
         if ckpt_path.exists():
             try:
@@ -319,19 +352,19 @@ class TransolverTool(HuginnTool):
                 warm_started = True
             except Exception:  # 防御: 载入失败继续从头训练
                 logger.debug("load failed", exc_info=True)
+        return warm_started
 
-        try:
-            x = self._to_tensor(args.features, device, torch.float32).unsqueeze(0)
-            pos = self._to_tensor(args.coords, device, torch.float32).unsqueeze(0)
-            y = self._to_tensor(args.target, device, torch.float32).unsqueeze(0)
-            cond = None
-            if args.condition is not None:
-                cond = torch.tensor(
-                    [args.condition], dtype=torch.float32, device=device
-                )
-        except Exception as e:
-            return ToolResult(data=None, success=False, error=f"tensor prep failed: {e}")
+    def _prepare_train_tensors(self, torch, args: TransolverToolInput, device):
+        """把训练数据转成张量 (批次维在前面)."""
+        x = self._to_tensor(args.features, device, torch.float32).unsqueeze(0)
+        pos = self._to_tensor(args.coords, device, torch.float32).unsqueeze(0)
+        y = self._to_tensor(args.target, device, torch.float32).unsqueeze(0)
+        cond = _transolver_cond(torch, args, device)
+        return x, pos, y, cond
 
+    @staticmethod
+    def _train_loop(torch, nn, model, x, pos, y, cond, args) -> list[float]:
+        """跑 epochs 轮 Adam 训练, 返回每轮 loss."""
         opt = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
         loss_fn = nn.MSELoss()
         model.train()
@@ -343,13 +376,60 @@ class TransolverTool(HuginnTool):
             loss.backward()
             opt.step()
             losses.append(float(loss.item()))
+        return losses
+
+    def _train(self, args: TransolverToolInput) -> ToolResult:
+        if not args.coords or not args.features or not args.target:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="train needs coords, features, and target",
+            )
+        if self._load_model_class() is None:
+            return ToolResult(data=None, success=False, error=_INSTALL_HINT)
+
+        try:
+            import torch
+            import torch.nn as nn
+
+            model, device = self._build_model(args)
+        except Exception as e:
+            return ToolResult(
+                data=None, success=False, error=f"model build failed: {e}"
+            )
+
+        # Warm-start from an existing checkpoint if one exists.
+        model_dir = self._resolve_model_dir(args)
+        ckpt_path = model_dir / f"{args.model_name}.pt"
+        warm_started = self._warm_start(torch, model, ckpt_path, device)
+
+        try:
+            x, pos, y, cond = self._prepare_train_tensors(torch, args, device)
+        except Exception as e:
+            return ToolResult(
+                data=None, success=False, error=f"tensor prep failed: {e}"
+            )
+
+        losses = self._train_loop(torch, nn, model, x, pos, y, cond, args)
 
         save_path = model_dir / f"{args.model_name}.pt"
         try:
-            torch.save({"model": model.state_dict(), "config": args.model_dump()}, save_path)
+            torch.save(
+                {"model": model.state_dict(), "config": args.model_dump()}, save_path
+            )
         except Exception as e:
             return ToolResult(data=None, success=False, error=f"save failed: {e}")
 
+        return self._train_result(args, save_path, losses, warm_started)
+
+    def _train_result(
+        self,
+        args: TransolverToolInput,
+        save_path: Path,
+        losses: list[float],
+        warm_started: bool,
+    ) -> ToolResult:
+        """组装训练结果并附加物理审计."""
         warnings: list[str] = []
         if not warm_started:
             warnings.append("trained from scratch (no warm-start checkpoint)")
@@ -362,20 +442,16 @@ class TransolverTool(HuginnTool):
         data = out.model_dump()
 
         # Physics audit — loss divergence, NaN/Inf, gradient explosion
-        try:
-            from huginn.execution.physics_auditor import PhysicsAuditor
-
-            auditor = PhysicsAuditor()
-            audit_report = auditor.audit("transolver_tool", args.action, data, args.model_dump())
-            data["physics_audit"] = audit_report.to_dict()
-        except Exception:  # 防御: 审计失败不阻断结果返回
-            logger.debug("audit failure can't block result delivery", exc_info=True)
+        _transolver_audit(args.action, data, args.model_dump())
 
         return ToolResult(data=data, success=True)
 
     def estimate_cost(self, args: TransolverToolInput) -> dict[str, float] | None:
         if args.action == "train":
-            return {"gpu_hours": args.epochs * 0.05, "walltime_hours": args.epochs * 0.05}
+            return {
+                "gpu_hours": args.epochs * 0.05,
+                "walltime_hours": args.epochs * 0.05,
+            }
         if args.action == "predict":
             return {"gpu_hours": 0.01, "walltime_hours": 0.01}
         return None

@@ -13,6 +13,33 @@ from typing import Any, Literal
 
 import networkx as nx
 
+#: 剪枝查询里过滤关键词用的停用词 (纯功能词, 不做分支名匹配).
+_PRUNED_STOP_WORDS: frozenset[str] = frozenset({
+    "why", "were", "are", "the", "branches", "branch",
+    "pruned", "that", "which", "for", "been", "have",
+    "has", "did", "does", "what", "how", "show", "list",
+    "tell", "about", "with", "from", "and", "but", "not",
+    "can", "could", "would", "should", "this", "those",
+    "these", "some", "all", "any", "many", "much",
+    "discarded", "rejected", "eliminated",
+})
+
+
+def _q_unrecognized(question: str) -> dict[str, Any]:
+    """Fallback: 返回可用查询类型提示."""
+    return {
+        "type": "unrecognized",
+        "question": question,
+        "hint": "Try asking about: pareto front, pruned branches, decision paths, status, or list all branches",
+        "available_query_types": [
+            "pareto_front — ask about best/optimal branches",
+            "pruned — ask about discarded/rejected branches",
+            "path — ask about decisions for a specific branch",
+            "status — ask about exploration progress",
+            "all_branches — list all branches",
+        ],
+    }
+
 
 class BranchStatus(Enum):
     PENDING = "pending"
@@ -227,142 +254,128 @@ class ExplorationSpace:
         - All branches: "all", "list", "branches"
         """
         q = question.lower().strip()
-
-        # Pareto front queries
         if any(kw in q for kw in ("pareto", "best", "optimal", "front", "top")):
-            front_ids = self.pareto_front or self.update_pareto_front()
-            branches = []
-            for bid in front_ids:
-                b = self.branches.get(bid)
-                if b:
-                    branches.append({
-                        "id": b.id,
-                        "name": b.name,
-                        "objectives": b.objectives,
-                        "status": b.status.value,
-                    })
-            return {
-                "type": "pareto_front",
-                "count": len(branches),
-                "branches": branches,
-                "objectives_config": self.objectives_config,
-            }
-
-        # Pruned branch queries
+            return self._q_pareto_front()
         if any(kw in q for kw in ("pruned", "discard", "rejected", "why not", "eliminated")):
-            branches = []
-            for bid in self.pruned_branches:
-                b = self.branches.get(bid)
-                if b:
-                    branches.append({
-                        "id": b.id,
-                        "name": b.name,
-                        "reason": b.prune_reason,
-                    })
-            # Optional filter by keyword
-            filter_kw = None
-            stop_words = {
-                "why", "were", "are", "the", "branches", "branch",
-                "pruned", "that", "which", "for", "been", "have",
-                "has", "did", "does", "what", "how", "show", "list",
-                "tell", "about", "with", "from", "and", "but", "not",
-                "can", "could", "would", "should", "this", "those",
-                "these", "some", "all", "any", "many", "much",
-                "discarded", "rejected", "eliminated",
-            }
-            for token in q.split():
-                clean = token.strip("?.,!;:")
-                if len(clean) > 2 and clean not in stop_words:
-                    filter_kw = clean
-                    break
-            if filter_kw:
-                branches = [
-                    b for b in branches
-                    if filter_kw in (b.get("name", "") + " " + (b.get("reason") or "")).lower()
-                ]
-            return {
-                "type": "pruned",
-                "count": len(branches),
-                "branches": branches,
-                "filter": filter_kw,
-            }
-
-        # Decision path queries
+            return self._q_pruned(q)
         if any(kw in q for kw in ("path", "how did", "decisions for", "trace", "decision path")):
-            # Try to extract a branch id from the question
-            target_id = None
-            for bid in self.branches:
-                if bid in q:
-                    target_id = bid
-                    break
-            if target_id is None:
-                # Fall back to first completed branch
-                for b in self.branches.values():
-                    if b.status == BranchStatus.COMPLETED:
-                        target_id = b.id
-                        break
-            if target_id and target_id in self.branches:
-                branch = self.branches[target_id]
-                return {
-                    "type": "path",
-                    "branch_id": target_id,
-                    "branch_name": branch.name,
-                    "decisions": [
-                        {
-                            "id": d.id,
-                            "description": d.description,
-                            "chosen": d.chosen_option,
-                            "options": d.available_options,
-                            "rationale": d.rationale,
-                            "confidence": d.confidence,
-                        }
-                        for d in branch.decisions
-                    ],
-                }
-            return {"type": "path", "error": "No matching branch found", "question": question}
-
-        # Status / progress queries
+            return self._q_decision_path(question, q)
         if any(kw in q for kw in ("status", "progress", "active", "running", "summary")):
-            status_counts: dict[str, int] = {}
-            for b in self.branches.values():
-                status_counts[b.status.value] = status_counts.get(b.status.value, 0) + 1
-            return {
-                "type": "status",
-                "total_branches": len(self.branches),
-                "active": len(self.active_branches),
-                "pruned": len(self.pruned_branches),
-                "status_counts": status_counts,
-                "pareto_front_size": len(self.pareto_front),
-            }
-
-        # List all branches
+            return self._q_status()
         if any(kw in q for kw in ("all", "list", "branches", "show")):
-            branches = []
-            for b in self.branches.values():
+            return self._q_all_branches()
+        return _q_unrecognized(question)
+
+    def _q_pareto_front(self) -> dict[str, Any]:
+        """Pareto 前沿分支 (未算过则现算)."""
+        front_ids = self.pareto_front or self.update_pareto_front()
+        branches = []
+        for bid in front_ids:
+            b = self.branches.get(bid)
+            if b:
                 branches.append({
                     "id": b.id,
                     "name": b.name,
-                    "status": b.status.value,
                     "objectives": b.objectives,
+                    "status": b.status.value,
                 })
-            return {
-                "type": "all_branches",
-                "count": len(branches),
-                "branches": branches,
-            }
-
-        # Fallback: return a helpful message with available query types
         return {
-            "type": "unrecognized",
-            "question": question,
-            "hint": "Try asking about: pareto front, pruned branches, decision paths, status, or list all branches",
-            "available_query_types": [
-                "pareto_front — ask about best/optimal branches",
-                "pruned — ask about discarded/rejected branches",
-                "path — ask about decisions for a specific branch",
-                "status — ask about exploration progress",
-                "all_branches — list all branches",
-            ],
+            "type": "pareto_front",
+            "count": len(branches),
+            "branches": branches,
+            "objectives_config": self.objectives_config,
+        }
+
+    def _q_pruned(self, q: str) -> dict[str, Any]:
+        """被剪分支 + 从问句里抠一个非停用词做关键词过滤."""
+        branches = []
+        for bid in self.pruned_branches:
+            b = self.branches.get(bid)
+            if b:
+                branches.append({
+                    "id": b.id,
+                    "name": b.name,
+                    "reason": b.prune_reason,
+                })
+        filter_kw = None
+        for token in q.split():
+            clean = token.strip("?.,!;:")
+            if len(clean) > 2 and clean not in _PRUNED_STOP_WORDS:
+                filter_kw = clean
+                break
+        if filter_kw:
+            branches = [
+                b for b in branches
+                if filter_kw in (b.get("name", "") + " " + (b.get("reason") or "")).lower()
+            ]
+        return {
+            "type": "pruned",
+            "count": len(branches),
+            "branches": branches,
+            "filter": filter_kw,
+        }
+
+    def _q_decision_path(self, question: str, q: str) -> dict[str, Any]:
+        """某分支的决策链; 问句里点不出 id 时退到首个 completed 分支."""
+        target_id = None
+        for bid in self.branches:
+            if bid in q:
+                target_id = bid
+                break
+        if target_id is None:
+            # Fall back to first completed branch
+            for b in self.branches.values():
+                if b.status == BranchStatus.COMPLETED:
+                    target_id = b.id
+                    break
+        if target_id and target_id in self.branches:
+            branch = self.branches[target_id]
+            return {
+                "type": "path",
+                "branch_id": target_id,
+                "branch_name": branch.name,
+                "decisions": [
+                    {
+                        "id": d.id,
+                        "description": d.description,
+                        "chosen": d.chosen_option,
+                        "options": d.available_options,
+                        "rationale": d.rationale,
+                        "confidence": d.confidence,
+                    }
+                    for d in branch.decisions
+                ],
+            }
+        return {"type": "path", "error": "No matching branch found", "question": question}
+
+    def _q_status(self) -> dict[str, Any]:
+        """分支状态统计."""
+        status_counts: dict[str, int] = {}
+        for b in self.branches.values():
+            status_counts[b.status.value] = status_counts.get(b.status.value, 0) + 1
+        return {
+            "type": "status",
+            "total_branches": len(self.branches),
+            "active": len(self.active_branches),
+            "pruned": len(self.pruned_branches),
+            "status_counts": status_counts,
+            "pareto_front_size": len(self.pareto_front),
+        }
+
+    def _q_all_branches(self) -> dict[str, Any]:
+        """全部分支列表."""
+        branches = []
+        for b in self.branches.values():
+            branches.append({
+                "id": b.id,
+                "name": b.name,
+                "status": b.status.value,
+                "objectives": b.objectives,
+            })
+        return {
+            "type": "all_branches",
+            "count": len(branches),
+            "branches": branches,
         }
 
     async def run_exploration(
@@ -381,23 +394,7 @@ class ExplorationSpace:
             max_parallel=max_parallel,
         )
 
-        initial = [
-            {
-                "name": b.name,
-                "hypothesis": b.hypothesis,
-                "decisions": [
-                    {
-                        "description": d.description,
-                        "type": d.decision_type,
-                        "chosen": d.chosen_option,
-                        "options": d.available_options,
-                        "rationale": d.rationale,
-                    }
-                    for d in b.decisions
-                ],
-            }
-            for b in self.branches.values()
-        ]
+        initial = self._exploration_seed()
 
         result = await orch.explore(
             objective=self.objective,
@@ -416,3 +413,23 @@ class ExplorationSpace:
             "n_pruned": result.n_branches_pruned,
             "convergence_reason": result.convergence_reason,
         }
+
+    def _exploration_seed(self) -> list[dict[str, Any]]:
+        """把现有分支摊成 orchestrator 的 initial_branches 载荷."""
+        return [
+            {
+                "name": b.name,
+                "hypothesis": b.hypothesis,
+                "decisions": [
+                    {
+                        "description": d.description,
+                        "type": d.decision_type,
+                        "chosen": d.chosen_option,
+                        "options": d.available_options,
+                        "rationale": d.rationale,
+                    }
+                    for d in b.decisions
+                ],
+            }
+            for b in self.branches.values()
+        ]

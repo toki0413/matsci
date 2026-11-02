@@ -137,6 +137,133 @@ class GenerateSCMResult:
     validation_errors: list[str] | None = None
 
 
+def _scm_strip_fence(raw: str) -> str:
+    """去掉 LLM 可能包上的 ```json 代码块 fence."""
+    s = raw.strip()
+    s = re.sub(r"^```(?:json)?\s*", "", s)
+    return re.sub(r"\s*```$", "", s)
+
+
+def _scm_check_fields(draft: dict) -> list[str]:
+    """必要字段 (nodes/edges/equations) 存在性检查."""
+    errors: list[str] = []
+    if "nodes" not in draft or not draft["nodes"]:
+        errors.append("缺少 nodes 或为空")
+    if "edges" not in draft:
+        errors.append("缺少 edges")
+    if "equations" not in draft:
+        errors.append("缺少 equations")
+    return errors
+
+
+def _scm_build_nodes(draft: dict, errors: list[str]) -> dict[str, Variable]:
+    """把 draft["nodes"] 构造成 Variable 表 (坏节点记 error 跳过)."""
+    nodes: dict[str, Variable] = {}
+    for n in draft["nodes"]:
+        try:
+            name = str(n["name"])
+            vtype = str(n.get("type", "feature"))
+            unit = str(n.get("unit", ""))
+            rng = n.get("range")
+            rng_t = tuple(float(x) for x in rng) if rng and len(rng) == 2 else None
+            desc = str(n.get("description", ""))
+            nodes[name] = Variable(name, vtype, unit, rng_t, desc)
+        except (KeyError, ValueError) as exc:
+            errors.append(f"node 解析失败 {n}: {exc}")
+    return nodes
+
+
+def _scm_build_edges(
+    draft: dict, nodes: dict[str, Variable], errors: list[str]
+) -> list[Edge]:
+    """把 draft["edges"] 构造成 Edge 表; 悬空引用记 error 并跳过."""
+    edges: list[Edge] = []
+    for e in draft["edges"]:
+        try:
+            cause, effect = str(e["cause"]), str(e["effect"])
+            if cause not in nodes or effect not in nodes:
+                errors.append(f"edge 引用不存在节点: {cause}→{effect}")
+                continue
+            mech = str(e.get("mechanism", ""))
+            strength = float(e.get("strength", 1.0))
+            edges.append(Edge(cause, effect, mech, strength))
+        except (KeyError, ValueError) as exc:
+            errors.append(f"edge 解析失败 {e}: {exc}")
+    return edges
+
+
+def _scm_build_equations(
+    draft: dict, nodes: dict[str, Variable], edges: list[Edge], errors: list[str]
+) -> tuple[dict[str, Callable[[dict[str, float], float], float]], dict[str, str]]:
+    """构造 equations 表 + eq_specs (表达式原文, 供 notes 记录)."""
+    equations: dict[str, Callable[[dict[str, float], float], float]] = {}
+    eq_specs: dict[str, str] = {
+        str(eq["node"]): str(eq["expr"]) for eq in draft["equations"]
+    }
+    for node_name, var in nodes.items():
+        if var.type == "condition":
+            # 条件节点: 直接从 parents (实际是 intervention/base_conditions) 取
+            equations[node_name] = lambda p, u, n=node_name: p.get(n, 0.0)
+        elif node_name in eq_specs:
+            parent_names = [e.cause for e in edges if e.effect == node_name]
+            equations[node_name] = _build_equation_closure(eq_specs[node_name], parent_names)
+        else:
+            errors.append(f"非条件节点 '{node_name}' 缺方程")
+            equations[node_name] = lambda p, u, n=node_name: 0.0
+    return equations, eq_specs
+
+
+def _scm_build_noise(nodes: dict[str, Variable]) -> dict[str, Callable[[], float]]:
+    """构造 noise 表 (条件节点零噪声, 其余默认 10% 相对噪声)."""
+    noise: dict[str, Callable[[], float]] = {}
+    for node_name, var in nodes.items():
+        noise[node_name] = _noise_normal(0) if var.type == "condition" else _noise_normal(0.10)
+    return noise
+
+
+def _scm_build_scm(
+    draft: dict,
+    nodes: dict[str, Variable],
+    edges: list[Edge],
+    equations: dict[str, Callable[[dict[str, float], float], float]],
+    noise: dict[str, Callable[[], float]],
+    eq_specs: dict[str, str],
+) -> VisualSCM:
+    """组装 VisualSCM; LLM 草稿必标 confirmed=False + source="llm_draft"."""
+    return VisualSCM(
+        name=str(draft.get("name", "custom_llm")),
+        domain=str(draft.get("domain", "unknown")),
+        nodes=nodes, edges=edges, equations=equations, noise=noise,
+        confirmed=False,   # LLM 草稿必标 False
+        source="llm_draft",
+        notes=str(draft.get("notes", "")) +
+              " | LLM 生成草稿, 未用户审核. 方程表达式: " +
+              "; ".join(f"{n}={e}" for n, e in eq_specs.items()),
+    )
+
+
+def _scm_smoke_test(
+    nodes: dict[str, Variable],
+    equations: dict[str, Callable[[dict[str, float], float], float]],
+) -> list[str]:
+    """方程冒烟测试: 用节点区间中点调一遍, 非有限数/抛异常记 error."""
+    errors: list[str] = []
+    test_values: dict[str, float] = {}
+    for n, v in nodes.items():
+        if v.range:
+            test_values[n] = (v.range[0] + v.range[1]) / 2
+        else:
+            test_values[n] = 1.0
+    for node_name, eq in equations.items():
+        try:
+            val = eq(test_values, 0.0)
+            if not isinstance(val, int | float) or not math.isfinite(val):
+                errors.append(f"方程 {node_name} 返非有限数: {val}")
+        except Exception as exc:
+            errors.append(f"方程 {node_name} 调用失败: {exc}")
+    return errors
+
+
 async def generate_scm_via_llm(
     question: str,
     llm_chat: Callable[[str], Any],
@@ -168,123 +295,42 @@ async def generate_scm_via_llm(
 
     raw_response = str(response)
 
-    # 解析 JSON (LLM 可能加 markdown 代码块, 清掉)
-    json_str = raw_response.strip()
-    json_str = re.sub(r"^```(?:json)?\s*", "", json_str)
-    json_str = re.sub(r"\s*```$", "", json_str)
-
     try:
-        scm_draft = json.loads(json_str)
+        scm_draft = json.loads(_scm_strip_fence(raw_response))
     except json.JSONDecodeError as exc:
         return GenerateSCMResult(scm=None, raw_response=raw_response,
                                   parse_error=f"JSON 解析失败: {exc}")
 
-    # 验证 + 构造 VisualSCM
-    errors: list[str] = []
-
-    # 必要字段
-    if "nodes" not in scm_draft or not scm_draft["nodes"]:
-        errors.append("缺少 nodes 或为空")
-    if "edges" not in scm_draft:
-        errors.append("缺少 edges")
-    if "equations" not in scm_draft:
-        errors.append("缺少 equations")
-
+    errors = _scm_check_fields(scm_draft)
     if errors:
         return GenerateSCMResult(scm=None, raw_response=raw_response,
                                   parse_error="; ".join(errors))
 
-    # 构造 nodes
-    nodes: dict[str, Variable] = {}
-    for n in scm_draft["nodes"]:
-        try:
-            name = str(n["name"])
-            vtype = str(n.get("type", "feature"))
-            unit = str(n.get("unit", ""))
-            rng = n.get("range")
-            rng_t = tuple(float(x) for x in rng) if rng and len(rng) == 2 else None
-            desc = str(n.get("description", ""))
-            nodes[name] = Variable(name, vtype, unit, rng_t, desc)
-        except (KeyError, ValueError) as exc:
-            errors.append(f"node 解析失败 {n}: {exc}")
+    return _scm_assemble(scm_draft, raw_response)
 
-    # 构造 edges
-    edges: list[Edge] = []
-    for e in scm_draft["edges"]:
-        try:
-            cause, effect = str(e["cause"]), str(e["effect"])
-            if cause not in nodes or effect not in nodes:
-                errors.append(f"edge 引用不存在节点: {cause}→{effect}")
-                continue
-            mech = str(e.get("mechanism", ""))
-            strength = float(e.get("strength", 1.0))
-            edges.append(Edge(cause, effect, mech, strength))
-        except (KeyError, ValueError) as exc:
-            errors.append(f"edge 解析失败 {e}: {exc}")
 
-    # 构造 equations
-    equations: dict[str, Callable[[dict[str, float], float], float]] = {}
-    eq_specs: dict[str, str] = {str(eq["node"]): str(eq["expr"]) for eq in scm_draft["equations"]}
-    for node_name, var in nodes.items():
-        if var.type == "condition":
-            # 条件节点: 直接从 parents (实际是 intervention/base_conditions) 取
-            equations[node_name] = lambda p, u, n=node_name: p.get(n, 0.0)
-        elif node_name in eq_specs:
-            parent_names = [e.cause for e in edges if e.effect == node_name]
-            equations[node_name] = _build_equation_closure(eq_specs[node_name], parent_names)
-        else:
-            errors.append(f"非条件节点 '{node_name}' 缺方程")
-            equations[node_name] = lambda p, u, n=node_name: 0.0
-
-    # 构造 noise (默认 10% 相对噪声, LLM 没指定)
-    noise: dict[str, Callable[[], float]] = {}
-    for node_name, var in nodes.items():
-        if var.type == "condition":
-            noise[node_name] = _noise_normal(0)
-        else:
-            noise[node_name] = _noise_normal(0.10)
-
+def _scm_assemble(draft: dict, raw_response: str) -> GenerateSCMResult:
+    """从已解析 draft 构 SCM, 过 DAG + 方程冒烟测试; 失败返回带 validation_errors 的结果."""
+    errors: list[str] = []
+    nodes = _scm_build_nodes(draft, errors)
+    edges = _scm_build_edges(draft, nodes, errors)
+    equations, eq_specs = _scm_build_equations(draft, nodes, edges, errors)
     if errors:
         return GenerateSCMResult(scm=None, raw_response=raw_response,
                                   validation_errors=errors)
 
     # 验证 DAG (topological_order 会抛)
-    scm = VisualSCM(
-        name=str(scm_draft.get("name", "custom_llm")),
-        domain=str(scm_draft.get("domain", "unknown")),
-        nodes=nodes, edges=edges, equations=equations, noise=noise,
-        confirmed=False,   # LLM 草稿必标 False
-        source="llm_draft",
-        notes=str(scm_draft.get("notes", "")) +
-              " | LLM 生成草稿, 未用户审核. 方程表达式: " +
-              "; ".join(f"{n}={e}" for n, e in eq_specs.items()),
-    )
-
+    scm = _scm_build_scm(draft, nodes, edges, equations, _scm_build_noise(nodes), eq_specs)
     try:
         _ = scm.topological_order()  # 抛如果有环
     except ValueError as exc:
         return GenerateSCMResult(scm=None, raw_response=raw_response,
                                   validation_errors=[f"SCM 有环: {exc}"])
 
-    # smoke test: 方程都能调 (传合理值)
-    test_values: dict[str, float] = {}
-    for n, v in nodes.items():
-        if v.range:
-            test_values[n] = (v.range[0] + v.range[1]) / 2
-        else:
-            test_values[n] = 1.0
-    for node_name, eq in equations.items():
-        try:
-            val = eq(test_values, 0.0)
-            if not isinstance(val, int | float) or not math.isfinite(val):
-                errors.append(f"方程 {node_name} 返非有限数: {val}")
-        except Exception as exc:
-            errors.append(f"方程 {node_name} 调用失败: {exc}")
-
+    errors = _scm_smoke_test(nodes, equations)
     if errors:
         return GenerateSCMResult(scm=None, raw_response=raw_response,
                                   validation_errors=errors)
-
     return GenerateSCMResult(scm=scm, raw_response=raw_response)
 
 
@@ -331,11 +377,27 @@ def confirm_scm(scm: VisualSCM, user_notes: str = "") -> VisualSCM:
 
 # ── self-check ───────────────────────────────────────────────
 
-def _selfcheck() -> None:
-    """12 项 assert 验证 LLM 生成 SCM 路径."""
-    import asyncio
+_SC_VALID_JSON = '''{
+      "name": "custom_battery_aging",
+      "domain": "battery",
+      "nodes": [
+        {"name": "T", "type": "condition", "unit": "K", "range": [253, 353], "description": "温度"},
+        {"name": "cycle_count", "type": "condition", "unit": "", "range": [0, 5000], "description": "循环次数"},
+        {"name": "capacity_retention", "type": "feature", "unit": "", "range": [0, 1], "description": "容量保持率"}
+      ],
+      "edges": [
+        {"cause": "T", "effect": "capacity_retention", "mechanism": "arrhenius_degradation", "strength": 0.8},
+        {"cause": "cycle_count", "effect": "capacity_retention", "mechanism": "cyclic_aging", "strength": 1.0}
+      ],
+      "equations": [
+        {"node": "capacity_retention", "expr": "exp(-0.0005 * cycle_count) * (1 - 0.001 * (T - 298))"}
+      ],
+      "notes": "电池老化 SCM, 线性温度修正+指数循环衰减"
+    }'''
 
-    # 1. _safe_eval_expr 白名单函数可用
+
+def _sc_eval_checks() -> None:
+    """1-5: 安全求值器 + 方程 closure 行为."""
     assert _safe_eval_expr("exp(-1.0)", {}) == math.exp(-1.0)
     assert _safe_eval_expr("2 * 3 + 1", {}) == 7.0
     assert _safe_eval_expr("sqrt(16)", {}) == 4.0
@@ -366,27 +428,13 @@ def _selfcheck() -> None:
     bad_eq = _build_equation_closure("undefined_func(1.0)", [])
     assert bad_eq({}, 0.0) == 0.0
 
-    # 6. generate_scm_via_llm: mock LLM 返合法 JSON
-    valid_json = '''{
-      "name": "custom_battery_aging",
-      "domain": "battery",
-      "nodes": [
-        {"name": "T", "type": "condition", "unit": "K", "range": [253, 353], "description": "温度"},
-        {"name": "cycle_count", "type": "condition", "unit": "", "range": [0, 5000], "description": "循环次数"},
-        {"name": "capacity_retention", "type": "feature", "unit": "", "range": [0, 1], "description": "容量保持率"}
-      ],
-      "edges": [
-        {"cause": "T", "effect": "capacity_retention", "mechanism": "arrhenius_degradation", "strength": 0.8},
-        {"cause": "cycle_count", "effect": "capacity_retention", "mechanism": "cyclic_aging", "strength": 1.0}
-      ],
-      "equations": [
-        {"node": "capacity_retention", "expr": "exp(-0.0005 * cycle_count) * (1 - 0.001 * (T - 298))"}
-      ],
-      "notes": "电池老化 SCM, 线性温度修正+指数循环衰减"
-    }'''
+
+def _sc_generate_ok() -> GenerateSCMResult:
+    """6-8: mock LLM 返合法 JSON → SCM 拓扑序 + 方程物理合理."""
+    import asyncio
 
     async def mock_llm(prompt: str) -> str:
-        return valid_json
+        return _SC_VALID_JSON
 
     result = asyncio.run(generate_scm_via_llm(
         question="温度对电池容量衰减的影响",
@@ -412,14 +460,17 @@ def _selfcheck() -> None:
     v_low_cycles = eq_retention({"T": 300, "cycle_count": 10}, 0.0)
     v_high_cycles = eq_retention({"T": 300, "cycle_count": 1000}, 0.0)
     assert v_high_cycles < v_low_cycles  # 循环越多, 保持率越低
+    return result
 
-    # 9. LLM 返非法 JSON → parse_error
+
+def _sc_generate_failures() -> GenerateSCMResult:
+    """9-10: 非法 JSON / 缺字段 JSON → parse_error, scm 为 None."""
+    import asyncio
+
     async def mock_bad_json(prompt: str) -> str:
         return "not a json"
 
-    result = asyncio.run(generate_scm_via_llm(
-        question="test", llm_chat=mock_bad_json,
-    ))
+    result = asyncio.run(generate_scm_via_llm(question="test", llm_chat=mock_bad_json))
     assert result.scm is None
     assert result.parse_error is not None
 
@@ -429,17 +480,21 @@ def _selfcheck() -> None:
     async def mock_incomplete(prompt: str) -> str:
         return incomplete_json
 
-    result = asyncio.run(generate_scm_via_llm(
-        question="test", llm_chat=mock_incomplete,
-    ))
+    result = asyncio.run(generate_scm_via_llm(question="test", llm_chat=mock_incomplete))
     assert result.scm is None
     # 空字段走 parse_error, 结构错走 validation_errors
     assert result.parse_error is not None or result.validation_errors is not None
+    return result
 
-    # 11. confirm_scm 升级 confirmed=True
-    scm = result.scm if result.scm else asyncio.run(generate_scm_via_llm(
-        "test", mock_llm
-    )).scm
+
+def _sc_confirm(result: GenerateSCMResult) -> None:
+    """11: confirm_scm 升级 confirmed=True 并改 source."""
+    import asyncio
+
+    async def mock_llm(prompt: str) -> str:
+        return _SC_VALID_JSON
+
+    scm = result.scm if result.scm else asyncio.run(generate_scm_via_llm("test", mock_llm)).scm
     assert scm is not None
     assert scm.confirmed is False
     confirmed = confirm_scm(scm, "测试审核")
@@ -447,18 +502,28 @@ def _selfcheck() -> None:
     assert confirmed.source == "user_confirmed"
     assert "测试审核" in confirmed.notes
 
-    # 12. markdown 代码块包裹的 JSON 也能解析
-    md_json = "```json\n" + valid_json + "\n```"
+
+def _sc_fence_parse() -> None:
+    """12: markdown 代码块包裹的 JSON 也能解析."""
+    import asyncio
+
+    md_json = "```json\n" + _SC_VALID_JSON + "\n```"
 
     async def mock_md(prompt: str) -> str:
         return md_json
 
-    result = asyncio.run(generate_scm_via_llm(
-        "test", mock_md
-    ))
+    result = asyncio.run(generate_scm_via_llm("test", mock_md))
     assert result.scm is not None
     assert result.scm.name == "custom_battery_aging"
 
+
+def _selfcheck() -> None:
+    """12 项 assert 验证 LLM 生成 SCM 路径."""
+    _sc_eval_checks()
+    result = _sc_generate_ok()
+    result = _sc_generate_failures() or result
+    _sc_confirm(result)
+    _sc_fence_parse()
     print("all self-checks passed")
 
 

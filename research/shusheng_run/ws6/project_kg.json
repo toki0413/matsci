@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: computation] Hypothesis A** — it is the most immediately testable (one par",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-23T18:06:05.180384",
+      "last_seen": "2026-10-23T18:06:05.180384",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "在 $\\Delta t\\le10^{-3}$ 时，相位对齐后L2误差 $<10^{-10}$ 而原始逐点L2误差 $>10^{-4}$（相位漂移 $\\sim O(t)$ 累积）；能量相对误差 $\\sim10^{-9}$–$10^{-10}$、动量相对误差 $\\sim10^{-10}$ 量级（SSFM守恒性好）；\"10轮迭代\"在时间推进解释下无法定义收敛，在自洽场解释下10步远不足——证实该判据与连",
+      "persona": "dft_expert",
+      "id": "experiment:[DIM: computation] Hypothesis A** — it is the most immediately testable (one par"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-23T18:06:05.180428",
+      "last_seen": "2026-10-23T18:06:05.180428",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-23T18:06:05.180442",
+      "last_seen": "2026-10-23T18:06:05.180442",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-23T18:06:05.180453",
+      "last_seen": "2026-10-23T18:06:05.180453",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: computation] Hypothesis A** — it is the most immediately testable (one par",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_dbb7180"
+    },
+    {
+      "label": "dft_expert_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-23T18:06:05.180546",
+      "last_seen": "2026-10-23T18:06:05.180546",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "5426b636277ab3ef",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:dft_expert_iter5"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: computation] Hypothesis A** — it is the most immediately testable (one par",
+      "confidence": 0.5,
+      "created_at": "2026-10-23T18:06:05.180453",
+      "last_seen": "2026-10-23T18:06:05.180453",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dbb7180"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-23T18:06:05.180453",
+      "last_seen": "2026-10-23T18:06:05.180453",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dbb7180"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-23T18:06:05.180453",
+      "last_seen": "2026-10-23T18:06:05.180453",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dbb7180"
+    }
+  ]
+}

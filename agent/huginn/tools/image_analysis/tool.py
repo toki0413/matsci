@@ -4,6 +4,7 @@
 在 scenes_*.py 里实现, call() 按 action lazy import 对应模块, 结果统一
 经过 _maybe_save 写文件.
 """
+
 from __future__ import annotations
 
 import ast
@@ -84,47 +85,22 @@ class ImageAnalysisTool(HuginnTool):
         self, args: dict[str, Any], context: ToolContext | None = None
     ) -> ValidationResult:
         # adapter 可能传 ImageAnalysisInput 实例 (已解析) 或 dict (model_dump 后)
-        input_data = args if isinstance(args, ImageAnalysisInput) else ImageAnalysisInput(**args)
+        input_data = (
+            args if isinstance(args, ImageAnalysisInput) else ImageAnalysisInput(**args)
+        )
         if not Path(input_data.image_path).exists():
             return ValidationResult(
                 result=False, message=f"图片不存在: {input_data.image_path}"
             )
         return ValidationResult(result=True)
 
-    async def call(
-        self, args: dict[str, Any], context: ToolContext
-    ) -> ToolResult:
-        input_data = args if isinstance(args, ImageAnalysisInput) else ImageAnalysisInput(**args)
+    async def call(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
+        input_data = (
+            args if isinstance(args, ImageAnalysisInput) else ImageAnalysisInput(**args)
+        )
         try:
-            if input_data.action == "sem_analysis":
-                from huginn.tools.image_analysis.scenes_sem import sem_analysis
-                result = sem_analysis(input_data)
-            elif input_data.action == "tem_lattice":
-                from huginn.tools.image_analysis.scenes_tem import tem_lattice
-                result = tem_lattice(input_data)
-            elif input_data.action == "eds_mapping":
-                from huginn.tools.image_analysis.scenes_eds import eds_mapping
-                result = eds_mapping(input_data)
-            elif input_data.action == "particle_stats":
-                from huginn.tools.image_analysis.scenes_particles import particle_stats
-                result = particle_stats(input_data)
-            elif input_data.action == "defect_detect":
-                from huginn.tools.image_analysis.scenes_defect import defect_detect
-                result = defect_detect(input_data)
-            elif input_data.action == "phase_field":
-                from huginn.tools.image_analysis.scenes_phase_field import phase_field
-                result = phase_field(input_data)
-            elif input_data.action == "plot_extract":
-                from huginn.tools.image_analysis.scenes_plot_extract import plot_extract
-                result = plot_extract(input_data)
-            elif input_data.action == "deplot_chart":
-                from huginn.tools.image_analysis.scenes_deplot import deplot_chart
-                result = deplot_chart(input_data)
-            elif input_data.action == "code_verify":
-                result = self._run_code_verify(input_data)
-            elif input_data.action == "compare_to_target":
-                result = self._run_compare_to_target(input_data)
-            else:
+            result = ImageAnalysisTool._dispatch_action(self, input_data)
+            if result is None:
                 return ToolResult(
                     data=None, success=False, error=f"未知 action: {input_data.action}"
                 )
@@ -134,8 +110,50 @@ class ImageAnalysisTool(HuginnTool):
                 self._maybe_save(input_data.output_path, result.data)
             return result
         except Exception as exc:
-            logger.warning("image_analysis_tool %s 失败: %s", input_data.action, exc, exc_info=True)
+            logger.warning(
+                "image_analysis_tool %s 失败: %s", input_data.action, exc, exc_info=True
+            )
             return ToolResult(data=None, success=False, error=str(exc))
+
+    def _dispatch_action(self, input_data: ImageAnalysisInput) -> ToolResult | None:
+        """按 action 分发到 scenes_* 实现, 未知 action 返回 None."""
+        if input_data.action == "sem_analysis":
+            from huginn.tools.image_analysis.scenes_sem import sem_analysis
+
+            return sem_analysis(input_data)
+        elif input_data.action == "tem_lattice":
+            from huginn.tools.image_analysis.scenes_tem import tem_lattice
+
+            return tem_lattice(input_data)
+        elif input_data.action == "eds_mapping":
+            from huginn.tools.image_analysis.scenes_eds import eds_mapping
+
+            return eds_mapping(input_data)
+        elif input_data.action == "particle_stats":
+            from huginn.tools.image_analysis.scenes_particles import particle_stats
+
+            return particle_stats(input_data)
+        elif input_data.action == "defect_detect":
+            from huginn.tools.image_analysis.scenes_defect import defect_detect
+
+            return defect_detect(input_data)
+        elif input_data.action == "phase_field":
+            from huginn.tools.image_analysis.scenes_phase_field import phase_field
+
+            return phase_field(input_data)
+        elif input_data.action == "plot_extract":
+            from huginn.tools.image_analysis.scenes_plot_extract import plot_extract
+
+            return plot_extract(input_data)
+        elif input_data.action == "deplot_chart":
+            from huginn.tools.image_analysis.scenes_deplot import deplot_chart
+
+            return deplot_chart(input_data)
+        elif input_data.action == "code_verify":
+            return self._run_code_verify(input_data)
+        elif input_data.action == "compare_to_target":
+            return self._run_compare_to_target(input_data)
+        return None
 
     def _maybe_save(self, output_path: str | None, data: dict[str, Any]) -> None:
         if output_path:
@@ -155,13 +173,15 @@ class ImageAnalysisTool(HuginnTool):
         target_path = input_data.parameters.get("target_path")
         if not target_path:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="compare_to_target 需要 parameters.target_path",
             )
         target = Path(target_path)
         if not target.exists():
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"target 图不存在: {target_path}",
             )
 
@@ -173,6 +193,7 @@ class ImageAnalysisTool(HuginnTool):
             candidates = [Path(input_data.image_path)]
 
         from huginn.tools.image_analysis.cv_compare import cv_best_match
+
         result = cv_best_match(target, candidates)
         return ToolResult(
             data={
@@ -209,7 +230,8 @@ class ImageAnalysisTool(HuginnTool):
             ast.parse(code)
         except SyntaxError as exc:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"Verification code syntax error: {exc}",
             )
 
@@ -222,24 +244,16 @@ class ImageAnalysisTool(HuginnTool):
         """
         from huginn.security.sandbox import SandboxConfig, SandboxExecutor
 
-        sandbox = SandboxExecutor(SandboxConfig(
-            allowed_executables={"python", "python3"},
-            default_timeout=timeout,
-            max_timeout=max(timeout, 60.0),
-        ))
-
-        work_dir = Path(self._tmp_dir())
-        work_dir.mkdir(parents=True, exist_ok=True)
-        script = work_dir / "_verify_code.py"
-        script.write_text(code, encoding="utf-8")
-
-        # sidecar 打包后 PATH 里可能没 python, fallback 到当前解释器
-        python_exe = (
-            shutil.which("python")
-            or shutil.which("python3")
-            or sys.executable
-            or "python"
+        sandbox = SandboxExecutor(
+            SandboxConfig(
+                allowed_executables={"python", "python3"},
+                default_timeout=timeout,
+                max_timeout=max(timeout, 60.0),
+            )
         )
+
+        work_dir, script = ImageAnalysisTool._prepare_sandbox_script(self, code)
+        python_exe = _resolve_python_exe()
 
         sb = sandbox.run(
             [python_exe, str(script)],
@@ -250,42 +264,70 @@ class ImageAnalysisTool(HuginnTool):
         )
 
         if not sb.success:
-            # 代码执行失败 (包括 AssertionError) — 不阻塞, 把 stderr 带回去
-            return ToolResult(
-                data={
-                    "verified": False,
-                    "stdout": sb.stdout,
-                    "stderr": sb.stderr,
-                    "returncode": sb.returncode,
-                },
-                success=False,
-                error=f"Verification code failed: {sb.stderr[:500] if sb.stderr else sb.stdout[:500]}",
-            )
+            return _sandbox_failure_result(sb)
+        return _sandbox_success_result(sb)
 
-        # 解析 __VERIFY_RESULT__ 标记
-        parsed = None
-        for line in reversed(sb.stdout.splitlines()):
-            if line.startswith("__VERIFY_RESULT__:"):
-                payload = line[len("__VERIFY_RESULT__:"):]
-                try:
-                    parsed = json.loads(payload)
-                except json.JSONDecodeError:
-                    parsed = {"raw": payload}
-                break
-
-        return ToolResult(
-            data={
-                "verified": parsed.get("all_match", False) if parsed else False,
-                "checks": parsed.get("checks", []) if parsed else [],
-                "measured": parsed.get("measured", {}) if parsed else {},
-                "claimed": parsed.get("claimed", {}) if parsed else {},
-                "stdout": sb.stdout,
-            },
-            success=True,
-        )
+    def _prepare_sandbox_script(self, code: str) -> tuple[Path, Path]:
+        """把验证代码写到临时目录, 返回 (work_dir, script)."""
+        work_dir = Path(self._tmp_dir())
+        work_dir.mkdir(parents=True, exist_ok=True)
+        script = work_dir / "_verify_code.py"
+        script.write_text(code, encoding="utf-8")
+        return work_dir, script
 
     @staticmethod
     def _tmp_dir() -> str:
         """临时目录给沙箱脚本用, 跑完不清理 (OS temp 反正会定期清)."""
         import tempfile
+
         return tempfile.mkdtemp(prefix="huginn_verify_")
+
+
+def _resolve_python_exe() -> str:
+    """sidecar 打包后 PATH 里可能没 python, fallback 到当前解释器."""
+    return (
+        shutil.which("python") or shutil.which("python3") or sys.executable or "python"
+    )
+
+
+def _sandbox_failure_result(sb) -> ToolResult:
+    """代码执行失败 (包括 AssertionError) — 不阻塞, 把 stderr 带回去."""
+    return ToolResult(
+        data={
+            "verified": False,
+            "stdout": sb.stdout,
+            "stderr": sb.stderr,
+            "returncode": sb.returncode,
+        },
+        success=False,
+        error=f"Verification code failed: {sb.stderr[:500] if sb.stderr else sb.stdout[:500]}",
+    )
+
+
+def _sandbox_success_result(sb) -> ToolResult:
+    """解析 __VERIFY_RESULT__ 标记并组装成功结果."""
+    parsed = _parse_verify_marker(sb.stdout)
+    return ToolResult(
+        data={
+            "verified": parsed.get("all_match", False) if parsed else False,
+            "checks": parsed.get("checks", []) if parsed else [],
+            "measured": parsed.get("measured", {}) if parsed else {},
+            "claimed": parsed.get("claimed", {}) if parsed else {},
+            "stdout": sb.stdout,
+        },
+        success=True,
+    )
+
+
+def _parse_verify_marker(stdout: str) -> dict | None:
+    """从 stdout 末尾找 __VERIFY_RESULT__ 标记."""
+    parsed = None
+    for line in reversed(stdout.splitlines()):
+        if line.startswith("__VERIFY_RESULT__:"):
+            payload = line[len("__VERIFY_RESULT__:") :]
+            try:
+                parsed = json.loads(payload)
+            except json.JSONDecodeError:
+                parsed = {"raw": payload}
+            break
+    return parsed

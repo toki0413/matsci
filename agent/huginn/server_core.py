@@ -87,7 +87,9 @@ def _make_state_store(kind: str) -> MutableMapping[str, Any]:
 
     if kind == "threads":
         return SqliteStore("huginn_threads")
-    return SqliteStore("huginn_checkpoints", encode=encode_checkpoint, decode=decode_checkpoint)
+    return SqliteStore(
+        "huginn_checkpoints", encode=encode_checkpoint, decode=decode_checkpoint
+    )
 
 
 _checkpoints = _make_state_store("checkpoints")  # type: ignore[assignment]
@@ -152,6 +154,13 @@ async def _check_ollama_available(base_url: str, timeout: float = 2.0) -> bool:
 # ── factory functions ───────────────────────────────────────────────
 
 
+def _fallback_mock_agent(memory_manager: MemoryManager) -> HuginnAgent:
+    logger.info("Falling back to mock mode (no LLM)")
+    agent = HuginnAgent(model=None, memory_manager=memory_manager)
+    agent.register_tools_from_registry()
+    return agent
+
+
 async def get_agent() -> HuginnAgent:
     """Get or create the HuginnAgent instance."""
     if get_context().agent is not None:
@@ -166,28 +175,20 @@ async def get_agent() -> HuginnAgent:
         ollama_models = [m for m in cfg.models if m.provider == "ollama" and m.enabled]
         if ollama_models and not await _check_ollama_available(cfg.ollama_host):
             logger.warning("Ollama not responding at {cfg.ollama_host}")
-            logger.info("Falling back to mock mode (no LLM)")
-            get_context().agent = HuginnAgent(model=None, memory_manager=memory_manager)
-            get_context().agent.register_tools_from_registry()
+            get_context().agent = _fallback_mock_agent(memory_manager)
             return get_context().agent
 
     try:
         get_context().agent = factory.create_lead()
     except ImportError:
         logger.warning("Missing dependency for configured model: {e}")
-        logger.info("Falling back to mock mode (no LLM)")
-        get_context().agent = HuginnAgent(model=None, memory_manager=memory_manager)
-        get_context().agent.register_tools_from_registry()
+        get_context().agent = _fallback_mock_agent(memory_manager)
     except ValueError:
         logger.warning("{e}")
-        logger.info("Falling back to mock mode (no LLM)")
-        get_context().agent = HuginnAgent(model=None, memory_manager=memory_manager)
-        get_context().agent.register_tools_from_registry()
+        get_context().agent = _fallback_mock_agent(memory_manager)
     except Exception:  # 防御: 其它初始化失败也回退 mock, 不中断
         logger.warning("Failed to initialize agent: {e}")
-        logger.info("Falling back to mock mode (no LLM)")
-        get_context().agent = HuginnAgent(model=None, memory_manager=memory_manager)
-        get_context().agent.register_tools_from_registry()
+        get_context().agent = _fallback_mock_agent(memory_manager)
 
     # Wire the agent's LLM into the memory manager for insight extraction
     try:
@@ -221,6 +222,7 @@ def _install_llm_vision_callback(agent: Any) -> None:
     # 检测模型是否支持 vision
     try:
         from huginn.models.registry import get_model_capabilities
+
         model_name = getattr(model, "model_name", None) or getattr(model, "model", "")
         caps = get_model_capabilities(str(model_name))
         if not caps.vision:
@@ -232,6 +234,10 @@ def _install_llm_vision_callback(agent: Any) -> None:
 
     from huginn.knowledge.ocr_loader import set_llm_vision_callback
 
+    set_llm_vision_callback(_make_vision_decoder(model))
+
+
+def _make_vision_decoder(model: Any) -> Any:
     def _vision_decode(image_bytes: bytes, hint: str = "") -> str:
         """把图像喂给多模态 LLM, 返回结构化 markdown.
 
@@ -256,17 +262,22 @@ def _install_llm_vision_callback(agent: Any) -> None:
             prompt = "请识别这页文档的所有文字内容, 保留版式结构, 用 markdown 输出."
 
         try:
-            msg = HumanMessage(content=[
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
-            ])
+            msg = HumanMessage(
+                content=[
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64}"},
+                    },
+                ]
+            )
             resp = model.invoke([msg])
             return getattr(resp, "content", str(resp)) or ""
         except Exception as exc:
             logger.debug("LLM vision decode failed (hint=%s): %s", hint, exc)
             return ""
 
-    set_llm_vision_callback(_vision_decode)
+    return _vision_decode
 
 
 def get_memory_manager() -> MemoryManager:
@@ -308,6 +319,7 @@ def get_agent_factory() -> AgentFactory:
     # Use the same config source as the REST config route —
     # huginn.toml if it exists, otherwise env vars.
     from huginn.routes.config import _load_runtime_config
+
     cfg = _load_runtime_config()
     registry = ModelRegistry.from_config(cfg)
     get_context().agent_factory = AgentFactory(
@@ -637,10 +649,7 @@ def get_system_snapshot() -> dict[str, Any]:
 
     # v23: 平移所有 ServerContext 字段, 只覆盖 active_threads / edit_tools.
     # 不再逐字段列举 — 加新字段时自动跟上, 不会再出现"快照漏字段"问题.
-    field_values = {
-        f.name: getattr(ctx, f.name)
-        for f in dataclasses.fields(ctx)
-    }
+    field_values = {f.name: getattr(ctx, f.name) for f in dataclasses.fields(ctx)}
     field_values["active_threads"] = threads_snapshot
     field_values["edit_tools"] = set(_EDIT_TOOLS)
     system = HuginnSystem(**field_values)

@@ -42,9 +42,7 @@ class DebuggerInput(BaseModel):
         description="单独的错误消息（无 traceback 时使用）",
     )
     file_path: str | None = Field(default=None, description="出错文件路径")
-    context_lines: int = Field(
-        default=5, description="提取上下文行数", ge=0, le=50
-    )
+    context_lines: int = Field(default=5, description="提取上下文行数", ge=0, le=50)
 
 
 # ---------------------------------------------------------------------------
@@ -324,29 +322,31 @@ def _get_kb_entry(error_type: str) -> dict[str, Any]:
 # 匹配每一帧：File "path", line N, in func\n    code
 _FRAME_RE = re.compile(
     r'File\s+"(?P<file>[^"]+)",\s+line\s+(?P<line>\d+)'
-    r'(?:,\s+in\s+(?P<func>[^\s]+))?\s*\n\s*(?P<code>.*)',
+    r"(?:,\s+in\s+(?P<func>[^\s]+))?\s*\n\s*(?P<code>.*)",
     re.MULTILINE,
 )
 
 # SyntaxError 特殊格式：行号前没有 "in func"
 _SYNTAX_FRAME_RE = re.compile(
     r'File\s+"(?P<file>[^"]+)",\s+line\s+(?P<line>\d+)\s*\n'
-    r'(?:\s*(?P<pointer>[~\^ ]+)\n)?\s*(?P<code>.*)',
+    r"(?:\s*(?P<pointer>[~\^ ]+)\n)?\s*(?P<code>.*)",
     re.MULTILINE,
 )
 
 
-def _parse_traceback_text(text: str) -> dict[str, Any]:
-    """纯正则解析 traceback 文本，返回结构化结果。"""
-    if not text or not text.strip():
-        return {
-            "error_type": None,
-            "error_message": None,
-            "frames": [],
-            "innermost_frame": None,
-            "outermost_frame": None,
-        }
+def _empty_parsed_traceback() -> dict[str, Any]:
+    """空输入时的固定结构化结果。"""
+    return {
+        "error_type": None,
+        "error_message": None,
+        "frames": [],
+        "innermost_frame": None,
+        "outermost_frame": None,
+    }
 
+
+def _extract_frames(text: str) -> list[dict[str, Any]]:
+    """按帧正则抽取调用栈；SyntaxError 格式再用专用正则补一遍。"""
     frames: list[dict[str, Any]] = []
     for m in _FRAME_RE.finditer(text):
         frames.append(
@@ -357,33 +357,6 @@ def _parse_traceback_text(text: str) -> dict[str, Any]:
                 "code": (m.group("code") or "").strip(),
             }
         )
-
-    # 提取最终错误行：取 traceback 里最后一个 "Type: msg" 模式
-    error_type: str | None = None
-    error_message: str | None = None
-
-    # 先按行扫，找最后一个看起来像 "XxxError: ..." 的行
-    last_error_match = None
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        m = re.match(
-            r'^([A-Za-z_][\w\.]*(?:Error|Exception|Warning|IterationError))\s*:\s*(.*)$',
-            line,
-        )
-        if m:
-            last_error_match = m
-
-    if last_error_match:
-        error_type = last_error_match.group(1)
-        error_message = last_error_match.group(2)
-    else:
-        # 兜底：如果用户只给了消息没给类型，整体当作 message
-        # 取最后一行非空内容
-        non_empty = [line.strip() for line in text.splitlines() if line.strip()]
-        if non_empty:
-            error_message = non_empty[-1]
 
     # SyntaxError 没有 "in func"，上面的 _FRAME_RE 可能漏掉部分
     # 用 _SYNTAX_FRAME_RE 补一遍，合并去重
@@ -397,6 +370,41 @@ def _parse_traceback_text(text: str) -> dict[str, Any]:
                     "code": (m.group("code") or "").strip(),
                 }
             )
+
+    return frames
+
+
+def _extract_error_head(text: str) -> tuple[str | None, str | None]:
+    """提取最终错误行：取 traceback 里最后一个 "Type: msg" 模式。"""
+    # 先按行扫，找最后一个看起来像 "XxxError: ..." 的行
+    last_error_match = None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = re.match(
+            r"^([A-Za-z_][\w\.]*(?:Error|Exception|Warning|IterationError))\s*:\s*(.*)$",
+            line,
+        )
+        if m:
+            last_error_match = m
+
+    if last_error_match:
+        return last_error_match.group(1), last_error_match.group(2)
+
+    # 兜底：如果用户只给了消息没给类型，整体当作 message
+    # 取最后一行非空内容
+    non_empty = [line.strip() for line in text.splitlines() if line.strip()]
+    return None, (non_empty[-1] if non_empty else None)
+
+
+def _parse_traceback_text(text: str) -> dict[str, Any]:
+    """纯正则解析 traceback 文本，返回结构化结果。"""
+    if not text or not text.strip():
+        return _empty_parsed_traceback()
+
+    frames = _extract_frames(text)
+    error_type, error_message = _extract_error_head(text)
 
     innermost = frames[-1] if frames else None
     outermost = frames[0] if frames else None
@@ -413,17 +421,28 @@ def _parse_traceback_text(text: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # 从错误消息里抽细节（变量名/类型等），用于修复模板填充
 # ---------------------------------------------------------------------------
-def _extract_details(error_type: str | None, error_message: str | None) -> dict[str, str]:
-    """从错误消息里抠出关键字段，供模板填充。"""
-    details: dict[str, str] = {"var": "?", "arg": "?", "expected": "?", "actual": "?",
-                               "obj": "?", "attr": "?", "seq": "?", "idx": "?",
-                               "key": "?", "module": "?", "func": "?", "value": "?",
-                               "path": "?", "detail": "?"}
-    if not error_message:
-        return details
+def _default_details() -> dict[str, str]:
+    """模板填充字段的初始值（全部未知）。"""
+    return {
+        "var": "?",
+        "arg": "?",
+        "expected": "?",
+        "actual": "?",
+        "obj": "?",
+        "attr": "?",
+        "seq": "?",
+        "idx": "?",
+        "key": "?",
+        "module": "?",
+        "func": "?",
+        "value": "?",
+        "path": "?",
+        "detail": "?",
+    }
 
-    msg = error_message
 
+def _fill_name_and_type_details(details: dict[str, str], msg: str) -> None:
+    """name / 对象属性 / 类型不匹配类消息。"""
     # name 'x' is not defined
     m = re.search(r"name '([^']+)' is not defined", msg)
     if m:
@@ -453,6 +472,11 @@ def _extract_details(error_type: str | None, error_message: str | None) -> dict[
     if m:
         details["expected"] = m.group(1).strip()
 
+
+def _fill_seq_and_key_details(
+    details: dict[str, str], msg: str, error_type: str | None
+) -> None:
+    """下标越界与 KeyError 的键名。"""
     # list index out of range
     if "list index out of range" in msg:
         details["seq"] = "list"
@@ -464,6 +488,9 @@ def _extract_details(error_type: str | None, error_message: str | None) -> dict[
         if m:
             details["key"] = m.group(1)
 
+
+def _fill_module_and_path_details(details: dict[str, str], msg: str) -> None:
+    """import 模块名与文件路径。"""
     # No module named 'foo'
     m = re.search(r"No module named '([^']+)'", msg)
     if m:
@@ -483,6 +510,9 @@ def _extract_details(error_type: str | None, error_message: str | None) -> dict[
     if m:
         details["path"] = m.group(1)
 
+
+def _fill_runtime_failure_details(details: dict[str, str], msg: str) -> None:
+    """除零与递归过深。"""
     # division by zero
     if "division by zero" in msg:
         details["detail"] = "division by zero"
@@ -492,80 +522,119 @@ def _extract_details(error_type: str | None, error_message: str | None) -> dict[
         m = re.search(r"in comparison|in (\w+)", msg)
         details["func"] = m.group(1) if m else "?"
 
+
+def _extract_details(
+    error_type: str | None, error_message: str | None
+) -> dict[str, str]:
+    """从错误消息里抠出关键字段，供模板填充。"""
+    details = _default_details()
+    if not error_message:
+        return details
+
+    msg = error_message
+    _fill_name_and_type_details(details, msg)
+    _fill_seq_and_key_details(details, msg, error_type)
+    _fill_module_and_path_details(details, msg)
+    _fill_runtime_failure_details(details, msg)
     return details
 
 
 # ---------------------------------------------------------------------------
 # 用 ast 扫 code_snippet，找可疑行
 # ---------------------------------------------------------------------------
-def _scan_code_snippet(code: str, error_type: str | None) -> list[dict[str, Any]]:
-    """对 code_snippet 做 ast 扫描，返回可疑行列表。失败就返回空。"""
-    suspicious: list[dict[str, Any]] = []
+def _parse_snippet(code: str) -> tuple[ast.AST | None, list[dict[str, Any]]]:
+    """解析代码片段；本身有语法错时返回 (None, 已构造的可疑行)。"""
     try:
-        tree = ast.parse(code)
+        return ast.parse(code), []
     except SyntaxError:
         # 代码本身就有语法错，直接标出来
-        suspicious.append(
+        return None, [
             {
                 "line": 0,
                 "reason": "代码片段本身存在语法错误，无法用 ast 解析",
                 "snippet": code.splitlines()[:3],
             }
-        )
-        return suspicious
+        ]
 
-    for node in ast.walk(tree):
-        # NameError 嫌疑：用了名字但没在当前片段里赋值
-        if error_type == "NameError" and isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-                # 粗略判断：片段里有没有这个名字的赋值
-                assigned = {
-                    n.id
-                    for n in ast.walk(tree)
-                    if isinstance(n, ast.Name)
-                    and isinstance(n.ctx, ast.Store)
-                }
-                if node.id not in assigned and not node.id.isupper():
-                    suspicious.append(
-                        {
-                            "line": getattr(node, "lineno", 0),
-                            "reason": f"名字 '{node.id}' 在片段里没看到赋值或参数定义",
-                            "name": node.id,
-                        }
-                    )
 
-        # AttributeError 嫌疑：对 None 字面量取属性
-        if error_type == "AttributeError" and isinstance(node, ast.Attribute):
-            val = node.value
-            if isinstance(val, ast.Constant) and val.value is None:
-                suspicious.append(
-                    {
-                        "line": getattr(node, "lineno", 0),
-                        "reason": "对 None 取属性，几乎肯定要炸",
-                        "attr": node.attr,
-                    }
-                )
+def _assigned_names(tree: ast.AST) -> set[str]:
+    """片段里所有被赋值的名字。"""
+    return {
+        n.id
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
+    }
 
-        # ZeroDivisionError 嫌疑：除以字面量 0
-        if error_type == "ZeroDivisionError" and isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div | ast.FloorDiv | ast.Mod):
-                right = node.right
-                if isinstance(right, ast.Constant) and right.value == 0:
-                    suspicious.append(
-                        {
-                            "line": getattr(node, "lineno", 0),
-                            "reason": "除以字面量 0",
-                        }
-                    )
 
-        # IndexError 嫌疑：对常量空列表取下标
-        if error_type == "IndexError" and isinstance(node, ast.Subscript) and isinstance(node.value, ast.List) and len(node.value.elts) == 0:
-                suspicious.append(
-                    {
-                        "line": getattr(node, "lineno", 0),
-                        "reason": "对空列表字面量取下标",
-                    }
-                )
+def _name_error_hit(node: ast.Name, assigned: set[str]) -> dict[str, Any] | None:
+    """NameError 嫌疑：用了名字但没在当前片段里赋值。"""
+    if node.id not in assigned and not node.id.isupper():
+        return {
+            "line": getattr(node, "lineno", 0),
+            "reason": f"名字 '{node.id}' 在片段里没看到赋值或参数定义",
+            "name": node.id,
+        }
+    return None
 
-    # 去重（同一行同一原因只留一条）
+
+def _attribute_error_hit(node: ast.Attribute) -> dict[str, Any] | None:
+    """AttributeError 嫌疑：对 None 字面量取属性。"""
+    val = node.value
+    if isinstance(val, ast.Constant) and val.value is None:
+        return {
+            "line": getattr(node, "lineno", 0),
+            "reason": "对 None 取属性，几乎肯定要炸",
+            "attr": node.attr,
+        }
+    return None
+
+
+def _zero_division_hit(node: ast.BinOp) -> dict[str, Any] | None:
+    """ZeroDivisionError 嫌疑：除以字面量 0。"""
+    right = node.right
+    if isinstance(right, ast.Constant) and right.value == 0:
+        return {
+            "line": getattr(node, "lineno", 0),
+            "reason": "除以字面量 0",
+        }
+    return None
+
+
+def _index_error_hit(node: ast.Subscript) -> dict[str, Any] | None:
+    """IndexError 嫌疑：对常量空列表取下标。"""
+    if isinstance(node.value, ast.List) and len(node.value.elts) == 0:
+        return {
+            "line": getattr(node, "lineno", 0),
+            "reason": "对空列表字面量取下标",
+        }
+    return None
+
+
+def _suspicious_for_node(
+    node: ast.AST, error_type: str | None, assigned: set[str]
+) -> dict[str, Any] | None:
+    """按异常类型检查单个 ast 节点，命中则返回一条可疑行。"""
+    if (
+        error_type == "NameError"
+        and isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Load)
+    ):
+        return _name_error_hit(node, assigned)
+    if error_type == "AttributeError" and isinstance(node, ast.Attribute):
+        return _attribute_error_hit(node)
+    if (
+        error_type == "ZeroDivisionError"
+        and isinstance(node, ast.BinOp)
+        and isinstance(node.op, ast.Div | ast.FloorDiv | ast.Mod)
+    ):
+        return _zero_division_hit(node)
+    if error_type == "IndexError" and isinstance(node, ast.Subscript):
+        return _index_error_hit(node)
+    return None
+
+
+def _dedupe_findings(suspicious: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """去重（同一行同一原因只留一条）。"""
     seen: set[tuple[int, str]] = set()
     deduped: list[dict[str, Any]] = []
     for s in suspicious:
@@ -575,6 +644,22 @@ def _scan_code_snippet(code: str, error_type: str | None) -> list[dict[str, Any]
         seen.add(key)
         deduped.append(s)
     return deduped
+
+
+def _scan_code_snippet(code: str, error_type: str | None) -> list[dict[str, Any]]:
+    """对 code_snippet 做 ast 扫描，返回可疑行列表。失败就返回空。"""
+    tree, syntax_findings = _parse_snippet(code)
+    if tree is None:
+        return syntax_findings
+
+    assigned = _assigned_names(tree)
+    suspicious: list[dict[str, Any]] = []
+    for node in ast.walk(tree):
+        hit = _suspicious_for_node(node, error_type, assigned)
+        if hit is not None:
+            suspicious.append(hit)
+
+    return _dedupe_findings(suspicious)
 
 
 # ---------------------------------------------------------------------------
@@ -677,24 +762,15 @@ class DebuggerTool(HuginnTool):
             success=True,
         )
 
-    # ---- suggest_fix ----
-    def _do_suggest(self, args: DebuggerInput) -> ToolResult:
-        error_type, error_message = self._resolve_type_and_msg(args)
-        if not error_type and not error_message and not args.code_snippet:
-            return ToolResult(
-                data=None,
-                success=False,
-                error="suggest_fix 需要 traceback_text / error_message / code_snippet 至少一个",
-            )
-
-        entry = _get_kb_entry(error_type or "")
-        details = _extract_details(error_type, error_message)
-
-        suggestions: list[dict[str, Any]] = []
-
-        # 主修复建议：基于模板
+    def _build_fix_text(
+        self,
+        entry: dict[str, Any],
+        details: dict[str, str],
+        error_message: str | None,
+    ) -> str:
+        """按模板填充主修复建议，缺字段时退回模板原文。"""
         try:
-            fix_text = entry["fix_template"].format(
+            return entry["fix_template"].format(
                 var=details["var"],
                 arg=details["arg"],
                 expected=details["expected"],
@@ -712,42 +788,67 @@ class DebuggerTool(HuginnTool):
                 msg=error_message or "",
             )
         except (KeyError, IndexError):
-            fix_text = entry["fix_template"]
+            return entry["fix_template"]
 
-        code_example = self._code_example(error_type, details)
+    def _suspicious_fix_suggestions(
+        self, code_snippet: str, error_type: str | None
+    ) -> list[dict[str, Any]]:
+        """用 ast 扫 code_snippet，追加可疑行建议。"""
+        return [
+            {
+                "fix": f"检查第 {s.get('line', '?')} 行：{s.get('reason', '')}",
+                "confidence": "medium",
+                "explanation": s.get("reason", ""),
+                "code_example": None,
+            }
+            for s in _scan_code_snippet(code_snippet, error_type)
+        ]
 
+    def _check_list_suggestions(self, entry: dict[str, Any]) -> list[dict[str, Any]]:
+        """检查项也作为补充建议。"""
+        return [
+            {
+                "fix": check,
+                "confidence": "low",
+                "explanation": "通用检查项",
+                "code_example": None,
+            }
+            for check in entry["check_list"][:2]
+        ]
+
+    # ---- suggest_fix ----
+    def _do_suggest(self, args: DebuggerInput) -> ToolResult:
+        error_type, error_message = self._resolve_type_and_msg(args)
+        if not error_type and not error_message and not args.code_snippet:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="suggest_fix 需要 traceback_text / error_message / code_snippet 至少一个",
+            )
+
+        entry = _get_kb_entry(error_type or "")
+        details = _extract_details(error_type, error_message)
+
+        suggestions: list[dict[str, Any]] = []
+
+        # 主修复建议：基于模板
         suggestions.append(
             {
-                "fix": fix_text,
+                "fix": self._build_fix_text(entry, details, error_message),
                 "confidence": "high" if error_type else "medium",
                 "explanation": entry["root_cause"],
-                "code_example": code_example,
+                "code_example": self._code_example(error_type, details),
             }
         )
 
         # 用 ast 扫 code_snippet，追加可疑行建议
         if args.code_snippet:
-            suspicious = _scan_code_snippet(args.code_snippet, error_type)
-            for s in suspicious:
-                suggestions.append(
-                    {
-                        "fix": f"检查第 {s.get('line', '?')} 行：{s.get('reason', '')}",
-                        "confidence": "medium",
-                        "explanation": s.get("reason", ""),
-                        "code_example": None,
-                    }
-                )
+            suggestions.extend(
+                self._suspicious_fix_suggestions(args.code_snippet, error_type)
+            )
 
         # 检查项也作为补充建议
-        for check in entry["check_list"][:2]:
-            suggestions.append(
-                {
-                    "fix": check,
-                    "confidence": "low",
-                    "explanation": "通用检查项",
-                    "code_example": None,
-                }
-            )
+        suggestions.extend(self._check_list_suggestions(entry))
 
         summary = f"共给出 {len(suggestions)} 条修复建议（{error_type or '未知异常'}）"
         return ToolResult(
@@ -802,7 +903,7 @@ class DebuggerTool(HuginnTool):
 
         # 尝试从单独的 error_message 里抠类型：形如 "NameError: foo"
         m = re.match(
-            r'^([A-Za-z_][\w\.]*(?:Error|Exception|Warning|IterationError))\s*:\s*(.*)$',
+            r"^([A-Za-z_][\w\.]*(?:Error|Exception|Warning|IterationError))\s*:\s*(.*)$",
             msg.strip(),
         )
         if m:
@@ -825,8 +926,26 @@ class DebuggerTool(HuginnTool):
         return None, msg
 
     # ---- 针对每种异常生成修复代码示例 ----
-    def _code_example(self, error_type: str | None, details: dict[str, str]) -> str | None:
+    def _code_example(
+        self, error_type: str | None, details: dict[str, str]
+    ) -> str | None:
         """给每种异常配一个最小修复示例。"""
+        if error_type in ("NameError", "TypeError"):
+            return self._example_missing_or_mistyped(error_type, details)
+        if error_type in ("AttributeError", "IndexError"):
+            return self._example_attr_or_index(error_type, details)
+        if error_type in ("KeyError", "ValueError"):
+            return self._example_key_or_value(error_type, details)
+        if error_type in ("ImportError", "ModuleNotFoundError", "SyntaxError"):
+            return self._example_import_or_syntax(error_type, details)
+        if error_type in ("ZeroDivisionError", "FileNotFoundError", "RecursionError"):
+            return self._example_div_file_or_recursion(error_type, details)
+        return None
+
+    def _example_missing_or_mistyped(
+        self, error_type: str, details: dict[str, str]
+    ) -> str:
+        """NameError / TypeError 的最小修复示例。"""
         if error_type == "NameError":
             var = details["var"]
             return (
@@ -837,13 +956,15 @@ class DebuggerTool(HuginnTool):
                 f"# 方案3：拼写检查\n"
                 f"# 搜一下 {var} 在项目里到底叫什么"
             )
-        if error_type == "TypeError":
-            return (
-                "# 检查实际类型并转换\n"
-                "if not isinstance(x, expected_type):\n"
-                "    x = expected_type(x)\n"
-                "result = func(x)"
-            )
+        return (
+            "# 检查实际类型并转换\n"
+            "if not isinstance(x, expected_type):\n"
+            "    x = expected_type(x)\n"
+            "result = func(x)"
+        )
+
+    def _example_attr_or_index(self, error_type: str, details: dict[str, str]) -> str:
+        """AttributeError / IndexError 的最小修复示例。"""
         if error_type == "AttributeError":
             attr = details["attr"]
             return (
@@ -854,14 +975,16 @@ class DebuggerTool(HuginnTool):
                 "    # 处理 None 的情况\n"
                 "    ..."
             )
-        if error_type == "IndexError":
-            return (
-                "# 访问前判长度\n"
-                "if len(seq) > idx:\n"
-                "    val = seq[idx]\n"
-                "else:\n"
-                "    val = default"
-            )
+        return (
+            "# 访问前判长度\n"
+            "if len(seq) > idx:\n"
+            "    val = seq[idx]\n"
+            "else:\n"
+            "    val = default"
+        )
+
+    def _example_key_or_value(self, error_type: str, details: dict[str, str]) -> str:
+        """KeyError / ValueError 的最小修复示例。"""
         if error_type == "KeyError":
             key = details["key"]
             return (
@@ -871,14 +994,18 @@ class DebuggerTool(HuginnTool):
                 f"if '{key}' in d:\n"
                 f"    val = d['{key}']"
             )
-        if error_type == "ValueError":
-            return (
-                "# 用 try/except 兜底\n"
-                "try:\n"
-                "    val = int(s)\n"
-                "except ValueError:\n"
-                "    val = default"
-            )
+        return (
+            "# 用 try/except 兜底\n"
+            "try:\n"
+            "    val = int(s)\n"
+            "except ValueError:\n"
+            "    val = default"
+        )
+
+    def _example_import_or_syntax(
+        self, error_type: str, details: dict[str, str]
+    ) -> str:
+        """ImportError / ModuleNotFoundError / SyntaxError 的最小修复示例。"""
         if error_type in ("ImportError", "ModuleNotFoundError"):
             module = details["module"]
             return (
@@ -890,14 +1017,18 @@ class DebuggerTool(HuginnTool):
                 f"except ImportError:\n"
                 f"    {module} = None"
             )
-        if error_type == "SyntaxError":
-            return (
-                "# 常见语法坑：\n"
-                "# 1. 括号没闭合 → 补上 ( [ {\n"
-                "# 2. if/for/def 后漏冒号 → 加 :\n"
-                "# 3. tab 和空格混用 → 统一用 4 个空格\n"
-                "# 4. 字符串引号不匹配 → 检查 ' 和 \""
-            )
+        return (
+            "# 常见语法坑：\n"
+            "# 1. 括号没闭合 → 补上 ( [ {\n"
+            "# 2. if/for/def 后漏冒号 → 加 :\n"
+            "# 3. tab 和空格混用 → 统一用 4 个空格\n"
+            "# 4. 字符串引号不匹配 → 检查 ' 和 \""
+        )
+
+    def _example_div_file_or_recursion(
+        self, error_type: str, details: dict[str, str]
+    ) -> str:
+        """ZeroDivisionError / FileNotFoundError / RecursionError 的示例。"""
         if error_type == "ZeroDivisionError":
             return (
                 "# 除法前判除数\n"
@@ -917,18 +1048,16 @@ class DebuggerTool(HuginnTool):
                 "else:\n"
                 "    raise FileNotFoundError(f'找不到文件: {{p}}')"
             )
-        if error_type == "RecursionError":
-            return (
-                "# 检查终止条件写对没\n"
-                "def f(n):\n"
-                "    if n <= 0:        # ← 必须有这一行\n"
-                "        return 0\n"
-                "    return f(n - 1)\n\n"
-                "# 太深就改迭代\n"
-                "def f_iter(n):\n"
-                "    acc = 0\n"
-                "    for i in range(n):\n"
-                "        acc += 1\n"
-                "    return acc"
-            )
-        return None
+        return (
+            "# 检查终止条件写对没\n"
+            "def f(n):\n"
+            "    if n <= 0:        # ← 必须有这一行\n"
+            "        return 0\n"
+            "    return f(n - 1)\n\n"
+            "# 太深就改迭代\n"
+            "def f_iter(n):\n"
+            "    acc = 0\n"
+            "    for i in range(n):\n"
+            "        acc += 1\n"
+            "    return acc"
+        )

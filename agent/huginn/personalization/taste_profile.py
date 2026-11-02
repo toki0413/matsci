@@ -61,73 +61,74 @@ class TasteProfile:
 
         parts: list[str] = []
 
-        tm = self.thinking_mode
+        thinking = TasteProfile._thinking_directive(self.thinking_mode)
+        if thinking is not None:
+            parts.append(thinking)
+
+        imagination = TasteProfile._imagination_directive(self.imagination)
+        if imagination is not None:
+            parts.append(imagination)
+
+        research = TasteProfile._research_directive(self.research_style)
+        if research is not None:
+            parts.append(research)
+
+        return "用户 taste profile:\n" + "\n".join(f"  - {p}" for p in parts)
+
+    @staticmethod
+    def _thinking_directive(tm: ThinkingMode) -> str | None:
         if tm == ThinkingMode.ANALYTICAL:
-            parts.append(
+            return (
                 "用户偏好严谨的逻辑分析, 回答时给出推导步骤和数据支撑, "
                 "用精确的定义而非模糊的类比."
             )
         elif tm == ThinkingMode.INTUITIVE:
-            parts.append(
+            return (
                 "用户偏好直觉式理解, 回答时先用类比和直觉解释, "
                 "再补充细节. 避免一上来就堆公式."
             )
         elif tm == ThinkingMode.VISUAL:
-            parts.append(
+            return (
                 "用户偏好可视化思维, 回答时尽量用图表/示意图描述, "
                 "用空间关系而非纯文字表达结构."
             )
         elif tm == ThinkingMode.SYSTEMS:
-            parts.append(
+            return (
                 "用户偏好系统性思考, 回答时先展示整体架构和模块关系, "
                 "再深入细节. 强调连接和交互."
             )
+        return None
 
-        img = self.imagination
+    @staticmethod
+    def _imagination_directive(img: Imagination) -> str | None:
         if img == Imagination.CONSERVATIVE:
-            parts.append(
-                "用户偏好保守推断, 只给有数据支撑的结论, "
-                "明确标注假设的不确定性."
-            )
+            return "用户偏好保守推断, 只给有数据支撑的结论, 明确标注假设的不确定性."
         elif img == Imagination.BALANCED:
-            parts.append(
-                "用户偏好平衡的推测, 既给保守结论也提合理外推, "
-                "区分已验证和推测部分."
-            )
+            return "用户偏好平衡的推测, 既给保守结论也提合理外推, 区分已验证和推测部分."
         elif img == Imagination.SPECULATIVE:
-            parts.append(
+            return (
                 "用户偏好大胆推测, 鼓励提出前瞻性假设和非常规思路, "
                 "即使证据不完全也值得探索."
             )
         elif img == Imagination.VISIONARY:
-            parts.append(
-                "用户偏好颠覆性想象, 鼓励提出范式转换级的想法, "
-                "不必受现有框架约束."
-            )
+            return "用户偏好颠覆性想象, 鼓励提出范式转换级的想法, 不必受现有框架约束."
+        return None
 
-        rs = self.research_style
+    @staticmethod
+    def _research_directive(rs: ResearchStyle) -> str | None:
         if rs == ResearchStyle.THEORETICAL:
-            parts.append(
-                "用户偏好理论驱动的研究, 从第一性原理出发推导, "
-                "关注数学优美和物理本质."
+            return (
+                "用户偏好理论驱动的研究, 从第一性原理出发推导, 关注数学优美和物理本质."
             )
         elif rs == ResearchStyle.EMPIRICAL:
-            parts.append(
-                "用户偏好实验驱动的研究, 从数据出发归纳规律, "
-                "关注可复现性和统计显著性."
+            return (
+                "用户偏好实验驱动的研究, 从数据出发归纳规律, 关注可复现性和统计显著性."
             )
         elif rs == ResearchStyle.ENGINEERING:
-            parts.append(
-                "用户偏好工程导向的研究, 从应用需求出发, "
-                "关注可行性和性能优化."
-            )
+            return "用户偏好工程导向的研究, 从应用需求出发, 关注可行性和性能优化."
         elif rs == ResearchStyle.MIXED:
-            parts.append(
-                "用户偏好混合风格, 理论+实验+工程并重, "
-                "根据问题灵活切换."
-            )
-
-        return "用户 taste profile:\n" + "\n".join(f"  - {p}" for p in parts)
+            return "用户偏好混合风格, 理论+实验+工程并重, 根据问题灵活切换."
+        return None
 
 
 # ── 问卷设计 ──────────────────────────────────────────────────────

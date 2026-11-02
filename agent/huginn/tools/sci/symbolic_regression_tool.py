@@ -72,7 +72,9 @@ class SymbolicRegressionInput(BaseModel):
     )
     # sobol_indices 专用
     n_sobol_samples: int = Field(
-        default=1024, ge=64, le=16384,
+        default=1024,
+        ge=64,
+        le=16384,
         description="Base sample count for Sobol Monte Carlo (total cost ≈ N*(d+2))",
     )
     sobol_model: str | None = Field(
@@ -132,23 +134,33 @@ class SymbolicRegressionTool(HuginnTool):
     ) -> tuple[np.ndarray, np.ndarray, list[str]]:
         """Load X, Y and feature names from file or inline JSON."""
         if args.data_json:
-            data = args.data_json
-            if args.target_column not in data:
-                raise ValueError(
-                    f"target_column '{args.target_column}' not found in data_json"
-                )
-            y = np.array(data[args.target_column], dtype=np.float64)
-            feature_cols = args.feature_columns or [
-                k for k in data if k != args.target_column
-            ]
-            x = np.column_stack(
-                [np.array(data[c], dtype=np.float64) for c in feature_cols]
-            )
-            return x, y.reshape(-1, 1), feature_cols
+            return self._load_inline_data(args)
 
         if not args.data_file:
             raise ValueError("Either data_file or data_json must be provided")
 
+        return self._load_csv_data(args)
+
+    @staticmethod
+    def _load_inline_data(
+        args: SymbolicRegressionInput,
+    ) -> tuple[np.ndarray, np.ndarray, list[str]]:
+        data = args.data_json
+        if args.target_column not in data:
+            raise ValueError(
+                f"target_column '{args.target_column}' not found in data_json"
+            )
+        y = np.array(data[args.target_column], dtype=np.float64)
+        feature_cols = args.feature_columns or [
+            k for k in data if k != args.target_column
+        ]
+        x = np.column_stack([np.array(data[c], dtype=np.float64) for c in feature_cols])
+        return x, y.reshape(-1, 1), feature_cols
+
+    @staticmethod
+    def _load_csv_data(
+        args: SymbolicRegressionInput,
+    ) -> tuple[np.ndarray, np.ndarray, list[str]]:
         path = Path(args.data_file)
         if not path.exists():
             raise FileNotFoundError(f"Data file not found: {path}")
@@ -214,89 +226,13 @@ class SymbolicRegressionTool(HuginnTool):
         # Check PSE availability
         if not self._ensure_pse_available():
             # Fallback: return mock result with helpful message
-            return ToolResult(
-                data={
-                    "pareto_front": [],
-                    "best_expression": None,
-                    "message": (
-                        "PSE/PSRN not available. Install from the符号回归 directory "
-                        "or ensure model/regressor.py is on PYTHONPATH."
-                    ),
-                    "features": features,
-                    "samples": X.shape[0],
-                },
-                success=False,
-                error="PSE/PSRN not importable",
-            )
+            return SymbolicRegressionTool._pse_unavailable_result(features, X.shape[0])
 
         try:
-            # Build stage config dynamically
-            stage_config = {
-                "default": {
-                    "operators": args.operators,
-                    "time_limit": args.time_limit,
-                    "n_psrn_inputs": min(5 + len(features), 10),
-                    "n_sample_variables": len(features),
-                },
-                "stages": [
-                    {
-                        "time_limit": min(30, args.time_limit // 3),
-                        "n_psrn_inputs": min(3 + len(features), 7),
-                    },
-                    {},
-                ],
-            }
-
-            # Write temporary stage config
-            import yaml
-
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".yaml", delete=False
-            ) as f:
-                yaml.dump(stage_config, f)
-                stage_path = f.name
-
-            try:
-                # Configure PSRN
-                regressor = self._regressor_class(
-                    variables=features,
-                    use_const=args.use_const,
-                    n_symbol_layers=args.n_symbol_layers,
-                    device="cuda" if self._cuda_available() else "cpu",
-                    token_generator="GP",
-                    stage_config=stage_path,
-                )
-
-                n_down = args.n_down_sample or min(X.shape[0], 1000)
-
-                flag, pareto_ls = regressor.fit(
-                    X,
-                    Y,
-                    n_down_sample=n_down,
-                    probe=args.probe_expression,
-                    top_k=args.top_k,
-                    time_limit=args.time_limit,
-                )
-            finally:
-                Path(stage_path).unlink(missing_ok=True)
-
-            # Format results
-            pareto_results = []
-            best_expr = None
-            best_reward = -float("inf")
-
-            for item in pareto_ls[: args.top_k]:
-                expr, reward, mse, complexity = item
-                entry = {
-                    "expression": str(expr),
-                    "reward": float(reward),
-                    "mse": float(mse),
-                    "complexity": int(complexity),
-                }
-                pareto_results.append(entry)
-                if reward > best_reward:
-                    best_reward = reward
-                    best_expr = entry
+            flag, pareto_ls = self._fit_psrn(args, X, Y, features)
+            pareto_results, best_expr = SymbolicRegressionTool._format_pareto(
+                pareto_ls, args.top_k
+            )
 
             return ToolResult(
                 data={
@@ -319,6 +255,108 @@ class SymbolicRegressionTool(HuginnTool):
                 success=False,
                 error=f"Symbolic regression failed: {e}\n{traceback_str}",
             )
+
+    @staticmethod
+    def _pse_unavailable_result(features: list[str], n_samples: int) -> ToolResult:
+        return ToolResult(
+            data={
+                "pareto_front": [],
+                "best_expression": None,
+                "message": (
+                    "PSE/PSRN not available. Install from the符号回归 directory "
+                    "or ensure model/regressor.py is on PYTHONPATH."
+                ),
+                "features": features,
+                "samples": n_samples,
+            },
+            success=False,
+            error="PSE/PSRN not importable",
+        )
+
+    @staticmethod
+    def _build_stage_config(
+        args: SymbolicRegressionInput, features: list[str]
+    ) -> dict[str, Any]:
+        # Build stage config dynamically
+        return {
+            "default": {
+                "operators": args.operators,
+                "time_limit": args.time_limit,
+                "n_psrn_inputs": min(5 + len(features), 10),
+                "n_sample_variables": len(features),
+            },
+            "stages": [
+                {
+                    "time_limit": min(30, args.time_limit // 3),
+                    "n_psrn_inputs": min(3 + len(features), 7),
+                },
+                {},
+            ],
+        }
+
+    def _fit_psrn(
+        self,
+        args: SymbolicRegressionInput,
+        X: np.ndarray,
+        Y: np.ndarray,
+        features: list[str],
+    ) -> tuple[Any, list[Any]]:
+        stage_config = SymbolicRegressionTool._build_stage_config(args, features)
+
+        # Write temporary stage config
+        import yaml
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            yaml.dump(stage_config, f)
+            stage_path = f.name
+
+        try:
+            # Configure PSRN
+            regressor = self._regressor_class(
+                variables=features,
+                use_const=args.use_const,
+                n_symbol_layers=args.n_symbol_layers,
+                device="cuda" if self._cuda_available() else "cpu",
+                token_generator="GP",
+                stage_config=stage_path,
+            )
+
+            n_down = args.n_down_sample or min(X.shape[0], 1000)
+
+            return regressor.fit(
+                X,
+                Y,
+                n_down_sample=n_down,
+                probe=args.probe_expression,
+                top_k=args.top_k,
+                time_limit=args.time_limit,
+            )
+        finally:
+            Path(stage_path).unlink(missing_ok=True)
+
+    @staticmethod
+    def _format_pareto(
+        pareto_ls: list[Any], top_k: int
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        # Format results
+        pareto_results = []
+        best_expr = None
+        best_reward = -float("inf")
+
+        for item in pareto_ls[:top_k]:
+            expr, reward, mse, complexity = item
+            entry = {
+                "expression": str(expr),
+                "reward": float(reward),
+                "mse": float(mse),
+                "complexity": int(complexity),
+            }
+            pareto_results.append(entry)
+            if reward > best_reward:
+                best_reward = reward
+                best_expr = entry
+
+        return pareto_results, best_expr
 
     async def _evaluate(self, args: SymbolicRegressionInput) -> ToolResult:
         """Evaluate a known expression on provided data."""
@@ -379,9 +417,7 @@ class SymbolicRegressionTool(HuginnTool):
 
         # Parse expressions: semicolon-separated
         expressions = [
-            expr.strip()
-            for expr in args.probe_expression.split(";")
-            if expr.strip()
+            expr.strip() for expr in args.probe_expression.split(";") if expr.strip()
         ]
         if len(expressions) < 2:
             return ToolResult(
@@ -392,41 +428,13 @@ class SymbolicRegressionTool(HuginnTool):
 
         local_vars = {f: X[:, i] for i, f in enumerate(features)}
 
-        results: list[dict[str, Any]] = []
-        for expr in expressions:
-            try:
-                predicted = safe_math_eval(expr, local_vars)
-                predicted = np.asarray(predicted, dtype=np.float64).reshape(-1, 1)
-                mse = float(np.mean((predicted - Y) ** 2))
-                rmse = float(np.sqrt(mse))
-                ss_res = float(np.sum((Y - predicted) ** 2))
-                ss_tot = float(np.sum((Y - np.mean(Y)) ** 2))
-                r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else 0.0
-                results.append({
-                    "expression": expr,
-                    "mse": mse,
-                    "rmse": rmse,
-                    "r2": r2,
-                    "rank": None,
-                })
-            except Exception as e:
-                results.append({
-                    "expression": expr,
-                    "error": str(e),
-                    "rank": None,
-                })
+        results: list[dict[str, Any]] = [
+            SymbolicRegressionTool._evaluate_expression(expr, local_vars, Y)
+            for expr in expressions
+        ]
 
         # Rank by R² (descending), errors get lowest rank
-        valid = [r for r in results if "error" not in r]
-        valid.sort(key=lambda r: r["r2"], reverse=True)
-        for i, r in enumerate(valid, 1):
-            r["rank"] = i
-        # Assign rank after valid for errored ones
-        error_rank = len(valid) + 1
-        for r in results:
-            if r["rank"] is None:
-                r["rank"] = error_rank
-                error_rank += 1
+        valid = SymbolicRegressionTool._assign_ranks(results)
 
         return ToolResult(
             data={
@@ -439,6 +447,46 @@ class SymbolicRegressionTool(HuginnTool):
             },
             success=True,
         )
+
+    @staticmethod
+    def _evaluate_expression(
+        expr: str, local_vars: dict[str, np.ndarray], Y: np.ndarray
+    ) -> dict[str, Any]:
+        try:
+            predicted = safe_math_eval(expr, local_vars)
+            predicted = np.asarray(predicted, dtype=np.float64).reshape(-1, 1)
+            mse = float(np.mean((predicted - Y) ** 2))
+            rmse = float(np.sqrt(mse))
+            ss_res = float(np.sum((Y - predicted) ** 2))
+            ss_tot = float(np.sum((Y - np.mean(Y)) ** 2))
+            r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else 0.0
+            return {
+                "expression": expr,
+                "mse": mse,
+                "rmse": rmse,
+                "r2": r2,
+                "rank": None,
+            }
+        except Exception as e:
+            return {
+                "expression": expr,
+                "error": str(e),
+                "rank": None,
+            }
+
+    @staticmethod
+    def _assign_ranks(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        valid = [r for r in results if "error" not in r]
+        valid.sort(key=lambda r: r["r2"], reverse=True)
+        for i, r in enumerate(valid, 1):
+            r["rank"] = i
+        # Assign rank after valid for errored ones
+        error_rank = len(valid) + 1
+        for r in results:
+            if r["rank"] is None:
+                r["rank"] = error_rank
+                error_rank += 1
+        return valid
 
     def _cuda_available(self) -> bool:
         try:
@@ -455,123 +503,37 @@ class SymbolicRegressionTool(HuginnTool):
         If data is provided (data_file/data_json), uses it as evaluation grid;
         otherwise builds a uniform grid from args.constraints['bounds'].
         """
-        if not args.probe_expression:
-            return ToolResult(
-                data=None, success=False,
-                error="probe_expression required for constraint_check",
-            )
-        if not args.constraints:
-            return ToolResult(
-                data=None, success=False,
-                error="constraints dict required for constraint_check",
-            )
+        error = SymbolicRegressionTool._validate_constraint_args(args)
+        if error is not None:
+            return error
 
         # 加载或构造采样网格
-        features: list[str]
-        X: np.ndarray
-        try:
-            X_data, _, features = self._load_data(args)
-            X = X_data
-        except Exception:
-            # 没数据 → 从 bounds 构造网格
-            bounds = args.constraints.get("bounds") or {}
-            if not bounds:
-                return ToolResult(
-                    data=None, success=False,
-                    error="Provide data or constraints['bounds'] for sampling grid",
-                )
-            features = list(bounds.keys())
-            grids = []
-            for f in features:
-                lo, hi = bounds[f]
-                # 21 点确保对称区间包含 0 (捕捉极点)
-                grids.append(np.linspace(lo, hi, 21))
-            X = np.column_stack([g.ravel() for g in np.meshgrid(*grids)])
+        X, features, error = self._constraint_grid(args)
+        if error is not None:
+            return error
 
         # 在网格上求值
-        try:
-            local_vars = {f: X[:, i] for i, f in enumerate(features)}
-            y_pred = np.asarray(safe_math_eval(args.probe_expression, local_vars),
-                                dtype=np.float64).ravel()
-        except SafeEvalError as e:
-            return ToolResult(data=None, success=False, error=f"Expression rejected: {e}")
-        except Exception as e:
-            return ToolResult(data=None, success=False, error=f"Evaluation failed: {e}")
+        y_pred, error = SymbolicRegressionTool._eval_constraint_grid(args, X, features)
+        if error is not None:
+            return error
 
         checks: list[dict[str, Any]] = []
 
         # 1. 正定性: 输出 >= 0
         if args.constraints.get("positivity"):
-            violated = int(np.sum(y_pred < -1e-10))
-            checks.append({
-                "name": "positivity",
-                "passed": violated == 0,
-                "violations": violated,
-                "min_value": float(np.min(y_pred)),
-            })
+            checks.append(SymbolicRegressionTool._positivity_check(y_pred))
 
         # 2. 单调性 (有限差分) — 对每个指定特征
-        for direction, sign in (("monotonic_in", 1), ("monotonic_decreasing_in", -1)):
-            for fname in args.constraints.get(direction, []) or []:
-                if fname not in features:
-                    checks.append({
-                        "name": f"{direction}:{fname}",
-                        "passed": False,
-                        "error": f"feature {fname} not in data",
-                    })
-                    continue
-                col = features.index(fname)
-                # 沿该轴排序后看差分符号
-                order = np.argsort(X[:, col])
-                y_sorted = y_pred[order]
-                dy = np.diff(y_sorted)
-                if sign > 0:
-                    violated = int(np.sum(dy < -1e-9))
-                else:
-                    violated = int(np.sum(dy > 1e-9))
-                checks.append({
-                    "name": f"{direction}:{fname}",
-                    "passed": violated == 0,
-                    "violations": violated,
-                    "n_steps": len(dy),
-                })
+        checks.extend(
+            SymbolicRegressionTool._monotonic_checks(args, X, y_pred, features)
+        )
 
         # 3. 量纲一致性 (契约层: sympy 推断 + UnitRegistry, 不再是语法空壳)
         if args.constraints.get("dimensional_check"):
-            from huginn.research.external_validator import (
-                _to_symbol,
-                check_expression_dimensions,
-            )
-
-            units = args.constraints.get("units") or {}
-            target_unit = args.constraints.get("target_unit") or ""
-            # feature 单位标签 → SI 符号; 未提供 units 时退化为"仅检查能解析"
-            sym_units = {f: _to_symbol(str(units[f])) for f in features if units.get(f)}
-            if not sym_units or not target_unit:
-                # 没有完整单位声明 → 如实报"量纲未知", 不硬判通过
-                checks.append({
-                    "name": "dimensional_check",
-                    "passed": False,
-                    "note": "需 constraints['units'](feature->unit) + ['target_unit'] 才能做真量纲校验",
-                })
-            else:
-                dim = check_expression_dimensions(args.probe_expression, sym_units, target_unit)
-                checks.append({
-                    "name": "dimensional_check",
-                    "passed": dim["ok"],
-                    "inferred": dim.get("inferred"),
-                    "expected": dim.get("expected"),
-                    "note": dim.get("error") or f"inferred={dim.get('inferred')}",
-                })
+            checks.append(SymbolicRegressionTool._dimensional_check(args, features))
 
         # 4. 边界域 (输出在 bounds 内有限)
-        finite = bool(np.all(np.isfinite(y_pred)))
-        checks.append({
-            "name": "finiteness",
-            "passed": finite,
-            "n_nan": int(np.sum(np.isnan(y_pred))),
-            "n_inf": int(np.sum(np.isinf(y_pred))),
-        })
+        checks.append(SymbolicRegressionTool._finiteness_check(y_pred))
 
         all_passed = all(c.get("passed", False) for c in checks)
         return ToolResult(
@@ -584,6 +546,166 @@ class SymbolicRegressionTool(HuginnTool):
             success=True,
         )
 
+    @staticmethod
+    def _validate_constraint_args(
+        args: SymbolicRegressionInput,
+    ) -> ToolResult | None:
+        if not args.probe_expression:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="probe_expression required for constraint_check",
+            )
+        if not args.constraints:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="constraints dict required for constraint_check",
+            )
+        return None
+
+    def _constraint_grid(
+        self, args: SymbolicRegressionInput
+    ) -> tuple[np.ndarray | None, list[str] | None, ToolResult | None]:
+        try:
+            X_data, _, features = self._load_data(args)
+            return X_data, features, None
+        except Exception:
+            # 没数据 → 从 bounds 构造网格
+            bounds = args.constraints.get("bounds") or {}
+            if not bounds:
+                return (
+                    None,
+                    None,
+                    ToolResult(
+                        data=None,
+                        success=False,
+                        error="Provide data or constraints['bounds'] for sampling grid",
+                    ),
+                )
+            X, features = SymbolicRegressionTool._grid_from_bounds(bounds)
+            return X, features, None
+
+    @staticmethod
+    def _grid_from_bounds(
+        bounds: dict[str, list[float]],
+    ) -> tuple[np.ndarray, list[str]]:
+        features = list(bounds.keys())
+        grids = []
+        for f in features:
+            lo, hi = bounds[f]
+            # 21 点确保对称区间包含 0 (捕捉极点)
+            grids.append(np.linspace(lo, hi, 21))
+        X = np.column_stack([g.ravel() for g in np.meshgrid(*grids)])
+        return X, features
+
+    @staticmethod
+    def _eval_constraint_grid(
+        args: SymbolicRegressionInput, X: np.ndarray, features: list[str]
+    ) -> tuple[np.ndarray | None, ToolResult | None]:
+        try:
+            local_vars = {f: X[:, i] for i, f in enumerate(features)}
+            y_pred = np.asarray(
+                safe_math_eval(args.probe_expression, local_vars),
+                dtype=np.float64,
+            ).ravel()
+            return y_pred, None
+        except SafeEvalError as e:
+            return None, ToolResult(
+                data=None, success=False, error=f"Expression rejected: {e}"
+            )
+        except Exception as e:
+            return None, ToolResult(
+                data=None, success=False, error=f"Evaluation failed: {e}"
+            )
+
+    @staticmethod
+    def _positivity_check(y_pred: np.ndarray) -> dict[str, Any]:
+        violated = int(np.sum(y_pred < -1e-10))
+        return {
+            "name": "positivity",
+            "passed": violated == 0,
+            "violations": violated,
+            "min_value": float(np.min(y_pred)),
+        }
+
+    @staticmethod
+    def _monotonic_checks(
+        args: SymbolicRegressionInput,
+        X: np.ndarray,
+        y_pred: np.ndarray,
+        features: list[str],
+    ) -> list[dict[str, Any]]:
+        checks: list[dict[str, Any]] = []
+        for direction, sign in (("monotonic_in", 1), ("monotonic_decreasing_in", -1)):
+            for fname in args.constraints.get(direction, []) or []:
+                if fname not in features:
+                    checks.append(
+                        {
+                            "name": f"{direction}:{fname}",
+                            "passed": False,
+                            "error": f"feature {fname} not in data",
+                        }
+                    )
+                    continue
+                col = features.index(fname)
+                # 沿该轴排序后看差分符号
+                order = np.argsort(X[:, col])
+                y_sorted = y_pred[order]
+                dy = np.diff(y_sorted)
+                if sign > 0:
+                    violated = int(np.sum(dy < -1e-9))
+                else:
+                    violated = int(np.sum(dy > 1e-9))
+                checks.append(
+                    {
+                        "name": f"{direction}:{fname}",
+                        "passed": violated == 0,
+                        "violations": violated,
+                        "n_steps": len(dy),
+                    }
+                )
+        return checks
+
+    @staticmethod
+    def _dimensional_check(
+        args: SymbolicRegressionInput, features: list[str]
+    ) -> dict[str, Any]:
+        from huginn.research.external_validator import (
+            _to_symbol,
+            check_expression_dimensions,
+        )
+
+        units = args.constraints.get("units") or {}
+        target_unit = args.constraints.get("target_unit") or ""
+        # feature 单位标签 → SI 符号; 未提供 units 时退化为"仅检查能解析"
+        sym_units = {f: _to_symbol(str(units[f])) for f in features if units.get(f)}
+        if not sym_units or not target_unit:
+            # 没有完整单位声明 → 如实报"量纲未知", 不硬判通过
+            return {
+                "name": "dimensional_check",
+                "passed": False,
+                "note": "需 constraints['units'](feature->unit) + ['target_unit'] 才能做真量纲校验",
+            }
+        dim = check_expression_dimensions(args.probe_expression, sym_units, target_unit)
+        return {
+            "name": "dimensional_check",
+            "passed": dim["ok"],
+            "inferred": dim.get("inferred"),
+            "expected": dim.get("expected"),
+            "note": dim.get("error") or f"inferred={dim.get('inferred')}",
+        }
+
+    @staticmethod
+    def _finiteness_check(y_pred: np.ndarray) -> dict[str, Any]:
+        finite = bool(np.all(np.isfinite(y_pred)))
+        return {
+            "name": "finiteness",
+            "passed": finite,
+            "n_nan": int(np.sum(np.isnan(y_pred))),
+            "n_inf": int(np.sum(np.isinf(y_pred))),
+        }
+
     async def _sobol_indices(self, args: SymbolicRegressionInput) -> ToolResult:
         """First-order + total Sobol sensitivity indices via Monte Carlo.
 
@@ -591,11 +713,26 @@ class SymbolicRegressionTool(HuginnTool):
         Model is either args.sobol_model (Python expr) or args.probe_expression.
         Domain is taken from args.constraints['bounds'] or unit hypercube.
         """
+        inputs = SymbolicRegressionTool._sobol_inputs(args)
+        if isinstance(inputs, ToolResult):
+            return inputs
+        model_expr, features, lo, hi, N = inputs
+
+        A_s, B_s = SymbolicRegressionTool._saltelli_base_samples(
+            N, len(features), lo, hi
+        )
+        return SymbolicRegressionTool._sobol_result(model_expr, features, N, A_s, B_s)
+
+    @staticmethod
+    def _sobol_inputs(
+        args: SymbolicRegressionInput,
+    ) -> tuple[str, list[str], np.ndarray, np.ndarray, int] | ToolResult:
         # 选模型表达式
         model_expr = args.sobol_model or args.probe_expression
         if not model_expr:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="Provide sobol_model or probe_expression for Sobol analysis",
             )
 
@@ -603,7 +740,8 @@ class SymbolicRegressionTool(HuginnTool):
         bounds = (args.constraints or {}).get("bounds") or {}
         if not bounds:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="constraints['bounds'] required for Sobol input domain",
             )
         features = list(bounds.keys())
@@ -612,75 +750,42 @@ class SymbolicRegressionTool(HuginnTool):
             return ToolResult(data=None, success=False, error="Need >=1 features")
         lo = np.array([bounds[f][0] for f in features], dtype=np.float64)
         hi = np.array([bounds[f][1] for f in features], dtype=np.float64)
-        N = args.n_sobol_samples
+        return model_expr, features, lo, hi, args.n_sobol_samples
 
-        # Saltelli 采样矩阵: A, B (各 N×d), 然后对每个 i 生成 A_B^{(i)}
-        rng = np.random.default_rng(42)
-        A = rng.uniform(0, 1, size=(N, d))
-        B = rng.uniform(0, 1, size=(N, d))
-
-        # 缩放到 bounds
-        def scale(M):
-            return lo + M * (hi - lo)
-
-        A_s = scale(A)
-        B_s = scale(B)
-
-        # 评估函数
-        def eval_at(X_arr):
-            local = {f: X_arr[:, i] for i, f in enumerate(features)}
-            try:
-                y = np.asarray(safe_math_eval(model_expr, local), dtype=np.float64).ravel()
-            except Exception as e:
-                raise RuntimeError(f"Model eval failed: {e}") from e
-            return y
-
-        try:
-            fA = eval_at(A_s)
-            fB = eval_at(B_s)
-            # 对每个 i, 把 A 的第 i 列换成 B 的第 i 列 (Saltelli mixed matrix AB^{(i)})
-            fAB = np.zeros((d, N))
-            for i in range(d):
-                AB_i = A_s.copy()
-                AB_i[:, i] = B_s[:, i]
-                fAB[i] = eval_at(AB_i)
-        except RuntimeError as e:
-            return ToolResult(data=None, success=False, error=str(e))
+    @staticmethod
+    def _sobol_result(
+        model_expr: str,
+        features: list[str],
+        N: int,
+        A_s: np.ndarray,
+        B_s: np.ndarray,
+    ) -> ToolResult:
+        d = len(features)
+        fA, fB, fAB, error = SymbolicRegressionTool._sobol_evaluate(
+            model_expr, features, A_s, B_s
+        )
+        if error is not None:
+            return error
 
         # 方差
         var_y = float(np.var(np.concatenate([fA, fB]), ddof=1))
         if var_y < 1e-15:
-            return ToolResult(
-                data={
-                    "model": model_expr,
-                    "features": features,
-                    "n_samples": N,
-                    "variance": var_y,
-                    "first_order": dict.fromkeys(features, 0.0),
-                    "total": dict.fromkeys(features, 0.0),
-                    "note": "Near-zero variance; model may be constant.",
-                },
-                success=True,
+            return SymbolicRegressionTool._sobol_constant_result(
+                model_expr, features, N, var_y
             )
 
-        # Saltelli 2010 估计器:
-        # 一阶 S_i = (1/N) Σ fB_j (fAB^{(i)}_j - fA_j) / Var
-        # 全序 ST_i = (1/(2N)) Σ (fA_j - fAB^{(i)}_j)^2 / Var   (Jansen 1999)
-        first_order = []
-        for i in range(d):
-            s = float(np.mean(fB * (fAB[i] - fA)) / var_y)
-            first_order.append(s)
-
-        total = []
-        for i in range(d):
-            s = float(np.mean((fA - fAB[i]) ** 2) / (2 * var_y))
-            total.append(s)
+        first_order, total = SymbolicRegressionTool._sobol_estimates(
+            fA, fB, fAB, d, var_y
+        )
 
         # 排序 + 重要性
         ranking = sorted(
-            [{"feature": f, "S": first_order[i], "ST": total[i]}
-             for i, f in enumerate(features)],
-            key=lambda r: r["ST"], reverse=True,
+            [
+                {"feature": f, "S": first_order[i], "ST": total[i]}
+                for i, f in enumerate(features)
+            ],
+            key=lambda r: r["ST"],
+            reverse=True,
         )
         return ToolResult(
             data={
@@ -694,6 +799,86 @@ class SymbolicRegressionTool(HuginnTool):
                 "ranking": ranking,
                 "sum_first_order": float(sum(first_order)),
                 "note": "Saltelli 2010 estimator. S_i captures main effect; ST_i captures main + interactions.",
+            },
+            success=True,
+        )
+
+    @staticmethod
+    def _saltelli_base_samples(
+        N: int, d: int, lo: np.ndarray, hi: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        # Saltelli 采样矩阵: A, B (各 N×d), 然后对每个 i 生成 A_B^{(i)}
+        rng = np.random.default_rng(42)
+        A = rng.uniform(0, 1, size=(N, d))
+        B = rng.uniform(0, 1, size=(N, d))
+
+        # 缩放到 bounds
+        def scale(M):
+            return lo + M * (hi - lo)
+
+        return scale(A), scale(B)
+
+    @staticmethod
+    def _sobol_evaluate(
+        model_expr: str, features: list[str], A_s: np.ndarray, B_s: np.ndarray
+    ) -> tuple[Any, Any, Any, ToolResult | None]:
+        # 评估函数
+        def eval_at(X_arr):
+            local = {f: X_arr[:, i] for i, f in enumerate(features)}
+            try:
+                y = np.asarray(
+                    safe_math_eval(model_expr, local), dtype=np.float64
+                ).ravel()
+            except Exception as e:
+                raise RuntimeError(f"Model eval failed: {e}") from e
+            return y
+
+        N = A_s.shape[0]
+        d = len(features)
+        try:
+            fA = eval_at(A_s)
+            fB = eval_at(B_s)
+            # 对每个 i, 把 A 的第 i 列换成 B 的第 i 列 (Saltelli mixed matrix AB^{(i)})
+            fAB = np.zeros((d, N))
+            for i in range(d):
+                AB_i = A_s.copy()
+                AB_i[:, i] = B_s[:, i]
+                fAB[i] = eval_at(AB_i)
+        except RuntimeError as e:
+            return None, None, None, ToolResult(data=None, success=False, error=str(e))
+        return fA, fB, fAB, None
+
+    @staticmethod
+    def _sobol_estimates(
+        fA: np.ndarray, fB: np.ndarray, fAB: np.ndarray, d: int, var_y: float
+    ) -> tuple[list[float], list[float]]:
+        # Saltelli 2010 估计器:
+        # 一阶 S_i = (1/N) Σ fB_j (fAB^{(i)}_j - fA_j) / Var
+        # 全序 ST_i = (1/(2N)) Σ (fA_j - fAB^{(i)}_j)^2 / Var   (Jansen 1999)
+        first_order = []
+        for i in range(d):
+            s = float(np.mean(fB * (fAB[i] - fA)) / var_y)
+            first_order.append(s)
+
+        total = []
+        for i in range(d):
+            s = float(np.mean((fA - fAB[i]) ** 2) / (2 * var_y))
+            total.append(s)
+        return first_order, total
+
+    @staticmethod
+    def _sobol_constant_result(
+        model_expr: str, features: list[str], N: int, var_y: float
+    ) -> ToolResult:
+        return ToolResult(
+            data={
+                "model": model_expr,
+                "features": features,
+                "n_samples": N,
+                "variance": var_y,
+                "first_order": dict.fromkeys(features, 0.0),
+                "total": dict.fromkeys(features, 0.0),
+                "note": "Near-zero variance; model may be constant.",
             },
             success=True,
         )

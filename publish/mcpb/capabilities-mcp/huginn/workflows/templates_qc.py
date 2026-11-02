@@ -16,6 +16,93 @@ from huginn.workflows.templates import register_template
 # ---------------------------------------------------------------------------
 
 
+def _geometry_optimization_stage(
+    structure_file: str, software: str
+) -> dict[str, Any] | None:
+    """Build the geometry-optimization stage for the selected QM software."""
+    if software.lower() == "gaussian":
+        return {
+            "name": "geometry_optimization",
+            "tool": "vasp_tool",  # or a generic QM tool
+            "action": "optimize",
+            "params": {
+                "structure_file": structure_file,
+                "method": "B3LYP",
+                "basis": "6-31G(d)",
+                "job_type": "opt",
+            },
+        }
+    if software.lower() == "orca":
+        return {
+            "name": "geometry_optimization",
+            "tool": "vasp_tool",
+            "action": "optimize",
+            "params": {
+                "structure_file": structure_file,
+                "method": "B3LYP",
+                "basis": "def2-SVP",
+                "job_type": "opt",
+            },
+        }
+    return None
+
+
+def _single_point_stage(software: str) -> dict[str, Any]:
+    """Build the single-point stage with a better basis set."""
+    return {
+        "name": "single_point",
+        "tool": "vasp_tool",
+        "action": "single_point",
+        "params": {
+            "structure_file": "optimized_geometry",
+            "method": "B3LYP",
+            "basis": (
+                "6-311+G(d,p)" if software.lower() == "gaussian" else "def2-TZVP"
+            ),
+            "job_type": "sp",
+        },
+        "depends_on": ["geometry_optimization"],
+    }
+
+
+def _method_analysis_stage(method: str) -> dict[str, Any] | None:
+    """Build the Multiwfn post-processing stage for one analysis method."""
+    if method.upper() == "ESP":
+        return {
+            "name": "esp_analysis",
+            "tool": "rag_tool",
+            "action": "search",
+            "params": {
+                "query": "ESP electrostatic potential analysis Multiwfn procedure",
+                "top_k": 3,
+            },
+            "depends_on": ["single_point"],
+        }
+    if method.upper() in ("NCI", "IGMH"):
+        return {
+            "name": f"{method.lower()}_analysis",
+            "tool": "rag_tool",
+            "action": "search",
+            "params": {
+                "query": f"{method} weak interaction visualization Multiwfn",
+                "top_k": 3,
+            },
+            "depends_on": ["single_point"],
+        }
+    if method.upper() == "NTO":
+        return {
+            "name": "nto_analysis",
+            "tool": "rag_tool",
+            "action": "search",
+            "params": {
+                "query": "NTO natural transition orbital excited state analysis",
+                "top_k": 3,
+            },
+            "depends_on": ["single_point"],
+        }
+    return None
+
+
 def wavefunction_analysis_pipeline(
     structure_file: str,
     software: str = "Gaussian",
@@ -32,94 +119,18 @@ def wavefunction_analysis_pipeline(
     stages = []
 
     # Stage 1: Geometry optimization
-    if software.lower() == "gaussian":
-        stages.append(
-            {
-                "name": "geometry_optimization",
-                "tool": "vasp_tool",  # or a generic QM tool
-                "action": "optimize",
-                "params": {
-                    "structure_file": structure_file,
-                    "method": "B3LYP",
-                    "basis": "6-31G(d)",
-                    "job_type": "opt",
-                },
-            }
-        )
-    elif software.lower() == "orca":
-        stages.append(
-            {
-                "name": "geometry_optimization",
-                "tool": "vasp_tool",
-                "action": "optimize",
-                "params": {
-                    "structure_file": structure_file,
-                    "method": "B3LYP",
-                    "basis": "def2-SVP",
-                    "job_type": "opt",
-                },
-            }
-        )
+    geometry_stage = _geometry_optimization_stage(structure_file, software)
+    if geometry_stage is not None:
+        stages.append(geometry_stage)
 
     # Stage 2: Single-point with better basis
-    stages.append(
-        {
-            "name": "single_point",
-            "tool": "vasp_tool",
-            "action": "single_point",
-            "params": {
-                "structure_file": "optimized_geometry",
-                "method": "B3LYP",
-                "basis": (
-                    "6-311+G(d,p)" if software.lower() == "gaussian" else "def2-TZVP"
-                ),
-                "job_type": "sp",
-            },
-            "depends_on": ["geometry_optimization"],
-        }
-    )
+    stages.append(_single_point_stage(software))
 
     # Stage 3: Post-processing with Multiwfn
     for method in methods:
-        if method.upper() == "ESP":
-            stages.append(
-                {
-                    "name": "esp_analysis",
-                    "tool": "rag_tool",
-                    "action": "search",
-                    "params": {
-                        "query": "ESP electrostatic potential analysis Multiwfn procedure",
-                        "top_k": 3,
-                    },
-                    "depends_on": ["single_point"],
-                }
-            )
-        elif method.upper() in ("NCI", "IGMH"):
-            stages.append(
-                {
-                    "name": f"{method.lower()}_analysis",
-                    "tool": "rag_tool",
-                    "action": "search",
-                    "params": {
-                        "query": f"{method} weak interaction visualization Multiwfn",
-                        "top_k": 3,
-                    },
-                    "depends_on": ["single_point"],
-                }
-            )
-        elif method.upper() == "NTO":
-            stages.append(
-                {
-                    "name": "nto_analysis",
-                    "tool": "rag_tool",
-                    "action": "search",
-                    "params": {
-                        "query": "NTO natural transition orbital excited state analysis",
-                        "top_k": 3,
-                    },
-                    "depends_on": ["single_point"],
-                }
-            )
+        analysis_stage = _method_analysis_stage(method)
+        if analysis_stage is not None:
+            stages.append(analysis_stage)
 
     return stages
 
@@ -127,6 +138,50 @@ def wavefunction_analysis_pipeline(
 # ---------------------------------------------------------------------------
 # Workflow 2: Reactivity Prediction Pipeline
 # ---------------------------------------------------------------------------
+
+
+def _optimize_neutral_stage(structure_file: str) -> dict[str, Any]:
+    """Build the neutral-state optimization stage."""
+    return {
+        "name": "optimize_neutral",
+        "tool": "vasp_tool",
+        "action": "optimize",
+        "params": {
+            "structure_file": structure_file,
+            "method": "B3LYP",
+            "basis": "6-31G(d)",
+        },
+    }
+
+
+def _fukui_state_stage(name: str, charge_delta: int) -> dict[str, Any]:
+    """Build the N±1 single-point stage needed for the Fukui function."""
+    return {
+        "name": name,
+        "tool": "vasp_tool",
+        "action": "single_point",
+        "params": {
+            "structure_file": "optimized_geometry",
+            "method": "B3LYP",
+            "basis": "6-31G(d)",
+            "charge_delta": charge_delta,
+        },
+        "depends_on": ["optimize_neutral"],
+    }
+
+
+def _multiwfn_fukui_stage() -> dict[str, Any]:
+    """Build the Multiwfn Fukui post-processing stage."""
+    return {
+        "name": "multiwfn_fukui",
+        "tool": "rag_tool",
+        "action": "search",
+        "params": {
+            "query": "Fukui function dual descriptor reaction site prediction Multiwfn CDFT",
+            "top_k": 5,
+        },
+        "depends_on": ["calculate_n_minus_1", "calculate_n_plus_1"],
+    }
 
 
 def reactivity_prediction_pipeline(
@@ -142,65 +197,17 @@ def reactivity_prediction_pipeline(
     stages = []
 
     # Stage 1: Optimize neutral state
-    stages.append(
-        {
-            "name": "optimize_neutral",
-            "tool": "vasp_tool",
-            "action": "optimize",
-            "params": {
-                "structure_file": structure_file,
-                "method": "B3LYP",
-                "basis": "6-31G(d)",
-            },
-        }
-    )
+    stages.append(_optimize_neutral_stage(structure_file))
 
     # Stage 2: Calculate N+1 and N-1 states for Fukui function
     if prediction_type in ("electrophilic", "both"):
-        stages.append(
-            {
-                "name": "calculate_n_minus_1",
-                "tool": "vasp_tool",
-                "action": "single_point",
-                "params": {
-                    "structure_file": "optimized_geometry",
-                    "method": "B3LYP",
-                    "basis": "6-31G(d)",
-                    "charge_delta": -1,  # N-1 state
-                },
-                "depends_on": ["optimize_neutral"],
-            }
-        )
+        stages.append(_fukui_state_stage("calculate_n_minus_1", -1))  # N-1 state
 
     if prediction_type in ("nucleophilic", "both"):
-        stages.append(
-            {
-                "name": "calculate_n_plus_1",
-                "tool": "vasp_tool",
-                "action": "single_point",
-                "params": {
-                    "structure_file": "optimized_geometry",
-                    "method": "B3LYP",
-                    "basis": "6-31G(d)",
-                    "charge_delta": +1,  # N+1 state
-                },
-                "depends_on": ["optimize_neutral"],
-            }
-        )
+        stages.append(_fukui_state_stage("calculate_n_plus_1", +1))  # N+1 state
 
     # Stage 3: Post-process with Multiwfn
-    stages.append(
-        {
-            "name": "multiwfn_fukui",
-            "tool": "rag_tool",
-            "action": "search",
-            "params": {
-                "query": "Fukui function dual descriptor reaction site prediction Multiwfn CDFT",
-                "top_k": 5,
-            },
-            "depends_on": ["calculate_n_minus_1", "calculate_n_plus_1"],
-        }
-    )
+    stages.append(_multiwfn_fukui_stage())
 
     return stages
 
@@ -208,6 +215,42 @@ def reactivity_prediction_pipeline(
 # ---------------------------------------------------------------------------
 # Workflow 3: Weak Interaction Analysis Pipeline
 # ---------------------------------------------------------------------------
+
+
+def _weak_single_point_stage(structure_file: str) -> dict[str, Any]:
+    """Build the single-point stage that produces the wavefunction."""
+    return {
+        "name": "single_point",
+        "tool": "vasp_tool",
+        "action": "single_point",
+        "params": {
+            "structure_file": structure_file,
+            "method": "B3LYP",
+            "basis": "6-31G(d)",
+        },
+    }
+
+
+def _weak_procedure_stage(method: str) -> dict[str, Any]:
+    """Build the retrieval stage for the weak-interaction procedure."""
+    query_map = {
+        "IGMH": "IGMH independent gradient model Hirshfeld weak interaction Multiwfn",
+        "NCI": "NCI non-covalent interaction RDG weak interaction Multiwfn",
+        "MIGM": "mIGM geometry weak interaction fast visualization",
+    }
+
+    return {
+        "name": f"{method.lower()}_procedure",
+        "tool": "rag_tool",
+        "action": "search",
+        "params": {
+            "query": query_map.get(
+                method.upper(), f"{method} weak interaction analysis"
+            ),
+            "top_k": 5,
+        },
+        "depends_on": ["single_point"] if method.upper() in ("IGMH", "NCI") else [],
+    }
 
 
 def weak_interaction_pipeline(
@@ -226,40 +269,10 @@ def weak_interaction_pipeline(
 
     # Stage 1: Single point calculation (if wavefunction needed)
     if method.upper() in ("IGMH", "NCI"):
-        stages.append(
-            {
-                "name": "single_point",
-                "tool": "vasp_tool",
-                "action": "single_point",
-                "params": {
-                    "structure_file": structure_file,
-                    "method": "B3LYP",
-                    "basis": "6-31G(d)",
-                },
-            }
-        )
+        stages.append(_weak_single_point_stage(structure_file))
 
     # Stage 2: Retrieve analysis procedure
-    query_map = {
-        "IGMH": "IGMH independent gradient model Hirshfeld weak interaction Multiwfn",
-        "NCI": "NCI non-covalent interaction RDG weak interaction Multiwfn",
-        "MIGM": "mIGM geometry weak interaction fast visualization",
-    }
-
-    stages.append(
-        {
-            "name": f"{method.lower()}_procedure",
-            "tool": "rag_tool",
-            "action": "search",
-            "params": {
-                "query": query_map.get(
-                    method.upper(), f"{method} weak interaction analysis"
-                ),
-                "top_k": 5,
-            },
-            "depends_on": ["single_point"] if method.upper() in ("IGMH", "NCI") else [],
-        }
-    )
+    stages.append(_weak_procedure_stage(method))
 
     return stages
 
@@ -267,6 +280,41 @@ def weak_interaction_pipeline(
 # ---------------------------------------------------------------------------
 # Workflow 4: Excited State Analysis Pipeline
 # ---------------------------------------------------------------------------
+
+
+def _tddft_stage(
+    structure_file: str, n_states: int, software: str
+) -> dict[str, Any] | None:
+    """Build the TDDFT stage for the selected QM software."""
+    if software.lower() == "gaussian":
+        return {
+            "name": "tddft_calculation",
+            "tool": "vasp_tool",
+            "action": "single_point",
+            "params": {
+                "structure_file": structure_file,
+                "method": "CAM-B3LYP",
+                "basis": "6-311+G(d,p)",
+                "job_type": "td",
+                "n_states": n_states,
+                "keywords": "IOp(9/40=4)",  # Print all CI coefficients
+            },
+        }
+    if software.lower() == "orca":
+        return {
+            "name": "tddft_calculation",
+            "tool": "vasp_tool",
+            "action": "single_point",
+            "params": {
+                "structure_file": structure_file,
+                "method": "CAM-B3LYP",
+                "basis": "def2-TZVP",
+                "job_type": "td",
+                "n_states": n_states,
+                "keywords": "TPrint",
+            },
+        }
+    return None
 
 
 def excited_state_pipeline(
@@ -284,38 +332,9 @@ def excited_state_pipeline(
     stages = []
 
     # Stage 1: TDDFT calculation
-    if software.lower() == "gaussian":
-        stages.append(
-            {
-                "name": "tddft_calculation",
-                "tool": "vasp_tool",
-                "action": "single_point",
-                "params": {
-                    "structure_file": structure_file,
-                    "method": "CAM-B3LYP",
-                    "basis": "6-311+G(d,p)",
-                    "job_type": "td",
-                    "n_states": n_states,
-                    "keywords": "IOp(9/40=4)",  # Print all CI coefficients
-                },
-            }
-        )
-    elif software.lower() == "orca":
-        stages.append(
-            {
-                "name": "tddft_calculation",
-                "tool": "vasp_tool",
-                "action": "single_point",
-                "params": {
-                    "structure_file": structure_file,
-                    "method": "CAM-B3LYP",
-                    "basis": "def2-TZVP",
-                    "job_type": "td",
-                    "n_states": n_states,
-                    "keywords": "TPrint",
-                },
-            }
-        )
+    tddft_stage = _tddft_stage(structure_file, n_states, software)
+    if tddft_stage is not None:
+        stages.append(tddft_stage)
 
     # Stage 2: Retrieve post-processing procedures
     stages.append(

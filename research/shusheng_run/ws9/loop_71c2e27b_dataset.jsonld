@@ -1,0 +1,533 @@
+{
+  "@context": "https://schema.org/",
+  "@type": "Dataset",
+  "name": "HuginnAgent Research Output: loop_71c2e27b",
+  "description": "基于解析解与数值积分的对比，验证一维非线性薛定谔方程（NLSE）孤子解在色散与非线性平衡下的稳定性，误差容限<1e-6，10轮迭代内收敛。 假设：在适当初始条件下，数值模拟的NLSE孤子应保持形状不变且能量、动量守恒，与解析解偏差随时间增长不超过1e-6。 成功判据：数值解与解析解在t=10时的L2范数误差 < 1e-6；能量守恒相对误差 < 1e-8，动量守恒相对误差 < 1e-7 独立校验：使用已知解析解（如sech²形式）作为初始条件，通过有限差分法求解NLSE，对比数值解与解析解在多个时间点的波形与守恒量。",
+  "creator": {
+    "@type": "Organization",
+    "name": "HuginnAgent"
+  },
+  "dateCreated": "2026-10-23T12:27:42.998032+00:00",
+  "license": "https://creativecommons.org/licenses/by/4.0/",
+  "keywords": [
+    "materials science",
+    "computational",
+    "agent-generated"
+  ],
+  "isAccessibleForFree": true,
+  "variableMeasured": [
+    {
+      "@type": "PropertyValue",
+      "name": "mode",
+      "value": "code_lab"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "description",
+      "value": "Write and execute a single self-contained Python script (`nlse_hypothesis_c.py`) that implements **four distinct method families** to test Hypothesis C (symmetry-adapted error metric) on the 1-D cubic NLSE $i\\psi_t + \\psi_{xx} + 2|\\psi|^2\\psi = 0$:"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "expected_prediction",
+      "value": "The naive L2 error at $t=10$ on the finest grid will be $\\sim10^{-3}$–$10^{-4}$ (dominated by accumulated phase drift of the soliton position/phase), failing the $10^{-6}$ target; the phase-aligned (symmetry-adapted) L2 error will be $\\sim10^{-7}$–$10^{-9}$, meeting the $10^{-8}$ target; mass/energy/momentum drifts will be $\\le10^{-10}$ (spectral) and $\\le10^{-7}$ (CN), confirming they are independent error indicators; the naive/aligned ratio will exceed $10^2$, demonstrating the symmetry-adapted metric is **not** a renaming of the naive tolerance. Convergence order will be $\\ge2$ in space and time for both integrators, and the Richardson estimate will agree with the phase-aligned error to within a factor of 3."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_inputs"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "override_reason",
+      "value": "code_experiment_not_physics_workflow"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "plan_id",
+      "value": "plan_3b75071f"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "status",
+      "value": "completed"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "success",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "final_answer",
+      "value": "Coder reached the maximum iteration limit.\n{\"result\": {\"command\": [\"python\", \"_test_tri.py\"], \"returncode\": 0, \"stdout\": \"_cyclic_thomas err 8.881784197001252e-16\\n_cyclic_sm err 8.881784197001252e-16\\n_cyclic_thomas_std err 8.881784197001252e-16\\n\", \"stderr\": \"\", \"message\": \"Command succeeded.\", \"sandbox\": true, \"suggest_fix\": \"\", \"stream_progress\": []}, \"_source_class\": \"tool_output\", \"_visual_self_check\": {\"confidence\": 0.2, \"caveats\": [], \"note\": \"\\u6570\\u503c\\u6570\\u636e\\u53ef\\u89c6\\u5316\\u7f6e\\u4fe1\\u5ea6\\u4f30\\u7b97, \\u8ba9\\u7ea2\\u961f\\u5224\\u65ad\\u53ef\\u89c6\\u5316\\u7ed3\\u8bba\\u53ef\\u4fe1\\u5ea6\"}}"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "tool_calls",
+      "value": 77
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "coder_outcome.tool_calls",
+      "value": 77
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "coder_outcome.tool_results",
+      "value": 77
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "coder_outcome.usable_tool_results",
+      "value": 69
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "coder_outcome.tool_error_count",
+      "value": 8
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "coder_outcome.hit_iteration_limit",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "coder_outcome.failure_reason",
+      "value": "iteration_limit"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "error",
+      "value": "coder 未产出可用结果 (iteration_limit)"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "Tests Passed",
+      "value": false
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "constraints_satisfied",
+      "value": false
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "benchmarks.passed",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "benchmarks.failed",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "benchmarks.skipped",
+      "value": 2
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "test_output",
+      "value": "\nno tests ran in 0.00s\n"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.score",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.reason",
+      "value": "Agent hit the iteration limit and produced no usable result. The returned payload is only a partial file read (lines 1–30 of nlse_cn.py, showing a docstring and the start of a cyclic Thomas routine), not a verification of the solver, no numerical output, no L2 error, and no comparison against the sech/SSFM reference from iteration 9. No data→inference→conclusion chain is present."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.needs_retry",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.evidence_score",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.evidence_gap",
+      "value": "Missing: completed implementation or execution output, measured L2 error, convergence check, and any comparison to the known SSFM reference (Δt=1e-4, N=1024) from prior iterations."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "generative_verify.failure_mode",
+      "value": "If the hypothesis that this Crank–Nicolson code is correct were true, we would expect finite-difference convergence and agreement with the reference soliton propagation. Instead the run terminates at the iteration limit with only a partial source dump; if the opposite is true, the code likely contains an unhandled bug (e.g., incorrect periodic Sherman–Morrison assembly, missing nonlinear iteration, or wrong sign convention) that prevents it from running to completion or producing a valid solution."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "reviewer_critique",
+      "value": "## Peer Review: Crank–Nicolson NLSE Solver (Iteration 10 — Failed)\n\n### 1. Verdict: No result to assess\nThe run produced **no numerical result, no error metric, and no convergence data**. The payload is a partial source read (lines 1–30 of `nlse_cn.py`) — essentially a docstring and the header of a cyclic Thomas routine. The agent hit the iteration limit. **There is nothing to validate scientifically**; this is a software-engineering failure, not a physics finding.\n\n### 2. Methodological weaknesses (anticipated, from the visible code skeleton)\n- **Unverified discretisation sign convention.** The docstring writes `i u_t + u_xx + 2|u|²u = 0`, but the rearranged scheme shows `[I − i dt/2 D2 − i dt G] u^{n+1} = [I + i dt/2 D2] u^n + i dt |u^n|² u^n`. The nonlinear coefficient is `1` on the RHS but `G^{(m)} = (|u^{n+1,(m)}|²+|u^n|²)/2` on the LHS — a factor-of-2 mismatch is one character away and is the classic failure mode in focusing-NLSE Crank–Nicolson. This must be checked against the exact one-soliton before any convergence claim.\n- **Periodic wrap assembly not tested.** A Sherman–Morrison rank-2 correction for cyclic tridiagonal systems is correct in principle, but the corner elements (`a[0] = A[n−1,0]`, `c[n−1] = A[0,n−1]`) are a well-known source of off-by-one bugs. No unit test of the linear solver against `scipy.linalg.solve` on a random cyclic matrix is visible.\n- **No nonlinear iteration convergence criterion.** The `(m)` superscript implies a fixed-point loop, but no tolerance, max iteration count, or residual monitor is shown. For a focusing soliton with steep gradients, a loose tolerance would masquerade as spatial/temporal discretisation error.\n- **Missing convergence protocol entirely.** No grid-refinement study, no Richardson extrapolation, no reported order of accuracy. The validation summary correctly flags this: *\"Missing: completed implementation or execution output, measured L2 error, convergence check.\"*\n\n### 3. Reproducibility and benchmarking\n- **Zero benchmarks run.** The two skipped tests in the prior iteration remain skipped. There is no comparison against the SSFM reference (`Δt = 1e-4`, `N = 1024`) established in iteration 9, no L2 error against the exact `sech` soliton, and no reported runtime or solver tolerance.\n- **Not reproducible as reported.** Without a completed run, no independent party can reproduce anything. The code itself is not even fully visible beyond line 30.\n\n### 4. Alignment with first-principles\nNo contradiction can be identified because no computation completed. However, the *intended* scheme is standard and physically sound (Crank–Nicolson is unitary for the linear part and conserves a discrete mass for the integrable NLSE), **provided** the nonlinear coefficient and periodic wrap are correct. The risk is precisely in those two places.\n\n### 5. Concrete next steps (prioritised)\n\n| Priority | Action | Acceptance criterion |\n|---|---|---|\n| 1 | **Finish the implementation** in one shot (no incremental reads). Write the full file, then execute it. | Script runs to completion, prints L2 error vs exact soliton at `t = 1`. |\n| 2 | **Unit-test the cyclic solver** against `scipy.linalg.solve` on 100 random cyclic-tridiagonal systems (sizes 8–256). | Max relative residual < 1e-12. |\n| 3 | **Verify the nonlinear coefficient** by propagating the exact one-soliton `u(x,t)=sech(x) e^{it}` (or the convention-matched variant) for one period. | L2 error < 1e-6 at `dt=1e-3`, `N=256`. |\n| 4 | **Run a grid-refinement study**: `dt ∈ {1e-2, 5e-3, 2.5e-3, 1.25e-3}`, `N ∈ {128, 256, 512, 1024}`. Report observed order. | Second-order convergence in both `dt` and `h` (asymptotically). |\n| 5 | **Benchmark against SSFM reference** from iteration 9 at identical grid. | `‖u_CN − u_SSFM‖₂` consistent with truncation error of the less-accurate method. |\n| 6 | **Add conservation diagnostics**: discrete mass `∫|u|² dx` and energy drift over `t ∈ [0, 10]`. | Drift < 1e-8 for the finest grid. |\n| 7 | **Document the sign convention explicitly** in the docstring, including the exact soliton used for testing. | A reader can reproduce the test case without guessing. |\n\n**Bottom line:** This iteration is a null result caused by premature termination. The physics is unexceptionable; the implementation is unverified. Retry with a single-shot complete implementation and the six-step validation protocol above — the exact soliton provides a free, rigorous oracle that should have been used in iteration 9 already."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_score",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_tool_diversity",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_reasoning_entropy",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_cross_domain",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_novelty",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "emergent_complexity.ec_domains_hit",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "grader_reward",
+      "value": 0.8571
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "eval_summary.bench_passed",
+      "value": 0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "eval_summary.bench_total",
+      "value": 8
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "eval_summary.bench_pass_rate",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.predicted",
+      "value": "在 Δx=0.01、Δt=1e-4 下，SSFM 的 L2(t=10) 应达 1e-7–1e-8 量级（谱精度），Crank–Nicolson 二阶约 1e-6–1e-7；能量与动量相对误差分别稳定在 1e-9 与 1e-8 以下，残差在 5–8 轮内降至 1e-10；若网格粗于 Δx=0.02 或 Δt>1e-3 则因截断误差累积导致 L2 超出 1e-6 并出现缓慢辐射尾。\nPLAN_SLOT"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.actual",
+      "value": "Coder reached the maximum iteration limit.\n{\"result\": {\"file_path\": \"/workspace/agent/nlse_cn.py\", \"total_lines\": 149, \"start_line\": 1, \"content\": \"   1  \\\"\\\"\\\"Crank-Nicolson solver for the 1-D focusi"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise",
+      "value": 0.977
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_mean",
+      "value": 0.955
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_worst",
+      "value": 0.977
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_std",
+      "value": 0.016
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_source",
+      "value": "jaccard"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "prediction_error.surprise_rel",
+      "value": 0.5
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "effort_floor_passed",
+      "value": false
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "effort_floor_deficits",
+      "value": "努力下限未达标: families_explored=1 < min_method_families=3 | 未排除等价性陷阱: [\" -> 原始问题中的'误差容限<1e-6'与'L2范数误差'校验要求\"]"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "failure_kind",
+      "value": "effort_floor_retry"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "epistemic_gap.overconfidence",
+      "value": false
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "epistemic_gap.has_evidence",
+      "value": true
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "epistemic_gap.advice",
+      "value": "结论有证据支撑, 但建议补一句不确定性/适用边界说明, 明确估计误差与尚未验证的假设."
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "plan_formula",
+      "value": "L2_rel_err=||u_num−u_exact||₂/||u_exact||₂"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.note",
+      "value": "Four-method NLSE symmetry-adapted error metric benchmark"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.tol_l2",
+      "value": 1e-06
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.tol_energy",
+      "value": 1e-08
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.tol_momentum",
+      "value": 1e-07
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.best_method",
+      "value": "ss_first_order"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.worst_method",
+      "value": "symplectic_split"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.mass_initial",
+      "value": 1.9999999917511924
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.energy_initial",
+      "value": -0.33333333735839515
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.momentum_initial",
+      "value": -1.9349595353548466e-14
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.symplectic_split_ok",
+      "value": false
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.symplectic_split_max_l2",
+      "value": 2.755252722248568
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.symplectic_split_final_l2",
+      "value": 2.049635626844802
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.symplectic_split_energy_rel",
+      "value": 6061.846077745345
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.symplectic_split_mom_rel",
+      "value": 31079993676828.742
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.symplectic_split_score",
+      "value": 3.107999368289059e+16
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.ss_first_order_ok",
+      "value": false
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.ss_first_order_max_l2",
+      "value": 2.6368060516378673
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.ss_first_order_final_l2",
+      "value": 2.100226674240838
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.ss_first_order_energy_rel",
+      "value": 365.7142812979438
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.ss_first_order_mom_rel",
+      "value": 0.19344298887203157
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.ss_first_order_score",
+      "value": 365909.82451349
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.fd_euler_ok",
+      "value": false
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.fd_euler_max_l2",
+      "value": NaN
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.fd_euler_final_l2",
+      "value": NaN
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.fd_euler_energy_rel",
+      "value": NaN
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.fd_euler_mom_rel",
+      "value": NaN
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.fd_euler_score",
+      "value": NaN
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.fd_taylor_ok",
+      "value": false
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.fd_taylor_max_l2",
+      "value": NaN
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.fd_taylor_final_l2",
+      "value": NaN
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.fd_taylor_energy_rel",
+      "value": NaN
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.fd_taylor_mom_rel",
+      "value": NaN
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "result.fd_taylor_score",
+      "value": NaN
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.score",
+      "value": -365909.82451349
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.best_l2",
+      "value": 2.100226674240838
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.energy_violation",
+      "value": NaN
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.momentum_violation",
+      "value": NaN
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.methods_passing",
+      "value": 0.0
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.worst_l2",
+      "value": 2.755252722248568
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.symmetry_metric_best",
+      "value": 365909.82451349
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "objectives.symmetry_metric_worst",
+      "value": 3.107999368289059e+16
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "script",
+      "value": "import numpy as np\n\n\ndef run(cfg):\n    seed = int(cfg.get('seed', 0))\n    rng = np.random.default_rng(seed)\n    L = float(cfg.get('L', 20.0))\n    nx = int(cfg.get('nx', 512))\n    tmax = float(cfg.get('tmax', 10.0))\n    nt = int(cfg.get('nt', 20000))\n    x = np.linspace(-L / 2, L / 2, nx, endpoint=False)\n    dx = x[1] - x[0]\n    dt = tmax / nt\n    k = 2 * np.pi * np.fft.fftfreq(nx, d=dx)\n    k2 = k ** 2\n    amp = float(cfg.get('amplitude', 1.0))\n    v = float(cfg.get('velocity', 0.0))\n    x0 = float(cfg.get('x0', 0.0))\n    phase = float(cfg.get('phase', 0.0))\n    psi0 = amp * np.cosh(-amp * (x - x0)) ** -1 * np.exp(1j * (v * (x - x0) / 2 + phase))\n\n    def exact(t, xc):\n        return amp * np.cosh(-amp * (x - xc)) ** -1 * np.exp(\n            1j * (v * (x - xc) / 2 + phase + (amp ** 2 - v ** 2 / 4) * t))\n\n    def mass(p):\n        return float(np.real(np.sum(np.abs(p) ** 2) * dx))\n\n    def energy(p):\n        px = np.fft.ifft(1j * k * np.fft.fft(p))\n        return float(np.real(np.sum((np.abs(px) ** 2 - np.abs(p) ** 4) * dx)) / 2)\n\n    def momentum(p):\n        px = np.fft.ifft(1j * k * np.fft.fft(p))\n        return float(np.real(np.sum(np.imag(np.conj(p) * px) * dx)))\n\n    def l2(p, q):\n        return float(np.sqrt(np.sum(np.abs(p - q) ** 2) * dx))\n\n    def step_ss(p):\n        n2 = 2 * np.abs(p) ** 2\n        return p * np.exp(-1j * n2 * dt)\n\n    def step_fd1(p):\n        lap = (np.roll(p, 1) - 2 * p + np.roll(p, -1)) / dx ** 2\n        return p + 1j * dt * (lap + 2 * np.abs(p) ** 2 * p)\n\n    def step_fd2(p):\n        lap = (np.roll(p, 1) - 2 * p + np.roll(p, -1)) / dx ** 2\n        return p + 1j * dt * (lap + 2 * np.abs(p) ** 2 * p) - 0.5 * dt ** 2 * (\n            (np.roll(lap, 1) - 2 * lap + np.roll(lap, -1)) / dx ** 2 +\n            2 * (2 * np.abs(p) ** 2 * lap + p * np.conj(p) * lap +\n                 np.conj(p) * lap * p + p * np.abs(lap) ** 2))\n\n    def step_split(p):\n        p = p * np.exp(-0.5j * dt * k2)\n        p = np.fft.ifft(np.fft.fft(p) * np.exp(-1j * 2 * np.abs(np.fft.ifft(np.fft.fft(p))) ** 2 * dt))\n        return p * np.exp(-0.5j * dt * k2)\n\n    methods = {\n        \"symplectic_split\": step_split,\n        \"ss_first_order\": step_ss,\n        \"fd_euler\": step_fd1,\n        \"fd_taylor\": step_fd2\n    }\n\n    e0 = energy(psi0)\n    p0 = momentum(psi0)\n    m0 = mass(psi0)\n    track = {m: {\"err\": [], \"energy\": [], \"mom\": [], \"mass\": []} for m in methods}\n    times = np.linspace(0, tmax, nt + 1)\n    ps = {m: psi0.copy() for m in methods}\n\n    for n in range(nt + 1):\n        t = times[n]\n        xc = x0 + v * t\n        ref = exact(t, xc)\n        for mname, step in methods.items():\n            p = ps[mname]\n            track[mname][\"err\"].append(l2(p, ref))\n            track[mname][\"energy\"].append(energy(p))\n            track[mname][\"mom\"].append(momentum(p))\n            track[mname][\"mass\"].append(mass(p))\n            if n < nt:\n                ps[mname] = step(p)\n\n    def rel(a, b):\n        return float(abs(a - b) / max(abs(b), 1e-300))\n\n    results = {}\n    for mname in methods:\n        err = np.array(track[mname][\"err\"])\n        en = np.array(track[mname][\"energy\"])\n        mo = np.array(track[mname][\"mom\"])\n        ma = np.array(track[mname][\"mass\"])\n        results[mname] = {\n            \"max_l2\": float(np.max(err)),\n            \"final_l2\": float(err[-1]),\n            \"energy_rel\": rel(float(en[-1]), e0),\n            \"mom_rel\": rel(float(mo[-1]), p0),\n            \"mass_rel\": rel(float(ma[-1]), m0),\n            \"drift_l2\": float(np.max(np.abs(err - err[0]))),\n            \"energy_range\": float(np.max(np.abs(en - en[0]))),\n            \"mom_range\": float(np.max(np.abs(mo - mo[0])))\n        }\n\n    tol_l2 = float(cfg.get(\"tol_l2\", 1e-6))\n    tol_e = float(cfg.get(\"tol_energy\", 1e-8))\n    tol_p = float(cfg.get(\"tol_momentum\", 1e-7))\n    ok = {}\n    for mname, r in results.items():\n        ok[mname] = bool(r[\"max_l2\"] < tol_l2 and r[\"energy_rel\"] < tol_e and r[\"mom_rel\"] < tol_p)\n\n    def symmetry_metric(r):\n        return float(r[\"final_l2\"] + 1e3 * r[\"energy_rel\"] + 1e3 * r[\"mom_rel\"])\n\n    scores = {m: symmetry_metric(r) for m, r in results.items()}\n    best = min(scores, key=scores.get)\n    worst = max(scores, key=scores.get)\n\n    summary = {\n        \"note\": \"Four-method NLSE symmetry-adapted error metric benchmark\",\n        \"tol_l2\": tol_l2,\n        \"tol_energy\": tol_e,\n        \"tol_momentum\": tol_p,\n        \"best_method\": best,\n        \"worst_method\": worst,\n        \"mass_initial\": m0,\n        \"energy_initial\": e0,\n        \"momentum_initial\": p0\n    }\n    for mname in methods:\n        summary[mname + \"_ok\"] = ok[mname]\n        summary[mname + \"_max_l2\"] = results[mname][\"max_l2\"]\n        summary[mname + \"_final_l2\"] = results[mname][\"final_l2\"]\n        summary[mname + \"_energy_rel\"] = results[mname][\"energy_rel\"]\n        summary[mname + \"_mom_rel\"] = results[mname][\"mom_rel\"]\n        summary[mname + \"_score\"] = scores[mname]\n\n    objectives = {\n        \"score\": float(-scores[best]),\n        \"best_l2\": float(results[best][\"final_l2\"]),\n        \"energy_violation\": float(np.max([results[m][\"energy_rel\"] for m in methods])),\n        \"momentum_violation\": float(np.max([results[m][\"mom_rel\"] for m in methods])),\n        \"methods_passing\": float(sum(ok.values())),\n        \"worst_l2\": float(results[worst][\"max_l2\"]),\n        \"symmetry_metric_best\": float(scores[best]),\n        \"symmetry_metric_worst\": float(scores[worst])\n    }\n\n    return {\"success\": True, \"summary\": summary, \"objectives\": objectives}"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "reproducible",
+      "value": true
+    }
+  ],
+  "measurementTechnique": "Automated computational workflow via HuginnAgent",
+  "wasGeneratedBy": {
+    "@type": "ResearchAction",
+    "name": "HuginnAgent run loop_71c2e27b",
+    "description": "基于解析解与数值积分的对比，验证一维非线性薛定谔方程（NLSE）孤子解在色散与非线性平衡下的稳定性，误差容限<1e-6，10轮迭代内收敛。 假设：在适当初始条件下，数值模拟的NLSE孤子应保持形状不变且能量、动量守恒，与解析解偏差随时间增长不超过1e-6。 成功判据：数值解与解析解在t=10时的L2范数误差 < 1e-6；能量守恒相对误差 < 1e-8，动量守恒相对误差 < 1e-7 独立校验：使用已知解析解（如sech²形式）作为初始条件，通过有限差分法求解NLSE，对比数值解与解析解在多个时间点的波形与守恒量。",
+    "instrument": "/workspace/research/shusheng_run/ws9/.huginn/trajectories/loop_71c2e27b.json",
+    "object": "/workspace/research/shusheng_run/ws9/.huginn/provenance.jsonl",
+    "startTime": "2026-10-23T19:27:49.915039",
+    "endTime": "2026-10-23T20:27:42.996242"
+  },
+  "distribution": [
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "text/markdown",
+      "contentUrl": "file:///workspace/research/shusheng_run/ws9/huginn_autoloop_report_loop_71c2e27b.md",
+      "name": "Research Report"
+    },
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "application/json",
+      "contentUrl": "file:///workspace/research/shusheng_run/ws9/.huginn/trajectories/loop_71c2e27b.json",
+      "name": "Execution Trajectory"
+    }
+  ]
+}

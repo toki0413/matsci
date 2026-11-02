@@ -46,6 +46,132 @@ class KernelExecResult:
     status: str = "ok"  # ok / error / timeout
 
 
+def _collect_iopub_parts(
+    msg: dict,
+    stdout_parts: list[str],
+    stderr_parts: list[str],
+    images: list[str],
+) -> tuple[str | None, bool]:
+    """把一条 iopub 消息并入输出缓冲; 返回 (错误回溯或 None, 是否已 idle)."""
+    mtype = msg["msg_type"]
+    content = msg.get("content", {})
+    if mtype == "stream":
+        text = content.get("text", "")
+        if content.get("name") == "stderr":
+            stderr_parts.append(text)
+        else:
+            stdout_parts.append(text)
+    elif mtype in ("execute_result", "display_data"):
+        data = content.get("data", {})
+        if "image/png" in data:
+            images.append(data["image/png"])
+        if "text/plain" in data:
+            stdout_parts.append(data["text/plain"])
+    elif mtype == "error":
+        tb = content.get("traceback", [])
+        return ("\n".join(tb) if tb else content.get("ename", "error")), False
+    elif mtype == "status" and content.get("execution_state") == "idle":
+        return None, True
+    return None, False
+
+
+def _drain_iopub(
+    kc: Any,
+    msg_id: str,
+    end: float,
+    stdout_parts: list[str],
+    stderr_parts: list[str],
+    images: list[str],
+) -> tuple[str, str | None]:
+    """消费 iopub 直到 idle; 返回 (状态 done/timeout, 错误文本或回溯)."""
+    error_tb: str | None = None
+    while True:
+        remaining = end - time.time()
+        if remaining <= 0:
+            return "timeout", "execution timeout"
+        try:
+            msg = kc.get_iopub_msg(timeout=remaining)
+        except Empty:
+            return "timeout", "iopub timeout"
+        # 只看本次 execute 的消息
+        if msg.get("parent_header", {}).get("msg_id") != msg_id:
+            continue
+        tb, done = _collect_iopub_parts(msg, stdout_parts, stderr_parts, images)
+        if tb is not None:
+            error_tb = tb
+        if done:
+            return "done", error_tb
+
+
+def _subprocess_head(state_file: str) -> str:
+    """脚本前半段: 载入状态 + stdout/stderr 重定向."""
+    return (
+        "import json, sys, io, traceback\n"
+        f"_sf = {state_file!r}\n"
+        # 先尝试 JSON, 失败则回退 pickle (旧格式), 再不行用空命名空间
+        "try:\n"
+        "    with open(_sf, 'r') as _f:\n"
+        "        _g = json.load(_f)\n"
+        # ponytail: pickle fallback only runs for legacy state files
+        # written by older versions that used pickle instead of JSON.
+        # Risk: pickle.load on a tampered temp file = arbitrary code exec.
+        # Acceptable because the temp file is created by this module and
+        # lives in the OS temp dir (single-user local tool).
+        # Upgrade: delete this fallback once all sessions use JSON state.
+        "except (json.JSONDecodeError, UnicodeDecodeError):\n"
+        "    import pickle, logging\n"
+        "    logging.warning('loading legacy pickle state: %s', _sf)\n"
+        "    try:\n"
+        "        with open(_sf, 'rb') as _f:\n"
+        "            _g = pickle.load(_f)\n"
+        "    except Exception:\n"
+        "        _g = {}\n"
+        "except Exception:\n"
+        "    _g = {}\n"
+        "_out, _err = io.StringIO(), io.StringIO()\n"
+        "_so, _se = sys.stdout, sys.stderr\n"
+        "sys.stdout, sys.stderr = _out, _err\n"
+    )
+
+
+def _subprocess_tail(code: str) -> str:
+    """脚本后半段: exec 用户代码, 还原 stdout/stderr, 原子写回状态."""
+    return (
+        "try:\n"
+        f"    exec({code!r}, _g)\n"
+        "except Exception:\n"
+        "    traceback.print_exc(file=_err)\n"
+        "sys.stdout, sys.stderr = _so, _se\n"
+        # 存回前剥掉 __builtins__: exec 会把它塞进 _g (module 形态),
+        # JSON 无法序列化 module, 必须排除
+        "_g.pop('__builtins__', None)\n"
+        # 原子写: JSON dump 到临时文件再 os.replace, 避免 dump 中途失败
+        # 把状态文件写坏, 写坏的文件下次 load 会变成空命名空间, 丢光所有变量
+        "import os as _os, tempfile as _tf\n"
+        "_fd, _tmp = _tf.mkstemp(dir=_os.path.dirname(_sf) or '.')\n"
+        "_os.close(_fd)\n"
+        # 非 JSON 可序列化对象 (module, function 等) 用 str() 兜底
+        "def _json_default(o):\n"
+        "    try: return str(o)\n"
+        "    except Exception: return None\n"
+        "try:\n"
+        "    with open(_tmp, 'w') as _f:\n"
+        "        json.dump(_g, _f, default=_json_default)\n"
+        "    _os.replace(_tmp, _sf)\n"
+        "except Exception as _e:\n"
+        "    _err.write('warning: state json dump failed: ' + repr(_e) + '\\n')\n"
+        "    try: _os.unlink(_tmp)\n"
+        "    except OSError: pass\n"
+        "sys.stdout.write(_out.getvalue())\n"
+        "sys.stderr.write(_err.getvalue())\n"
+    )
+
+
+def _subprocess_script(state_file: str, code: str) -> str:
+    """构造 subprocess 降级路径执行用户代码的脚本 (与重定向/状态写回逻辑一致)."""
+    return _subprocess_head(state_file) + _subprocess_tail(code)
+
+
 class KernelSession:
     """单个 ipykernel 会话, 管理一个持久内核的生命周期."""
 
@@ -73,7 +199,9 @@ class KernelSession:
 
     @property
     def backend(self) -> str:
-        return "jupyter" if _JUPYTER_AVAILABLE and self._km is not None else "subprocess"
+        return (
+            "jupyter" if _JUPYTER_AVAILABLE and self._km is not None else "subprocess"
+        )
 
     def start(self) -> None:
         """启动内核. jupyter 不可用时降级到 subprocess."""
@@ -102,9 +230,7 @@ class KernelSession:
         self._kc.wait_for_ready(timeout=self.timeout)
         # matplotlib inline: 图走 png, 能被我们捕获
         self._jupyter_exec("%matplotlib inline", silent=True)
-        self._jupyter_exec(
-            "import matplotlib; matplotlib.use('Agg')", silent=True
-        )
+        self._jupyter_exec("import matplotlib; matplotlib.use('Agg')", silent=True)
 
     def _jupyter_exec(
         self, code: str, silent: bool = False, deadline: float | None = None
@@ -117,58 +243,17 @@ class KernelSession:
         stdout_parts: list[str] = []
         stderr_parts: list[str] = []
         images: list[str] = []
-        error_tb: str | None = None
         end = time.time() + timeout
 
-        while True:
-            remaining = end - time.time()
-            if remaining <= 0:
-                return KernelExecResult(
-                    stdout="".join(stdout_parts),
-                    stderr="".join(stderr_parts),
-                    images=images,
-                    error="execution timeout",
-                    status="timeout",
-                )
-            try:
-                msg = self._kc.get_iopub_msg(timeout=remaining)
-            except Empty:
-                return KernelExecResult(
-                    stdout="".join(stdout_parts),
-                    stderr="".join(stderr_parts),
-                    images=images,
-                    error="iopub timeout",
-                    status="timeout",
-                )
-            # 只看本次 execute 的消息
-            if msg.get("parent_header", {}).get("msg_id") != msg_id:
-                continue
-            mtype = msg["msg_type"]
-            content = msg.get("content", {})
-            if mtype == "stream":
-                text = content.get("text", "")
-                if content.get("name") == "stderr":
-                    stderr_parts.append(text)
-                else:
-                    stdout_parts.append(text)
-            elif mtype in ("execute_result", "display_data"):
-                data = content.get("data", {})
-                if "image/png" in data:
-                    images.append(data["image/png"])
-                if "text/plain" in data:
-                    stdout_parts.append(data["text/plain"])
-            elif mtype == "error":
-                tb = content.get("traceback", [])
-                error_tb = "\n".join(tb) if tb else content.get("ename", "error")
-            elif mtype == "status" and content.get("execution_state") == "idle":
-                break
-
+        status, error_tb = _drain_iopub(
+            self._kc, msg_id, end, stdout_parts, stderr_parts, images
+        )
         return KernelExecResult(
             stdout="".join(stdout_parts),
             stderr="".join(stderr_parts),
             images=images,
             error=error_tb,
-            status="error" if error_tb else "ok",
+            status=("timeout" if status != "done" else ("error" if error_tb else "ok")),
         )
 
     # ── subprocess 降级路径 ──────────────────────────────────────
@@ -187,60 +272,7 @@ class KernelSession:
             return KernelExecResult(status="error", error="subprocess not started")
         # 每次执行: 加载状态 -> exec -> 存回状态 -> 打印输出
         # 用 repr 转义代码, 避免注入
-        script = (
-            "import json, sys, io, traceback\n"
-            f"_sf = {self._state_file!r}\n"
-            # 先尝试 JSON, 失败则回退 pickle (旧格式), 再不行用空命名空间
-            "try:\n"
-            "    with open(_sf, 'r') as _f:\n"
-            "        _g = json.load(_f)\n"
-            # ponytail: pickle fallback only runs for legacy state files
-            # written by older versions that used pickle instead of JSON.
-            # Risk: pickle.load on a tampered temp file = arbitrary code exec.
-            # Acceptable because the temp file is created by this module and
-            # lives in the OS temp dir (single-user local tool).
-            # Upgrade: delete this fallback once all sessions use JSON state.
-            "except (json.JSONDecodeError, UnicodeDecodeError):\n"
-            "    import pickle, logging\n"
-            "    logging.warning('loading legacy pickle state: %s', _sf)\n"
-            "    try:\n"
-            "        with open(_sf, 'rb') as _f:\n"
-            "            _g = pickle.load(_f)\n"
-            "    except Exception:\n"
-            "        _g = {}\n"
-            "except Exception:\n"
-            "    _g = {}\n"
-            "_out, _err = io.StringIO(), io.StringIO()\n"
-            "_so, _se = sys.stdout, sys.stderr\n"
-            "sys.stdout, sys.stderr = _out, _err\n"
-            "try:\n"
-            f"    exec({code!r}, _g)\n"
-            "except Exception:\n"
-            "    traceback.print_exc(file=_err)\n"
-            "sys.stdout, sys.stderr = _so, _se\n"
-            # 存回前剥掉 __builtins__: exec 会把它塞进 _g (module 形态),
-            # JSON 无法序列化 module, 必须排除
-            "_g.pop('__builtins__', None)\n"
-            # 原子写: JSON dump 到临时文件再 os.replace, 避免 dump 中途失败
-            # 把状态文件写坏, 写坏的文件下次 load 会变成空命名空间, 丢光所有变量
-            "import os as _os, tempfile as _tf\n"
-            "_fd, _tmp = _tf.mkstemp(dir=_os.path.dirname(_sf) or '.')\n"
-            "_os.close(_fd)\n"
-            # 非 JSON 可序列化对象 (module, function 等) 用 str() 兜底
-            "def _json_default(o):\n"
-            "    try: return str(o)\n"
-            "    except Exception: return None\n"
-            "try:\n"
-            "    with open(_tmp, 'w') as _f:\n"
-            "        json.dump(_g, _f, default=_json_default)\n"
-            "    _os.replace(_tmp, _sf)\n"
-            "except Exception as _e:\n"
-            "    _err.write('warning: state json dump failed: ' + repr(_e) + '\\n')\n"
-            "    try: _os.unlink(_tmp)\n"
-            "    except OSError: pass\n"
-            "sys.stdout.write(_out.getvalue())\n"
-            "sys.stderr.write(_err.getvalue())\n"
-        )
+        script = _subprocess_script(self._state_file, code)
         try:
             proc = subprocess.run(
                 [sys.executable, "-c", script],
@@ -406,7 +438,8 @@ class KernelSessionManager:
         reaped = 0
         with self._lock:
             stale = [
-                sid for sid, s in self._sessions.items()
+                sid
+                for sid, s in self._sessions.items()
                 if s.idle_seconds() > self._idle_timeout
             ]
             for sid in stale:

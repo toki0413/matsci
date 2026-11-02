@@ -185,11 +185,13 @@ class DocumentGraph:
         for els in by_page.values():
             els.sort(key=lambda e: (e.bbox.y1, e.bbox.x1))
             for a, b in zip(els, els[1:]):
-                edges.append(GraphEdge(
-                    source=a.element_id,
-                    target=b.element_id,
-                    edge_type=EdgeType.SEQ,
-                ))
+                edges.append(
+                    GraphEdge(
+                        source=a.element_id,
+                        target=b.element_id,
+                        edge_type=EdgeType.SEQ,
+                    )
+                )
         return edges
 
     def _build_contains_edges(self) -> list[GraphEdge]:
@@ -213,11 +215,13 @@ class DocumentGraph:
                 continue
             for mention in self._extract_mentions(el):
                 self._elements[mention.element_id] = mention
-                edges.append(GraphEdge(
-                    source=el.element_id,
-                    target=mention.element_id,
-                    edge_type=EdgeType.CONTAINS,
-                ))
+                edges.append(
+                    GraphEdge(
+                        source=el.element_id,
+                        target=mention.element_id,
+                        edge_type=EdgeType.CONTAINS,
+                    )
+                )
         return edges
 
     def _build_caption_of_edges(self) -> list[GraphEdge]:
@@ -230,12 +234,15 @@ class DocumentGraph:
         happens to be spatially closer.
         """
         edges: list[GraphEdge] = []
-        captions = [e for e in self._elements.values()
-                    if e.element_type is ElementType.CAPTION]
-        figures = [e for e in self._elements.values()
-                   if e.element_type is ElementType.FIGURE]
-        tables = [e for e in self._elements.values()
-                  if e.element_type is ElementType.TABLE]
+        captions = [
+            e for e in self._elements.values() if e.element_type is ElementType.CAPTION
+        ]
+        figures = [
+            e for e in self._elements.values() if e.element_type is ElementType.FIGURE
+        ]
+        tables = [
+            e for e in self._elements.values() if e.element_type is ElementType.TABLE
+        ]
 
         for cap in captions:
             cap_type = self._detect_caption_type(cap.content)
@@ -252,11 +259,13 @@ class DocumentGraph:
             if not same_page:
                 continue
             nearest = min(same_page, key=lambda t: cap.bbox.center_distance(t.bbox))
-            edges.append(GraphEdge(
-                source=cap.element_id,
-                target=nearest.element_id,
-                edge_type=EdgeType.CAPTION_OF,
-            ))
+            edges.append(
+                GraphEdge(
+                    source=cap.element_id,
+                    target=nearest.element_id,
+                    edge_type=EdgeType.CAPTION_OF,
+                )
+            )
         return edges
 
     def _build_adjacent_edges(self, threshold: float | None = None) -> list[GraphEdge]:
@@ -292,37 +301,60 @@ class DocumentGraph:
             by_page[el.page].append(el)
 
         for els in by_page.values():
-            n = len(els)
-            for i in range(n):
-                a = els[i]
-                if self._ADJACENT_CROSS_TYPE_ONLY and per_node_count[a.element_id] >= self._ADJACENT_MAX_PER_NODE:
+            self._connect_adjacent_page(els, threshold, per_node_count, edges)
+        return edges
+
+    def _connect_adjacent_page(
+        self,
+        els: list[DocumentElement],
+        threshold: float,
+        per_node_count: dict[str, int],
+        edges: list[GraphEdge],
+    ) -> None:
+        n = len(els)
+        for i in range(n):
+            a = els[i]
+            if (
+                self._ADJACENT_CROSS_TYPE_ONLY
+                and per_node_count[a.element_id] >= self._ADJACENT_MAX_PER_NODE
+            ):
+                continue
+            for j in range(i + 1, n):
+                b = els[j]
+                # Skip same-type pairs when cross-type filtering is on.
+                # Text-text is covered by SEQ; figure-figure and
+                # table-table adjacency adds little value at this stage.
+                if self._should_skip_adjacent_pair(a, b, threshold, per_node_count):
                     continue
-                for j in range(i + 1, n):
-                    b = els[j]
-                    # Skip same-type pairs when cross-type filtering is on.
-                    # Text-text is covered by SEQ; figure-figure and
-                    # table-table adjacency adds little value at this stage.
-                    if self._ADJACENT_CROSS_TYPE_ONLY and a.element_type is b.element_type:
-                        continue
-                    if per_node_count[b.element_id] >= self._ADJACENT_MAX_PER_NODE:
-                        continue
-                    # Cheap reject: skip pairs whose bboxes don't even
-                    # overlap in projection -- they can't be within
-                    # `threshold` unless the threshold is huge.
-                    if not self._bbox_may_be_near(a.bbox, b.bbox, threshold):
-                        continue
-                    if a.bbox.center_distance(b.bbox) <= threshold:
-                        src, dst = sorted((a.element_id, b.element_id))
-                        edges.append(GraphEdge(
+                if a.bbox.center_distance(b.bbox) <= threshold:
+                    src, dst = sorted((a.element_id, b.element_id))
+                    edges.append(
+                        GraphEdge(
                             source=src,
                             target=dst,
                             edge_type=EdgeType.ADJACENT,
-                        ))
-                        per_node_count[a.element_id] += 1
-                        per_node_count[b.element_id] += 1
-                        if per_node_count[a.element_id] >= self._ADJACENT_MAX_PER_NODE:
-                            break
-        return edges
+                        )
+                    )
+                    per_node_count[a.element_id] += 1
+                    per_node_count[b.element_id] += 1
+                    if per_node_count[a.element_id] >= self._ADJACENT_MAX_PER_NODE:
+                        break
+
+    def _should_skip_adjacent_pair(
+        self,
+        a: DocumentElement,
+        b: DocumentElement,
+        threshold: float,
+        per_node_count: dict[str, int],
+    ) -> bool:
+        if self._ADJACENT_CROSS_TYPE_ONLY and a.element_type is b.element_type:
+            return True
+        if per_node_count[b.element_id] >= self._ADJACENT_MAX_PER_NODE:
+            return True
+        # Cheap reject: skip pairs whose bboxes don't even
+        # overlap in projection -- they can't be within
+        # `threshold` unless the threshold is huge.
+        return not self._bbox_may_be_near(a.bbox, b.bbox, threshold)
 
     def _build_extracted_from_edges(self) -> list[GraphEdge]:
         """Link data points to their source figure via EXTRACTED_FROM.
@@ -346,39 +378,49 @@ class DocumentGraph:
         for el in list(self._elements.values()):
             if not el.data_points:
                 continue
-            dp = self._make_data_point_element(el)
-            self._elements[dp.element_id] = dp
-            edges.append(GraphEdge(
-                source=dp.element_id,
-                target=el.element_id,
-                edge_type=EdgeType.EXTRACTED_FROM,
-            ))
+            edges.append(self._make_extracted_from_edge(el))
 
         # Case 2: free-standing data points supplied by the caller.
-        figures = [e for e in self._elements.values()
-                   if e.element_type is ElementType.FIGURE]
+        figures = [
+            e for e in self._elements.values() if e.element_type is ElementType.FIGURE
+        ]
         for el in self._elements.values():
-            if el.element_type is not ElementType.DATA_POINT:
-                continue
-            # Skip the aggregates we just synthesized -- they already have
-            # their EXTRACTED_FROM edge from case 1.
-            if el.metadata.get("_synthesized"):
-                continue
-            target_id = el.metadata.get("source_figure_id")
-            if target_id and target_id in self._elements:
-                target = self._elements[target_id]
-            else:
-                same_page = [f for f in figures if f.page == el.page]
-                if not same_page:
-                    continue
-                target = min(same_page,
-                             key=lambda f: el.bbox.center_distance(f.bbox))
-            edges.append(GraphEdge(
-                source=el.element_id,
-                target=target.element_id,
-                edge_type=EdgeType.EXTRACTED_FROM,
-            ))
+            edge = self._free_data_point_edge(el, figures)
+            if edge is not None:
+                edges.append(edge)
         return edges
+
+    def _make_extracted_from_edge(self, el: DocumentElement) -> GraphEdge:
+        dp = self._make_data_point_element(el)
+        self._elements[dp.element_id] = dp
+        return GraphEdge(
+            source=dp.element_id,
+            target=el.element_id,
+            edge_type=EdgeType.EXTRACTED_FROM,
+        )
+
+    def _free_data_point_edge(
+        self, el: DocumentElement, figures: list[DocumentElement]
+    ) -> GraphEdge | None:
+        if el.element_type is not ElementType.DATA_POINT:
+            return None
+        # Skip the aggregates we just synthesized -- they already have
+        # their EXTRACTED_FROM edge from case 1.
+        if el.metadata.get("_synthesized"):
+            return None
+        target_id = el.metadata.get("source_figure_id")
+        if target_id and target_id in self._elements:
+            target = self._elements[target_id]
+        else:
+            same_page = [f for f in figures if f.page == el.page]
+            if not same_page:
+                return None
+            target = min(same_page, key=lambda f: el.bbox.center_distance(f.bbox))
+        return GraphEdge(
+            source=el.element_id,
+            target=target.element_id,
+            edge_type=EdgeType.EXTRACTED_FROM,
+        )
 
     # ------------------------------------------------------------------
     # Mention extraction
@@ -426,20 +468,22 @@ class DocumentGraph:
 
                 self._child_counter += 1
                 mid = f"{element.element_id}__mention_{self._child_counter}"
-                mentions.append(DocumentElement(
-                    element_id=mid,
-                    element_type=ElementType.MENTION,
-                    content=m.group(0),
-                    page=element.page,
-                    # We don't have char-level boxes, so the mention inherits
-                    # its parent block's bbox. Spatial reasoning on mentions
-                    # is therefore block-level, which is good enough for
-                    # resolving "this paragraph refers to Figure 3".
-                    bbox=element.bbox,
-                    mention_type=mention_type,
-                    mention_number=number,
-                    metadata={"parent_id": element.element_id},
-                ))
+                mentions.append(
+                    DocumentElement(
+                        element_id=mid,
+                        element_type=ElementType.MENTION,
+                        content=m.group(0),
+                        page=element.page,
+                        # We don't have char-level boxes, so the mention inherits
+                        # its parent block's bbox. Spatial reasoning on mentions
+                        # is therefore block-level, which is good enough for
+                        # resolving "this paragraph refers to Figure 3".
+                        bbox=element.bbox,
+                        mention_type=mention_type,
+                        mention_number=number,
+                        metadata={"parent_id": element.element_id},
+                    )
+                )
         return mentions
 
     def _make_data_point_element(self, source: DocumentElement) -> DocumentElement:
@@ -538,9 +582,7 @@ class DocumentGraph:
                 neighbor_ids.update(ids)
         return [self._elements[nid] for nid in neighbor_ids if nid in self._elements]
 
-    def get_adjacency_matrix(
-        self, edge_type: EdgeType | None = None
-    ) -> np.ndarray:
+    def get_adjacency_matrix(self, edge_type: EdgeType | None = None) -> np.ndarray:
         """Return the adjacency matrix as a dense float32 array.
 
         Node ordering matches get_elements() -- callers that need to align
@@ -643,7 +685,4 @@ class DocumentGraph:
         return element_id in self._elements
 
     def __repr__(self) -> str:
-        return (
-            f"DocumentGraph(nodes={len(self._elements)}, "
-            f"edges={len(self._edges)})"
-        )
+        return f"DocumentGraph(nodes={len(self._elements)}, edges={len(self._edges)})"

@@ -80,17 +80,17 @@ SCENES: dict[str, dict[str, Any]] = {
     # 按场景显式声明可测的子集. 复杂机器人可经 ``urdf_path`` 注入外部 URDF.
     "kuka_iiwa": {
         "domain": "robotics.arm.kuka_iiwa",
-        "state": tuple(f"j{i}" for i in range(7)),   # KUKA iiwa 7 关节角
+        "state": tuple(f"j{i}" for i in range(7)),  # KUKA iiwa 7 关节角
         "observables": tuple(f"j{i}" for i in range(7)),
         "law": "关节构型 q 在重力 + 保持力矩下的动态:  M(q) q'' + C(q,q') q' + g(q) = τ",
-        "urdf": "kuka_iiwa/model.urdf",              # pybullet_data 内置 7R 机械臂
+        "urdf": "kuka_iiwa/model.urdf",  # pybullet_data 内置 7R 机械臂
     },
     "humanoid": {
         "domain": "robotics.humanoid",
         "state": tuple(f"j{i}" for i in range(30)),
-        "observables": ("root_height",),             # 最可测单标量: 质心离地高度
+        "observables": ("root_height",),  # 最可测单标量: 质心离地高度
         "law": "双足在重力下由被动动力学 + 关节力矩维持平衡;  无控制座下必倒地(立不稳)",
-        "urdf": "humanoid/humanoid.urdf",            # pybullet_data 内置 30 关节双足
+        "urdf": "humanoid/humanoid.urdf",  # pybullet_data 内置 30 关节双足
     },
 }
 
@@ -178,46 +178,56 @@ class PyBulletEnv:
             raise PyBulletUnavailable("pybullet unavailable on this host")
         return self._pb
 
-    def _rollout_cartpole(self, pb, state: LawState, action: LawAction, scene) -> LawState:
-        """倒立摆: 连 pybullet, 建 cart-pole 两体, 施水平力, rollout, 读末态."""
-        force = float(action.config.get("force", 0.0))
+    def _connect_pb(self, pb) -> int:
+        """连接 pybullet (GUI 连不上时降级 DIRECT)."""
         mode = pb.GUI if self.use_gui else pb.DIRECT
         try:
-            cid = pb.connect(mode)
+            return pb.connect(mode)
         except Exception as exc:  # noqa: BLE001 — 无显示(CI)下 GUI 连不上要能降级
             if self.use_gui:
                 logger.warning("pybullet GUI connect failed, falling back DIRECT")
-                cid = pb.connect(pb.DIRECT)
-            else:
-                raise PyBulletUnavailable(f"pybullet connect failed: {exc}") from exc
+                return pb.connect(pb.DIRECT)
+            raise PyBulletUnavailable(f"pybullet connect failed: {exc}") from exc
+
+    def _build_cartpole(self, pb, cid: int, state: LawState) -> tuple[int, int]:
+        """用两个盒体近似 车 + 摆, 并把摆底端固定到车上."""
+        # 简化替身: 用两个盒体近似 车 + 摆(质量/尺寸可配). 真 URDF 见 S4.
+        car = pb.createCollisionShape(pb.GEOM_BOX, halfExtents=[0.25, 0.25, 0.1])
+        car_body = pb.createMultiBody(
+            baseMass=1.0,
+            baseCollisionShapeIndex=car,
+            basePosition=[state.get("cart_pos", 0.0), 0, 0.5],
+        )
+        pole = pb.createCollisionShape(pb.GEOM_BOX, halfExtents=[0.03, 0.03, 0.5])
+        pole_body = pb.createMultiBody(
+            baseMass=0.1,
+            baseCollisionShapeIndex=pole,
+            basePosition=[state.get("cart_pos", 0.0), 0, 1.0 + 0.5],
+        )
+        # 固定摆底端到车上 + 摆竖直, 简化约束 (真实铰接用 createConstraint)
+        pb.createConstraint(
+            parentBodyUniqueId=car_body,
+            parentLinkIndex=-1,
+            childBodyUniqueId=pole_body,
+            childLinkIndex=-1,
+            jointType=pb.JOINT_POINT2POINT,
+            jointAxis=[0, 0, 1],
+            parentFramePosition=[0, 0, 0.5],
+            childFramePosition=[0, 0, -0.5],
+            physicsClientId=cid,
+        )
+        return car_body, pole_body
+
+    def _rollout_cartpole(
+        self, pb, state: LawState, action: LawAction, scene
+    ) -> LawState:
+        """倒立摆: 连 pybullet, 建 cart-pole 两体, 施水平力, rollout, 读末态."""
+        force = float(action.config.get("force", 0.0))
+        cid = self._connect_pb(pb)
         try:
             pb.setGravity(0, 0, self.gravity, physicsClientId=cid)
             pb.setTimeStep(self.timestep, physicsClientId=cid)
-            # 简化替身: 用两个盒体近似 车 + 摆(质量/尺寸可配). 真 URDF 见 S4.
-            car = pb.createCollisionShape(pb.GEOM_BOX, halfExtents=[0.25, 0.25, 0.1])
-            car_body = pb.createMultiBody(
-                baseMass=1.0,
-                baseCollisionShapeIndex=car,
-                basePosition=[state.get("cart_pos", 0.0), 0, 0.5],
-            )
-            pole = pb.createCollisionShape(pb.GEOM_BOX, halfExtents=[0.03, 0.03, 0.5])
-            pole_body = pb.createMultiBody(
-                baseMass=0.1,
-                baseCollisionShapeIndex=pole,
-                basePosition=[state.get("cart_pos", 0.0), 0, 1.0 + 0.5],
-            )
-            # 固定摆底端到车上 + 摆竖直, 简化约束 (真实铰接用 createConstraint)
-            pb.createConstraint(
-                parentBodyUniqueId=car_body,
-                parentLinkIndex=-1,
-                childBodyUniqueId=pole_body,
-                childLinkIndex=-1,
-                jointType=pb.JOINT_POINT2POINT,
-                jointAxis=[0, 0, 1],
-                parentFramePosition=[0, 0, 0.5],
-                childFramePosition=[0, 0, -0.5],
-                physicsClientId=cid,
-            )
+            car_body, pole_body = self._build_cartpole(pb, cid, state)
             # 初始摆角 (相对竖直): 绕 x 轴旋转近似
             theta = state.get("pole_theta", 0.0)
             pb.resetBasePositionAndOrientation(
@@ -229,8 +239,12 @@ class PyBulletEnv:
             # rollout
             for _ in range(self.n_steps):
                 pb.applyExternalForce(
-                    car_body, -1, [force, 0, 0], [0, 0, 0],
-                    pb.WORLD_FRAME, physicsClientId=cid,
+                    car_body,
+                    -1,
+                    [force, 0, 0],
+                    [0, 0, 0],
+                    pb.WORLD_FRAME,
+                    physicsClientId=cid,
                 )
                 pb.stepSimulation(physicsClientId=cid)
             cart_pos, cart_vel = self._body_state(pb, cid, car_body, "cart")
@@ -265,8 +279,61 @@ class PyBulletEnv:
             self.scene.get("domain", self.domain),
         )
 
-    def _rollout_urdf(self, pb, state: LawState, action: LawAction,
-                      scene: dict[str, Any], urdf: str) -> LawState:
+    def _configure_search_path(self, pb, cid: int) -> None:
+        """把 pybullet_data 加进搜索路径 (缺失仅记录, 不阻断显式 urdf_path)."""
+        # pybullet_data 作为内置 URDF 的搜索路径 (ur5/humanoid 等内置场景靠它定位)
+        try:
+            import pybullet_data as _pd
+
+            pb.setAdditionalSearchPath(
+                os.path.join(os.path.dirname(_pd.__file__)), physicsClientId=cid
+            )
+        except Exception:  # noqa: BLE001 — 数据路径缺失仅记录, 不阻断显式 urdf_path
+            logger.warning("pybullet_data unavailable; explicit urdf_path only")
+
+    def _load_robot_urdf(self, pb, cid: int, urdf: str) -> Any:
+        """载入机器人 URDF, 缺失时转成 fail-open 的 PyBulletUnavailable."""
+        try:
+            return pb.loadURDF(urdf, physicsClientId=cid)
+        except Exception as exc:  # noqa: BLE001 — URDF 缺失 → fail-open 报告即可
+            raise PyBulletUnavailable(f"urdf load failed ({urdf}): {exc}") from exc
+
+    def _apply_joint_controls(self, pb, cid: int, robot, controls: dict) -> None:
+        """按 joint_parameters 给匹配到的关节下发位置控制."""
+        for j in range(pb.getNumJoints(robot, physicsClientId=cid)):
+            info = pb.getJointInfo(robot, j, physicsClientId=cid)
+            name = info[1].decode()
+            if name not in controls:
+                continue
+            params = controls[name]
+            v = float(params.get("target", 0.0) if isinstance(params, dict) else params)
+            pb.setJointMotorControl2(
+                robot,
+                j,
+                pb.POSITION_CONTROL,
+                targetPosition=v,
+                force=float(params.get("force", 50.0))
+                if isinstance(params, dict)
+                else 50.0,
+                physicsClientId=cid,
+            )
+
+    def _read_joint_vector(self, pb, cid: int, robot) -> dict[str, float]:
+        """读显式可测关节角作为状态向量 (个别关节读失败跳过)."""
+        vec: dict[str, float] = {}
+        for j in range(pb.getNumJoints(robot, physicsClientId=cid)):
+            try:
+                info = pb.getJointInfo(robot, j, physicsClientId=cid)
+                vec[info[1].decode()] = round(
+                    pb.getJointState(robot, j, physicsClientId=cid)[0], 6
+                )
+            except Exception:  # noqa: BLE001 — 个别关节读失败跳过, 不整场景崩
+                continue
+        return vec
+
+    def _rollout_urdf(
+        self, pb, state: LawState, action: LawAction, scene: dict[str, Any], urdf: str
+    ) -> LawState:
         """URDF 多关节场景 rollout: 载 plane + 机器人, 施加关节动作, 读末态关节角.
 
         这是科研 explore 的**真物理 ground truth** —— 多刚体动力学 + 接触 + 关节,
@@ -274,60 +341,27 @@ class PyBulletEnv:
         力矩/位置) 传 ``setJointMotorControl``。urdf 路径异常/缺失 → 抛 PyBulletUnavailable
         让上层 fail-open (偶发的内建模缺文件不阻断真场景).
         """
-        mode = pb.GUI if self.use_gui else pb.DIRECT
-        try:
-            cid = pb.connect(mode)
-        except Exception as exc:  # noqa: BLE001 — 无显示(CI)下 GUI 连不上要能降级
-            if self.use_gui:
-                logger.warning("pybullet GUI connect failed, falling back DIRECT")
-                cid = pb.connect(pb.DIRECT)
-            else:
-                raise PyBulletUnavailable(f"pybullet connect failed: {exc}") from exc
+        cid = self._connect_pb(pb)
         try:
             pb.setGravity(0, 0, self.gravity, physicsClientId=cid)
             pb.setTimeStep(self.timestep, physicsClientId=cid)
-            # pybullet_data 作为内置 URDF 的搜索路径 (ur5/humanoid 等内置场景靠它定位)
-            try:
-                import pybullet_data as _pd
-                pb.setAdditionalSearchPath(
-                    os.path.join(os.path.dirname(_pd.__file__)), physicsClientId=cid
-                )
-            except Exception:  # noqa: BLE001 — 数据路径缺失仅记录, 不阻断显式 urdf_path
-                logger.warning("pybullet_data unavailable; explicit urdf_path only")
+            self._configure_search_path(pb, cid)
             pb.loadURDF("plane.urdf", physicsClientId=cid)
-            try:
-                robot = pb.loadURDF(urdf, physicsClientId=cid)
-            except Exception as exc:  # noqa: BLE001 — URDF 缺失 → fail-open 报告即可
-                raise PyBulletUnavailable(f"urdf load failed ({urdf}): {exc}") from exc
+            robot = self._load_robot_urdf(pb, cid, urdf)
             controls = action.config.get("joint_parameters") or {}
-            for j in range(pb.getNumJoints(robot, physicsClientId=cid)):
-                info = pb.getJointInfo(robot, j, physicsClientId=cid)
-                name = info[1].decode()
-                if name not in controls:
-                    continue
-                params = controls[name]
-                v = float(params.get("target", 0.0) if isinstance(params, dict) else params)
-                pb.setJointMotorControl2(
-                    robot, j, pb.POSITION_CONTROL, targetPosition=v,
-                    force=float(params.get("force", 50.0)) if isinstance(params, dict) else 50.0,
-                    physicsClientId=cid,
-                )
+            self._apply_joint_controls(pb, cid, robot, controls)
             for _ in range(self.n_steps):
                 pb.stepSimulation(physicsClientId=cid)
             if getattr(self, "observable", None) or (scene.get("observables")):
                 # 机械臂/双足: 读显式可测关节角作为状态向量 (ground truth)
-                vec: dict[str, float] = {}
-                for j in range(pb.getNumJoints(robot, physicsClientId=cid)):
-                    try:
-                        info = pb.getJointInfo(robot, j, physicsClientId=cid)
-                        vec[info[1].decode()] = round(pb.getJointState(robot, j, physicsClientId=cid)[0], 6)
-                    except Exception:  # noqa: BLE001 — 个别关节读失败跳过, 不整场景崩
-                        continue
+                vec = self._read_joint_vector(pb, cid, robot)
                 return LawState(vec, scene.get("domain", self.domain))
             # 双足 humanoid: 最可测单标量 = 基座离地高度 (无控制必倒地 → 高度降)
             root_pos, _ = pb.getBasePositionAndOrientation(robot, physicsClientId=cid)
-            return LawState({"root_height": float(root_pos[2])},
-                            scene.get("domain", self.domain))
+            return LawState(
+                {"root_height": float(root_pos[2])},
+                scene.get("domain", self.domain),
+            )
         finally:
             pb.disconnect(cid)
 

@@ -120,42 +120,7 @@ class ScheduleManager:
         timestamp = now_iso()
 
         for job in due:
-            start = time.time()
-            try:
-                # shell=True 在 Windows 上有命令注入风险, 统一用 shlex 拆分
-                cmd_parts = shlex.split(job.command) if isinstance(job.command, str) else job.command
-                proc = subprocess.run(
-                    cmd_parts,
-                    shell=False,
-                    cwd=self.workspace,
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                )
-                ok = proc.returncode == 0
-                result = {
-                    "job_id": job.id,
-                    "command": job.command,
-                    "success": ok,
-                    "returncode": proc.returncode,
-                    "stdout": proc.stdout,
-                    "stderr": proc.stderr,
-                    "duration": round(time.time() - start, 3),
-                }
-            except subprocess.TimeoutExpired:
-                result = {
-                    "job_id": job.id,
-                    "command": job.command,
-                    "success": False,
-                    "error": "Timed out after 300s",
-                }
-            except Exception as exc:
-                result = {
-                    "job_id": job.id,
-                    "command": job.command,
-                    "success": False,
-                    "error": str(exc),
-                }
+            result = ScheduleManager._run_job(self, job)
 
             if job.id in jobs:
                 jobs[job.id].last_run = timestamp
@@ -164,6 +129,49 @@ class ScheduleManager:
 
         self._save(list(jobs.values()))
         return results
+
+    def _run_job(self, job: ScheduledJob) -> dict[str, Any]:
+        start = time.time()
+        try:
+            # shell=True 在 Windows 上有命令注入风险, 统一用 shlex 拆分
+            cmd_parts = (
+                shlex.split(job.command)
+                if isinstance(job.command, str)
+                else job.command
+            )
+            proc = subprocess.run(
+                cmd_parts,
+                shell=False,
+                cwd=self.workspace,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            ok = proc.returncode == 0
+            result = {
+                "job_id": job.id,
+                "command": job.command,
+                "success": ok,
+                "returncode": proc.returncode,
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+                "duration": round(time.time() - start, 3),
+            }
+        except subprocess.TimeoutExpired:
+            result = {
+                "job_id": job.id,
+                "command": job.command,
+                "success": False,
+                "error": "Timed out after 300s",
+            }
+        except Exception as exc:
+            result = {
+                "job_id": job.id,
+                "command": job.command,
+                "success": False,
+                "error": str(exc),
+            }
+        return result
 
     def run_blocking(self, interval: int = 60) -> None:
         """Run the scheduler daemon until interrupted."""

@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 # ── Parameter spaces ──────────────────────────────────────────────────
 
+
 class ParameterSpace(ABC):
     """Abstract base for parameter space designs."""
 
@@ -146,6 +147,7 @@ class LatinHypercubeSpace(ParameterSpace):
 
 # ── Job and sweep definitions ─────────────────────────────────────────
 
+
 @dataclass
 class SweepJob:
     """A single job in a parameter sweep."""
@@ -221,7 +223,13 @@ class ParameterSweep:
     def failed_jobs(self) -> list[SweepJob]:
         return [j for j in self._jobs if j.status == "failed"]
 
-    def update_job(self, job_id: str, status: str, result: dict[str, Any] | None = None, error: str | None = None) -> None:
+    def update_job(
+        self,
+        job_id: str,
+        status: str,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> None:
         """Update the status of a job."""
         for job in self._jobs:
             if job.job_id == job_id:
@@ -250,7 +258,9 @@ class ParameterSweep:
             logger.debug("best-effort op failed", exc_info=True)
             return False
 
-    def aggregate_results(self, job_results: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    def aggregate_results(
+        self, job_results: dict[str, dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
         """Aggregate results from completed jobs.
 
         Args:
@@ -278,27 +288,9 @@ class ParameterSweep:
             if isinstance(r, dict):
                 all_keys.update(k for k, v in r.items() if isinstance(v, int | float))
 
-        summary: dict[str, dict[str, float]] = {}
-        for key in all_keys:
-            values = [r[key] for r in results if isinstance(r.get(key), int | float)]
-            if values:
-                summary[key] = {
-                    "min": min(values),
-                    "max": max(values),
-                    "mean": sum(values) / len(values),
-                    "n": len(values),
-                }
-
+        summary = _sweep_summary_stats(results, all_keys)
         # Find best result per metric (assumes higher is better unless prefixed with _min_)
-        best: dict[str, dict[str, Any]] = {}
-        for key in all_keys:
-            values_with_params = [
-                (r[key], p) for r, p in zip(results, params)
-                if isinstance(r.get(key), int | float)
-            ]
-            if values_with_params:
-                best_val, best_params = max(values_with_params, key=lambda x: x[0])
-                best[key] = {"value": best_val, "parameters": best_params}
+        best = _sweep_best_results(results, params, all_keys)
 
         return {
             "n_completed": len(results),
@@ -321,3 +313,39 @@ class ParameterSweep:
             "n_failed": len(self.failed_jobs),
             "n_pending": len(self.pending_jobs),
         }
+
+
+def _sweep_summary_stats(
+    results: list[dict[str, Any]], all_keys: set[str]
+) -> dict[str, dict[str, float]]:
+    """Per-key min/max/mean/count over numeric results."""
+    summary: dict[str, dict[str, float]] = {}
+    for key in all_keys:
+        values = [r[key] for r in results if isinstance(r.get(key), int | float)]
+        if values:
+            summary[key] = {
+                "min": min(values),
+                "max": max(values),
+                "mean": sum(values) / len(values),
+                "n": len(values),
+            }
+    return summary
+
+
+def _sweep_best_results(
+    results: list[dict[str, Any]],
+    params: list[dict[str, Any]],
+    all_keys: set[str],
+) -> dict[str, dict[str, Any]]:
+    """Best (max) value per numeric key along with its parameter set."""
+    best: dict[str, dict[str, Any]] = {}
+    for key in all_keys:
+        values_with_params = [
+            (r[key], p)
+            for r, p in zip(results, params)
+            if isinstance(r.get(key), int | float)
+        ]
+        if values_with_params:
+            best_val, best_params = max(values_with_params, key=lambda x: x[0])
+            best[key] = {"value": best_val, "parameters": best_params}
+    return best

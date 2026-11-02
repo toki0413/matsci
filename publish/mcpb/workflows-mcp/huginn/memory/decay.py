@@ -12,7 +12,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from huginn.memory.longterm import _coerce_importance
 
 if TYPE_CHECKING:
     from huginn.memory.longterm import LongTermMemory
@@ -54,68 +56,10 @@ class MemoryDecayPolicy:
 
             promoted = 0
             for row in rows:
-                entry_id = row["id"]
-                importance = row["importance"]
-                access_count = row["access_count"]
-                keys = set(row.keys())
-                tier = row["tier"] if "tier" in keys else "mid"
-                # 旧库没这列时 row["last_decay_access_count"] 取不到, 默认 0
-                last_decay_count = (
-                    row["last_decay_access_count"] if "last_decay_access_count" in keys else 0
-                ) or 0
-                created_at = self._parse_dt(row["created_at"]) or now
-                last_accessed = self._parse_dt(row["last_accessed"]) or created_at
-
-                age_days = (now - created_at).total_seconds() / 86400
-                idle_days = (now - last_accessed).total_seconds() / 86400
-
-                # Decay importance based on idle time.
-                new_importance = importance * (self.decay_per_day**idle_days)
-                # Boost based on visits since last decay — not cumulative
-                # access_count, otherwise each decay re-adds the whole history
-                # and importance gets pinned to 1.0 forever.
-                new_visits = max(0, access_count - last_decay_count)
-                new_importance = min(
-                    1.0, new_importance + self.access_boost * new_visits
-                )
-
-                if abs(new_importance - importance) > 0.001 or new_visits > 0:
-                    conn.execute(
-                        "UPDATE memories SET importance = ?, last_decay_access_count = ? WHERE id = ?",
-                        (round(new_importance, 4), access_count, entry_id),
-                    )
-                    decayed += 1
-
-                # 频繁访问的 mid 记忆自动晋升到 long — 以前衰减只做降级,
-                # 不做升级. 这是 access_count → tier 的反馈环.
-                if (
-                    tier == "mid"
-                    and access_count >= self.promote_access_threshold
-                    and new_importance >= self.promote_importance
-                ):
-                    conn.execute(
-                        "UPDATE memories SET tier = 'long' WHERE id = ?",
-                        (entry_id,),
-                    )
-                    promoted += 1
-
-                # Prune low-importance, non-permanent memories that are old enough.
-                # long tier 是"永久保留"的 (直觉/关键洞察/蒸馏知识), 不参与 prune.
-                # 之前不检查 tier, 科研长周期项目里早期直觉 memory 会因 importance
-                # 衰减被误删 — 研究线索断裂.
-                if (
-                    tier != "long"
-                    and new_importance < self.prune_threshold
-                    and age_days >= self.min_age_days
-                    and age_days <= self.max_age_days
-                ):
-                    # RevertibleEffect (Cordis 时间可组合性): decay 改为软删除 —
-                    # archived=1 标记而非物理 DELETE, _where_alive 自动过滤,
-                    # 误删可经 update_archived(id, False) 恢复. 不留不可逆副作用.
-                    conn.execute(
-                        "UPDATE memories SET archived = 1 WHERE id = ?", (entry_id,)
-                    )
-                    pruned += 1
+                row_decayed, row_promoted, row_pruned = self._apply_row(conn, row, now)
+                decayed += row_decayed
+                promoted += row_promoted
+                pruned += row_pruned
 
             conn.commit()
 
@@ -132,6 +76,107 @@ class MemoryDecayPolicy:
             "promoted": promoted,
             "expired": expired,
         }
+
+    def _apply_row(self, conn: Any, row: Any, now: datetime) -> tuple[int, int, int]:
+        """Decay / promote / prune a single memory row.
+
+        Returns ``(decayed, promoted, pruned)`` deltas for this row.
+        """
+        entry_id = row["id"]
+        importance = _coerce_importance(row["importance"])
+        access_count = row["access_count"]
+        keys = set(row.keys())
+        tier = row["tier"] if "tier" in keys else "mid"
+        # 旧库没这列时 row["last_decay_access_count"] 取不到, 默认 0
+        last_decay_count = (
+            row["last_decay_access_count"] if "last_decay_access_count" in keys else 0
+        ) or 0
+        created_at = self._parse_dt(row["created_at"]) or now
+        last_accessed = self._parse_dt(row["last_accessed"]) or created_at
+
+        age_days = (now - created_at).total_seconds() / 86400
+        idle_days = (now - last_accessed).total_seconds() / 86400
+
+        # Decay importance based on idle time.
+        new_importance = importance * (self.decay_per_day**idle_days)
+        # Boost based on visits since last decay — not cumulative
+        # access_count, otherwise each decay re-adds the whole history
+        # and importance gets pinned to 1.0 forever.
+        new_visits = max(0, access_count - last_decay_count)
+        new_importance = min(1.0, new_importance + self.access_boost * new_visits)
+
+        decayed = self._store_importance(
+            conn, entry_id, importance, access_count, new_importance, new_visits
+        )
+        promoted = self._promote_if_hot(
+            conn, entry_id, tier, access_count, new_importance
+        )
+        pruned = self._prune_if_stale(conn, entry_id, tier, new_importance, age_days)
+        return decayed, promoted, pruned
+
+    @staticmethod
+    def _store_importance(
+        conn: Any,
+        entry_id: Any,
+        importance: float,
+        access_count: int,
+        new_importance: float,
+        new_visits: int,
+    ) -> int:
+        if abs(new_importance - importance) > 0.001 or new_visits > 0:
+            conn.execute(
+                "UPDATE memories SET importance = ?, last_decay_access_count = ? WHERE id = ?",
+                (round(new_importance, 4), access_count, entry_id),
+            )
+            return 1
+        return 0
+
+    def _promote_if_hot(
+        self,
+        conn: Any,
+        entry_id: Any,
+        tier: str,
+        access_count: int,
+        new_importance: float,
+    ) -> int:
+        # 频繁访问的 mid 记忆自动晋升到 long — 以前衰减只做降级,
+        # 不做升级. 这是 access_count → tier 的反馈环.
+        if (
+            tier == "mid"
+            and access_count >= self.promote_access_threshold
+            and new_importance >= self.promote_importance
+        ):
+            conn.execute(
+                "UPDATE memories SET tier = 'long' WHERE id = ?",
+                (entry_id,),
+            )
+            return 1
+        return 0
+
+    def _prune_if_stale(
+        self,
+        conn: Any,
+        entry_id: Any,
+        tier: str,
+        new_importance: float,
+        age_days: float,
+    ) -> int:
+        # Prune low-importance, non-permanent memories that are old enough.
+        # long tier 是"永久保留"的 (直觉/关键洞察/蒸馏知识), 不参与 prune.
+        # 之前不检查 tier, 科研长周期项目里早期直觉 memory 会因 importance
+        # 衰减被误删 — 研究线索断裂.
+        if (
+            tier != "long"
+            and new_importance < self.prune_threshold
+            and age_days >= self.min_age_days
+            and age_days <= self.max_age_days
+        ):
+            # RevertibleEffect (Cordis 时间可组合性): decay 改为软删除 —
+            # archived=1 标记而非物理 DELETE, _where_alive 自动过滤,
+            # 误删可经 update_archived(id, False) 恢复. 不留不可逆副作用.
+            conn.execute("UPDATE memories SET archived = 1 WHERE id = ?", (entry_id,))
+            return 1
+        return 0
 
     @staticmethod
     def _parse_dt(value: str | None) -> datetime | None:

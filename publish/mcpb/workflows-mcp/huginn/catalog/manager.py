@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,6 +24,45 @@ from huginn.catalog.models import (
     CatalogEntry,
     make_entry_id,
 )
+
+logger = logging.getLogger(__name__)
+
+# kind -> 采集该 kind 所需的外部 handle 键 (None = 无需 handle, 从全局注册表读).
+# 这张表是 `discover_handles` / `_kind_collectors` / `discover_all` 三者之间的契约:
+# 新增 kind 必须显式声明它依赖哪个 handle, 门禁 (tests/test_arch_catalog_handles.py)
+# 断言三者的键集双向闭合 —— 否则又会回到「忘了传 handle → 该 kind 结构上永不出现」.
+KIND_HANDLE_SPECS: dict[str, str | None] = {
+    "mcp": "mcp_manager",
+    "model": "model_registry",
+    "plugin": "plugins_dir",
+    "tool": None,
+    "skill": None,
+    "prompt": None,
+    "workflow": None,
+}
+
+# discover_all 接受的 handle 键全集.
+_HANDLE_KEYS = frozenset(v for v in KIND_HANDLE_SPECS.values() if v)
+
+
+def discover_handles(ctx: Any) -> dict[str, Any]:
+    """从 ServerContext 派生 discover_all 的 handles (MCP / 模型 / 插件目录).
+
+    只做**读取**: 缺哪项就给 None, 对应 kind 如实缺席, 不伪造条目. 集中在此是为了让
+    census / lifespan / REST 路由共用同一份"从上下文取哪些 handle"的知识, 避免各处
+    手写一半 handles 导致 discover_all 覆盖式采集时把其它 kind 冲掉.
+    """
+    handles: dict[str, Any] = {"mcp_manager": getattr(ctx, "mcp_manager", None)}
+    factory = getattr(ctx, "agent_factory", None)
+    handles["model_registry"] = getattr(factory, "model_registry", None)
+    try:
+        from huginn.plugins.loader import DEFAULT_PLUGINS_DIR
+
+        handles["plugins_dir"] = DEFAULT_PLUGINS_DIR
+    except Exception:  # 非致命: 插件目录不可解析时该 kind 缺席
+        logger.debug("plugins_dir unavailable for catalog discovery", exc_info=True)
+        handles["plugins_dir"] = None
+    return handles
 
 
 def _collect_tools() -> list[CatalogEntry]:
@@ -217,6 +257,13 @@ class CatalogManager:
         set_enabled 标记的"用户禁用"不会在 rediscover 时被冲掉.
         """
         raw: dict[str, CatalogEntry] = {}
+        unknown = sorted(set(handles) - _HANDLE_KEYS)
+        if unknown:
+            # 误传参此前被静默忽略 = 「传错了也不算错」; 显式拒绝让接入方早暴露.
+            raise TypeError(
+                f"unknown catalog handle(s): {unknown}; "
+                f"accepted: {sorted(_HANDLE_KEYS)}"
+            )
         for _kind, entries in _kind_collectors(handles).items():
             for e in entries:
                 prev = raw.get(e.id)

@@ -23,11 +23,14 @@ import logging
 import re
 from typing import Any
 
+from huginn.autoloop._facade import EngineFacade
+
 logger = logging.getLogger(__name__)
 
 # 关键词: 只用于 description 的自由文本解析兜底 (模型偶尔不严格按 JSON 输出)
-_KV_RE = re.compile(r"(?:^|[\s,;])([A-Za-z_]+)\s*[:=]\s*(\[[^\]]*\]|\"[^\"]*\"|'[^']*'|[^\s,;]+)")
-
+_KV_RE = re.compile(
+    r"(?:^|[\s,;])([A-Za-z_]+)\s*[:=]\s*(\[[^\]]*\]|\"[^\"]*\"|'[^']*'|[^\s,;]+)"
+)
 
 def _flag_on(name: str) -> bool:
     try:
@@ -37,7 +40,6 @@ def _flag_on(name: str) -> bool:
     except Exception:  # 防御: flag 层异常 → 当作关 (功能默认 off)
         logger.debug("feature flag read failed for %s", name, exc_info=True)
         return False
-
 
 def _as_float_list(value: Any) -> list[float] | None:
     """把 [..] / 'a,b,c' / 'a b c' 解析成一维 float 列表; 失败 None."""
@@ -56,26 +58,8 @@ def _as_float_list(value: Any) -> list[float] | None:
             return None
     return None
 
-
-class RecallModes:
+class RecallModes(EngineFacade):
     """trace_inspect / frame_inspect 方法族协作对象."""
-
-    def __init__(self, engine: Any) -> None:
-        object.__setattr__(self, "engine", engine)
-
-    def __getattr__(self, name: str) -> Any:
-        if name.startswith("_"):
-            return object.__getattribute__(self.engine, name)
-        raise AttributeError(name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name == "engine":
-            object.__setattr__(self, name, value)
-            return
-        if self.engine is self:
-            object.__setattr__(self, name, value)
-            return
-        setattr(self.engine, name, value)
 
     # ── 帧捕获 (execute 尾部调用, flag 关时零成本直返) ────────────────
     def capture_if_enabled(self, tool: str, result: Any) -> dict[str, Any] | None:
@@ -180,25 +164,9 @@ class RecallModes:
         }
 
     # ── mode 2: 无损帧回看 / 区域裁剪 / 像素读取 ─────────────────────
-    async def _execute_frame_inspect(
-        self, description: str, context: dict[str, Any]
-    ) -> dict[str, Any]:
-        """回看历史帧: view (整帧) / region (裁区域) / pixels (取精确 RGB)."""
-        if not _flag_on("visual_frame_memory"):
-            return {
-                "mode": "frame_inspect",
-                "success": False,
-                "error": (
-                    "frame_inspect disabled; enable with "
-                    "HUGINN_FEATURE_VISUAL_FRAME_MEMORY=true"
-                ),
-            }
-        store = self._get_frame_store()
-        if store is None:
-            return {"mode": "frame_inspect", "success": False, "error": "frame store unavailable"}
-
-        p = self._parse_params(description)
-        action = str(p.get("action", "view") or "view").strip().lower()
+    @staticmethod
+    def _resolve_frame(store: Any, p: dict[str, Any]) -> int | None:
+        """解析 frame_id; 缺省时取最近帧, 无帧返回 None."""
         frame_id = p.get("frame_id")
         try:
             frame_id = int(frame_id) if frame_id is not None else None
@@ -206,9 +174,17 @@ class RecallModes:
             frame_id = None
         if frame_id is None:
             frame_id = store.last_frame_id()
-        if frame_id is None:
-            return {"mode": "frame_inspect", "success": False, "error": "no frames captured yet"}
+        return frame_id
 
+    @staticmethod
+    def _frame_action(
+        store: Any,
+        action: str,
+        p: dict[str, Any],
+        frame_id: int,
+        truthy: Any,
+    ) -> tuple[Any, str]:
+        """按 action 取帧数据: region/zoom/crop → 裁剪, pixels → 采样, 否则整帧."""
         if action in ("region", "zoom", "crop"):
             box = _as_float_list(p.get("box")) or [0.0, 0.0, 1.0, 1.0]
             res = store.region(frame_id, box)
@@ -225,9 +201,7 @@ class RecallModes:
             if not isinstance(points, list):
                 points = []
             points = [q for q in (_as_float_list(q) for q in points) if q]
-            res = store.read_pixels(
-                frame_id, points, normalized=self._truthy(p.get("normalized"), False)
-            )
+            res = store.read_pixels(frame_id, points, normalized=truthy)
             kind = "pixels"
         else:  # view
             raw = store.get_bytes(frame_id)
@@ -240,7 +214,12 @@ class RecallModes:
                     "image_b64": base64.b64encode(raw).decode(),
                 }
             kind = "view"
+        return res, kind
 
+    def _frame_output(
+        self, store: Any, frame_id: int, kind: str, res: Any
+    ) -> dict[str, Any]:
+        """组装返回体; 有帧图则回写多模态缓存与最近帧."""
         _err = res.get("error") if isinstance(res, dict) else "invalid result"
         out: dict[str, Any] = {
             "mode": "frame_inspect",
@@ -268,3 +247,39 @@ class RecallModes:
                 "This is the original pixels, not a text projection."
             )
         return out
+
+    async def _execute_frame_inspect(
+        self, description: str, context: dict[str, Any]
+    ) -> dict[str, Any]:
+        """回看历史帧: view (整帧) / region (裁区域) / pixels (取精确 RGB)."""
+        if not _flag_on("visual_frame_memory"):
+            return {
+                "mode": "frame_inspect",
+                "success": False,
+                "error": (
+                    "frame_inspect disabled; enable with "
+                    "HUGINN_FEATURE_VISUAL_FRAME_MEMORY=true"
+                ),
+            }
+        store = self._get_frame_store()
+        if store is None:
+            return {
+                "mode": "frame_inspect",
+                "success": False,
+                "error": "frame store unavailable",
+            }
+
+        p = self._parse_params(description)
+        action = str(p.get("action", "view") or "view").strip().lower()
+        frame_id = RecallModes._resolve_frame(store, p)
+        if frame_id is None:
+            return {
+                "mode": "frame_inspect",
+                "success": False,
+                "error": "no frames captured yet",
+            }
+
+        res, kind = RecallModes._frame_action(
+            store, action, p, frame_id, self._truthy(p.get("normalized"), False)
+        )
+        return RecallModes._frame_output(self, store, frame_id, kind, res)

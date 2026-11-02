@@ -16,6 +16,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from huginn.core_types import HandleType, ToolContext, ToolResult, ValidationResult
+from huginn.env_access import env_str
 from huginn.hpc.client import HPCConfig
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.validation.handle_validator import HandleValidator
@@ -266,10 +267,10 @@ class JobTool(HuginnTool):
 
     def _get_hpc_config(self, args: JobToolInput) -> HPCConfig:
         """Build HPCConfig from tool args and env vars."""
-        host = args.hpc_host or os.environ.get("HPC_HOST")
-        username = args.hpc_username or os.environ.get("HPC_USERNAME")
+        host = args.hpc_host or env_str("HPC_HOST") or None
+        username = args.hpc_username or env_str("HPC_USERNAME") or None
         scheduler = args.hpc_scheduler or os.environ.get("HPC_SCHEDULER", "slurm")
-        key_path = args.hpc_key_path or os.environ.get("HPC_KEY_PATH")
+        key_path = args.hpc_key_path or env_str("HPC_KEY_PATH") or None
 
         if not host:
             raise ValueError(
@@ -300,27 +301,10 @@ class JobTool(HuginnTool):
 
             with HPCClient(cfg) as client:
                 # Generate or upload script
-                if args.script_path and Path(args.script_path).exists():
-                    # Upload local script
-                    local_script = Path(args.script_path)
-                    job_name = args.job_name or local_script.stem
-                    remote_script = f"{cfg.remote_work_dir}/{job_name}.sh"
-                    client.upload_file(str(local_script), remote_script)
-
-                    # Read content for submission
-                    with open(local_script) as f:
-                        script_content = f.read()
-                elif args.command:
-                    # Generate script from command
-                    job_name = args.job_name or "huginn_job"
-                    script_content = client.generate_job_script(
-                        command=args.command,
-                        job_name=job_name,
-                        walltime=f"{args.walltime_hours}:00:00",
-                        modules=args.modules,
-                        env_vars=args.env_vars,
-                    )
-                else:
+                job_name, script_content = JobTool._prepare_submission(
+                    self, client, args, cfg
+                )
+                if job_name is None:
                     return ToolResult(
                         data=None,
                         success=False,
@@ -330,25 +314,7 @@ class JobTool(HuginnTool):
                 job_id = client.submit_job(script_content, job_name=job_name)
 
                 # Track in RemoteJobStore so the monitor picks it up
-                try:
-                    from huginn.execution.remote_job_store import (
-                        RemoteJobRecord,
-                        RemoteJobStore,
-                    )
-
-                    workspace = Path(os.environ.get("HUGINN_WORKSPACE", "."))
-                    store = RemoteJobStore(workspace=workspace)
-                    record = RemoteJobRecord(
-                        local_id=str(uuid.uuid4())[:8],
-                        scheduler_id=str(job_id),
-                        command=shlex.split(args.command) if args.command else [],
-                        cwd=cfg.remote_work_dir,
-                        status="PENDING",
-                        submitted_at=time.time(),
-                    )
-                    store.add_or_update(record)
-                except Exception:
-                    logger.debug("job record persist failed", exc_info=True)
+                JobTool._persist_job_record(self, job_id, args, cfg)
 
                 output = JobToolOutput(
                     job_id=job_id,
@@ -361,6 +327,54 @@ class JobTool(HuginnTool):
             return ToolResult(
                 data=None, success=False, error=f"Remote submission failed: {e}"
             )
+
+    def _prepare_submission(self, client, args: JobToolInput, cfg: HPCConfig):
+        """上传或生成提交脚本, 返回 (job_name, script_content); 无脚本源时返回 (None, None)."""
+        if args.script_path and Path(args.script_path).exists():
+            # Upload local script
+            local_script = Path(args.script_path)
+            job_name = args.job_name or local_script.stem
+            remote_script = f"{cfg.remote_work_dir}/{job_name}.sh"
+            client.upload_file(str(local_script), remote_script)
+
+            # Read content for submission
+            with open(local_script) as f:
+                script_content = f.read()
+        elif args.command:
+            # Generate script from command
+            job_name = args.job_name or "huginn_job"
+            script_content = client.generate_job_script(
+                command=args.command,
+                job_name=job_name,
+                walltime=f"{args.walltime_hours}:00:00",
+                modules=args.modules,
+                env_vars=args.env_vars,
+            )
+        else:
+            return None, None
+        return job_name, script_content
+
+    def _persist_job_record(self, job_id, args: JobToolInput, cfg: HPCConfig) -> None:
+        """记录到 RemoteJobStore, 持久化失败不阻塞提交."""
+        try:
+            from huginn.execution.remote_job_store import (
+                RemoteJobRecord,
+                RemoteJobStore,
+            )
+
+            workspace = Path(os.environ.get("HUGINN_WORKSPACE", "."))
+            store = RemoteJobStore(workspace=workspace)
+            record = RemoteJobRecord(
+                local_id=str(uuid.uuid4())[:8],
+                scheduler_id=str(job_id),
+                command=shlex.split(args.command) if args.command else [],
+                cwd=cfg.remote_work_dir,
+                status="PENDING",
+                submitted_at=time.time(),
+            )
+            store.add_or_update(record)
+        except Exception:
+            logger.debug("job record persist failed", exc_info=True)
 
     async def _poll_remote(self, args: JobToolInput) -> ToolResult:
         """Poll status of a remote job."""

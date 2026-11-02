@@ -328,8 +328,8 @@ class _FakeKB:
         return self._results[:top_k]
 
 
-def _selfcheck() -> None:
-    # 1. TargetChain.is_complete
+def _sc_is_complete() -> None:
+    """1. TargetChain.is_complete — 空/部分/全部 + 空 required_results."""
     c = TargetChain(
         target_id="target_1",
         target="复现 median",
@@ -350,7 +350,9 @@ def _selfcheck() -> None:
     )
     assert empty_rr.is_complete(), "空 required_results 应 trivially complete"
 
-    # 2. update_progress: 匹配 → progress 增加
+
+def _sc_update_progress() -> None:
+    """2. update_progress — 匹配增加 / 不匹配不变 / 完成到 1.0."""
     c2 = TargetChain(
         target_id="target_2",
         target="复现 mean",
@@ -372,7 +374,9 @@ def _selfcheck() -> None:
     # 空 step 不影响
     assert update_progress(c2, "") == 1.0
 
-    # 3. detect_drift
+
+def _sc_detect_drift() -> None:
+    """3. detect_drift — 连续 off-track 漂移 / 混合不漂移 / 窗口不足 / 空."""
     evals_off = [{"on_track": False}, {"on_track": False}, {"on_track": False}]
     is_drift, msg = detect_drift(evals_off, window=3)
     assert is_drift, "连续 3 步 off-track 应漂移"
@@ -386,22 +390,39 @@ def _selfcheck() -> None:
     # 空 evals → 无漂移
     assert detect_drift([], window=3) == (False, "")
 
-    # 3.1 detect_drift 兼容 StepEvaluation 对象 — rcb_runner 传 _evals_history
+
+def _sc_detect_drift_objects() -> None:
+    """3.1 detect_drift 兼容 StepEvaluation 对象 — rcb_runner 传 _evals_history."""
     from types import SimpleNamespace
-    evals_obj_off = [SimpleNamespace(on_track="false"), SimpleNamespace(on_track="false"), SimpleNamespace(on_track="false")]
+
+    evals_obj_off = [
+        SimpleNamespace(on_track="false"),
+        SimpleNamespace(on_track="false"),
+        SimpleNamespace(on_track="false"),
+    ]
     is_drift3, msg3 = detect_drift(evals_obj_off, window=3)
     assert is_drift3, "对象形式连续 3 步 false 应漂移"
     assert "3 步" in msg3
     # 'unsure' 不算 off-track — 避免证据不足也触发漂移告警
-    evals_unsure = [SimpleNamespace(on_track="false"), SimpleNamespace(on_track="unsure"), SimpleNamespace(on_track="false")]
+    evals_unsure = [
+        SimpleNamespace(on_track="false"),
+        SimpleNamespace(on_track="unsure"),
+        SimpleNamespace(on_track="false"),
+    ]
     is_drift4, _ = detect_drift(evals_unsure, window=3)
     assert not is_drift4, "unsure 不应算 off-track"
     # 混合 dict + 对象也能吃
-    evals_mix = [{"on_track": False}, SimpleNamespace(on_track="false"), SimpleNamespace(on_track="false")]
+    evals_mix = [
+        {"on_track": False},
+        SimpleNamespace(on_track="false"),
+        SimpleNamespace(on_track="false"),
+    ]
     is_drift5, _ = detect_drift(evals_mix, window=3)
     assert is_drift5, "dict + 对象混合应正常判定"
 
-    # 4. _parse_llm_response: 合法 JSON → TargetChain; 非法 → 降级
+
+def _sc_parse_llm_response() -> str:
+    """4. _parse_llm_response — 合法 JSON / fence / 非法 / 空字段 / 空文本."""
     good_json = json.dumps({
         "required_results": ["拟合", "计算"],
         "required_methods": ["MLE"],
@@ -439,8 +460,11 @@ def _selfcheck() -> None:
     # 空文本 → 降级
     tc5 = _parse_llm_response("", target="y", target_id="t5")
     assert tc5.required_results == ["y"]
+    return good_json
 
-    # 5. format_target_chain_text: 含 target / progress / verification
+
+def _sc_format_text() -> None:
+    """5. format_target_chain_text — 含 target/progress/verification, 空串, DONE."""
     chains = [
         TargetChain(
             target_id="target_1",
@@ -473,7 +497,9 @@ def _selfcheck() -> None:
     done_chain.progress = 1.0
     assert "DONE" in format_target_chain_text([done_chain], current_step=10)
 
-    # 6. build_target_chains: Mode A 推 chain, Mode B 跳过, LLM 失败降级
+
+def _sc_build_chains(good_json: str) -> None:
+    """6. build_target_chains — Mode A 推 chain / Mode B 跳过 / LLM 失败降级."""
     checklist = [
         {"item": "复现 median 4e-4", "mode": "A", "metric": "median"},
         {"item": "理解论文方法", "mode": "B", "metric": ""},
@@ -497,7 +523,9 @@ def _selfcheck() -> None:
         assert c.required_results == [c.target], "LLM 失败应降级"
         assert c.verification == "目视检查"
 
-    # 7. KB prior: None / 抛错 / 空结果 / 多 chunk 都不崩
+
+def _sc_kb_prior() -> _FakeKB:
+    """7. KB prior — None / 抛错 / 空结果 / 多 chunk 都不崩."""
     fake_kb = _FakeKB(results=[{"content": "论文用 MLE 拟合"}])
     assert _query_kb_prior(fake_kb, "median") == "论文用 MLE 拟合"
     assert _query_kb_prior(None, "median") == ""
@@ -508,15 +536,30 @@ def _selfcheck() -> None:
     )
     assert "chunk1" in multi_prior and "chunk2" in multi_prior
     assert "---" in multi_prior
+    return fake_kb
 
-    # 8. KB + task_context 注入 build_target_chains 不崩, chain 正常出
+
+def _sc_kb_injection(fake_kb: _FakeKB, good_json: str) -> None:
+    """8. KB + task_context 注入 build_target_chains 不崩, chain 正常出."""
     built_with_kb = build_target_chains(
         [{"item": "复现 median", "mode": "A", "metric": "median"}],
-        kb=fake_kb, model=fake_model, task_context="任务背景",
+        kb=fake_kb, model=_FakeModel(response_text=good_json), task_context="任务背景",
     )
     assert len(built_with_kb) == 1
     assert built_with_kb[0].required_results == ["拟合", "计算"]
 
+
+def _selfcheck() -> None:
+    """9 段 assert 验证 target_chain 核心行为."""
+    _sc_is_complete()
+    _sc_update_progress()
+    _sc_detect_drift()
+    _sc_detect_drift_objects()
+    good_json = _sc_parse_llm_response()
+    _sc_format_text()
+    _sc_build_chains(good_json)
+    fake_kb = _sc_kb_prior()
+    _sc_kb_injection(fake_kb, good_json)
     print("target_chain selfcheck OK")
 
 

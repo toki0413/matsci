@@ -12,6 +12,7 @@ bandit B202 / CVE-2007-4559 系列问题的统一修复点.
 
 注: ``fully_trusted`` filter 等同于不防护, 永远不要用.
 """
+
 from __future__ import annotations
 
 import logging
@@ -66,6 +67,39 @@ def _check_size(name: str, size: int, total: int) -> tuple[bool, int]:
     return True, new_total
 
 
+def _extract_tar_members(
+    tar: tarfile.TarFile,
+    members: list[tarfile.TarInfo],
+    extract_dir: Path,
+) -> int:
+    """逐成员检查路径/链接/大小后提取, 返回实际提取数 (3.8-3.11 兜底路径)."""
+    total = 0
+    extracted = 0
+    for m in members:
+        if not m.name:
+            continue
+        # 跳过符号链接/硬链接指向目标外的成员
+        if m.islnk() or m.issym():
+            link_target = m.linkname
+            if link_target and (
+                link_target.startswith(("/", "\\")) or ".." in Path(link_target).parts
+            ):
+                logger.warning("跳过危险链接成员: %s -> %s", m.name, link_target)
+                continue
+        if not _is_safe_member(m.name, extract_dir):
+            logger.warning("跳过路径遍历成员: %s", m.name)
+            continue
+        ok, total = _check_size(m.name, m.size, total)
+        if not ok:
+            continue
+        try:
+            tar.extract(m, path=extract_dir)
+            extracted += 1
+        except Exception as exc:
+            logger.warning("提取成员 %s 失败: %s", m.name, exc)
+    return extracted
+
+
 def safe_extract_tar(
     tar: tarfile.TarFile,
     extract_dir: str | Path,
@@ -94,31 +128,7 @@ def safe_extract_tar(
             logger.warning("data_filter extractall 失败, 退回逐成员提取: %s", exc)
 
     # 3.8-3.11 手动逐成员检查.
-    total = 0
-    extracted = 0
-    for m in members:
-        if not m.name:
-            continue
-        # 跳过符号链接/硬链接指向目标外的成员
-        if m.islnk() or m.issym():
-            link_target = m.linkname
-            if link_target and (
-                link_target.startswith(("/", "\\")) or ".." in Path(link_target).parts
-            ):
-                logger.warning("跳过危险链接成员: %s -> %s", m.name, link_target)
-                continue
-        if not _is_safe_member(m.name, extract_dir):
-            logger.warning("跳过路径遍历成员: %s", m.name)
-            continue
-        ok, total = _check_size(m.name, m.size, total)
-        if not ok:
-            continue
-        try:
-            tar.extract(m, path=extract_dir)
-            extracted += 1
-        except Exception as exc:
-            logger.warning("提取成员 %s 失败: %s", m.name, exc)
-    return extracted
+    return _extract_tar_members(tar, members, extract_dir)
 
 
 def safe_extract_zip(

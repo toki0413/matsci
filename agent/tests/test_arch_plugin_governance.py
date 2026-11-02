@@ -1,3 +1,4 @@
+# governance-gate
 """制度化闭环：插件准入门禁。
 
 Star 插件（huginn/plugins/<name>/ 含 metadata.yaml + main.py）必须：

@@ -1,4 +1,5 @@
 """RCB 认知/证据/假设流 — 依赖 rcb_utils."""
+
 from __future__ import annotations
 
 import contextlib
@@ -45,61 +46,25 @@ def _write_cognitive_evidence(
         _lines.append(f"\n## Cognitive Evidence [{_tag}]\n")
 
         if entry:
-            _darwin = float(entry.get("darwin_score", 0.5))
-            _sup = float(entry.get("supported_ratio", 0.0))
-            _lines.append(
-                f"- darwin_score: {_darwin:.3f}  supported_ratio: {_sup:.3f}  "
-                f"on_track: {entry.get('on_track', 'N/A')}"
-            )
-            _attempted = (entry.get("attempted") or "")[:150]
-            if _attempted:
-                _lines.append(f"- attempted: {_attempted}")
+            _lines.extend(_entry_evidence_lines(entry))
 
         if pmk_state:
-            _lines.append(f"- PMK persona: {(pmk_state.get('persona') or '')[:100]}")
-            _lines.append(f"- PMK memory: {(pmk_state.get('memory') or '')[:100]}")
-            _lines.append(f"- PMK kb: {(pmk_state.get('kb') or '')[:100]}")
+            _lines.extend(_pmk_evidence_lines(pmk_state))
 
         if mcmc_info:
-            _lines.append(
-                f"- MCMC: accepted={mcmc_info.get('accepted', 'N/A')} "
-                f"current_h_id={mcmc_info.get('h_id', 'N/A')} "
-                f"llh={mcmc_info.get('llh', 'N/A')}"
-            )
+            _lines.extend(_mcmc_evidence_lines(mcmc_info))
 
         if heat_engine is not None:
-            try:
-                _hk = getattr(heat_engine, "kinematics", None)
-                if _hk:
-                    _lines.append(
-                        f"- heat: Re_cog={_hk.get('Re_cog', 0):.3f} "
-                        f"T_hot={_hk.get('T_hot', 0):.3f} "
-                        f"belief_entropy={_hk.get('belief_entropy', 0):.3f}"
-                    )
-            except Exception:
-                logger.debug("heat engine evidence snapshot skipped", exc_info=True)
+            _lines.extend(_heat_evidence_lines(heat_engine))
 
         if bandit_controller is not None:
-            try:
-                _vl = getattr(bandit_controller, "verified_lessons", None)
-                if _vl:
-                    _n_lessons = len(_vl)
-                    _lines.append(f"- verified_lessons: {_n_lessons} patterns tracked")
-            except Exception:
-                logger.debug("verified_lessons evidence snapshot skipped", exc_info=True)
+            _lines.extend(_bandit_evidence_lines(bandit_controller))
 
         if completion_audit:
-            _lines.append(
-                f"- completion_audit: passed={completion_audit.get('passed', 'N/A')} "
-                f"gaps={completion_audit.get('n_gaps', 'N/A')} "
-                f"coverage={completion_audit.get('coverage', 'N/A')}"
-            )
+            _lines.extend(_completion_audit_lines(completion_audit))
 
         if anomaly_info:
-            _lines.append(
-                f"- isomorphic_anomaly: {len(anomaly_info.get('pairs', []))} pair(s), "
-                f"{len(anomaly_info.get('generated', []))} new hypothesis"
-            )
+            _lines.extend(_anomaly_evidence_lines(anomaly_info))
 
         if is_final:
             _lines.append("\n[final cognitive evidence snapshot]")
@@ -110,8 +75,78 @@ def _write_cognitive_evidence(
         print(f"[cognitive_evidence write skipped: {_ce_e}]", flush=True)
 
 
+def _entry_evidence_lines(entry: dict) -> list[str]:
+    _darwin = float(entry.get("darwin_score", 0.5))
+    _sup = float(entry.get("supported_ratio", 0.0))
+    lines = [
+        f"- darwin_score: {_darwin:.3f}  supported_ratio: {_sup:.3f}  "
+        f"on_track: {entry.get('on_track', 'N/A')}"
+    ]
+    _attempted = (entry.get("attempted") or "")[:150]
+    if _attempted:
+        lines.append(f"- attempted: {_attempted}")
+    return lines
+
+
+def _pmk_evidence_lines(pmk_state: dict) -> list[str]:
+    return [
+        f"- PMK persona: {(pmk_state.get('persona') or '')[:100]}",
+        f"- PMK memory: {(pmk_state.get('memory') or '')[:100]}",
+        f"- PMK kb: {(pmk_state.get('kb') or '')[:100]}",
+    ]
+
+
+def _mcmc_evidence_lines(mcmc_info: dict) -> list[str]:
+    return [
+        f"- MCMC: accepted={mcmc_info.get('accepted', 'N/A')} "
+        f"current_h_id={mcmc_info.get('h_id', 'N/A')} "
+        f"llh={mcmc_info.get('llh', 'N/A')}"
+    ]
+
+
+def _heat_evidence_lines(heat_engine) -> list[str]:
+    try:
+        _hk = getattr(heat_engine, "kinematics", None)
+        if _hk:
+            return [
+                f"- heat: Re_cog={_hk.get('Re_cog', 0):.3f} "
+                f"T_hot={_hk.get('T_hot', 0):.3f} "
+                f"belief_entropy={_hk.get('belief_entropy', 0):.3f}"
+            ]
+    except Exception:
+        logger.debug("heat engine evidence snapshot skipped", exc_info=True)
+    return []
+
+
+def _bandit_evidence_lines(bandit_controller) -> list[str]:
+    try:
+        _vl = getattr(bandit_controller, "verified_lessons", None)
+        if _vl:
+            _n_lessons = len(_vl)
+            return [f"- verified_lessons: {_n_lessons} patterns tracked"]
+    except Exception:
+        logger.debug("verified_lessons evidence snapshot skipped", exc_info=True)
+    return []
+
+
+def _completion_audit_lines(completion_audit: dict) -> list[str]:
+    return [
+        f"- completion_audit: passed={completion_audit.get('passed', 'N/A')} "
+        f"gaps={completion_audit.get('n_gaps', 'N/A')} "
+        f"coverage={completion_audit.get('coverage', 'N/A')}"
+    ]
+
+
+def _anomaly_evidence_lines(anomaly_info: dict) -> list[str]:
+    return [
+        f"- isomorphic_anomaly: {len(anomaly_info.get('pairs', []))} pair(s), "
+        f"{len(anomaly_info.get('generated', []))} new hypothesis"
+    ]
+
+
 async def _trigger_anomaly_hypothesis(
-    anomaly_pairs: list[tuple[str, str]], model,
+    anomaly_pairs: list[tuple[str, str]],
+    model,
 ) -> list[str]:
     """调 AutoloopEngine.trigger_isomorphic_anomaly_hypothesis 接通死代码."""
     if not anomaly_pairs:
@@ -133,8 +168,11 @@ async def _trigger_anomaly_hypothesis(
             except Exception:
                 logger.debug("best-effort op failed", exc_info=True)
                 return None
-            _txt = _resp if isinstance(_resp, str) else str(
-                getattr(_resp, "content", _resp))
+            _txt = (
+                _resp
+                if isinstance(_resp, str)
+                else str(getattr(_resp, "content", _resp))
+            )
             return _txt.strip() or None
 
         _stub = types.SimpleNamespace(
@@ -143,7 +181,8 @@ async def _trigger_anomaly_hypothesis(
             _last_raw_hypothesis=None,
         )
         return await AutoloopEngine.trigger_isomorphic_anomaly_hypothesis(
-            _stub, anomaly_pairs)
+            _stub, anomaly_pairs
+        )
     except Exception as _e:
         print(f"[anomaly] trigger failed: {_e}", flush=True)
         return []
@@ -160,7 +199,7 @@ def _init_hypothesis_manifold(
     task_ctx: str = "",
 ):
     """v15 Phase 2 Task 3.1: 初始化 HypothesisManifold, 跨轮持久化."""
-    from huginn.metacog.hypothesis_manifold import Hypothesis, HypothesisManifold
+    from huginn.metacog.hypothesis_manifold import HypothesisManifold
 
     path = ws / HUGINN_DIR_NAME / "hypothesis_manifold.jsonl"
 
@@ -168,12 +207,31 @@ def _init_hypothesis_manifold(
     if loaded is not None:
         return loaded
 
-    text_pool = " ".join(filter(None, [
-        checklist or "", str(instructions or ""), scan_text or "",
-    ]))
+    text_pool = " ".join(
+        filter(
+            None,
+            [
+                checklist or "",
+                str(instructions or ""),
+                scan_text or "",
+            ],
+        )
+    )
     targets = _extract_numeric_targets(text_pool)
 
     manifold = HypothesisManifold()
+    for h in _make_default_hypotheses(targets):
+        with contextlib.suppress(ValueError):
+            manifold.add(h)
+
+    _save_manifold(manifold, path)
+    return manifold
+
+
+def _make_default_hypotheses(targets: dict) -> list:
+    """构造三个默认假设: 完全复现 / 部分复现 / 零基线."""
+    from huginn.metacog.hypothesis_manifold import Hypothesis
+
     h_paper = Hypothesis(
         h_id="h_paper_repro",
         description="Paper results reproducible: metrics match claimed values",
@@ -192,12 +250,7 @@ def _init_hypothesis_manifold(
         predictions=dict.fromkeys(targets, 0.0),
         n_params=1,
     )
-    for h in (h_paper, h_partial, h_null):
-        with contextlib.suppress(ValueError):
-            manifold.add(h)
-
-    _save_manifold(manifold, path)
-    return manifold
+    return [h_paper, h_partial, h_null]
 
 
 def _collect_observations(
@@ -269,8 +322,7 @@ def _record_abduction(
     if manifold is None or not observations:
         return
     try:
-        best_h_id, log_post, fisher_info = _compute_v15_fields(
-            manifold, observations)
+        best_h_id, log_post, fisher_info = _compute_v15_fields(manifold, observations)
         if best_h_id is None:
             return
         abd_entry = {
@@ -280,7 +332,7 @@ def _record_abduction(
             "attempted": f"abductive inference over {len(observations)} observations",
             "found": f"best_h={best_h_id} log_posterior={log_post:.3f}",
             "evidence": [
-                f"obs_{i+1}: {o.name}={o.value:.4g}"
+                f"obs_{i + 1}: {o.name}={o.value:.4g}"
                 for i, o in enumerate(observations[:5])
             ],
             "limitations": [],
@@ -288,8 +340,7 @@ def _record_abduction(
             "next_hint": f"prior boost for {best_h_id}",
             "darwin_score": 0.0,
             "supported_ratio": 0.0,
-            "simplex_id": _make_simplex_id(
-                task_id, iteration, "abductive_inference"),
+            "simplex_id": _make_simplex_id(task_id, iteration, "abductive_inference"),
             "cochain_type": "gradient",
             "domain": _infer_domain(task_id),
             "task_id": task_id,
@@ -313,12 +364,18 @@ def _append_observations_log(observations, path: Path, *, iteration: int) -> Non
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as f:
             for o in observations:
-                f.write(json.dumps({
-                    "type": "observation",
-                    "iteration": iteration,
-                    "name": o.name,
-                    "value": o.value,
-                    "sigma": o.sigma,
-                }, ensure_ascii=False) + "\n")
+                f.write(
+                    json.dumps(
+                        {
+                            "type": "observation",
+                            "iteration": iteration,
+                            "name": o.name,
+                            "value": o.value,
+                            "sigma": o.sigma,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
     except Exception:
         logger.debug("observations save skipped", exc_info=True)

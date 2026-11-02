@@ -86,15 +86,11 @@ def _decode_y_stream(chunk: str) -> list[float]:
     return vals
 
 
-def parse_jdx(text: str) -> dict:
-    """解析 JCAMP-DX 文本 (常见 NMR 变体) → 结构化 dict.
-
-    返回: {"title", "data_type", "xunits", "yunits", "observer_frequency",
-           "data_form", "x"/"y" (XYDATA) 或 "peaks" (PEAK TABLE), "n_points"}.
-    不认识的 DATA FORM → ValueError 点名形态.
-    """
+def _scan_jdx_header(
+    lines: list[str],
+) -> tuple[dict[str, str], str | None, int | None]:
+    """扫描 ## 头部; 返回 (meta, data_form, data_start)."""
     meta: dict[str, str] = {}
-    lines = text.splitlines()
     data_start: int | None = None
     data_form: str | None = None
     for i, line in enumerate(lines):
@@ -113,7 +109,8 @@ def parse_jdx(text: str) -> dict:
         other = [
             _meta_value(line)[0]
             for line in lines
-            if line.startswith("##") and _meta_value(line)[0] in ("DATATABLE", "XYPOINTS")
+            if line.startswith("##")
+            and _meta_value(line)[0] in ("DATATABLE", "XYPOINTS")
         ]
         if other:
             raise ValueError(
@@ -121,37 +118,35 @@ def parse_jdx(text: str) -> dict:
                 f"(支持: {', '.join(JDX_SUPPORTED_FORMS)})"
             )
         raise ValueError("未找到数据段 (##PEAK TABLE / ##XYDATA)")
+    return meta, data_form, data_start
 
+
+def _jdx_body(lines: list[str], data_start: int) -> list[str]:
     body = []
     for line in lines[data_start:]:
         if line.startswith("##"):
             break
         body.append(line)
+    return body
 
-    out = {
-        "title": meta.get("TITLE", ""),
-        "data_type": meta.get("DATA TYPE", ""),
-        "xunits": meta.get("XUNITS", ""),
-        "yunits": meta.get("YUNITS", ""),
-        "observer_frequency": meta.get(".OBSERVER FREQUENCY", ""),
-        "data_form": data_form,
-    }
 
-    if data_form == "PEAK TABLE":
-        peaks = []
-        for line in body:
-            parts = re.split(r"[,\s]+", line.strip())
-            if len(parts) < 2:
-                continue
-            try:
-                peaks.append({"x": float(parts[0]), "y": float(parts[1])})
-            except ValueError:
-                continue  # 表头/杂行
-        out["peaks"] = peaks
-        out["n_points"] = len(peaks)
-        return out
+def _parse_peak_table(body: list[str]) -> list[dict]:
+    peaks = []
+    for line in body:
+        parts = re.split(r"[,\s]+", line.strip())
+        if len(parts) < 2:
+            continue
+        try:
+            peaks.append({"x": float(parts[0]), "y": float(parts[1])})
+        except ValueError:
+            continue  # 表头/杂行
+    return peaks
 
-    # XYDATA= (X++(Y..Y)): 每行 "x首值++Y压缩串", x 以 XFACTOR 步进
+
+def _parse_xydata(
+    body: list[str], meta: dict[str, str]
+) -> tuple[list[float], list[float]]:
+    """XYDATA= (X++(Y..Y)): 每行 "x首值++Y压缩串", x 以 XFACTOR 步进."""
     xfactor = float(meta.get("XFACTOR", "1") or 1)
     yfactor = float(meta.get("YFACTOR", "1") or 1)
     xs: list[float] = []
@@ -171,6 +166,37 @@ def parse_jdx(text: str) -> dict:
         for j, y in enumerate(row):
             xs.append(x_first + j * xfactor)
             ys.append(y)
+    return xs, ys
+
+
+def parse_jdx(text: str) -> dict:
+    """解析 JCAMP-DX 文本 (常见 NMR 变体) → 结构化 dict.
+
+    返回: {"title", "data_type", "xunits", "yunits", "observer_frequency",
+           "data_form", "x"/"y" (XYDATA) 或 "peaks" (PEAK TABLE), "n_points"}.
+    不认识的 DATA FORM → ValueError 点名形态.
+    """
+    lines = text.splitlines()
+    meta, data_form, data_start = _scan_jdx_header(lines)
+
+    body = _jdx_body(lines, data_start)
+
+    out = {
+        "title": meta.get("TITLE", ""),
+        "data_type": meta.get("DATA TYPE", ""),
+        "xunits": meta.get("XUNITS", ""),
+        "yunits": meta.get("YUNITS", ""),
+        "observer_frequency": meta.get(".OBSERVER FREQUENCY", ""),
+        "data_form": data_form,
+    }
+
+    if data_form == "PEAK TABLE":
+        peaks = _parse_peak_table(body)
+        out["peaks"] = peaks
+        out["n_points"] = len(peaks)
+        return out
+
+    xs, ys = _parse_xydata(body, meta)
     out["x"] = xs
     out["y"] = ys
     out["n_points"] = len(ys)
@@ -218,12 +244,45 @@ def _decode_binary(bd: ET.Element) -> tuple[str | None, list[float]]:
     if not dtype:
         return next(iter(accessions)), []
     n = len(raw) // struct.calcsize(f"<{dtype}")
-    values = list(struct.unpack(f"<{n}{dtype}", raw[: n * struct.calcsize(f"<{dtype}")]))
+    values = list(
+        struct.unpack(f"<{n}{dtype}", raw[: n * struct.calcsize(f"<{dtype}")])
+    )
     if _MZ_ARRAY in accessions:
         return "mz", values
     if _INTENSITY_ARRAY in accessions:
         return "intensity", values
     return None, values
+
+
+def _parse_spectrum(
+    elem: ET.Element, max_peaks: int, skipped_arrays: list[str]
+) -> dict:
+    """解一个 <spectrum> 元素 → 谱 dict."""
+    ms_level = ""
+    for child in elem:
+        if _local(child.tag) == "cvParam" and child.get("accession") == _MS_LEVEL:
+            ms_level = child.get("value") or ""
+    arrays: dict[str, list[float]] = {}
+    for arr in elem.iter():
+        if _local(arr.tag) != "binaryDataArray":
+            continue
+        kind, values = _decode_binary(arr)
+        if kind is None:
+            skipped_arrays.append(f"spectrum[{elem.get('index')}]")
+            continue
+        arrays[kind] = values
+    mz = arrays.get("mz", [])
+    inten = arrays.get("intensity", [])
+    n = min(len(mz), len(inten))
+    peaks = [{"mz": mz[i], "intensity": inten[i]} for i in range(min(n, max_peaks))]
+    return {
+        "index": elem.get("index"),
+        "ms_level": ms_level,
+        "n_peaks": n,
+        "n_peaks_returned": len(peaks),
+        "peaks": peaks,
+        "truncated": n > max_peaks,
+    }
 
 
 def parse_mzml(
@@ -254,35 +313,7 @@ def parse_mzml(
         spectra_total += 1
         if len(spectra) >= max_spectra:
             continue
-        ms_level = ""
-        for child in elem:
-            if _local(child.tag) == "cvParam" and child.get("accession") == _MS_LEVEL:
-                ms_level = child.get("value") or ""
-        arrays: dict[str, list[float]] = {}
-        for arr in elem.iter():
-            if _local(arr.tag) != "binaryDataArray":
-                continue
-            kind, values = _decode_binary(arr)
-            if kind is None:
-                skipped_arrays.append(f"spectrum[{elem.get('index')}]")
-                continue
-            arrays[kind] = values
-        mz = arrays.get("mz", [])
-        inten = arrays.get("intensity", [])
-        n = min(len(mz), len(inten))
-        peaks = [
-            {"mz": mz[i], "intensity": inten[i]} for i in range(min(n, max_peaks))
-        ]
-        spectra.append(
-            {
-                "index": elem.get("index"),
-                "ms_level": ms_level,
-                "n_peaks": n,
-                "n_peaks_returned": len(peaks),
-                "peaks": peaks,
-                "truncated": n > max_peaks,
-            }
-        )
+        spectra.append(_parse_spectrum(elem, max_peaks, skipped_arrays))
     return {
         "n_spectra_total": spectra_total,
         "n_spectra": len(spectra),

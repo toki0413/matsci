@@ -21,20 +21,8 @@ from skfem.models.elasticity import linear_elasticity, plane_stress
 from huginn.core_types import ToolResult
 
 
-def static_linear(args: Any) -> ToolResult:
-    """2D 线弹性静力分析. 接受 mesh_from_geometry 的输出或内部重新生成."""
-    mesh_result = args._mesh_result if hasattr(args, "_mesh_result") else None
-    if mesh_result is None:
-        # 内部调 mesh_from_geometry
-        from .mesh import mesh_from_geometry
-        mesh_result = mesh_from_geometry(args)
-        if not mesh_result.success:
-            return mesh_result
-
-    m = mesh_result.data["mesh"]
-    boundary_facets = mesh_result.data["boundary_facets"]
-
-    material = args.material
+def _assemble_stiffness(m: Any, material: dict[str, float]) -> tuple[Any, Any, float]:
+    """组装刚度矩阵 K, 返回 (basis, K, thickness)."""
     E = material["E"]
     nu = material["nu"]
     material.get("rho", 7850.0)
@@ -49,10 +37,13 @@ def static_linear(args: Any) -> ToolResult:
 
     # 组装刚度矩阵
     K = asm(linear_elasticity(lam, mu), basis)
+    return basis, K, thickness
 
-    # 组装载荷向量
-    # 简化: 支持端部集中力 (right edge) 和顶部均布压力 (top edge)
-    loads = args.loads
+
+def _assemble_loads(
+    loads: Any, boundary_facets: dict[str, Any], m: Any, basis: Any, thickness: float
+) -> np.ndarray:
+    """组装载荷向量: 支持端部集中力 (right edge) 和顶部均布压力 (top edge)."""
     f = np.zeros(basis.N)
 
     for load in loads:
@@ -66,7 +57,7 @@ def static_linear(args: Any) -> ToolResult:
             if len(region_facets):
                 region_nodes = np.unique(m.facets[:, region_facets])
                 for node in region_nodes:
-                    dofs_y = basis.nodal_dofs[1][node:node+1]
+                    dofs_y = basis.nodal_dofs[1][node : node + 1]
                     f[dofs_y] += value / max(len(region_nodes), 1)
 
         elif ltype == "pressure":
@@ -75,33 +66,15 @@ def static_linear(args: Any) -> ToolResult:
             if len(region_facets):
                 region_nodes = np.unique(m.facets[:, region_facets])
                 for node in region_nodes:
-                    dofs_y = basis.nodal_dofs[1][node:node+1]
+                    dofs_y = basis.nodal_dofs[1][node : node + 1]
                     f[dofs_y] += value * thickness / max(len(region_nodes), 1)
+    return f
 
-    # 边界条件: 固定 left edge (u1=u2=0)
-    bcs = args.boundary_conditions
-    fixed_dofs = []
-    for bc in bcs:
-        region = bc.get("region", "left")
-        region_facets = boundary_facets.get(region, [])
-        if len(region_facets):
-            region_nodes = np.unique(m.facets[:, region_facets])
-            for node in region_nodes:
-                for dof_idx in bc.get("dofs", [0, 1]):
-                    fixed_dofs.append(basis.nodal_dofs[dof_idx][node])
 
-    fixed_dofs = np.array(fixed_dofs, dtype=int) if fixed_dofs else np.array([], dtype=int)
-
-    # 求解 K u = f (缩减后)
-    try:
-        u = solve(*condense(K, f, D=fixed_dofs))
-    except Exception as exc:
-        return ToolResult(
-            data=None,
-            success=False,
-            error=f"linear solve failed: {exc}",
-        )
-
+def _displacement_result(
+    u: Any, basis: Any, m: Any, material: dict[str, float], loads: Any, bcs: Any
+) -> ToolResult:
+    """从解向量提取位移场并组装返回数据."""
     # 提取位移
     ux = u[basis.nodal_dofs[0]]
     uy = u[basis.nodal_dofs[1]]
@@ -126,3 +99,40 @@ def static_linear(args: Any) -> ToolResult:
         },
         success=True,
     )
+
+
+def static_linear(args: Any) -> ToolResult:
+    """2D 线弹性静力分析. 接受 mesh_from_geometry 的输出或内部重新生成."""
+    mesh_result = args._mesh_result if hasattr(args, "_mesh_result") else None
+    if mesh_result is None:
+        # 内部调 mesh_from_geometry
+        from .mesh import mesh_from_geometry
+
+        mesh_result = mesh_from_geometry(args)
+        if not mesh_result.success:
+            return mesh_result
+
+    m = mesh_result.data["mesh"]
+    boundary_facets = mesh_result.data["boundary_facets"]
+
+    material = args.material
+    loads = args.loads
+    basis, K, thickness = _assemble_stiffness(m, material)
+    f = _assemble_loads(loads, boundary_facets, m, basis, thickness)
+
+    # 边界条件: 固定 left edge (u1=u2=0)
+    from .mesh import _collect_fixed_dofs
+
+    bcs = args.boundary_conditions
+    fixed_dofs = _collect_fixed_dofs(bcs, boundary_facets, m, basis)
+
+    # 求解 K u = f (缩减后)
+    try:
+        u = solve(*condense(K, f, D=fixed_dofs))
+    except Exception as exc:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"linear solve failed: {exc}",
+        )
+    return _displacement_result(u, basis, m, material, loads, bcs)

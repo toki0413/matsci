@@ -100,52 +100,115 @@ _METRIC_KEYWORDS: list[tuple[str, list[str]]] = [
     ("crystallite_size", ["crystallite size", "grain size", "scherrer", "晶粒尺寸"]),
     ("intensity", ["intensity", "peak intensity", "relative intensity", "counts"]),
     # Mechanical properties
-    ("compressive_strength", ["compressive strength", "抗压强度", "抗压", "compressive"]),
-    ("flexural_strength", ["flexural strength", "抗折强度", "抗弯强度", "flexural", "bending strength", "fracture"]),
+    (
+        "compressive_strength",
+        ["compressive strength", "抗压强度", "抗压", "compressive"],
+    ),
+    (
+        "flexural_strength",
+        [
+            "flexural strength",
+            "抗折强度",
+            "抗弯强度",
+            "flexural",
+            "bending strength",
+            "fracture",
+        ],
+    ),
     ("tensile_strength", ["tensile strength", "抗拉强度", "tensile"]),
-    ("elastic_modulus", ["elastic modulus", "young's modulus", "弹性模量", "杨氏模量", "modulus"]),
+    (
+        "elastic_modulus",
+        ["elastic modulus", "young's modulus", "弹性模量", "杨氏模量", "modulus"],
+    ),
     ("toughness", ["toughness", "韧性", "fracture toughness", "断裂韧性"]),
     ("strain", ["strain", "应变", "failure strain"]),
     ("stress", ["stress", "应力", "crack stress", "开裂应力"]),
     ("density", ["density", "密度", "bulk density"]),
     ("porosity", ["porosity", "孔隙率"]),
     # Thermal / electrical
-    ("temperature", ["temperature", "annealing", "synthesized at", "calcined at",
-                      "温度", "养护温度", "表面温度"]),
+    (
+        "temperature",
+        [
+            "temperature",
+            "annealing",
+            "synthesized at",
+            "calcined at",
+            "温度",
+            "养护温度",
+            "表面温度",
+        ],
+    ),
     ("heating_rate", ["heating rate", "升温速率", "temperature rate"]),
     ("pressure", ["pressure", "applied pressure", "压力", "功率"]),
     ("resistivity", ["resistivity", "电阻率", "resistance", "电阻"]),
     ("conductivity", ["conductivity", "电导率", "conductance"]),
     ("thermal_conductivity", ["thermal conductivity", "导热系数", "导热率"]),
     # Spectroscopy
-    ("frequency", ["frequency", "raman shift", "wavenumber", "cm-1", "cm⁻¹", "ir band"]),
+    (
+        "frequency",
+        ["frequency", "raman shift", "wavenumber", "cm-1", "cm⁻¹", "ir band"],
+    ),
 ]
 
 # Unit normalisation. Different papers spell the same unit differently; we fold
 # variants onto a canonical token before comparing claim vs data units.
 _UNIT_ALIASES: dict[str, str] = {
-    "°": "degree", "°c": "degree", "℃": "degree", "deg": "degree",
-    "degree": "degree", "degrees": "degree", "°f": "degree_f",
-    "å": "angstrom", "angstrom": "angstrom", "angstroms": "angstrom",
-    "nm": "nm", "nanometer": "nm", "nanometers": "nm",
-    "μm": "um", "um": "um", "micron": "um", "microns": "um",
-    "mm": "mm", "millimeter": "mm",
+    "°": "degree",
+    "°c": "degree",
+    "℃": "degree",
+    "deg": "degree",
+    "degree": "degree",
+    "degrees": "degree",
+    "°f": "degree_f",
+    "å": "angstrom",
+    "angstrom": "angstrom",
+    "angstroms": "angstrom",
+    "nm": "nm",
+    "nanometer": "nm",
+    "nanometers": "nm",
+    "μm": "um",
+    "um": "um",
+    "micron": "um",
+    "microns": "um",
+    "mm": "mm",
+    "millimeter": "mm",
     "cm": "cm",
     "ev": "eV",
-    "ghz": "GHz", "mhz": "MHz", "khz": "kHz",
-    "gpa": "GPa", "mpa": "MPa", "kpa": "kPa", "pa": "Pa",
+    "ghz": "GHz",
+    "mhz": "MHz",
+    "khz": "kHz",
+    "gpa": "GPa",
+    "mpa": "MPa",
+    "kpa": "kPa",
+    "pa": "Pa",
     "k": "K",
-    "cm-1": "cm-1", "cm⁻¹": "cm-1",
+    "cm-1": "cm-1",
+    "cm⁻¹": "cm-1",
     "%": "percent",
-    "kg/m³": "kg_m3", "kg/m3": "kg_m3",
-    "g/cm³": "g_cm3", "g/cm3": "g_cm3",
-    "n": "N", "kn": "kN", "mn": "MN",
-    "j": "J", "kj": "kJ",
-    "w": "W", "mw": "mW", "kw": "kW",
-    "ω": "ohm", "ω·m": "ohm_m", "ω·cm": "ohm_cm",
-    "s/cm": "S_cm", "ms/cm": "mS_cm",
-    "h": "h", "hour": "h", "min": "min", "s": "s", "ms": "ms",
-    "ppm": "ppm", "ph": "pH",
+    "kg/m³": "kg_m3",
+    "kg/m3": "kg_m3",
+    "g/cm³": "g_cm3",
+    "g/cm3": "g_cm3",
+    "n": "N",
+    "kn": "kN",
+    "mn": "MN",
+    "j": "J",
+    "kj": "kJ",
+    "w": "W",
+    "mw": "mW",
+    "kw": "kW",
+    "ω": "ohm",
+    "ω·m": "ohm_m",
+    "ω·cm": "ohm_cm",
+    "s/cm": "S_cm",
+    "ms/cm": "mS_cm",
+    "h": "h",
+    "hour": "h",
+    "min": "min",
+    "s": "s",
+    "ms": "ms",
+    "ppm": "ppm",
+    "ph": "pH",
 }
 
 # Units that can be compared at all. If two units aren't in each other's
@@ -237,30 +300,30 @@ class CrossModalAdapter:
     # Per-metric tolerances. Values are in the canonical unit for each metric.
     # "default" is a 10% relative fallback for metrics we don't recognise.
     TOLERANCE_TABLE: dict[str, float] = {
-        "2theta": 0.5,           # degree
-        "d_spacing": 0.05,       # angstrom
+        "2theta": 0.5,  # degree
+        "d_spacing": 0.05,  # angstrom
         "lattice_constant": 0.01,  # angstrom
-        "band_gap": 0.05,        # eV
-        "crystallite_size": 1.0,   # nm
-        "intensity": 0.15,      # relative, 15%
-        "temperature": 2.0,     # K (or degree C)
-        "heating_rate": 0.05,   # relative, 5%
-        "pressure": 0.1,        # GPa
-        "frequency": 0.5,      # cm^-1 (Raman/IR)
+        "band_gap": 0.05,  # eV
+        "crystallite_size": 1.0,  # nm
+        "intensity": 0.15,  # relative, 15%
+        "temperature": 2.0,  # K (or degree C)
+        "heating_rate": 0.05,  # relative, 5%
+        "pressure": 0.1,  # GPa
+        "frequency": 0.5,  # cm^-1 (Raman/IR)
         # Mechanical properties — materials science tolerances
         "compressive_strength": 2.0,  # MPa
-        "flexural_strength": 1.0,     # MPa
-        "tensile_strength": 2.0,      # MPa
-        "elastic_modulus": 1.0,       # GPa
-        "toughness": 0.15,           # relative, 15%
-        "strain": 0.005,             # dimensionless (0.5%)
-        "stress": 2.0,              # MPa
-        "density": 50.0,            # kg/m³
-        "porosity": 0.5,           # percent
-        "resistivity": 0.15,      # relative, 15%
-        "conductivity": 0.15,    # relative, 15%
+        "flexural_strength": 1.0,  # MPa
+        "tensile_strength": 2.0,  # MPa
+        "elastic_modulus": 1.0,  # GPa
+        "toughness": 0.15,  # relative, 15%
+        "strain": 0.005,  # dimensionless (0.5%)
+        "stress": 2.0,  # MPa
+        "density": 50.0,  # kg/m³
+        "porosity": 0.5,  # percent
+        "resistivity": 0.15,  # relative, 15%
+        "conductivity": 0.15,  # relative, 15%
         "thermal_conductivity": 0.05,  # relative, 5%
-        "default": 0.1,        # 10% relative tolerance
+        "default": 0.1,  # 10% relative tolerance
     }
 
     def __init__(self, llm_client: Any = None) -> None:
@@ -298,33 +361,45 @@ class CrossModalAdapter:
                 "evidence": result["evidence"],
             }
 
-            matched = result.get("matched_data")
-            if matched is None:
-                # No data to point at -- skip the edge. The claim node is
-                # still in the graph for provenance.
+            edge = self._build_validation_edge(claim, result)
+            if edge is None:
                 continue
 
-            target_id = matched.get("_source_element_id")
-            if not target_id:
-                continue
-
-            edge_type = self._verdict_edge_type(result["verdict"])
-            edge = GraphEdge(
-                source=claim.element_id,
-                target=target_id,
-                edge_type=edge_type,
-                weight=round(result["score"], 4),
-                confidence=round(result["score"], 4),
-                metadata={
-                    "evidence": result["evidence"],
-                    "score": round(result["score"], 4),
-                    "verdict": result["verdict"],
-                },
-            )
             graph.add_edge(edge)
             new_edges.append(edge)
 
         return new_edges
+
+    def _build_validation_edge(
+        self, claim: DocumentElement, result: dict[str, Any]
+    ) -> GraphEdge | None:
+        """Build the claim -> data edge for one validation result.
+
+        Returns None when there is no concrete data point to point at; the
+        claim node is still in the graph for provenance.
+        """
+        matched = result.get("matched_data")
+        if matched is None:
+            # No data to point at -- skip the edge.
+            return None
+
+        target_id = matched.get("_source_element_id")
+        if not target_id:
+            return None
+
+        edge_type = self._verdict_edge_type(result["verdict"])
+        return GraphEdge(
+            source=claim.element_id,
+            target=target_id,
+            edge_type=edge_type,
+            weight=round(result["score"], 4),
+            confidence=round(result["score"], 4),
+            metadata={
+                "evidence": result["evidence"],
+                "score": round(result["score"], 4),
+                "verdict": result["verdict"],
+            },
+        )
 
     # ------------------------------------------------------------------
     # 1. Claim extraction
@@ -350,19 +425,7 @@ class CrossModalAdapter:
             if not _CLAIM_PREFILTER_RE.search(content):
                 continue
 
-            raw_claims: list[dict[str, Any]] = []
-
-            # LLM first -- it tends to produce the richer structures (real
-            # conclusions, better qualifiers). Regex fills the gaps and
-            # runs unconditionally so we never miss a "value + unit" hit.
-            if self.llm is not None:
-                llm_claim = self._llm_extract_claim(content)
-                if llm_claim:
-                    raw_claims.append(llm_claim)
-
-            raw_claims.extend(self._regex_extract_claims(content))
-
-            for claim_data in raw_claims:
+            for claim_data in self._collect_raw_claims(content):
                 key = (
                     claim_data.get("metric"),
                     claim_data.get("value"),
@@ -373,35 +436,74 @@ class CrossModalAdapter:
                     continue
                 seen_keys.add(key)
 
-                self._claim_counter += 1
-                cid = f"{text_el.element_id}__claim_{self._claim_counter}"
-                claim = DocumentElement(
-                    element_id=cid,
-                    element_type=ElementType.CLAIM,
-                    content=claim_data.get("source_text", content[:200]),
-                    page=text_el.page,
-                    # Inherit the parent's bbox -- we don't have char-level
-                    # offsets, same trade-off the mention extractor makes.
-                    bbox=text_el.bbox,
-                    claim_data=claim_data,
-                    metadata={"parent_text_id": text_el.element_id},
-                )
+                claim = self._make_claim_element(text_el, claim_data, content)
                 claims.append(claim)
                 graph.add_element(claim)
-                graph.add_edge(GraphEdge(
-                    source=text_el.element_id,
-                    target=cid,
-                    edge_type=EdgeType.CONTAINS,
-                ))
+                graph.add_edge(
+                    GraphEdge(
+                        source=text_el.element_id,
+                        target=claim.element_id,
+                        edge_type=EdgeType.CONTAINS,
+                    )
+                )
 
         return claims
 
+    def _collect_raw_claims(self, content: str) -> list[dict[str, Any]]:
+        """Gather the LLM and regex claims for a single text block."""
+        raw_claims: list[dict[str, Any]] = []
+
+        # LLM first -- it tends to produce the richer structures (real
+        # conclusions, better qualifiers). Regex fills the gaps and
+        # runs unconditionally so we never miss a "value + unit" hit.
+        if self.llm is not None:
+            llm_claim = self._llm_extract_claim(content)
+            if llm_claim:
+                raw_claims.append(llm_claim)
+
+        raw_claims.extend(self._regex_extract_claims(content))
+        return raw_claims
+
+    def _make_claim_element(
+        self,
+        text_el: DocumentElement,
+        claim_data: dict[str, Any],
+        content: str,
+    ) -> DocumentElement:
+        """Materialise one claim dict as a CLAIM element."""
+        self._claim_counter += 1
+        cid = f"{text_el.element_id}__claim_{self._claim_counter}"
+        return DocumentElement(
+            element_id=cid,
+            element_type=ElementType.CLAIM,
+            content=claim_data.get("source_text", content[:200]),
+            page=text_el.page,
+            # Inherit the parent's bbox -- we don't have char-level
+            # offsets, same trade-off the mention extractor makes.
+            bbox=text_el.bbox,
+            claim_data=claim_data,
+            metadata={"parent_text_id": text_el.element_id},
+        )
+
     def _regex_extract_claims(self, text: str) -> list[dict[str, Any]]:
         """Pull claims out of text using the numeric + qualitative regexes."""
-        claims: list[dict[str, Any]] = []
         # Track the context windows of numeric hits so we can skip
         # qualitative words that were already absorbed as qualifiers.
         consumed: list[tuple[int, int]] = []
+
+        claims = self._numeric_claims(text, consumed)
+        # Qualitative-only claims: judgement words that aren't near a number.
+        # These capture things like "the results confirm the cubic phase"
+        # where there's nothing quantitative to anchor on.
+        claims.extend(self._qualitative_claims(text, consumed))
+        return claims
+
+    @staticmethod
+    def _numeric_claims(
+        text: str, consumed: list[tuple[int, int]]
+    ) -> list[dict[str, Any]]:
+        """Numeric "value + unit" claims, recording each hit's window."""
+        claims: list[dict[str, Any]] = []
 
         for m in _NUMERIC_RE.finditer(text):
             value = float(m.group(1))
@@ -412,40 +514,50 @@ class CrossModalAdapter:
             ctx_end = min(len(text), m.end() + 80)
             window = text[ctx_start:ctx_end]
 
-            metric = self._detect_metric(window)
-            qualifier = self._detect_qualifier(window)
-            conclusion = self._extract_conclusion(window)
+            metric = CrossModalAdapter._detect_metric(window)
+            qualifier = CrossModalAdapter._detect_qualifier(window)
+            conclusion = CrossModalAdapter._extract_conclusion(window)
 
             src_start = max(0, m.start() - 40)
             src_end = min(len(text), m.end() + 40)
 
-            claims.append({
-                "metric": metric,
-                "value": value,
-                "unit": unit,
-                "qualifier": qualifier,
-                "conclusion": conclusion,
-                "source_text": text[src_start:src_end].strip(),
-            })
+            claims.append(
+                {
+                    "metric": metric,
+                    "value": value,
+                    "unit": unit,
+                    "qualifier": qualifier,
+                    "conclusion": conclusion,
+                    "source_text": text[src_start:src_end].strip(),
+                }
+            )
             consumed.append((ctx_start, ctx_end))
 
-        # Qualitative-only claims: judgement words that aren't near a number.
-        # These capture things like "the results confirm the cubic phase"
-        # where there's nothing quantitative to anchor on.
+        return claims
+
+    @staticmethod
+    def _qualitative_claims(
+        text: str, consumed: list[tuple[int, int]]
+    ) -> list[dict[str, Any]]:
+        """Qualitative claims whose keyword sits outside numeric windows."""
+        claims: list[dict[str, Any]] = []
+
         for qm in _QUALITATIVE_RE.finditer(text):
             if any(s <= qm.start() < e for s, e in consumed):
                 continue
             win_start = max(0, qm.start() - 60)
             win_end = min(len(text), qm.end() + 60)
             window = text[win_start:win_end]
-            claims.append({
-                "metric": None,
-                "value": None,
-                "unit": None,
-                "qualifier": qm.group(1).lower(),
-                "conclusion": self._extract_conclusion(window),
-                "source_text": window.strip(),
-            })
+            claims.append(
+                {
+                    "metric": None,
+                    "value": None,
+                    "unit": None,
+                    "qualifier": qm.group(1).lower(),
+                    "conclusion": CrossModalAdapter._extract_conclusion(window),
+                    "source_text": window.strip(),
+                }
+            )
 
         return claims
 
@@ -570,6 +682,28 @@ class CrossModalAdapter:
         parent_id = claim.metadata.get("parent_text_id")
         parent = id_index.get(parent_id) if parent_id else None
 
+        figures = self._candidate_figures(graph, claim, parent, id_index)
+
+        # Prefer first-class DATA_POINT nodes (added by the graph builder).
+        # These are the aggregate children of figures that carry data_points.
+        data = self._child_data_points(graph, figures)
+
+        # If no DATA_POINT children, read data_points straight off the
+        # figure / table element. Some callers populate data_points there
+        # without the graph builder synthesising a child node.
+        if not data:
+            data = self._inline_data_points(figures)
+
+        return data
+
+    def _candidate_figures(
+        self,
+        graph: DocumentGraph,
+        claim: DocumentElement,
+        parent: DocumentElement | None,
+        id_index: dict[str, DocumentElement],
+    ) -> list[DocumentElement]:
+        """Find the figures/tables that may carry the claim's data."""
         figures: list[DocumentElement] = []
 
         if parent is not None:
@@ -588,22 +722,29 @@ class CrossModalAdapter:
         # to validate against a chart on page 20.
         if not figures and parent is not None:
             figures = [
-                e for e in id_index.values()
+                e
+                for e in id_index.values()
                 if e.element_type in (ElementType.FIGURE, ElementType.TABLE)
                 and e.page == parent.page
             ]
         elif not figures:
             # No parent at all — last resort, same-page as the claim.
             figures = [
-                e for e in id_index.values()
+                e
+                for e in id_index.values()
                 if e.element_type in (ElementType.FIGURE, ElementType.TABLE)
                 and e.page == claim.page
             ]
 
+        return figures
+
+    @staticmethod
+    def _child_data_points(
+        graph: DocumentGraph, figures: list[DocumentElement]
+    ) -> list[dict[str, Any]]:
+        """Collect data points from the DATA_POINT children of figures."""
         data: list[dict[str, Any]] = []
 
-        # Prefer first-class DATA_POINT nodes (added by the graph builder).
-        # These are the aggregate children of figures that carry data_points.
         for fig in figures:
             for dp_el in graph.get_neighbors(fig.element_id, EdgeType.EXTRACTED_FROM):
                 if dp_el.element_type is not ElementType.DATA_POINT:
@@ -615,17 +756,22 @@ class CrossModalAdapter:
                     d["_source_element_id"] = dp_el.element_id
                     data.append(d)
 
-        # If no DATA_POINT children, read data_points straight off the
-        # figure / table element. Some callers populate data_points there
-        # without the graph builder synthesising a child node.
-        if not data:
-            for fig in figures:
-                if not fig.data_points:
-                    continue
-                for dp in fig.data_points:
-                    d = dict(dp)
-                    d["_source_element_id"] = fig.element_id
-                    data.append(d)
+        return data
+
+    @staticmethod
+    def _inline_data_points(
+        figures: list[DocumentElement],
+    ) -> list[dict[str, Any]]:
+        """Read data_points straight off figure / table elements."""
+        data: list[dict[str, Any]] = []
+
+        for fig in figures:
+            if not fig.data_points:
+                continue
+            for dp in fig.data_points:
+                d = dict(dp)
+                d["_source_element_id"] = fig.element_id
+                data.append(d)
 
         return data
 
@@ -708,84 +854,105 @@ class CrossModalAdapter:
         if dp_intensity is None:
             dp_intensity = dp.get("y")
 
-        # --- metric ---------------------------------------------------
+        # Each term contributes a score delta plus an optional evidence
+        # reason; metric, numerical, unit, qualitative -- in that order.
+        terms = (
+            self._score_metric(claim_metric, dp_metric),
+            self._score_value(claim_value, dp_value, claim_metric),
+            self._score_unit(claim_unit, dp_unit),
+            self._score_qualifier(claim_qualifier, dp_intensity),
+        )
+        for delta, reason in terms:
+            score += delta
+            if reason:
+                reasons.append(reason)
+
+        score = max(0.0, min(1.0, score))
+        evidence = "; ".join(reasons) if reasons else "no strong signal"
+        return score, evidence
+
+    @staticmethod
+    def _score_metric(
+        claim_metric: str | None, dp_metric: str | None
+    ) -> tuple[float, str | None]:
+        """Metric agreement term of the score."""
         if claim_metric and dp_metric:
             if claim_metric == dp_metric:
-                score += 0.15
-                reasons.append("metric matches")
-            else:
-                score -= 0.25
-                reasons.append(f"metric mismatch ({claim_metric} vs {dp_metric})")
-        elif claim_metric and not dp_metric:
-            # Data has no metric label -- can't confirm or deny, stay neutral.
-            pass
+                return 0.15, "metric matches"
+            return -0.25, f"metric mismatch ({claim_metric} vs {dp_metric})"
+        # Data has no metric label -- can't confirm or deny, stay neutral.
+        return 0.0, None
 
-        # --- numerical ------------------------------------------------
+    def _score_value(
+        self,
+        claim_value: Any,
+        dp_value: Any,
+        claim_metric: str | None,
+    ) -> tuple[float, str | None]:
+        """Numerical tolerance term of the score."""
         if claim_value is not None and dp_value is not None:
             try:
                 cv = float(claim_value)
                 dv = float(dp_value)
             except (TypeError, ValueError):
-                pass
-            else:
-                tol = self._get_tolerance(claim_metric or "")
-                diff = abs(cv - dv)
-                if diff <= tol:
-                    score += 0.35
-                    reasons.append(f"value within tolerance (Δ={diff:.4g} ≤ {tol})")
-                else:
-                    score -= 0.35
-                    reasons.append(f"value out of tolerance (Δ={diff:.4g} > {tol})")
-        elif claim_value is None and dp_value is not None:
+                return 0.0, None
+            tol = self._get_tolerance(claim_metric or "")
+            diff = abs(cv - dv)
+            if diff <= tol:
+                return 0.35, f"value within tolerance (Δ={diff:.4g} ≤ {tol})"
+            return -0.35, f"value out of tolerance (Δ={diff:.4g} > {tol})"
+        if claim_value is None and dp_value is not None:
             # Claim has no number -- data exists under the same metric, so
             # give a small nudge. The real verdict will hinge on units /
             # qualitative signals.
-            score += 0.05
+            return 0.05, None
+        return 0.0, None
 
-        # --- unit -----------------------------------------------------
-        if claim_unit and dp_unit:
-            cu = _UNIT_ALIASES.get(claim_unit.lower(), claim_unit.lower())
-            du = _UNIT_ALIASES.get(dp_unit.lower(), dp_unit.lower())
-            if cu == du:
-                score += 0.05
-                reasons.append("units match")
-            elif du in _COMPATIBLE_UNITS.get(cu, set()):
-                # Compatible but not identical (e.g. angstrom vs nm).
-                # No bonus, no penalty -- a conversion would reconcile them.
-                pass
-            else:
-                score -= 0.30
-                reasons.append(f"incompatible units ({claim_unit} vs {dp_unit})")
+    @staticmethod
+    def _score_unit(
+        claim_unit: str | None, dp_unit: str | None
+    ) -> tuple[float, str | None]:
+        """Unit agreement term of the score."""
+        if not claim_unit or not dp_unit:
+            return 0.0, None
 
-        # --- qualitative ----------------------------------------------
-        if claim_qualifier and dp_intensity is not None:
-            try:
-                intensity = float(dp_intensity)
-            except (TypeError, ValueError):
-                pass
-            else:
-                # Only judge intensity when it looks normalised (0-1 range).
-                # Raw counts need a baseline we don't have, so we skip rather
-                # than guess.
-                if 0.0 <= intensity <= 1.0:
-                    if claim_qualifier in _HIGH_INTENSITY_QUALIFIERS:
-                        if intensity >= 0.5:
-                            score += 0.10
-                            reasons.append("qualifier matches high intensity")
-                        else:
-                            score -= 0.15
-                            reasons.append("qualifier expects high intensity, data is low")
-                    elif claim_qualifier in _LOW_INTENSITY_QUALIFIERS:
-                        if intensity < 0.5:
-                            score += 0.05
-                            reasons.append("qualifier matches low intensity")
-                        else:
-                            score -= 0.10
-                            reasons.append("qualifier expects low intensity, data is high")
+        cu = _UNIT_ALIASES.get(claim_unit.lower(), claim_unit.lower())
+        du = _UNIT_ALIASES.get(dp_unit.lower(), dp_unit.lower())
+        if cu == du:
+            return 0.05, "units match"
+        if du in _COMPATIBLE_UNITS.get(cu, set()):
+            # Compatible but not identical (e.g. angstrom vs nm).
+            # No bonus, no penalty -- a conversion would reconcile them.
+            return 0.0, None
+        return -0.30, f"incompatible units ({claim_unit} vs {dp_unit})"
 
-        score = max(0.0, min(1.0, score))
-        evidence = "; ".join(reasons) if reasons else "no strong signal"
-        return score, evidence
+    @staticmethod
+    def _score_qualifier(
+        claim_qualifier: str | None, dp_intensity: Any
+    ) -> tuple[float, str | None]:
+        """Qualitative intensity-agreement term of the score."""
+        if not claim_qualifier or dp_intensity is None:
+            return 0.0, None
+        try:
+            intensity = float(dp_intensity)
+        except (TypeError, ValueError):
+            return 0.0, None
+
+        # Only judge intensity when it looks normalised (0-1 range).
+        # Raw counts need a baseline we don't have, so we skip rather
+        # than guess.
+        if not 0.0 <= intensity <= 1.0:
+            return 0.0, None
+
+        if claim_qualifier in _HIGH_INTENSITY_QUALIFIERS:
+            if intensity >= 0.5:
+                return 0.10, "qualifier matches high intensity"
+            return -0.15, "qualifier expects high intensity, data is low"
+        if claim_qualifier in _LOW_INTENSITY_QUALIFIERS:
+            if intensity < 0.5:
+                return 0.05, "qualifier matches low intensity"
+            return -0.10, "qualifier expects low intensity, data is high"
+        return 0.0, None
 
     # ------------------------------------------------------------------
     # 4. Tolerance + verdict helpers

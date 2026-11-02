@@ -1,0 +1,552 @@
+[
+  {
+    "row": 2,
+    "material": "MgH2 (pristine)",
+    "ea": "189",
+    "ok": false,
+    "matched": [
+      "crossref"
+    ],
+    "n_sources": 1,
+    "missing": [
+      "The calculated dehydrogenation activation energy values for pristine M"
+    ]
+  },
+  {
+    "row": 3,
+    "material": "MgH2-1 wt% Ti3C2Tx",
+    "ea": "145",
+    "ok": false,
+    "matched": [],
+    "n_sources": 1,
+    "missing": [
+      "The activation energy of the first hydrogen desorption maximum was 145"
+    ]
+  },
+  {
+    "row": 4,
+    "material": "MgH2-3 wt% Ti3C2Tx",
+    "ea": "70",
+    "ok": false,
+    "matched": [],
+    "n_sources": 1,
+    "missing": [
+      "The activation energy of the first hydrogen desorption maximum was 145"
+    ]
+  },
+  {
+    "row": 5,
+    "material": "MgH2-6 wt% Ti3C2Tx",
+    "ea": "67",
+    "ok": false,
+    "matched": [
+      "crossref"
+    ],
+    "n_sources": 1,
+    "missing": [
+      "The activation energy of the first hydrogen desorption maximum was 145"
+    ]
+  },
+  {
+    "row": 6,
+    "material": "MgH2 (milled)",
+    "ea": "133",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 7,
+    "material": "MgH2-10 wt% Ni0.6Zn0.4O",
+    "ea": "97",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 8,
+    "material": "Mg-5Ni (hydrogenated)",
+    "ea": "210",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 9,
+    "material": "Mg-5Ni (hydrogenated)",
+    "ea": "206",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 10,
+    "material": "Mg-5Ni (hydrided)",
+    "ea": "174",
+    "ok": false,
+    "matched": [],
+    "n_sources": 1,
+    "missing": [
+      "From this plot, the activation energy for hydride decomposition, E, wa"
+    ]
+  },
+  {
+    "row": 11,
+    "material": "MgH2 (pristine)",
+    "ea": "121",
+    "ok": true,
+    "matched": [
+      "crossref"
+    ],
+    "n_sources": 1,
+    "missing": []
+  },
+  {
+    "row": 12,
+    "material": "MgH2 + 7.5 wt% Ti3CN",
+    "ea": "80",
+    "ok": true,
+    "matched": [
+      "crossref"
+    ],
+    "n_sources": 1,
+    "missing": []
+  },
+  {
+    "row": 13,
+    "material": "MgH2 (as-milled)",
+    "ea": "153.09",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 14,
+    "material": "MgH2-6 wt% ML-Ti3C2",
+    "ea": "99.11",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 15,
+    "material": "MgH2 (pure)",
+    "ea": "161",
+    "ok": true,
+    "matched": [
+      "crossref",
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 16,
+    "material": "MgH2-EEWAl (10 wt%)",
+    "ea": "109",
+    "ok": true,
+    "matched": [
+      "crossref",
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 17,
+    "material": "AZ31-0 WP",
+    "ea": "123.25",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 18,
+    "material": "AZ31-4 WP",
+    "ea": "109.06",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 19,
+    "material": "AZ31-8 WP",
+    "ea": "104.58",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 20,
+    "material": "MgH2 + 5 wt% V",
+    "ea": "78",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 21,
+    "material": "MgH2 (pure)",
+    "ea": "154.9",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 22,
+    "material": "MgH2 + 10 wt% K2MoO4 (MK10)",
+    "ea": "128.36",
+    "ok": true,
+    "matched": [
+      "crossref",
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 23,
+    "material": "MgH2 (pure)",
+    "ea": "70.6",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 24,
+    "material": "MgH2 + 10 wt% K2MoO4 (MK10)",
+    "ea": "55.8",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 25,
+    "material": "MgH2 + 10 wt% LaCoO3",
+    "ea": "90",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 26,
+    "material": "MgH2 (pure)",
+    "ea": "132.19",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 1,
+    "missing": []
+  },
+  {
+    "row": 27,
+    "material": "MgH2 + 10 wt% Ni/NiO",
+    "ea": "87.21",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 1,
+    "missing": []
+  },
+  {
+    "row": 28,
+    "material": "MgH2 (pure)",
+    "ea": "68.36",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 1,
+    "missing": []
+  },
+  {
+    "row": 29,
+    "material": "MgH2 + 10 wt% Ni/NiO",
+    "ea": "34.84",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 1,
+    "missing": []
+  },
+  {
+    "row": 30,
+    "material": "MgH2 (as-milled)",
+    "ea": "135.0",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 31,
+    "material": "MgH2 + 10 wt% CoTiO3",
+    "ea": "104.6",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 32,
+    "material": "Mg-VCl3 (cryo-milled)",
+    "ea": "123.11",
+    "ok": true,
+    "matched": [
+      "crossref",
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 33,
+    "material": "Mg-VCl3 (cryo-milled)",
+    "ea": "63.8",
+    "ok": true,
+    "matched": [
+      "crossref",
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 34,
+    "material": "MgH2 (milled)",
+    "ea": "156.55",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 35,
+    "material": "MgH2-5 wt% BaCrO4",
+    "ea": "106.75",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 36,
+    "material": "MgH2 (as-milled)",
+    "ea": "161.1",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 37,
+    "material": "MgH2-CCPA (in situ amorphous carbon)",
+    "ea": "77.5",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 38,
+    "material": "MgH2-CCPA (in situ amorphous carbon)",
+    "ea": "57.9",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 39,
+    "material": "Mg-25Ni",
+    "ea": "56.74",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 40,
+    "material": "Mg-33Ni",
+    "ea": "61.25",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 41,
+    "material": "MgH2@Nb2C",
+    "ea": "111.49",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 42,
+    "material": "MgH2@Ti2C",
+    "ea": "86.48",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 43,
+    "material": "MgH2@graphene",
+    "ea": "123.98",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 44,
+    "material": "Mg-Ni/HCS (hard-carbon-sphere-wrapped Ni)",
+    "ea": "65.9",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 45,
+    "material": "MgH2 (commercial)",
+    "ea": "133.5",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 46,
+    "material": "MgH2-Na3AlH6 composite",
+    "ea": "140",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 1,
+    "missing": []
+  },
+  {
+    "row": 47,
+    "material": "MgH2-Na3AlH6 + 10 wt% FeCl3",
+    "ea": "128",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 1,
+    "missing": []
+  },
+  {
+    "row": 48,
+    "material": "MgH2-BM (pristine, ball-milled)",
+    "ea": "137.4",
+    "ok": true,
+    "matched": [
+      "crossref",
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 49,
+    "material": "MgH2-10 wt% H-V2O5",
+    "ea": "113.8",
+    "ok": true,
+    "matched": [
+      "crossref",
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  },
+  {
+    "row": 50,
+    "material": "MgH2-10 wt% H-V2O5",
+    "ea": "84.55",
+    "ok": true,
+    "matched": [
+      "epmc_xml"
+    ],
+    "n_sources": 2,
+    "missing": []
+  }
+]

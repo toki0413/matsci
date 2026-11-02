@@ -52,6 +52,95 @@ def _canonical_claim(claim_text: str) -> str:
     return " ".join(claim_text.strip().split())
 
 
+def _hyperedge_record(hyperedge: ClaimHyperedge) -> dict[str, Any]:
+    return {
+        "mode": hyperedge.mode,
+        "condition": hyperedge.condition,
+        "status": hyperedge.status,
+        "evidence_strength": hyperedge.evidence_strength,
+        "n_premises": len(hyperedge.premises),
+    }
+
+
+def _status_map_from_report(claim_text: str, report: dict[str, Any]) -> dict[str, str]:
+    # 回写 KG 节点状态, 让现有检索/可视化能看到挑战结果
+    status_map: dict[str, str] = {}
+    if report.get("root"):
+        status_map[claim_text] = STATUS_RECHECK
+    for a in report.get("affected", []):
+        status_map[a["claim"]] = (
+            STATUS_RECHECK if a["impact"] == IMPACT_RECHECK else STATUS_CONTESTED
+        )
+    return status_map
+
+
+def _write_kg_statuses(
+    kg: ProjectKnowledgeGraph, status_map: dict[str, str]
+) -> list[str]:
+    updated = []
+    for cid, st in status_map.items():
+        cid_node = f"Claim:{cid}"
+        if cid_node not in kg._graph:
+            continue
+        node = kg._graph.nodes[cid_node]
+        if node.get("status") == STATUS_SUPERSEDED:
+            continue  # 已被更权威结论取代的, 不再降级
+        if node.get("status") != st:
+            node["status"] = st
+            updated.append(cid)
+    if updated:
+        kg.save()
+    return updated
+
+
+def _sync_hypergraph_status(
+    hypergraph: ClaimHypergraph, claim_text: str, report: dict[str, Any]
+) -> None:
+    # 超图侧: 让被挑战的结论本身进入 recheck (供 stats/循环审计可见)
+    hypergraph.update_status(claim_text, STATUS_RECHECK)
+    # 受影响下游同样同步超图边状态 (recheck/contested) — 否则 contested
+    # 标签 (rag_bridge / context_builder 读的是超图边状态) 会读到过期值.
+    for a in report.get("affected", []):
+        target = STATUS_RECHECK if a["impact"] == IMPACT_RECHECK else STATUS_CONTESTED
+        hypergraph.update_status(a["claim"], target)
+
+
+def _conflict_status(conflict: dict[str, Any], default_status: str) -> str:
+    return (
+        default_status
+        if not conflict.get("contested_claims") or conflict.get("consistent")
+        else STATUS_CONTESTED
+    )
+
+
+def _register_finding(
+    auditor: ClaimAuditor,
+    f: dict[str, Any],
+    i: int,
+    conflict: dict[str, Any],
+    default_status: str,
+    source_prefix: str,
+) -> dict[str, Any] | None:
+    claim_text = _canonical_claim(str(f.get("claim", "")).strip())
+    if not claim_text:
+        return None
+    status = _conflict_status(conflict, default_status)
+    return auditor.register_claim(
+        claim_text,
+        literature_id=str(f.get("literature_id", "") or ""),
+        premises=[
+            _canonical_claim(str(p))
+            for p in (f.get("premises") or [])
+            if str(p).strip()
+        ],
+        mode=str(f.get("mode", "AND")),
+        condition=str(f.get("condition", "") or ""),
+        evidence_strength=float(f.get("evidence_strength", 0.5)),
+        source=str(f.get("source", "") or f"{source_prefix}:{i}"),
+        status=status,
+    )
+
+
 class ClaimAuditor:
     """知识审计编排器 — 结论抽取/登记/挑战传播/自指环检测的统一入口.
 
@@ -164,20 +253,12 @@ class ClaimAuditor:
         return {
             "claim": claim_text,
             "kg_node_id": kg_node_id,
-            "hyperedge": {
-                "mode": hyperedge.mode,
-                "condition": hyperedge.condition,
-                "status": hyperedge.status,
-                "evidence_strength": hyperedge.evidence_strength,
-                "n_premises": len(hyperedge.premises),
-            },
+            "hyperedge": _hyperedge_record(hyperedge),
         }
 
     # ── 3. 挑战传播 (超图前向 + KG 状态回写) ───────────────────────
 
-    def challenge(
-        self, claim_text: str, max_hops: int = 10
-    ) -> dict[str, Any]:
+    def challenge(self, claim_text: str, max_hops: int = 10) -> dict[str, Any]:
         """挑战一条结论, 沿超边前向传播, 并把受影响结论的状态回写 KG.
 
         回写规则 (与 impact_propagation 一致):
@@ -189,42 +270,9 @@ class ClaimAuditor:
         claim_text = _canonical_claim(claim_text)
         report = self.hypergraph.impact_propagation(claim_text, max_hops=max_hops)
 
-        # 回写 KG 节点状态, 让现有检索/可视化能看到挑战结果
-        status_map: dict[str, str] = {}
-        if report.get("root"):
-            status_map[claim_text] = STATUS_RECHECK
-        for a in report.get("affected", []):
-            status_map[a["claim"]] = (
-                STATUS_RECHECK
-                if a["impact"] == IMPACT_RECHECK
-                else STATUS_CONTESTED
-            )
-
-        updated = []
-        for cid, st in status_map.items():
-            cid_node = f"Claim:{cid}"
-            if cid_node not in self.kg._graph:
-                continue
-            node = self.kg._graph.nodes[cid_node]
-            if node.get("status") == STATUS_SUPERSEDED:
-                continue  # 已被更权威结论取代的, 不再降级
-            if node.get("status") != st:
-                node["status"] = st
-                updated.append(cid)
-        if updated:
-            self.kg.save()
-
-        # 超图侧: 让被挑战的结论本身进入 recheck (供 stats/循环审计可见)
-        self.hypergraph.update_status(claim_text, STATUS_RECHECK)
-        # 受影响下游同样同步超图边状态 (recheck/contested) — 否则 contested
-        # 标签 (rag_bridge / context_builder 读的是超图边状态) 会读到过期值.
-        for a in report.get("affected", []):
-            target = (
-                STATUS_RECHECK
-                if a["impact"] == IMPACT_RECHECK
-                else STATUS_CONTESTED
-            )
-            self.hypergraph.update_status(a["claim"], target)
+        status_map = _status_map_from_report(claim_text, report)
+        updated = _write_kg_statuses(self.kg, status_map)
+        _sync_hypergraph_status(self.hypergraph, claim_text, report)
 
         return {
             "challenged": claim_text,
@@ -291,33 +339,15 @@ class ClaimAuditor:
         conflict = self.detect_conflict(findings, core=core)
         if conflict.get("error"):
             logger = __import__("logging").getLogger(__name__)
-            logger.debug("claim audit conflict detection degraded: %s", conflict["error"])
+            logger.debug(
+                "claim audit conflict detection degraded: %s", conflict["error"]
+            )
 
         claims = []
         for i, f in enumerate(findings):
-            claim_text = _canonical_claim(str(f.get("claim", "")).strip())
-            if not claim_text:
-                continue
-            status = (
-                default_status
-                if not conflict.get("contested_claims") or conflict.get("consistent")
-                else STATUS_CONTESTED
-            )
-            rec = self.register_claim(
-                claim_text,
-                literature_id=str(f.get("literature_id", "") or ""),
-                premises=[
-                    _canonical_claim(str(p))
-                    for p in (f.get("premises") or [])
-                    if str(p).strip()
-                ],
-                mode=str(f.get("mode", "AND")),
-                condition=str(f.get("condition", "") or ""),
-                evidence_strength=float(f.get("evidence_strength", 0.5)),
-                source=str(f.get("source", "") or f"{source_prefix}:{i}"),
-                status=status,
-            )
-            claims.append(rec)
+            rec = _register_finding(self, f, i, conflict, default_status, source_prefix)
+            if rec is not None:
+                claims.append(rec)
 
         return {
             "conflict": {
@@ -354,8 +384,10 @@ if __name__ == "__main__":
         print("1. register_claim 双写 OK")
 
         auditor.register_claim(
-            "下游结论Z成立", premises=["材料X在低温下呈 altermagnetism"],
-            mode="AND", source="doi:3",
+            "下游结论Z成立",
+            premises=["材料X在低温下呈 altermagnetism"],
+            mode="AND",
+            source="doi:3",
         )
 
         # 2. sheaf 冲突检测: 同 key 不同值 → H¹ > 0
@@ -381,10 +413,16 @@ if __name__ == "__main__":
 
         # 4. 自指环审计
         auditor.register_claim(
-            "环结论P", premises=["环结论Q"], mode="AND", source="doi:x",
+            "环结论P",
+            premises=["环结论Q"],
+            mode="AND",
+            source="doi:x",
         )
         auditor.register_claim(
-            "环结论Q", premises=["环结论P"], mode="AND", source="doi:y",
+            "环结论Q",
+            premises=["环结论P"],
+            mode="AND",
+            source="doi:y",
         )
         cyc = auditor.audit_citation_cycles()
         assert cyc["n_cycles"] >= 1, cyc
@@ -394,9 +432,14 @@ if __name__ == "__main__":
         # 5. ingest_findings 顶层流水线 (跨源冲突 → contested 登记)
         res = auditor.ingest_findings(
             [
-                {"claim": "新实验观测到 Tc=80K", "Tc": 80.0,
-                 "premises": ["样本制备S"], "mode": "AND",
-                 "evidence_strength": 0.7, "literature_id": "doi:new"},
+                {
+                    "claim": "新实验观测到 Tc=80K",
+                    "Tc": 80.0,
+                    "premises": ["样本制备S"],
+                    "mode": "AND",
+                    "evidence_strength": 0.7,
+                    "literature_id": "doi:new",
+                },
             ],
             core={"Tc": 100.0},
         )

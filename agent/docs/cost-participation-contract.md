@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # 成本-剪枝参与感契约 (Cost & Pruning Participation)
 
 > 状态: **active**（已实现并落地，由 staging 提升。后端 `branch_policy.py`、事件总线

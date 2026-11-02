@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # Huginn 产业级验收清单（INDUSTRIAL ACCEPTANCE CHECKLIST）
 
 > 版本：2026-09-12（基于当日实盘验证，非读文档杜撰）

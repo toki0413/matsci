@@ -218,6 +218,108 @@ def run(*, seed: int = 0, noise_sd: float = 0.04, drop: float = 0.1) -> dict[str
     }
 
 
+def _augment_paper(
+    paper: dict[str, Any], full_text: dict[str, str] | None
+) -> dict[str, Any]:
+    """拷一份 paper, 有 full_text 映射时按 doi/source_paper 注入原文."""
+    item = dict(paper)
+    if full_text:
+        key = paper.get("doi") or paper.get("source_paper") or ""
+        item["full_text"] = full_text.get(key, item.get("full_text", ""))
+    return item
+
+
+def _run_temperature(
+    t: float,
+    *,
+    papers: list[dict[str, Any]],
+    base: str,
+    model: str,
+    system: str,
+    property_: str,
+    seed: int,
+    full_text: dict[str, str] | None,
+) -> dict[str, Any]:
+    """用一个温度跑一次真实身体, 返回该次运行摘要."""
+    model_obj = _real_deepseek_model(base, temperature=t, model=model)
+    aug = [_augment_paper(p, full_text) for p in papers]
+    data = asyncio.run(
+        run_real_body(
+            papers=aug,
+            system=system,
+            property_=property_,
+            model=model_obj,
+            seed=seed,
+            drop=0.0,
+            noise_sd=0.0,
+        )
+    )
+    return {
+        "temperature": t,
+        "reported_values": data.get("reported_values", []),
+        "consensus": data.get("consensus"),
+        "consistency": data.get("consistency"),
+        "n_reported": len(data.get("reported_values", [])),
+    }
+
+
+def _bodies_result(
+    system: str,
+    property_: str,
+    model: str,
+    runs: list[dict[str, Any]],
+    medians: list[float],
+    converge: bool,
+    verdicts: list[Any],
+) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "system": system,
+        "property": property_,
+        "model": model,
+        "n_real_bodies": len(runs),
+        "runs": runs,
+        "real_bodies_converge": converge,
+        "median_spread": (
+            round(max(medians) - min(medians), 6) if len(medians) >= 2 else None
+        ),
+        "verdicts": verdicts,
+    }
+
+
+def _default_papers(system: str, property_: str, seed: int) -> list[dict[str, Any]]:
+    """无显式 papers 时, 从合成论文里筛出同 system/property 的条目."""
+    return [
+        p
+        for p in _synthetic_papers(seed)
+        if p["system"] == system and p["property"] == property_
+    ]
+
+
+def _collected_medians(runs: list[dict[str, Any]]) -> list[float]:
+    return [
+        r["consensus"]["median"]
+        for r in runs
+        if r["consensus"] and r["consensus"]["median"] is not None
+    ]
+
+
+def _run_verdicts(runs: list[dict[str, Any]]) -> list[Any]:
+    return [(r["consistency"] or {}).get("overall", {}).get("verdict") for r in runs]
+
+
+def _converge_flag(
+    papers: list[dict[str, Any]],
+    runs: list[dict[str, Any]],
+    medians: list[float],
+) -> bool:
+    """跨身体稳健中心是否落在容差内."""
+    tol = max(abs(papers[0]["value"]) * 0.15, 0.05) if papers else 0.05
+    if len(medians) == len(runs) and len(medians) >= 2:
+        return max(medians) - min(medians) <= tol
+    return False
+
+
 def run_deepseek(
     *,
     api_key: str,
@@ -239,72 +341,30 @@ def run_deepseek(
     判别: 各 body 的 consensus 中位数应落在同一真值邻域、verdict 一致.
     """
     if papers is None:
-        papers = [
-            p
-            for p in _synthetic_papers(seed)
-            if p["system"] == system and p["property"] == property_
-        ]
+        papers = _default_papers(system, property_, seed)
     if not papers:
         return {"ok": False, "error": f"no {system} {property_} papers"}
 
     base = os.environ.get("DEEPSEEK_API_KEY", api_key)
-    runs = []
-    for t in temps:
-        model_obj = _real_deepseek_model(base, temperature=t, model=model)
-        aug = []
-        for p in papers:
-            item = dict(p)
-            if full_text:
-                key = p.get("doi") or p.get("source_paper") or ""
-                item["full_text"] = full_text.get(key, item.get("full_text", ""))
-            aug.append(item)
-        data = asyncio.run(
-            run_real_body(
-                papers=aug,
-                system=system,
-                property_=property_,
-                model=model_obj,
-                seed=seed,
-                drop=0.0,
-                noise_sd=0.0,
-            )
+    runs = [
+        _run_temperature(
+            t,
+            papers=papers,
+            base=base,
+            model=model,
+            system=system,
+            property_=property_,
+            seed=seed,
+            full_text=full_text,
         )
-        runs.append(
-            {
-                "temperature": t,
-                "reported_values": data.get("reported_values", []),
-                "consensus": data.get("consensus"),
-                "consistency": data.get("consistency"),
-                "n_reported": len(data.get("reported_values", [])),
-            }
-        )
+        for t in temps
+    ]
 
     # 判别: 跨两身体稳健中心一致性
-    medians = [
-        r["consensus"]["median"]
-        for r in runs
-        if r["consensus"] and r["consensus"]["median"] is not None
-    ]
-    verdicts = [
-        (r["consistency"] or {}).get("overall", {}).get("verdict") for r in runs
-    ]
-    tol = max(abs(papers[0]["value"]) * 0.15, 0.05) if papers else 0.05
-    converge = False
-    if len(medians) == len(runs) and len(medians) >= 2:
-        converge = max(medians) - min(medians) <= tol
-    return {
-        "ok": True,
-        "system": system,
-        "property": property_,
-        "model": model,
-        "n_real_bodies": len(runs),
-        "runs": runs,
-        "real_bodies_converge": converge,
-        "median_spread": (
-            round(max(medians) - min(medians), 6) if len(medians) >= 2 else None
-        ),
-        "verdicts": verdicts,
-    }
+    medians = _collected_medians(runs)
+    verdicts = _run_verdicts(runs)
+    converge = _converge_flag(papers, runs, medians)
+    return _bodies_result(system, property_, model, runs, medians, converge, verdicts)
 
 
 if __name__ == "__main__":

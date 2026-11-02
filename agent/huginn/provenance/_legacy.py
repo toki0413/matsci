@@ -44,7 +44,6 @@ from huginn.utils.runtime import HUGINN_DIR_NAME
 logger = logging.getLogger(__name__)
 
 
-
 # ---------------------------------------------------------------------------
 # 数据类
 # ---------------------------------------------------------------------------
@@ -233,6 +232,18 @@ def _get_tool_version(tool_name: str) -> str:
     return huginn_ver
 
 
+def _provenance_enabled() -> bool:
+    """provenance flag 是否开启; flag 层异常时按开启处理, 不让它带挂业务."""
+    try:
+        from huginn.feature_flags import FeatureFlags
+
+        return FeatureFlags.shared().is_enabled("provenance")
+    except Exception:
+        # flag 层挂了不能带挂业务, 继续走原逻辑
+        logger.debug("best-effort op failed", exc_info=True)
+        return True
+
+
 def capture(
     tool_name: str,
     input_params: dict[str, Any],
@@ -254,18 +265,13 @@ def capture(
         ProvenanceSnapshot
     """
     # flag 关掉时返回最小空 snapshot, 不收集版本/hash
-    try:
-        from huginn.feature_flags import FeatureFlags
-        if not FeatureFlags.shared().is_enabled("provenance"):
-            return ProvenanceSnapshot(
-                timestamp="",
-                tool_name=tool_name,
-                tool_version="",
-                input_params={},
-            )
-    except Exception:
-        # flag 层挂了不能带挂业务, 继续走原逻辑
-        logger.debug("best-effort op failed", exc_info=True)
+    if not _provenance_enabled():
+        return ProvenanceSnapshot(
+            timestamp="",
+            tool_name=tool_name,
+            tool_version="",
+            input_params={},
+        )
 
     timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     software_versions = _collect_software_versions()
@@ -377,8 +383,14 @@ class ProvenanceRecord:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ProvenanceRecord:
         known = {
-            "run_id", "objective", "inputs", "outputs",
-            "tool_chain", "timestamps", "dois", "tags",
+            "run_id",
+            "objective",
+            "inputs",
+            "outputs",
+            "tool_chain",
+            "timestamps",
+            "dois",
+            "tags",
         }
         kwargs = {k: v for k, v in d.items() if k in known}
         return cls(**kwargs)
@@ -396,12 +408,13 @@ def _hash_file(path: str | Path) -> str:
     return h.hexdigest()[:12]
 
 
-def capture_run_inputs(files: list[str | Path] | None = None,
-                        params: dict[str, Any] | None = None) -> dict[str, Any]:
+def capture_run_inputs(
+    files: list[str | Path] | None = None, params: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """收集 run 级输入: 文件 hash + 参数快照."""
     inputs: dict[str, Any] = {"params": dict(params or {})}
     file_hashes: dict[str, str] = {}
-    for f in (files or []):
+    for f in files or []:
         fp = Path(f)
         file_hashes[fp.name] = _hash_file(fp)
     inputs["files"] = file_hashes
@@ -465,6 +478,25 @@ def export_crate(record: ProvenanceRecord) -> dict[str, Any]:
     tool_chain 节点作为一个 entity, inputs/outputs 作为 file entity.
     DOMAP / FAIR-Ware 这类工具能直接吃这个结构.
     """
+    tool_ids = _crate_tool_ids(record)
+    graph: list[dict[str, Any]] = []
+    # root: 本次 run
+    graph.append(_crate_root(record, tool_ids))
+    # 每个 tool-call 一个 entity, @id 与 root instrument 引用一致
+    graph.extend(_crate_tool_entities(record, tool_ids))
+    # input file entities
+    graph.extend(_crate_file_entities(record))
+    # output entities
+    graph.extend(_crate_output_entities(record))
+    # DOI entities
+    graph.extend(_crate_doi_entities(record))
+    return {
+        "@context": "https://w3id.org/ro/crate/1.1/context",
+        "@graph": graph,
+    }
+
+
+def _crate_tool_ids(record: ProvenanceRecord) -> list[str]:
     # 预计算每个 tool-call 的 @id, root instrument 引用和 tool entity 共用一套.
     # 同名工具多次调用用 _1 / _2 区分, 保证 @id 唯一且引用一致.
     seen_tools: dict[str, int] = {}
@@ -475,10 +507,11 @@ def export_crate(record: ProvenanceRecord) -> dict[str, Any]:
         seen_tools[tname] = count + 1
         suffix = f"_{count}" if count > 0 else ""
         tool_ids.append(f"tool:{tname}{suffix}")
+    return tool_ids
 
-    graph: list[dict[str, Any]] = []
-    # root: 本次 run
-    graph.append({
+
+def _crate_root(record: ProvenanceRecord, tool_ids: list[str]) -> dict[str, Any]:
+    return {
         "@id": f"run:{record.run_id}",
         "@type": ["CreateAction", "ResearchAction"],
         "name": record.objective or f"Run {record.run_id}",
@@ -487,51 +520,77 @@ def export_crate(record: ProvenanceRecord) -> dict[str, Any]:
         "instrument": [{"@id": tid} for tid in tool_ids],
         "object": [
             {"@id": f"input:{k}"}
-            for k in (record.inputs.get("files", {}).keys()
-                      if isinstance(record.inputs, dict) else [])
+            for k in (
+                record.inputs.get("files", {}).keys()
+                if isinstance(record.inputs, dict)
+                else []
+            )
         ],
         "result": [
             {"@id": f"output:{k}"}
-            for k in (record.outputs.keys()
-                      if isinstance(record.outputs, dict) else [])
+            for k in (record.outputs.keys() if isinstance(record.outputs, dict) else [])
         ],
-    })
-    # 每个 tool-call 一个 entity, @id 与 root instrument 引用一致
+    }
+
+
+def _crate_tool_entities(
+    record: ProvenanceRecord, tool_ids: list[str]
+) -> list[dict[str, Any]]:
+    entities: list[dict[str, Any]] = []
     for i, snap in enumerate(record.tool_chain):
         tname = snap.get("tool_name", "unknown")
-        graph.append({
-            "@id": tool_ids[i],
-            "@type": "SoftwareApplication",
-            "name": tname,
-            "softwareVersion": snap.get("tool_version", "unknown"),
-            "url": f"huginn://tools/{tname}",
-            "position": i,
-        })
-    # input file entities
+        entities.append(
+            {
+                "@id": tool_ids[i],
+                "@type": "SoftwareApplication",
+                "name": tname,
+                "softwareVersion": snap.get("tool_version", "unknown"),
+                "url": f"huginn://tools/{tname}",
+                "position": i,
+            }
+        )
+    return entities
+
+
+def _crate_file_entities(record: ProvenanceRecord) -> list[dict[str, Any]]:
+    entities: list[dict[str, Any]] = []
     files = record.inputs.get("files", {}) if isinstance(record.inputs, dict) else {}
     for fname, fhash in files.items():
-        graph.append({
-            "@id": f"input:{fname}",
-            "@type": "File",
-            "name": fname,
-            "sha256": fhash,
-        })
-    # output entities
-    for oname, ovalue in record.outputs.items() if isinstance(record.outputs, dict) else []:
-        graph.append({
-            "@id": f"output:{oname}",
-            "@type": "PropertyValue",
-            "name": oname,
-            "value": ovalue,
-        })
-    # DOI entities
+        entities.append(
+            {
+                "@id": f"input:{fname}",
+                "@type": "File",
+                "name": fname,
+                "sha256": fhash,
+            }
+        )
+    return entities
+
+
+def _crate_output_entities(record: ProvenanceRecord) -> list[dict[str, Any]]:
+    entities: list[dict[str, Any]] = []
+    for oname, ovalue in (
+        record.outputs.items() if isinstance(record.outputs, dict) else []
+    ):
+        entities.append(
+            {
+                "@id": f"output:{oname}",
+                "@type": "PropertyValue",
+                "name": oname,
+                "value": ovalue,
+            }
+        )
+    return entities
+
+
+def _crate_doi_entities(record: ProvenanceRecord) -> list[dict[str, Any]]:
+    entities: list[dict[str, Any]] = []
     for doi in record.dois:
-        graph.append({
-            "@id": doi,
-            "@type": "ScholarlyArticle",
-            "identifier": doi,
-        })
-    return {
-        "@context": "https://w3id.org/ro/crate/1.1/context",
-        "@graph": graph,
-    }
+        entities.append(
+            {
+                "@id": doi,
+                "@type": "ScholarlyArticle",
+                "identifier": doi,
+            }
+        )
+    return entities

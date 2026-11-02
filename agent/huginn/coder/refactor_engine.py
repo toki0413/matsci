@@ -31,6 +31,21 @@ class PlannedEdit:
     new_string: str
 
 
+def _score_candidates(
+    keywords: set[str], candidate_paths: list[Path]
+) -> list[tuple[int, Path]]:
+    """Score candidate files by how many task keywords they mention."""
+    scored: list[tuple[int, Path]] = []
+    for path in candidate_paths:
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:  # 防御: 读取失败则跳过该文件继续筛选
+            continue
+        score = sum(1 for kw in keywords if kw in text.lower())
+        scored.append((score, path))
+    return scored
+
+
 class RefactorEngine:
     """Plan and execute cross-file refactorings safely."""
 
@@ -145,14 +160,7 @@ class RefactorEngine:
         candidate_paths = [p for p in candidate_paths if p.exists()]
         # Prefer files that mention task keywords.
         keywords = {w.lower() for w in re.findall(r"[A-Za-z_]\w+", task)}
-        scored: list[tuple[int, Path]] = []
-        for path in candidate_paths:
-            try:
-                text = path.read_text(encoding="utf-8", errors="ignore")
-            except Exception:  # 防御: 读取失败则跳过该文件继续筛选
-                continue
-            score = sum(1 for kw in keywords if kw in text.lower())
-            scored.append((score, path))
+        scored = _score_candidates(keywords, candidate_paths)
 
         scored.sort(key=lambda x: x[0], reverse=True)
         paths = [p for _, p in scored[: self.MAX_FILES]]

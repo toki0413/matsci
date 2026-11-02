@@ -324,7 +324,7 @@ def expand_latex_inputs(path: Path, seen: set[Path] | None = None) -> str:
 
     def replace_input(match: re.Match[str]) -> str:
         raw = match.group(2).strip()
-        candidate = (path.parent / raw)
+        candidate = path.parent / raw
         if candidate.suffix == "":
             candidate = candidate.with_suffix(".tex")
         if candidate.exists() and candidate.is_file():
@@ -358,7 +358,10 @@ def normalize_text(text: str) -> str:
 def canonical_section(title: str) -> str:
     normalized = title.strip().lower()
     for key, aliases in SECTION_ALIASES.items():
-        if any(normalized == alias or normalized.startswith(alias + " ") for alias in aliases):
+        if any(
+            normalized == alias or normalized.startswith(alias + " ")
+            for alias in aliases
+        ):
             return key
     return normalized
 
@@ -376,7 +379,11 @@ def split_sections(text: str) -> dict[str, str]:
             continue
         sections.setdefault(current, []).append(line)
 
-    return {key: normalize_text("\n".join(value)) for key, value in sections.items() if normalize_text("\n".join(value))}
+    return {
+        key: normalize_text("\n".join(value))
+        for key, value in sections.items()
+        if normalize_text("\n".join(value))
+    }
 
 
 def trim_at_references(text: str) -> tuple[str, bool]:
@@ -416,7 +423,9 @@ def collect_captions(text: str) -> list[str]:
     return captions[:12]
 
 
-def make_candidate_contexts(sections: dict[str, str], captions: list[str]) -> list[dict[str, str]]:
+def make_candidate_contexts(
+    sections: dict[str, str], captions: list[str]
+) -> list[dict[str, str]]:
     candidates: list[dict[str, str]] = []
     preferred = [
         ("abstract", "Abstract"),
@@ -429,13 +438,24 @@ def make_candidate_contexts(sections: dict[str, str], captions: list[str]) -> li
             candidates.append({"name": label, "text": compact(sections[key], 1400)})
 
     if captions:
-        candidates.append({"name": "Figure captions", "text": compact("\n\n".join(captions), 1400)})
+        candidates.append(
+            {"name": "Figure captions", "text": compact("\n\n".join(captions), 1400)}
+        )
 
     combined = "\n\n".join(sections.values())
     keyword_patterns = [
-        ("mechanism/process", r"(?i)(mechanism|pathway|pipeline|framework|architecture|workflow|schematic|机制|通路|流程|架构|框架)"),
-        ("experiment/system", r"(?i)(apparatus|setup|system|device|instrument|experiment|实验|装置|系统|设备)"),
-        ("comparison/result", r"(?i)(compare|comparison|condition|group|result|performance|对比|比较|工况|结果|性能)"),
+        (
+            "mechanism/process",
+            r"(?i)(mechanism|pathway|pipeline|framework|architecture|workflow|schematic|机制|通路|流程|架构|框架)",
+        ),
+        (
+            "experiment/system",
+            r"(?i)(apparatus|setup|system|device|instrument|experiment|实验|装置|系统|设备)",
+        ),
+        (
+            "comparison/result",
+            r"(?i)(compare|comparison|condition|group|result|performance|对比|比较|工况|结果|性能)",
+        ),
     ]
     for name, pattern in keyword_patterns:
         match = re.search(pattern, combined)
@@ -452,12 +472,30 @@ def make_candidate_contexts(sections: dict[str, str], captions: list[str]) -> li
 
 def extract_document(path: Path) -> ExtractionResult:
     if path.is_dir():
-        raise SystemExit("LaTeX folders are not guessed. Please pass the main .tex file path.")
+        raise SystemExit(
+            "LaTeX folders are not guessed. Please pass the main .tex file path."
+        )
 
     suffix = path.suffix.lower()
     if not path.exists():
         raise SystemExit(f"File not found: {path}")
 
+    raw_text, parser, parser_notes = _extract_raw_text(path, suffix)
+
+    raw_text = normalize_text(raw_text)
+    trimmed_text, removed_refs = trim_at_references(raw_text)
+    sections = split_sections(trimmed_text)
+    captions = collect_captions(raw_text)
+
+    result = _build_extraction_result(
+        path, suffix, parser, parser_notes, raw_text, trimmed_text, sections, captions
+    )
+    _append_extraction_warnings(result, suffix, raw_text, removed_refs)
+
+    return result
+
+
+def _extract_raw_text(path: Path, suffix: str) -> tuple[str, str, list[str]]:
     parser = ""
     parser_notes: list[str] = []
     if suffix == ".pdf":
@@ -474,13 +512,20 @@ def extract_document(path: Path) -> ExtractionResult:
         parser = "plain-text"
     else:
         raise SystemExit(f"Unsupported file type: {suffix}")
+    return raw_text, parser, parser_notes
 
-    raw_text = normalize_text(raw_text)
-    trimmed_text, removed_refs = trim_at_references(raw_text)
-    sections = split_sections(trimmed_text)
-    captions = collect_captions(raw_text)
 
-    result = ExtractionResult(
+def _build_extraction_result(
+    path: Path,
+    suffix: str,
+    parser: str,
+    parser_notes: list[str],
+    raw_text: str,
+    trimmed_text: str,
+    sections: dict[str, str],
+    captions: list[str],
+) -> ExtractionResult:
+    return ExtractionResult(
         source_path=str(path.resolve()),
         source_type=suffix.lstrip(".") or "unknown",
         title=compact(extract_title(trimmed_text, sections, path), 300),
@@ -496,20 +541,34 @@ def extract_document(path: Path) -> ExtractionResult:
         parser=parser,
     )
 
-    if removed_refs:
-        result.warnings.append("References section was detected and excluded from section extraction.")
-    if result.text_length < 800:
-        result.warnings.append("Extracted text is short; the document may be scanned, image-only, or sparsely parsed.")
-    if suffix == ".pdf" and not result.abstract and not result.methods:
-        result.warnings.append("PDF section detection was limited; verify snippets before generating the prompt.")
-    if suffix == ".pdf" and not raw_text.strip():
-        result.warnings.append("No extractable PDF text was found; this may be a scanned or image-only PDF. Use OCR or paste the abstract/methods text.")
-    if suffix == ".docx" and not raw_text.strip():
-        result.warnings.append("No extractable DOCX text was found; paste the relevant sections or export the document as plain text.")
-    if suffix in {".tex", ".latex"}:
-        result.warnings.append("LaTeX macros were simplified; verify equations and specialized notation manually.")
 
-    return result
+def _append_extraction_warnings(
+    result: ExtractionResult, suffix: str, raw_text: str, removed_refs: bool
+) -> None:
+    if removed_refs:
+        result.warnings.append(
+            "References section was detected and excluded from section extraction."
+        )
+    if result.text_length < 800:
+        result.warnings.append(
+            "Extracted text is short; the document may be scanned, image-only, or sparsely parsed."
+        )
+    if suffix == ".pdf" and not result.abstract and not result.methods:
+        result.warnings.append(
+            "PDF section detection was limited; verify snippets before generating the prompt."
+        )
+    if suffix == ".pdf" and not raw_text.strip():
+        result.warnings.append(
+            "No extractable PDF text was found; this may be a scanned or image-only PDF. Use OCR or paste the abstract/methods text."
+        )
+    if suffix == ".docx" and not raw_text.strip():
+        result.warnings.append(
+            "No extractable DOCX text was found; paste the relevant sections or export the document as plain text."
+        )
+    if suffix in {".tex", ".latex"}:
+        result.warnings.append(
+            "LaTeX macros were simplified; verify equations and specialized notation manually."
+        )
 
 
 def to_markdown(result: ExtractionResult) -> str:
@@ -553,9 +612,18 @@ def to_markdown(result: ExtractionResult) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Extract research-document context for Happy Figure prompt generation.")
-    parser.add_argument("path", help="Path to .docx, .doc, .pdf, .tex, .latex, .md, or .txt")
-    parser.add_argument("--format", choices=["markdown", "json"], default="markdown", help="Output format")
+    parser = argparse.ArgumentParser(
+        description="Extract research-document context for Happy Figure prompt generation."
+    )
+    parser.add_argument(
+        "path", help="Path to .docx, .doc, .pdf, .tex, .latex, .md, or .txt"
+    )
+    parser.add_argument(
+        "--format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="Output format",
+    )
     args = parser.parse_args()
 
     result = extract_document(Path(args.path))

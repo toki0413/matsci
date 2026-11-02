@@ -19,6 +19,7 @@ ponytail: 不引 few-shot pool / schema_validator / pdf_splitter 依赖. 升级�
   - 抽取质量不够时, 在 SCHEMA_JSON 之外补 few-shot 示例 (放 data/fewshot_pool/)
   - 长文档切片由 SmartIngester 处理, 这里不重复.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -133,6 +134,27 @@ def parse_document(parsed_dir: Path) -> Document:
     if not isinstance(raw, list):
         raise ValueError(f"unexpected content_list format: {type(raw)}")
 
+    chunks, sections, tables, figures, abstract_text, first_page_chunks = (
+        _collect_chunks(raw)
+    )
+
+    # full_text: 全 chunk 拼接
+    full_text = "\n".join(c.text for c in chunks if c.text)
+    first_page_text = "\n".join(first_page_chunks)[:6000]
+
+    return Document(
+        chunks=chunks,
+        sections=sections,
+        abstract=abstract_text,
+        tables=tables,
+        figures=figures,
+        first_page_text=first_page_text,
+        full_text=full_text,
+    )
+
+
+def _collect_chunks(raw: list) -> tuple:
+    """遍历 content_list, 收集 chunk / sections / tables / figures / abstract."""
     chunks: list[Chunk] = []
     sections: dict[str, list[Chunk]] = {}
     tables: list[Chunk] = []
@@ -148,7 +170,9 @@ def parse_document(parsed_dir: Path) -> Document:
         text = item.get("text") or ""
         page_idx = item.get("page_idx", 0) or 0
         text_level = item.get("text_level")
-        chunk = Chunk(idx=idx, type=ctype, text=text, page_idx=page_idx, text_level=text_level)
+        chunk = Chunk(
+            idx=idx, type=ctype, text=text, page_idx=page_idx, text_level=text_level
+        )
         chunks.append(chunk)
 
         if ctype == "table":
@@ -172,19 +196,7 @@ def parse_document(parsed_dir: Path) -> Document:
         if page_idx == 0 and text.strip():
             first_page_chunks.append(text.strip())
 
-    # full_text: 全 chunk 拼接
-    full_text = "\n".join(c.text for c in chunks if c.text)
-    first_page_text = "\n".join(first_page_chunks)[:6000]
-
-    return Document(
-        chunks=chunks,
-        sections=sections,
-        abstract=abstract_text,
-        tables=tables,
-        figures=figures,
-        first_page_text=first_page_text,
-        full_text=full_text,
-    )
+    return chunks, sections, tables, figures, abstract_text, first_page_chunks
 
 
 # ── LLM 调用: huginn ModelRegistry 替代上游 deepseek_client ───────────────────
@@ -233,7 +245,9 @@ def chat_json(
             resp = model.invoke(messages)
         except RuntimeError:
             resp = asyncio.run(model.ainvoke(messages))
-        text = str(resp.content).strip() if hasattr(resp, "content") else str(resp).strip()
+        text = (
+            str(resp.content).strip() if hasattr(resp, "content") else str(resp).strip()
+        )
         text = _strip_code_fences(text)
         if not text:
             return {}
@@ -276,9 +290,15 @@ def extract_anchors(doc: Document, model: Any) -> dict:
     """抽取摘要锚点. 无可用文本时返回空锚点."""
     source_name, text = _best_anchor_source(doc)
     if not source_name:
-        return {"primary_materials": [], "key_properties": [],
-                "process_keywords": [], "application_hints": []}
-    prompt = ANCHOR_PROMPT.format(source_name=source_name) + f"\n{source_name}:\n" + text
+        return {
+            "primary_materials": [],
+            "key_properties": [],
+            "process_keywords": [],
+            "application_hints": [],
+        }
+    prompt = (
+        ANCHOR_PROMPT.format(source_name=source_name) + f"\n{source_name}:\n" + text
+    )
     return chat_json(
         model,
         [
@@ -286,8 +306,12 @@ def extract_anchors(doc: Document, model: Any) -> dict:
             {"role": "user", "content": prompt},
         ],
         max_tokens=4000,
-    ) or {"primary_materials": [], "key_properties": [],
-          "process_keywords": [], "application_hints": []}
+    ) or {
+        "primary_materials": [],
+        "key_properties": [],
+        "process_keywords": [],
+        "application_hints": [],
+    }
 
 
 def _section_payload(doc: Document, anchors: dict) -> dict:
@@ -318,7 +342,9 @@ def _extract_block(
         f"Schema ({block_name}):\n{json.dumps(schema_block, ensure_ascii=False, indent=2)}\n"
         f"{extra_hint}\n"
     )
-    user_msg = user_intro + "\n输入数据 (JSON):\n" + json.dumps(payload, ensure_ascii=False)
+    user_msg = (
+        user_intro + "\n输入数据 (JSON):\n" + json.dumps(payload, ensure_ascii=False)
+    )
     return chat_json(
         model,
         [
@@ -347,7 +373,10 @@ def extract_schema(
     material = _extract_block(doc, model, "Material", SCHEMA_JSON["Material"])
     structure = _extract_block(doc, model, "Structure", SCHEMA_JSON["Structure"])
     properties_raw = _extract_block(
-        doc, model, "Properties", SCHEMA_JSON["Properties"],
+        doc,
+        model,
+        "Properties",
+        SCHEMA_JSON["Properties"],
         extra_hint="Properties 是数组, 返回 [{{...}}, {{...}}] 形式.",
     )
     synthesis = _extract_block(doc, model, "Synthesis", SCHEMA_JSON["Synthesis"])
@@ -355,15 +384,7 @@ def extract_schema(
     metadata = _extract_block(doc, model, "Metadata", SCHEMA_JSON["Metadata"])
 
     # Properties 可能直接是 list, 也可能是 {"Properties": [...]}
-    if isinstance(properties_raw, list):
-        props_list = properties_raw
-    elif isinstance(properties_raw, dict):
-        props_list = properties_raw.get("Properties") or properties_raw.get("properties") or []
-        # 单 dict (单条性能) 也兜底成 list
-        if isinstance(props_list, dict):
-            props_list = [props_list]
-    else:
-        props_list = []
+    props_list = _normalize_properties_raw(properties_raw)
 
     extracted = {
         "Material": material,
@@ -378,6 +399,22 @@ def extract_schema(
         extracted = verify_original_texts(extracted, doc.full_text)
 
     return from_llm_output(extracted)
+
+
+def _normalize_properties_raw(properties_raw) -> list:
+    """Properties 可能直接是 list, 也可能是 {"Properties": [...]}."""
+    if isinstance(properties_raw, list):
+        props_list = properties_raw
+    elif isinstance(properties_raw, dict):
+        props_list = (
+            properties_raw.get("Properties") or properties_raw.get("properties") or []
+        )
+        # 单 dict (单条性能) 也兜底成 list
+        if isinstance(props_list, dict):
+            props_list = [props_list]
+    else:
+        props_list = []
+    return props_list
 
 
 # ── verify_original_texts: 五级原文溯源校验 ──────────────────────────────────
@@ -398,8 +435,8 @@ def _ngram_jaccard(a: str, b: str, n: int = 3) -> float:
     a, b = a.lower(), b.lower()
     if len(a) < n or len(b) < n:
         return 0.0
-    sa = {a[i:i + n] for i in range(len(a) - n + 1)}
-    sb = {b[i:i + n] for i in range(len(b) - n + 1)}
+    sa = {a[i : i + n] for i in range(len(a) - n + 1)}
+    sb = {b[i : i + n] for i in range(len(b) - n + 1)}
     if not sa or not sb:
         return 0.0
     return len(sa & sb) / len(sa | sb)
@@ -415,11 +452,15 @@ def _verify_one(original: str, full_text: str) -> bool:
     # 2. 归一化
     if _normalize(original) in _normalize(full_text):
         return True
-    ratio = difflib.SequenceMatcher(None, _normalize(original), _normalize(full_text)).quick_ratio()
+    ratio = difflib.SequenceMatcher(
+        None, _normalize(original), _normalize(full_text)
+    ).quick_ratio()
     # 3. 高模糊 (整体相似度 >= 0.9) — quick_ratio 是上界, 走 find_longest_match 严格判定
     if ratio >= 0.9:
         # 取原文本里最长连续子串在 full_text 中匹配
-        match = difflib.SequenceMatcher(None, _normalize(original), _normalize(full_text)).find_longest_match(
+        match = difflib.SequenceMatcher(
+            None, _normalize(original), _normalize(full_text)
+        ).find_longest_match(
             0, len(_normalize(original)), 0, len(_normalize(full_text))
         )
         if match.size / max(len(_normalize(original)), 1) >= 0.7:
@@ -433,7 +474,7 @@ def _verify_one(original: str, full_text: str) -> bool:
         norm_orig = _normalize(original)
         norm_full = _normalize(full_text)
         for i in range(0, max(len(norm_full) - win, 0) + 1, win // 2 or 1):
-            sub = norm_full[i:i + win]
+            sub = norm_full[i : i + win]
             r = difflib.SequenceMatcher(None, norm_orig, sub).ratio()
             if r > best:
                 best = r
@@ -485,12 +526,15 @@ def verify_original_texts(extracted: dict, full_text: str) -> dict:
     if stats["checked"]:
         logger.info(
             "verify_original_texts: checked=%d passed=%d failed=%d",
-            stats["checked"], stats["passed"], stats["failed"],
+            stats["checked"],
+            stats["passed"],
+            stats["failed"],
         )
     return extracted
 
 
 # ── 顶层入口 ─────────────────────────────────────────────────────────────────
+
 
 def extract_from_parsed_dir(
     parsed_dir: Path,
@@ -531,15 +575,31 @@ if __name__ == "__main__":
         d.mkdir()
         sample_content = [
             {"type": "header", "text": "Abstract", "text_level": 1, "page_idx": 0},
-            {"type": "text", "text": "This paper studies PVDF electrolyte.", "page_idx": 0},
-            {"type": "header", "text": "1. Introduction", "text_level": 1, "page_idx": 0},
+            {
+                "type": "text",
+                "text": "This paper studies PVDF electrolyte.",
+                "page_idx": 0,
+            },
+            {
+                "type": "header",
+                "text": "1. Introduction",
+                "text_level": 1,
+                "page_idx": 0,
+            },
             {"type": "text", "text": "PVDF is a polymer.", "page_idx": 0},
-            {"type": "header", "text": "2. Experimental", "text_level": 1, "page_idx": 1},
+            {
+                "type": "header",
+                "text": "2. Experimental",
+                "text_level": 1,
+                "page_idx": 1,
+            },
             {"type": "text", "text": "Tg was measured at 25 ℃.", "page_idx": 1},
             {"type": "table", "text": "[Table 1: properties]", "page_idx": 1},
             {"type": "chart", "text": "[Fig 1: SEM]", "page_idx": 2},
         ]
-        (d / "content_list.json").write_text(json.dumps(sample_content), encoding="utf-8")
+        (d / "content_list.json").write_text(
+            json.dumps(sample_content), encoding="utf-8"
+        )
         doc = parse_document(d)
         assert doc.abstract == "This paper studies PVDF electrolyte."
         assert "abstract" in doc.sections
@@ -555,9 +615,16 @@ if __name__ == "__main__":
     # 2. _verify_one 五级溯源
     full = "The Tg of PVDF was measured to be 25 ℃ using DSC at a heating rate of 10 ℃/min."
     assert _verify_one("Tg of PVDF was measured to be 25 ℃", full) is True  # 精确
-    assert _verify_one("Tg of PVDF was measured to be 25 ℃ using DSC", full) is True  # 归一化后子串
-    assert _verify_one("Tg of PVDF was measured to be 25 ℃ using DSC at a heating", full) is True  # 归一化
-    assert _verify_one("Tg of PVDF was 25 ℃ measured", full) is False  # 词序调换, 不算原文
+    assert (
+        _verify_one("Tg of PVDF was measured to be 25 ℃ using DSC", full) is True
+    )  # 归一化后子串
+    assert (
+        _verify_one("Tg of PVDF was measured to be 25 ℃ using DSC at a heating", full)
+        is True
+    )  # 归一化
+    assert (
+        _verify_one("Tg of PVDF was 25 ℃ measured", full) is False
+    )  # 词序调换, 不算原文
     assert _verify_one("完全无关的文本 xyz123", full) is False
     assert _verify_one("", full) is False
     assert _verify_one("Tg", "") is False
@@ -565,7 +632,10 @@ if __name__ == "__main__":
     # 3. verify_original_texts 整体: 通过保留, 不通过置 null
     extracted = {
         "Properties": [
-            {"Property_name": "Tg", "Original text": "Tg of PVDF was measured to be 25 ℃"},
+            {
+                "Property_name": "Tg",
+                "Original text": "Tg of PVDF was measured to be 25 ℃",
+            },
             {"Property_name": "fake", "Original text": "完全不存在的原文 xyz"},
         ],
         "Synthesis": {
@@ -578,11 +648,13 @@ if __name__ == "__main__":
     out = verify_original_texts(extracted, full)
     assert out["Properties"][0]["Original text"] == "Tg of PVDF was measured to be 25 ℃"
     assert out["Properties"][1]["Original text"] is None
-    assert out["Synthesis"]["Parameters"][0]["Original text"] == "heating rate of 10 ℃/min"
+    assert (
+        out["Synthesis"]["Parameters"][0]["Original text"] == "heating rate of 10 ℃/min"
+    )
     assert out["Synthesis"]["Parameters"][1]["Original text"] is None
 
     # 4. _strip_code_fences
-    assert _strip_code_fences("```json\n{\"a\":1}\n```") == '{"a":1}'
+    assert _strip_code_fences('```json\n{"a":1}\n```') == '{"a":1}'
     assert _strip_code_fences('{"a":1}') == '{"a":1}'
     assert _strip_code_fences("") == ""
 

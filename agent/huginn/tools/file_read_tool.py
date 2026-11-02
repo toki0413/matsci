@@ -69,99 +69,121 @@ class FileReadTool(HuginnTool):
     ) -> ToolResult:
         input_data = FileReadToolInput(**args)
         work_dir = (
-            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+            Path(input_data.working_dir) if input_data.working_dir else self.default_work_dir()
         )
         path = work_dir / input_data.file_path
         if not path.is_absolute():
             path = path.resolve()
 
-        # Path traversal protection: restrict reads to the workspace directory.
-        # Allow explicit opt-out via HUGINN_ALLOW_UNRESTRICTED_READ for power users.
-        allow_unrestricted = os.environ.get(
-            "HUGINN_ALLOW_UNRESTRICTED_READ", ""
-        ).lower() in ("1", "true", "yes")
-        if not allow_unrestricted:
-            try:
-                work_dir_resolved = work_dir.resolve()
-                path.relative_to(work_dir_resolved)
-            except ValueError:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=(
-                        f"Access denied: {path} is outside the workspace "
-                        f"({work_dir_resolved}). Set HUGINN_ALLOW_UNRESTRICTED_READ=1 "
-                        "to override."
-                    ),
-                )
-
+        err = self._fr_check_access(path, work_dir)
+        if err is not None:
+            return err
         if not path.exists():
             return ToolResult(data=None, success=False, error=f"File not found: {path}")
         if not path.is_file():
             return ToolResult(data=None, success=False, error=f"Not a file: {path}")
 
-        max_size = input_data.max_size_bytes or int(
-            os.environ.get(
-                "HUGINN_FILE_READ_MAX_SIZE_BYTES", str(DEFAULT_MAX_SIZE_BYTES)
-            )
-        )
-        max_tokens = input_data.max_output_tokens or int(
-            os.environ.get(
-                "HUGINN_FILE_READ_MAX_OUTPUT_TOKENS", str(DEFAULT_MAX_OUTPUT_TOKENS)
-            )
-        )
+        max_size, max_tokens = _fr_limits(input_data)
 
         # PDF 走 KB 的 pymupdf + OCR 链, 不走 read_text(errors="replace").
-        # 旧版 read_text 产 256KB 乱码, 留在消息历史里 get_buffer_string
-        # MemoryError (v16 崩溃根因). KB 的 _extract_text 用 pymupdf 提取
-        # 真正文本, 扫描件 fallback 到 OCR.
         if path.suffix.lower() == ".pdf":
-            try:
-                from huginn.knowledge.store import _extract_text
+            pdf_result = self._fr_read_pdf(path, input_data, max_tokens)
+            if pdf_result is not None:
+                return pdf_result
+        return self._fr_read_text(path, input_data, max_size, max_tokens)
 
-                content = path.read_bytes()
-                # pymupdf 流式提取, 不受 max_size 限制 — 输出靠 max_tokens 截断.
-                # PDF 原始 2.3MB 但提取后文本通常 <100KB.
-                pdf_text = _extract_text(str(path), content)
-                if pdf_text:
-                    lines = pdf_text.splitlines()
-                    total = len(lines)
-                    # 支持 line_offset/n_lines 读 PDF 中间段落 — 之前固定从第 1 行
-                    # 截断, agent 读不到 Methods 中间部分, 只能反复 fetch 外部论文
-                    # (网络不稳定时崩溃). 现在 agent 可分页读完整 PDF.
-                    start = input_data.line_offset or 1
-                    end = (
-                        total + 1
-                        if input_data.n_lines is None
-                        else start + input_data.n_lines
-                    )
-                    selected = lines[start - 1 : end - 1]
-                    selected, was_truncated = self._apply_token_cap(
-                        selected, start, max_tokens, ".pdf"
-                    )
-                    numbered = "\n".join(
-                        f"{i + start:4d}  {line}" for i, line in enumerate(selected)
-                    )
-                    msg = f"Read PDF ({len(pdf_text)} chars extracted, lines {start}-{start + len(selected) - 1} of {total})."
-                    if was_truncated:
-                        msg += f" Truncated to stay under {max_tokens} tokens."
-                    return ToolResult(
-                        data={
-                            "file_path": str(path),
-                            "total_lines": total,
-                            "start_line": start,
-                            "content": numbered,
-                            "message": msg,
-                        },
-                        success=True,
-                    )
-            except Exception as e:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"PDF extraction failed: {e}",
-                )
+    def _fr_check_access(self, path: Path, work_dir: Path) -> ToolResult | None:
+        """Path traversal protection: restrict reads to the workspace directory.
 
+        Allow explicit opt-out via HUGINN_ALLOW_UNRESTRICTED_READ for power users.
+        """
+        allow_unrestricted = os.environ.get(
+            "HUGINN_ALLOW_UNRESTRICTED_READ", ""
+        ).lower() in ("1", "true", "yes")
+        if allow_unrestricted:
+            return None
+        try:
+            work_dir_resolved = work_dir.resolve()
+            path.relative_to(work_dir_resolved)
+        except ValueError:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=(
+                    f"Access denied: {path} is outside the workspace "
+                    f"({work_dir_resolved}). Set HUGINN_ALLOW_UNRESTRICTED_READ=1 "
+                    "to override."
+                ),
+            )
+        return None
+
+    def _fr_read_pdf(
+        self, path: Path, input_data: FileReadToolInput, max_tokens: int,
+    ) -> ToolResult | None:
+        """PDF 走 KB 的 pymupdf + OCR 链. 返回 None 表示提取为空, 继续走文本路径.
+
+        旧版 read_text 产 256KB 乱码, 留在消息历史里 get_buffer_string
+        MemoryError (v16 崩溃根因). KB 的 _extract_text 用 pymupdf 提取
+        真正文本, 扫描件 fallback 到 OCR.
+        """
+        try:
+            from huginn.knowledge.store import _extract_text
+
+            content = path.read_bytes()
+            # pymupdf 流式提取, 不受 max_size 限制 — 输出靠 max_tokens 截断.
+            # PDF 原始 2.3MB 但提取后文本通常 <100KB.
+            pdf_text = _extract_text(str(path), content)
+            if not pdf_text:
+                return None
+            return self._fr_pdf_slice(pdf_text, path, input_data, max_tokens)
+        except Exception as e:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"PDF extraction failed: {e}",
+            )
+
+    def _fr_pdf_slice(
+        self, pdf_text: str, path: Path,
+        input_data: FileReadToolInput, max_tokens: int,
+    ) -> ToolResult:
+        """按 line_offset/n_lines 切 PDF 文本段 (支持分页读中间段落)."""
+        lines = pdf_text.splitlines()
+        total = len(lines)
+        # 之前固定从第 1 行截断, agent 读不到 Methods 中间部分, 只能反复
+        # fetch 外部论文 (网络不稳定时崩溃). 现在 agent 可分页读完整 PDF.
+        start = input_data.line_offset or 1
+        end = (
+            total + 1
+            if input_data.n_lines is None
+            else start + input_data.n_lines
+        )
+        selected = lines[start - 1 : end - 1]
+        selected, was_truncated = self._apply_token_cap(
+            selected, start, max_tokens, ".pdf"
+        )
+        numbered = "\n".join(
+            f"{i + start:4d}  {line}" for i, line in enumerate(selected)
+        )
+        msg = f"Read PDF ({len(pdf_text)} chars extracted, lines {start}-{start + len(selected) - 1} of {total})."
+        if was_truncated:
+            msg += f" Truncated to stay under {max_tokens} tokens."
+        return ToolResult(
+            data={
+                "file_path": str(path),
+                "total_lines": total,
+                "start_line": start,
+                "content": numbered,
+                "message": msg,
+            },
+            success=True,
+        )
+
+    def _fr_read_text(
+        self, path: Path, input_data: FileReadToolInput,
+        max_size: int, max_tokens: int,
+    ) -> ToolResult:
+        """纯文本/其它格式读取: 整读 / tail / 窗口 三选一."""
         try:
             size = path.stat().st_size
             window_mode = input_data.window_offset is not None
@@ -178,36 +200,11 @@ class FileReadTool(HuginnTool):
                     ),
                 )
 
-            if window_mode:
-                # 懒读/分块窗口: 按字节 seek 读一块, 不整体载入超大文件.
-                window_bytes = input_data.window_size or max_size
-                selected, start = self._read_window(
-                    path, input_data.window_offset or 0, window_bytes, size
-                )
-                total = self._count_total_lines(path)
-                if start is None:
-                    return ToolResult(
-                        data=None,
-                        success=False,
-                        error=(
-                            f"Window offset {input_data.window_offset} is beyond "
-                            f"end of file ({size} bytes)."
-                        ),
-                    )
-            elif input_data.tail_lines is not None and input_data.tail_lines > 0:
-                selected, start = self._tail_lines(path, input_data.tail_lines)
-                total = input_data.tail_lines
-                end = start + len(selected)
-            else:
-                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-                total = len(lines)
-                start = input_data.line_offset or 1
-                end = (
-                    total + 1
-                    if input_data.n_lines is None
-                    else start + input_data.n_lines
-                )
-                selected = lines[start - 1 : end - 1]
+            selected, start, total, err = self._fr_select(
+                path, input_data, max_size, size, window_mode
+            )
+            if err is not None:
+                return err
 
             selected, was_truncated = self._apply_token_cap(
                 selected, start, max_tokens, path.suffix
@@ -215,32 +212,54 @@ class FileReadTool(HuginnTool):
             numbered = "\n".join(
                 f"{i + start:4d}  {line}" for i, line in enumerate(selected)
             )
-
-            if window_mode:
-                msg = (
-                    f"Read window (offset={input_data.window_offset} bytes) lines "
-                    f"{start}-{start + len(selected) - 1} of {total}."
-                )
-            else:
-                msg = f"Read lines {start}-{start + len(selected) - 1} of {total}."
-            if was_truncated:
-                msg += f" Truncated to stay under {max_tokens} tokens."
-
-            data = {
-                "file_path": str(path),
-                "total_lines": total,
-                "start_line": start,
-                "content": numbered,
-                "message": msg,
-            }
-            if window_mode:
-                data["window_offset"] = input_data.window_offset or 0
-                data["window_size"] = input_data.window_size or max_size
+            data = _fr_build_data(
+                path, input_data, max_size, start, total, numbered,
+                was_truncated, window_mode, max_tokens, len(selected),
+            )
             return ToolResult(data=data, success=True)
         except Exception as e:
             return ToolResult(
                 data=None, success=False, error=f"Failed to read file: {e}"
             )
+
+    def _fr_select(
+        self, path: Path, input_data: FileReadToolInput,
+        max_size: int, size: int, window_mode: bool,
+    ):
+        """按模式选行. 返回 (selected, start, total, error)."""
+        if window_mode:
+            # 懒读/分块窗口: 按字节 seek 读一块, 不整体载入超大文件.
+            window_bytes = input_data.window_size or max_size
+            selected, start = self._read_window(
+                path, input_data.window_offset or 0, window_bytes, size
+            )
+            total = self._count_total_lines(path)
+            if start is None:
+                return None, None, None, ToolResult(
+                    data=None,
+                    success=False,
+                    error=(
+                        f"Window offset {input_data.window_offset} is beyond "
+                        f"end of file ({size} bytes)."
+                    ),
+                )
+            return selected, start, total, None
+
+        if input_data.tail_lines is not None and input_data.tail_lines > 0:
+            selected, start = self._tail_lines(path, input_data.tail_lines)
+            total = input_data.tail_lines
+            return selected, start, total, None
+
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        total = len(lines)
+        start = input_data.line_offset or 1
+        end = (
+            total + 1
+            if input_data.n_lines is None
+            else start + input_data.n_lines
+        )
+        selected = lines[start - 1 : end - 1]
+        return selected, start, total, None
 
     def _read_window(
         self, path: Path, byte_offset: int, byte_size_limit: int, file_size: int
@@ -326,3 +345,49 @@ class FileReadTool(HuginnTool):
                 all_lines = f.read().splitlines()
             start = max(1, len(all_lines) - n + 1)
             return all_lines[-n:], start
+
+
+# ── file_read helper (模块级, 无 self 依赖) ─────────────────────────
+
+def _fr_limits(input_data: FileReadToolInput) -> tuple[int, int]:
+    """解析 max_size / max_tokens (args 优先, 否则取环境变量/默认值)."""
+    max_size = input_data.max_size_bytes or int(
+        os.environ.get(
+            "HUGINN_FILE_READ_MAX_SIZE_BYTES", str(DEFAULT_MAX_SIZE_BYTES)
+        )
+    )
+    max_tokens = input_data.max_output_tokens or int(
+        os.environ.get(
+            "HUGINN_FILE_READ_MAX_OUTPUT_TOKENS", str(DEFAULT_MAX_OUTPUT_TOKENS)
+        )
+    )
+    return max_size, max_tokens
+
+
+def _fr_build_data(
+    path: Path, input_data: FileReadToolInput, max_size: int,
+    start: int, total: int, numbered: str, was_truncated: bool,
+    window_mode: bool, max_tokens: int, n_selected: int,
+) -> dict[str, Any]:
+    """组装读取结果 data (含 message 与窗口元信息)."""
+    if window_mode:
+        msg = (
+            f"Read window (offset={input_data.window_offset} bytes) lines "
+            f"{start}-{start + n_selected - 1} of {total}."
+        )
+    else:
+        msg = f"Read lines {start}-{start + n_selected - 1} of {total}."
+    if was_truncated:
+        msg += f" Truncated to stay under {max_tokens} tokens."
+
+    data = {
+        "file_path": str(path),
+        "total_lines": total,
+        "start_line": start,
+        "content": numbered,
+        "message": msg,
+    }
+    if window_mode:
+        data["window_offset"] = input_data.window_offset or 0
+        data["window_size"] = input_data.window_size or max_size
+    return data

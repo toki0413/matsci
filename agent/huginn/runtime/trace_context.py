@@ -1,4 +1,4 @@
-﻿"""Trace context — 一次 agent run 的统一 trace_id.
+"""Trace context — 一次 agent run 的统一 trace_id.
 
 用 contextvars.ContextVar 存当前 trace_id, async/task 安全. 一次 run 启动时
 调 new_trace_id() 生成, 之后 audit/engine_state/checkpoint/task_metrics 序列化

@@ -31,7 +31,9 @@ _crawl4ai_warned = False  # 模块级标记, 缺库只警告一次
 
 
 async def _crawl4ai_fetch(
-    url: str, max_links: int = 50, user_data_dir: str | None = None,
+    url: str,
+    max_links: int = 50,
+    user_data_dir: str | None = None,
     headless: bool = True,
 ) -> tuple[str, str, list[str]]:
     """用 crawl4ai 抓单页, 返回 (markdown, title, links).
@@ -48,24 +50,19 @@ async def _crawl4ai_fetch(
         from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
     except ImportError:
         if not _crawl4ai_warned:
-            logger.info("crawl4ai 未安装, crawl_web 走 urllib 降级. 装: pip install crawl4ai-skill")
+            logger.info(
+                "crawl4ai 未安装, crawl_web 走 urllib 降级. 装: pip install crawl4ai-skill"
+            )
             _crawl4ai_warned = True
         raise _Crawl4aiUnavailable("crawl4ai not installed") from None
 
     # 一次性配置: headless, 禁图, UA 伪装; 有 user_data_dir 时复用 session
-    browser_cfg_kwargs: dict[str, Any] = {
-        "headless": headless,
-        "light_mode": True,  # 关掉一些重资源加载
-        "user_agent": _USER_AGENT,
-    }
-    if user_data_dir:
-        browser_cfg_kwargs["user_data_dir"] = user_data_dir
-    browser_cfg = BrowserConfig(**browser_cfg_kwargs)
-    run_cfg = CrawlerRunConfig(
-        markdown_generator=DefaultMarkdownGenerator(),
-        word_count_threshold=10,  # 过滤太短的段落
-        page_timeout=int(_timeout() * 1000 * 2),  # 毫秒
-        verbose=False,
+    browser_cfg, run_cfg = _build_crawl4ai_configs(
+        headless,
+        user_data_dir,
+        BrowserConfig,
+        CrawlerRunConfig,
+        DefaultMarkdownGenerator,
     )
 
     async with AsyncWebCrawler(config=browser_cfg) as crawler:
@@ -73,33 +70,68 @@ async def _crawl4ai_fetch(
         if not result.success:
             raise RuntimeError(f"crawl4ai fetch failed: {result.error_message}")
 
-        md = result.markdown.raw_markdown or ""
-        # fit_markdown 是去噪后的, 优先用
-        fit_md = getattr(result.markdown, "fit_markdown", None)
-        if fit_md:
-            md = fit_md
+        return _extract_crawl4ai_payload(result, max_links)
 
-        title = ""
-        if result.metadata:
-            title = result.metadata.get("title", "") or ""
 
-        # 抽页面内链接
-        links: list[str] = []
-        seen: set[str] = set()
-        for link in (result.links.get("internal", []) or []) + (result.links.get("external", []) or []):
-            href = link.get("href", "") if isinstance(link, dict) else ""
-            if href and href.startswith("http") and href not in seen:
-                seen.add(href)
-                links.append(href)
-            if len(links) >= max_links:
-                break
+def _build_crawl4ai_configs(
+    headless: bool,
+    user_data_dir: str | None,
+    browser_config_cls,
+    crawler_run_config_cls,
+    markdown_generator_cls,
+):
+    """构造 BrowserConfig / CrawlerRunConfig."""
+    browser_cfg_kwargs: dict[str, Any] = {
+        "headless": headless,
+        "light_mode": True,  # 关掉一些重资源加载
+        "user_agent": _USER_AGENT,
+    }
+    if user_data_dir:
+        browser_cfg_kwargs["user_data_dir"] = user_data_dir
+    browser_cfg = browser_config_cls(**browser_cfg_kwargs)
+    run_cfg = crawler_run_config_cls(
+        markdown_generator=markdown_generator_cls(),
+        word_count_threshold=10,  # 过滤太短的段落
+        page_timeout=int(_timeout() * 1000 * 2),  # 毫秒
+        verbose=False,
+    )
+    return browser_cfg, run_cfg
 
-        return md, title, links
+
+def _extract_crawl4ai_payload(result, max_links: int):
+    """从 crawl4ai 结果抽 (markdown, title, links)."""
+    md = result.markdown.raw_markdown or ""
+    # fit_markdown 是去噪后的, 优先用
+    fit_md = getattr(result.markdown, "fit_markdown", None)
+    if fit_md:
+        md = fit_md
+
+    title = ""
+    if result.metadata:
+        title = result.metadata.get("title", "") or ""
+
+    # 抽页面内链接
+    links: list[str] = []
+    seen: set[str] = set()
+    for link in (result.links.get("internal", []) or []) + (
+        result.links.get("external", []) or []
+    ):
+        href = link.get("href", "") if isinstance(link, dict) else ""
+        if href and href.startswith("http") and href not in seen:
+            seen.add(href)
+            links.append(href)
+        if len(links) >= max_links:
+            break
+
+    return md, title, links
 
 
 async def _playwright_fetch(
-    url: str, user_data_dir: str | None = None, max_links: int = 50,
-    wait_sec: float = 3.0, headless: bool = True,
+    url: str,
+    user_data_dir: str | None = None,
+    max_links: int = 50,
+    wait_sec: float = 3.0,
+    headless: bool = True,
 ) -> tuple[str, str, list[str]]:
     """原生 Playwright 抓页. crawl4ai anti-bot 误判时的降级.
 
@@ -113,80 +145,114 @@ async def _playwright_fetch(
     from playwright.async_api import async_playwright
 
     async with async_playwright() as pw:
-        if user_data_dir:
-            context = await pw.chromium.launch_persistent_context(
-                user_data_dir=user_data_dir,
-                headless=headless,
-                user_agent=_USER_AGENT,
-                viewport={"width": 1280, "height": 800},
-                args=["--disable-blink-features=AutomationControlled"],
-            )
-            browser = None
-        else:
-            browser = await pw.chromium.launch(
-                headless=headless,
-                args=["--disable-blink-features=AutomationControlled"],
-            )
-            context = await browser.new_context(
-                user_agent=_USER_AGENT,
-                viewport={"width": 1280, "height": 800},
-            )
+        context, browser = _launch_playwright_context(pw, user_data_dir, headless)
         try:
             page = await context.new_page()
             await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            # 等 JS 渲染: networkidle + 额外 delay
-            try:
-                await page.wait_for_load_state("networkidle", timeout=15000)
-            except Exception:
-                logger.debug("wait for load state failed", exc_info=True)  # 有些站永远不 idle, 不强求
-            await asyncio.sleep(wait_sec)
-
-            # Cloudflare 自动挑战等待: 标题含 "just a moment"/"请稍候" 说明在挑战,
-            # 很多 Cloudflare JS 挑战会自动过, 给最多 30s 缓冲.
-            cf_title_kw = ("just a moment", "请稍候", "attention required",
-                           "checking your browser")
-            for _ in range(10):  # 10 次 × 3s = 30s 上限
-                try:
-                    cur_title = ((await page.title()) or "").lower()
-                except Exception:
-                    break
-                if not any(k in cur_title for k in cf_title_kw):
-                    break
-                # 还在挑战页, 再等 3s
-                await asyncio.sleep(3.0)
+            await _wait_page_ready(page, wait_sec)
 
             title = await page.title()
             # 报告 429 或其他错误
             html = await page.content()
             # 简单 HTML → text
-            import re as _re
-            text = _re.sub(r"<script[^>]*>.*?</script>", "", html, flags=_re.IGNORECASE | _re.DOTALL)
-            text = _re.sub(r"<style[^>]*>.*?</style>", "", text, flags=_re.IGNORECASE | _re.DOTALL)
-            text = _re.sub(r"<[^>]+>", " ", text)
-            text = _re.sub(r"&nbsp;", " ", text)
-            text = _re.sub(r"&amp;", "&", text)
-            text = _re.sub(r"&lt;", "<", text)
-            text = _re.sub(r"&gt;", ">", text)
-            text = _re.sub(r"&quot;", '"', text)
-            text = _re.sub(r"\s+", " ", text).strip()
+            text = _html_to_text(html)
 
             # 抽链接
-            links_raw = await page.eval_on_selector_all(
-                "a[href]", "els => els.map(e => e.href)"
-            )
-            links: list[str] = []
-            seen: set[str] = set()
-            for href in links_raw or []:
-                if href.startswith("http") and href not in seen:
-                    seen.add(href)
-                    links.append(href)
-                if len(links) >= max_links:
-                    break
+            links = await _collect_page_links(page, max_links)
             return text, title, links
         finally:
             await context.close()
             if browser:
                 await browser.close()
+
+
+async def _launch_playwright_context(pw, user_data_dir: str | None, headless: bool):
+    """按是否复用 profile 启动 context, 返回 (context, browser)."""
+    if user_data_dir:
+        context = await pw.chromium.launch_persistent_context(
+            user_data_dir=user_data_dir,
+            headless=headless,
+            user_agent=_USER_AGENT,
+            viewport={"width": 1280, "height": 800},
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        browser = None
+    else:
+        browser = await pw.chromium.launch(
+            headless=headless,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        context = await browser.new_context(
+            user_agent=_USER_AGENT,
+            viewport={"width": 1280, "height": 800},
+        )
+    return context, browser
+
+
+async def _wait_page_ready(page, wait_sec: float) -> None:
+    """等 JS 渲染 + Cloudflare 挑战缓冲."""
+    # 等 JS 渲染: networkidle + 额外 delay
+    try:
+        await page.wait_for_load_state("networkidle", timeout=15000)
+    except Exception:
+        logger.debug(
+            "wait for load state failed", exc_info=True
+        )  # 有些站永远不 idle, 不强求
+    await asyncio.sleep(wait_sec)
+
+    # Cloudflare 自动挑战等待: 标题含 "just a moment"/"请稍候" 说明在挑战,
+    # 很多 Cloudflare JS 挑战会自动过, 给最多 30s 缓冲.
+    cf_title_kw = (
+        "just a moment",
+        "请稍候",
+        "attention required",
+        "checking your browser",
+    )
+    for _ in range(10):  # 10 次 × 3s = 30s 上限
+        try:
+            cur_title = ((await page.title()) or "").lower()
+        except Exception:
+            break
+        if not any(k in cur_title for k in cf_title_kw):
+            break
+        # 还在挑战页, 再等 3s
+        await asyncio.sleep(3.0)
+
+
+def _html_to_text(html: str) -> str:
+    """简单 HTML → text."""
+    import re as _re
+
+    text = _re.sub(
+        r"<script[^>]*>.*?</script>", "", html, flags=_re.IGNORECASE | _re.DOTALL
+    )
+    text = _re.sub(
+        r"<style[^>]*>.*?</style>", "", text, flags=_re.IGNORECASE | _re.DOTALL
+    )
+    text = _re.sub(r"<[^>]+>", " ", text)
+    text = _re.sub(r"&nbsp;", " ", text)
+    text = _re.sub(r"&amp;", "&", text)
+    text = _re.sub(r"&lt;", "<", text)
+    text = _re.sub(r"&gt;", ">", text)
+    text = _re.sub(r"&quot;", '"', text)
+    text = _re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+async def _collect_page_links(page, max_links: int) -> list[str]:
+    """抽页面内 http 链接."""
+    links_raw = await page.eval_on_selector_all(
+        "a[href]", "els => els.map(e => e.href)"
+    )
+    links: list[str] = []
+    seen: set[str] = set()
+    for href in links_raw or []:
+        if href.startswith("http") and href not in seen:
+            seen.add(href)
+            links.append(href)
+        if len(links) >= max_links:
+            break
+    return links
 
 
 async def _fallback_html_fetch(url: str) -> tuple[str, str]:
@@ -207,7 +273,9 @@ async def _fallback_html_fetch(url: str) -> tuple[str, str]:
         title = re.sub(r"\s+", " ", m.group(1)).strip()
 
     # 简单 HTML → 文本: 去 script/style/标签, 压空白
-    text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(
+        r"<script[^>]*>.*?</script>", "", html, flags=re.IGNORECASE | re.DOTALL
+    )
     text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.IGNORECASE | re.DOTALL)
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"&nbsp;", " ", text)
@@ -236,7 +304,10 @@ _SCIHUB_MIRRORS = (
 def _scihub_enabled() -> bool:
     """是否启用 Sci-Hub 候选源. 默认关闭, 需 HUGINN_ENABLE_SCIHUB=1."""
     return os.environ.get("HUGINN_ENABLE_SCIHUB", "").lower() in (
-        "1", "true", "yes", "on",
+        "1",
+        "true",
+        "yes",
+        "on",
     )
 
 
@@ -252,7 +323,8 @@ async def _scihub_pdf_url(doi: str) -> str | None:
         return None
     logger.warning(
         "Sci-Hub 兜底启用 (HUGINN_ENABLE_SCIHUB=1). 法律灰色地带, 用户自负风险. "
-        "DOI: %s", doi
+        "DOI: %s",
+        doi,
     )
     for mirror in _SCIHUB_MIRRORS:
         url = f"{mirror}/{doi}"
@@ -361,29 +433,46 @@ def split_sections(text: str) -> list[dict[str, Any]]:
     让 LLM 能定位到 Results/Tables 章节抽数值.
     """
     section_titles = (
-        "introduction", "abstract", "methods", "methodology", "method",
-        "results", "discussion", "conclusion", "conclusions",
-        "references", "acknowledg", "appendix", "table", "tables",
-        "experiment", "experimental", "theory", "computational",
+        "introduction",
+        "abstract",
+        "methods",
+        "methodology",
+        "method",
+        "results",
+        "discussion",
+        "conclusion",
+        "conclusions",
+        "references",
+        "acknowledg",
+        "appendix",
+        "table",
+        "tables",
+        "experiment",
+        "experimental",
+        "theory",
+        "computational",
     )
     sections: list[dict[str, Any]] = []
     current_title = "preamble"
     current_lines: list[str] = []
     for line in text.split("\n"):
         stripped = line.strip().lower().rstrip(".:")
-        if 0 < len(stripped) < 60 and any(stripped == t or stripped.startswith(t) for t in section_titles):
+        if 0 < len(stripped) < 60 and any(
+            stripped == t or stripped.startswith(t) for t in section_titles
+        ):
             if current_lines:
-                sections.append({
-                    "title": current_title,
-                    "text": "\n".join(current_lines).strip()[:8000],
-                })
+                _append_section(sections, current_title, current_lines)
             current_title = stripped
             current_lines = []
         else:
             current_lines.append(line)
     if current_lines:
-        sections.append({
-            "title": current_title,
-            "text": "\n".join(current_lines).strip()[:8000],
-        })
+        _append_section(sections, current_title, current_lines)
     return sections
+
+
+def _append_section(
+    sections: list[dict[str, Any]], title: str, lines: list[str]
+) -> None:
+    """把当前行块收进 sections."""
+    sections.append({"title": title, "text": "\n".join(lines).strip()[:8000]})

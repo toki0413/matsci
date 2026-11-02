@@ -19,57 +19,137 @@ logger = logging.getLogger(__name__)
 
 # 按性质定的默认容差, 没传 tolerance 时用这个
 TOLERANCES: dict[str, float] = {
-    "band_gap": 0.10,          # DFT 带隙问题大, 放宽到 10%
+    "band_gap": 0.10,  # DFT 带隙问题大, 放宽到 10%
     "lattice_constant": 0.02,  # 晶格常数 DFT 一般准, 2%
     "formation_energy": 0.05,  # 形成能 5%
-    "elastic_modulus": 0.15,   # 弹性模量对应变敏感, 15%
-    "magnetic_moment": 0.20,   # 磁矩依赖磁序, 20%
-    "bulk_modulus": 0.10,      # 体弹模量 10%
+    "elastic_modulus": 0.15,  # 弹性模量对应变敏感, 15%
+    "magnetic_moment": 0.20,  # 磁矩依赖磁序, 20%
+    "bulk_modulus": 0.10,  # 体弹模量 10%
 }
 
 # 内置实验/DFT 基准值表, key = (structure, property)
 # 不在这里的再去查 materials_database_tool 兜底
 BENCHMARK_DATA: dict[tuple[str, str], dict[str, Any]] = {
-    ("Si", "band_gap"): {"value": 1.12, "uncertainty": 0.01, "source": "experimental",
-                          "metadata": {"mp_id": "mp-149", "note": "Si 室温实验带隙 eV"}},
-    ("Si", "lattice_constant"): {"value": 5.43, "uncertainty": 0.005, "source": "experimental",
-                                  "metadata": {"mp_id": "mp-149", "note": "Si 金刚石晶格常数 Å"}},
-    ("Cu", "lattice_constant"): {"value": 3.61, "uncertainty": 0.005, "source": "experimental",
-                                  "metadata": {"mp_id": "mp-30", "note": "FCC Cu 晶格常数 Å"}},
-    ("Cu", "band_gap"): {"value": 0.0, "uncertainty": 0.0, "source": "experimental",
-                          "metadata": {"mp_id": "mp-30", "note": "Cu 金属无带隙"}},
-    ("GaN", "band_gap"): {"value": 3.4, "uncertainty": 0.05, "source": "experimental",
-                           "metadata": {"mp_id": "mp-804", "note": "GaN 室温带隙 eV"}},
-    ("Fe", "lattice_constant"): {"value": 2.87, "uncertainty": 0.005, "source": "experimental",
-                                  "metadata": {"mp_id": "mp-13", "note": "BCC Fe 晶格常数 Å"}},
-    ("C", "band_gap"): {"value": 5.5, "uncertainty": 0.1, "source": "experimental",
-                         "metadata": {"mp_id": "mp-66", "note": "金刚石带隙 eV"}},
-    ("SiC", "band_gap"): {"value": 3.26, "uncertainty": 0.05, "source": "experimental",
-                           "metadata": {"note": "4H-SiC 带隙 eV"}},
-    ("Al", "lattice_constant"): {"value": 4.05, "uncertainty": 0.005, "source": "experimental",
-                                  "metadata": {"mp_id": "mp-134", "note": "FCC Al 晶格常数 Å"}},
-    ("Au", "lattice_constant"): {"value": 4.08, "uncertainty": 0.005, "source": "experimental",
-                                  "metadata": {"mp_id": "mp-81", "note": "FCC Au 晶格常数 Å"}},
-    ("MgO", "lattice_constant"): {"value": 4.21, "uncertainty": 0.01, "source": "experimental",
-                                   "metadata": {"mp_id": "mp-1265", "note": "MgO 岩盐晶格常数 Å"}},
-    ("TiO2", "band_gap"): {"value": 3.0, "uncertainty": 0.05, "source": "experimental",
-                            "metadata": {"mp_id": "mp-390", "note": "金红石 TiO2 带隙 eV"}},
-    ("ZnO", "band_gap"): {"value": 3.37, "uncertainty": 0.05, "source": "experimental",
-                           "metadata": {"mp_id": "mp-2133", "note": "ZnO 室温带隙 eV"}},
-    ("GaAs", "band_gap"): {"value": 1.42, "uncertainty": 0.01, "source": "experimental",
-                            "metadata": {"mp_id": "mp-2534", "note": "GaAs 室温带隙 eV"}},
-    ("NaCl", "lattice_constant"): {"value": 5.64, "uncertainty": 0.01, "source": "experimental",
-                                    "metadata": {"mp_id": "mp-22862", "note": "NaCl 岩盐晶格常数 Å"}},
-    ("Fe2O3", "band_gap"): {"value": 2.1, "uncertainty": 0.1, "source": "experimental",
-                             "metadata": {"mp_id": "mp-19770", "note": "赤铁矿带隙 eV"}},
-    ("Ni", "lattice_constant"): {"value": 3.52, "uncertainty": 0.005, "source": "experimental",
-                                  "metadata": {"mp_id": "mp-23", "note": "FCC Ni 晶格常数 Å"}},
-    ("W", "lattice_constant"): {"value": 3.16, "uncertainty": 0.005, "source": "experimental",
-                                 "metadata": {"mp_id": "mp-91", "note": "BCC W 晶格常数 Å"}},
-    ("Pt", "lattice_constant"): {"value": 3.92, "uncertainty": 0.005, "source": "experimental",
-                                  "metadata": {"mp_id": "mp-126", "note": "FCC Pt 晶格常数 Å"}},
-    ("Al", "band_gap"): {"value": 0.0, "uncertainty": 0.0, "source": "experimental",
-                          "metadata": {"mp_id": "mp-134", "note": "Al 金属无带隙"}},
+    ("Si", "band_gap"): {
+        "value": 1.12,
+        "uncertainty": 0.01,
+        "source": "experimental",
+        "metadata": {"mp_id": "mp-149", "note": "Si 室温实验带隙 eV"},
+    },
+    ("Si", "lattice_constant"): {
+        "value": 5.43,
+        "uncertainty": 0.005,
+        "source": "experimental",
+        "metadata": {"mp_id": "mp-149", "note": "Si 金刚石晶格常数 Å"},
+    },
+    ("Cu", "lattice_constant"): {
+        "value": 3.61,
+        "uncertainty": 0.005,
+        "source": "experimental",
+        "metadata": {"mp_id": "mp-30", "note": "FCC Cu 晶格常数 Å"},
+    },
+    ("Cu", "band_gap"): {
+        "value": 0.0,
+        "uncertainty": 0.0,
+        "source": "experimental",
+        "metadata": {"mp_id": "mp-30", "note": "Cu 金属无带隙"},
+    },
+    ("GaN", "band_gap"): {
+        "value": 3.4,
+        "uncertainty": 0.05,
+        "source": "experimental",
+        "metadata": {"mp_id": "mp-804", "note": "GaN 室温带隙 eV"},
+    },
+    ("Fe", "lattice_constant"): {
+        "value": 2.87,
+        "uncertainty": 0.005,
+        "source": "experimental",
+        "metadata": {"mp_id": "mp-13", "note": "BCC Fe 晶格常数 Å"},
+    },
+    ("C", "band_gap"): {
+        "value": 5.5,
+        "uncertainty": 0.1,
+        "source": "experimental",
+        "metadata": {"mp_id": "mp-66", "note": "金刚石带隙 eV"},
+    },
+    ("SiC", "band_gap"): {
+        "value": 3.26,
+        "uncertainty": 0.05,
+        "source": "experimental",
+        "metadata": {"note": "4H-SiC 带隙 eV"},
+    },
+    ("Al", "lattice_constant"): {
+        "value": 4.05,
+        "uncertainty": 0.005,
+        "source": "experimental",
+        "metadata": {"mp_id": "mp-134", "note": "FCC Al 晶格常数 Å"},
+    },
+    ("Au", "lattice_constant"): {
+        "value": 4.08,
+        "uncertainty": 0.005,
+        "source": "experimental",
+        "metadata": {"mp_id": "mp-81", "note": "FCC Au 晶格常数 Å"},
+    },
+    ("MgO", "lattice_constant"): {
+        "value": 4.21,
+        "uncertainty": 0.01,
+        "source": "experimental",
+        "metadata": {"mp_id": "mp-1265", "note": "MgO 岩盐晶格常数 Å"},
+    },
+    ("TiO2", "band_gap"): {
+        "value": 3.0,
+        "uncertainty": 0.05,
+        "source": "experimental",
+        "metadata": {"mp_id": "mp-390", "note": "金红石 TiO2 带隙 eV"},
+    },
+    ("ZnO", "band_gap"): {
+        "value": 3.37,
+        "uncertainty": 0.05,
+        "source": "experimental",
+        "metadata": {"mp_id": "mp-2133", "note": "ZnO 室温带隙 eV"},
+    },
+    ("GaAs", "band_gap"): {
+        "value": 1.42,
+        "uncertainty": 0.01,
+        "source": "experimental",
+        "metadata": {"mp_id": "mp-2534", "note": "GaAs 室温带隙 eV"},
+    },
+    ("NaCl", "lattice_constant"): {
+        "value": 5.64,
+        "uncertainty": 0.01,
+        "source": "experimental",
+        "metadata": {"mp_id": "mp-22862", "note": "NaCl 岩盐晶格常数 Å"},
+    },
+    ("Fe2O3", "band_gap"): {
+        "value": 2.1,
+        "uncertainty": 0.1,
+        "source": "experimental",
+        "metadata": {"mp_id": "mp-19770", "note": "赤铁矿带隙 eV"},
+    },
+    ("Ni", "lattice_constant"): {
+        "value": 3.52,
+        "uncertainty": 0.005,
+        "source": "experimental",
+        "metadata": {"mp_id": "mp-23", "note": "FCC Ni 晶格常数 Å"},
+    },
+    ("W", "lattice_constant"): {
+        "value": 3.16,
+        "uncertainty": 0.005,
+        "source": "experimental",
+        "metadata": {"mp_id": "mp-91", "note": "BCC W 晶格常数 Å"},
+    },
+    ("Pt", "lattice_constant"): {
+        "value": 3.92,
+        "uncertainty": 0.005,
+        "source": "experimental",
+        "metadata": {"mp_id": "mp-126", "note": "FCC Pt 晶格常数 Å"},
+    },
+    ("Al", "band_gap"): {
+        "value": 0.0,
+        "uncertainty": 0.0,
+        "source": "experimental",
+        "metadata": {"mp_id": "mp-134", "note": "Al 金属无带隙"},
+    },
 }
 
 # benchmark 里 property 名 → MP summary 返回字段名
@@ -82,11 +162,266 @@ _MP_FIELD_MAP: dict[str, str] = {
 }
 
 
+def _merge_validator_checks(
+    adapter_results: list, physics_checks: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """把约束系统检查与 PhysicsValidator 检查合并去重 (约束系统优先)."""
+    checks: list[dict[str, Any]] = [
+        {
+            "name": r.name,
+            "passed": r.passed,
+            "value": r.value,
+            "expected": r.expected,
+            "message": r.message,
+            "severity": r.severity,
+            "family": r.family,
+            "score": r.score,
+        }
+        for r in adapter_results
+    ]
+
+    # 约束系统已经跑过的检查名，后面用来去重
+    covered = {r.name for r in adapter_results}
+    for check in physics_checks:
+        if check["name"] in covered:
+            # 同名检查以约束系统的结果为准（带 severity），这里跳过
+            continue
+        checks.append(
+            {
+                "name": check["name"],
+                "passed": check["passed"],
+                "value": check["value"],
+                "expected": check["expected"],
+                "message": check["message"],
+                # PhysicsValidator 没有分级，没过的就当 warn，过了标记成 info
+                "severity": "warn" if not check["passed"] else "info",
+                "family": "physics",
+                "score": check.get("score"),
+            }
+        )
+        covered.add(check["name"])
+    return checks
+
+
+def _parse_computed_value(cv: float | dict) -> tuple[float, float | None]:
+    """解析计算值, 支持带不确定度的 dict."""
+    if isinstance(cv, dict):
+        computed_val = float(cv.get("value", 0.0))
+        unc = cv.get("uncertainty")
+        computed_unc = float(unc) if unc is not None else None
+    else:
+        computed_val = float(cv)
+        computed_unc = None
+    return computed_val, computed_unc
+
+
+def _apply_sim_to_real(
+    args: ValidateToolInput, computed_val: float
+) -> tuple[float | None, float | None]:
+    """按 CorrectionTable 修正 DFT 系统偏差; 返回 (corrected_val, factor)."""
+    # Sim-to-real correction: DFT 方法有系统偏差 (PBE bandgap 低估 ~50%,
+    # LDA 晶格常数低估 ~1-2%). 拿 CorrectionTable 修正后再判 verdict —
+    # 不然 PBE Si bandgap=0.61 vs 实验 1.12 永远是 discrepancy, 但这其实是
+    # 已知方法偏差, 不是计算错误.
+    corrected_val: float | None = None
+    correction_factor: float | None = None
+    if args.method and args.structure:
+        try:
+            from huginn.provenance.correction import CorrectionTable
+
+            table = CorrectionTable.shared()
+            factor = table.get_avg_correction_factor(
+                args.structure, args.property, args.method
+            )
+            if factor is not None and abs(factor - 1.0) > 1e-6:
+                correction_factor = factor
+                corrected_val = computed_val * factor
+        except Exception:
+            logger.debug("correction factor lookup failed", exc_info=True)
+    return corrected_val, correction_factor
+
+
+def _benchmark_verdict(
+    computed_val: float, corrected_val: float | None, ref_val: float, tol: float
+) -> tuple[float, float | None, bool, str]:
+    """算 diff / rel_err / within_tolerance, 并按容差给出 verdict 分档."""
+    # verdict 基于修正后的值 (如果有), 否则原始计算值
+    verdict_base = corrected_val if corrected_val is not None else computed_val
+    diff = verdict_base - ref_val
+    # 参考值为 0 时相对误差没意义, 返回 None
+    rel_err = abs(diff) / abs(ref_val) * 100.0 if ref_val != 0 else None
+
+    within = (rel_err is not None) and (rel_err / 100.0 < tol)
+
+    # verdict 分档: <tol/3 excellent, <tol/2 good, <tol acceptable, 否则 discrepancy
+    if rel_err is None:
+        # 参考值是 0, 没法算相对误差, 看绝对差是否在容差量级内
+        verdict = "acceptable" if abs(diff) < 1e-6 else "discrepancy"
+    else:
+        rel_frac = rel_err / 100.0
+        if rel_frac < tol / 3.0:
+            verdict = "excellent"
+        elif rel_frac < tol / 2.0:
+            verdict = "good"
+        elif rel_frac < tol:
+            verdict = "acceptable"
+        else:
+            verdict = "discrepancy"
+    return diff, rel_err, within, verdict
+
+
+def _no_reference_result(
+    args: ValidateToolInput,
+    prop: str,
+    computed_val: float,
+    computed_unc: float | None,
+    tol: float,
+) -> ToolResult:
+    """没找到基准值时的 ToolResult."""
+    return ToolResult(
+        data={
+            "action": "benchmark",
+            "property": prop,
+            "computed": {"value": computed_val, "uncertainty": computed_unc},
+            "reference": None,
+            "difference": None,
+            "relative_error": None,
+            "within_tolerance": None,
+            "verdict": "no_reference",
+            "reference_metadata": None,
+            "tolerance": tol,
+            "units": args.units,
+            "message": f"没找到 {args.structure} 的 {prop} 基准值",
+        },
+        success=True,
+    )
+
+
+def _benchmark_guard(args: ValidateToolInput) -> ToolResult | None:
+    """benchmark 必需字段缺失时的错误 ToolResult."""
+    if args.property is None:
+        return ToolResult(
+            data=None,
+            success=False,
+            error="property is required for benchmark action",
+        )
+    if args.computed_value is None:
+        return ToolResult(
+            data=None,
+            success=False,
+            error="computed_value is required for benchmark action",
+        )
+    return None
+
+
+def _corrected_block(
+    args: ValidateToolInput,
+    corrected_val: float | None,
+    correction_factor: float | None,
+) -> dict[str, Any] | None:
+    """benchmark 返回里的 corrected 子块 (无修正时为 None)."""
+    if corrected_val is None:
+        return None
+    return {
+        "value": corrected_val,
+        "correction_factor": correction_factor,
+        "method": args.method,
+    }
+
+
+def _reference_block(ref: dict[str, Any]) -> dict[str, Any]:
+    """benchmark 返回里的 reference 子块."""
+    return {
+        "value": float(ref["value"]),
+        "uncertainty": ref.get("uncertainty"),
+        "source": ref.get("source", "unknown"),
+    }
+
+
+def _born_checks(
+    BornStabilityChecker: Any, C: Any, crystal_system: str
+) -> tuple[list[dict], str | None]:
+    """Born 稳定性判据; 返回 (checks, crystal_system 或 None)."""
+    born = None
+    checks: list[dict[str, Any]] = []
+    try:
+        born = BornStabilityChecker.check(C, crystal_system=crystal_system)
+        for c in born.get("criteria", []):
+            # numpy.bool_ / numpy.float64 转 Python 原生类型, 否则 FastAPI 序列化炸
+            passed = bool(c["passed"])
+            checks.append(
+                {
+                    "name": c["name"],
+                    "passed": passed,
+                    "value": float(c["value"]) if c["value"] is not None else None,
+                    "expected": f"> {c['threshold']}",
+                    "message": f"Born criterion ({born.get('crystal_system', '?')})",
+                    "severity": "error" if not passed else "info",
+                    "family": "mechanics",
+                }
+            )
+    except Exception as e:
+        checks.append(
+            {
+                "name": "born_stability",
+                "passed": False,
+                "value": None,
+                "expected": "valid criteria",
+                "message": f"Born check failed: {e}",
+                "severity": "warn",
+                "family": "mechanics",
+            }
+        )
+    return checks, (born.get("crystal_system") if born is not None else None)
+
+
+def _hill_moduli_checks(ElasticTensor: Any, C: Any) -> list[dict]:
+    """Hill 平均模量 (Voigt-Reuss 平均), 失败产出 warn 检查."""
+    checks: list[dict[str, Any]] = []
+    try:
+        et = ElasticTensor(C)
+        moduli = et.hill_moduli()
+        for key, label in [
+            ("bulk_modulus_hill", "Bulk modulus (Hill)"),
+            ("shear_modulus_hill", "Shear modulus (Hill)"),
+            ("youngs_modulus", "Young's modulus"),
+        ]:
+            val = moduli.get(key)
+            if val is not None:
+                val = float(val)
+                checks.append(
+                    {
+                        "name": f"{key} > 0",
+                        "passed": val > 0,
+                        "value": val,
+                        "expected": "> 0 GPa",
+                        "message": label,
+                        "severity": "warn" if val <= 0 else "info",
+                        "family": "mechanics",
+                    }
+                )
+    except Exception as e:
+        checks.append(
+            {
+                "name": "moduli_calculation",
+                "passed": False,
+                "value": None,
+                "expected": "invertible tensor",
+                "message": f"Moduli calculation failed: {e}",
+                "severity": "warn",
+                "family": "mechanics",
+            }
+        )
+    return checks
+
+
 class ValidateToolInput(BaseModel):
     action: Literal["validate", "benchmark"] = Field(default="validate")
     # validate action 用的字段 (action=validate 时必填)
     result_type: Literal["dft", "md", "phonon", "elastic"] | None = Field(default=None)
-    result_data: dict | None = Field(default=None, description="Calculation result dict to validate")
+    result_data: dict | None = Field(
+        default=None, description="Calculation result dict to validate"
+    )
     # benchmark action 用的字段
     property: str | None = Field(
         default=None,
@@ -100,7 +435,9 @@ class ValidateToolInput(BaseModel):
         default=None,
         description="结构标识, 化学式 (Si/GaN/Fe2O3) 或 mp_id (mp-149)",
     )
-    reference_source: Literal["auto", "materials_project", "experimental", "literature"] = Field(
+    reference_source: Literal[
+        "auto", "materials_project", "experimental", "literature"
+    ] = Field(
         default="auto",
         description="基准来源, auto 先内置表再 MP",
     )
@@ -146,12 +483,14 @@ class ValidateTool(HuginnTool):
         # 下面是原有 validate 路径, result_type 必须有
         if args.result_type is None:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="result_type is required for validate action",
             )
         if args.result_data is None:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error="result_data is required for validate action",
             )
         # 弹性张量校验走独立路径 (Born 稳定性 + Hill 模量)
@@ -160,40 +499,8 @@ class ValidateTool(HuginnTool):
 
         adapter_results = self._adapter.evaluate_all(args.result_type, args.result_data)
 
-        checks: list[dict[str, Any]] = [
-            {
-                "name": r.name,
-                "passed": r.passed,
-                "value": r.value,
-                "expected": r.expected,
-                "message": r.message,
-                "severity": r.severity,
-                "family": r.family,
-                "score": r.score,
-            }
-            for r in adapter_results
-        ]
-
-        # 约束系统已经跑过的检查名，后面用来去重
-        covered = {r.name for r in adapter_results}
-        for check in self._run_physics_validator(args.result_type, args.result_data):
-            if check["name"] in covered:
-                # 同名检查以约束系统的结果为准（带 severity），这里跳过
-                continue
-            checks.append(
-                {
-                    "name": check["name"],
-                    "passed": check["passed"],
-                    "value": check["value"],
-                    "expected": check["expected"],
-                    "message": check["message"],
-                    # PhysicsValidator 没有分级，没过的就当 warn，过了标记成 info
-                    "severity": "warn" if not check["passed"] else "info",
-                    "family": "physics",
-                    "score": check.get("score"),
-                }
-            )
-            covered.add(check["name"])
+        physics_checks = self._run_physics_validator(args.result_type, args.result_data)
+        checks = _merge_validator_checks(adapter_results, physics_checks)
 
         all_passed = all(c["passed"] for c in checks)
         r_phys = self._aggregate_physics_score(checks)
@@ -269,106 +576,39 @@ class ValidateTool(HuginnTool):
 
     async def _run_benchmark(self, args: ValidateToolInput) -> ToolResult:
         """把计算值跟内置基准表 / Materials Project 数据对比, 给出 verdict."""
-        if args.property is None:
-            return ToolResult(data=None, success=False,
-                              error="property is required for benchmark action")
-        if args.computed_value is None:
-            return ToolResult(data=None, success=False,
-                              error="computed_value is required for benchmark action")
+        bad = _benchmark_guard(args)
+        if bad is not None:
+            return bad
 
         # 解析计算值, 支持带不确定度的 dict
-        cv = args.computed_value
-        if isinstance(cv, dict):
-            computed_val = float(cv.get("value", 0.0))
-            unc = cv.get("uncertainty")
-            computed_unc = float(unc) if unc is not None else None
-        else:
-            computed_val = float(cv)
-            computed_unc = None
+        computed_val, computed_unc = _parse_computed_value(args.computed_value)
 
         prop = args.property
         # 没传 tolerance 就按性质自动定, 没匹配上的性质给 10% 兜底
-        tol = args.tolerance if args.tolerance is not None else TOLERANCES.get(prop, 0.10)
+        tol = (
+            args.tolerance if args.tolerance is not None else TOLERANCES.get(prop, 0.10)
+        )
 
         ref = await self._lookup_reference(prop, args.structure, args.reference_source)
 
         if ref is None:
-            return ToolResult(
-                data={
-                    "action": "benchmark",
-                    "property": prop,
-                    "computed": {"value": computed_val, "uncertainty": computed_unc},
-                    "reference": None,
-                    "difference": None,
-                    "relative_error": None,
-                    "within_tolerance": None,
-                    "verdict": "no_reference",
-                    "reference_metadata": None,
-                    "tolerance": tol,
-                    "units": args.units,
-                    "message": f"没找到 {args.structure} 的 {prop} 基准值",
-                },
-                success=True,
-            )
+            return _no_reference_result(args, prop, computed_val, computed_unc, tol)
 
         ref_val = float(ref["value"])
-        ref_unc = ref.get("uncertainty")
 
-        # Sim-to-real correction: DFT 方法有系统偏差 (PBE bandgap 低估 ~50%,
-        # LDA 晶格常数低估 ~1-2%). 拿 CorrectionTable 修正后再判 verdict —
-        # 不然 PBE Si bandgap=0.61 vs 实验 1.12 永远是 discrepancy, 但这其实是
-        # 已知方法偏差, 不是计算错误.
-        corrected_val: float | None = None
-        correction_factor: float | None = None
-        if args.method and args.structure:
-            try:
-                from huginn.provenance.correction import CorrectionTable
-                table = CorrectionTable.shared()
-                factor = table.get_avg_correction_factor(args.structure, prop, args.method)
-                if factor is not None and abs(factor - 1.0) > 1e-6:
-                    correction_factor = factor
-                    corrected_val = computed_val * factor
-            except Exception:
-                logger.debug("correction factor lookup failed", exc_info=True)
+        corrected_val, correction_factor = _apply_sim_to_real(args, computed_val)
 
-        # verdict 基于修正后的值 (如果有), 否则原始计算值
-        verdict_base = corrected_val if corrected_val is not None else computed_val
-        diff = verdict_base - ref_val
-        # 参考值为 0 时相对误差没意义, 返回 None
-        rel_err = abs(diff) / abs(ref_val) * 100.0 if ref_val != 0 else None
-
-        within = (rel_err is not None) and (rel_err / 100.0 < tol)
-
-        # verdict 分档: <tol/3 excellent, <tol/2 good, <tol acceptable, 否则 discrepancy
-        if rel_err is None:
-            # 参考值是 0, 没法算相对误差, 看绝对差是否在容差量级内
-            verdict = "acceptable" if abs(diff) < 1e-6 else "discrepancy"
-        else:
-            rel_frac = rel_err / 100.0
-            if rel_frac < tol / 3.0:
-                verdict = "excellent"
-            elif rel_frac < tol / 2.0:
-                verdict = "good"
-            elif rel_frac < tol:
-                verdict = "acceptable"
-            else:
-                verdict = "discrepancy"
+        diff, rel_err, within, verdict = _benchmark_verdict(
+            computed_val, corrected_val, ref_val, tol
+        )
 
         return ToolResult(
             data={
                 "action": "benchmark",
                 "property": prop,
                 "computed": {"value": computed_val, "uncertainty": computed_unc},
-                "corrected": (
-                    {"value": corrected_val, "correction_factor": correction_factor,
-                     "method": args.method}
-                    if corrected_val is not None else None
-                ),
-                "reference": {
-                    "value": ref_val,
-                    "uncertainty": ref_unc,
-                    "source": ref.get("source", "unknown"),
-                },
+                "corrected": _corrected_block(args, corrected_val, correction_factor),
+                "reference": _reference_block(ref),
                 "difference": diff,
                 "relative_error": rel_err,
                 "within_tolerance": within,
@@ -476,73 +716,10 @@ class ValidateTool(HuginnTool):
             )
 
         crystal_system = result_data.get("crystal_system", "auto")
-        checks: list[dict[str, Any]] = []
-
-        # Born 稳定性
-        try:
-            born = BornStabilityChecker.check(C, crystal_system=crystal_system)
-            for c in born.get("criteria", []):
-                # numpy.bool_ / numpy.float64 转 Python 原生类型, 否则 FastAPI 序列化炸
-                passed = bool(c["passed"])
-                checks.append(
-                    {
-                        "name": c["name"],
-                        "passed": passed,
-                        "value": float(c["value"]) if c["value"] is not None else None,
-                        "expected": f"> {c['threshold']}",
-                        "message": f"Born criterion ({born.get('crystal_system', '?')})",
-                        "severity": "error" if not passed else "info",
-                        "family": "mechanics",
-                    }
-                )
-        except Exception as e:
-            checks.append(
-                {
-                    "name": "born_stability",
-                    "passed": False,
-                    "value": None,
-                    "expected": "valid criteria",
-                    "message": f"Born check failed: {e}",
-                    "severity": "warn",
-                    "family": "mechanics",
-                }
-            )
-
-        # Hill 平均模量 (Voigt-Reuss 平均)
-        try:
-            et = ElasticTensor(C)
-            moduli = et.hill_moduli()
-            for key, label in [
-                ("bulk_modulus_hill", "Bulk modulus (Hill)"),
-                ("shear_modulus_hill", "Shear modulus (Hill)"),
-                ("youngs_modulus", "Young's modulus"),
-            ]:
-                val = moduli.get(key)
-                if val is not None:
-                    val = float(val)
-                    checks.append(
-                        {
-                            "name": f"{key} > 0",
-                            "passed": val > 0,
-                            "value": val,
-                            "expected": "> 0 GPa",
-                            "message": label,
-                            "severity": "warn" if val <= 0 else "info",
-                            "family": "mechanics",
-                        }
-                    )
-        except Exception as e:
-            checks.append(
-                {
-                    "name": "moduli_calculation",
-                    "passed": False,
-                    "value": None,
-                    "expected": "invertible tensor",
-                    "message": f"Moduli calculation failed: {e}",
-                    "severity": "warn",
-                    "family": "mechanics",
-                }
-            )
+        born_checks, crystal_system_out = _born_checks(
+            BornStabilityChecker, C, crystal_system
+        )
+        checks = born_checks + _hill_moduli_checks(ElasticTensor, C)
 
         all_passed = all(c["passed"] for c in checks)
         r_phys = self._aggregate_physics_score(checks)
@@ -551,11 +728,51 @@ class ValidateTool(HuginnTool):
                 "all_passed": all_passed,
                 "r_phys": r_phys,
                 "checks": checks,
-                "crystal_system": born.get("crystal_system") if "born" in locals() else None,
+                "crystal_system": crystal_system_out,
                 "summary": f"{sum(c['passed'] for c in checks)}/{len(checks)} checks passed",
             },
             success=True,
         )
+
+
+async def _selfcheck_case_no_method(tool: ValidateTool) -> ToolResult:
+    """Case 1: 不传 method → corrected=None, 行为不变."""
+    args1 = ValidateToolInput(
+        action="benchmark",
+        property="band_gap",
+        structure="Si",
+        computed_value=0.61,
+        reference_source="experimental",
+    )
+    r1 = await tool.call(args1)
+    assert r1.data["corrected"] is None, "无 method 时不应有 corrected"
+    # 0.61 vs 1.12 → rel_err ~45%, verdict 应是 discrepancy (PBE 已知偏差)
+    assert r1.data["verdict"] == "discrepancy", (
+        f"无修正时 Si PBE bandgap 应是 discrepancy, got {r1.data['verdict']}"
+    )
+    return r1
+
+
+async def _selfcheck_case_pbe(tool: ValidateTool) -> ToolResult:
+    """Case 2: 传 method=PBE → apply correction (factor ≈ 1.83), verdict 改善."""
+    args2 = ValidateToolInput(
+        action="benchmark",
+        property="band_gap",
+        structure="Si",
+        computed_value=0.61,
+        method="PBE",
+        reference_source="experimental",
+    )
+    r2 = await tool.call(args2)
+    assert r2.data["corrected"] is not None, "PBE + Si 应有 corrected"
+    assert r2.data["corrected"]["method"] == "PBE"
+    corrected_v = r2.data["corrected"]["value"]
+    # 0.61 * (1.12/0.61) ≈ 1.12
+    assert abs(corrected_v - 1.12) < 0.05, f"corrected 应 ≈ 1.12, got {corrected_v}"
+    assert r2.data["verdict"] != "discrepancy", (
+        f"修正后 verdict 应改善, got {r2.data['verdict']}"
+    )
+    return r2
 
 
 def _selfcheck() -> None:
@@ -568,34 +785,18 @@ def _selfcheck() -> None:
     tool = ValidateTool()
 
     async def _run():
-        # Case 1: 不传 method → corrected=None, 行为不变
-        args1 = ValidateToolInput(
-            action="benchmark", property="band_gap", structure="Si",
-            computed_value=0.61, reference_source="experimental",
-        )
-        r1 = await tool.call(args1)
-        assert r1.data["corrected"] is None, "无 method 时不应有 corrected"
-        # 0.61 vs 1.12 → rel_err ~45%, verdict 应是 discrepancy (PBE 已知偏差)
-        assert r1.data["verdict"] == "discrepancy", f"无修正时 Si PBE bandgap 应是 discrepancy, got {r1.data['verdict']}"
-
-        # Case 2: 传 method=PBE → apply correction (factor ≈ 1.83), verdict 改善
-        args2 = ValidateToolInput(
-            action="benchmark", property="band_gap", structure="Si",
-            computed_value=0.61, method="PBE", reference_source="experimental",
-        )
-        r2 = await tool.call(args2)
-        assert r2.data["corrected"] is not None, "PBE + Si 应有 corrected"
-        assert r2.data["corrected"]["method"] == "PBE"
-        corrected_v = r2.data["corrected"]["value"]
-        # 0.61 * (1.12/0.61) ≈ 1.12
-        assert abs(corrected_v - 1.12) < 0.05, f"corrected 应 ≈ 1.12, got {corrected_v}"
-        assert r2.data["verdict"] != "discrepancy", f"修正后 verdict 应改善, got {r2.data['verdict']}"
+        r1 = await _selfcheck_case_no_method(tool)
+        r2 = await _selfcheck_case_pbe(tool)
         return r1, r2
 
     r1, r2 = asyncio.run(_run())
     print("validate_tool correction selfcheck OK")
-    print(f"  无修正: computed=0.61 → verdict={r1.data['verdict']}, rel_err={r1.data['relative_error']:.1f}%")
-    print(f"  PBE修正: computed=0.61 → corrected={r2.data['corrected']['value']:.3f}, verdict={r2.data['verdict']}, rel_err={r2.data['relative_error']:.1f}%")
+    print(
+        f"  无修正: computed=0.61 → verdict={r1.data['verdict']}, rel_err={r1.data['relative_error']:.1f}%"
+    )
+    print(
+        f"  PBE修正: computed=0.61 → corrected={r2.data['corrected']['value']:.3f}, verdict={r2.data['verdict']}, rel_err={r2.data['relative_error']:.1f}%"
+    )
 
 
 if __name__ == "__main__":

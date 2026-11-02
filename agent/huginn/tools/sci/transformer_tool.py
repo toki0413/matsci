@@ -111,6 +111,178 @@ if _TORCH_AVAILABLE:
             return self.head(x)
 
 
+def _build_train_model(inp: TransformerToolInput) -> tuple[Any, int]:
+    """Seed RNG, instantiate the tiny encoder LM, and count parameters."""
+    torch.manual_seed(inp.seed)
+    model = _SeqLM(
+        inp.vocab_size,
+        inp.d_model,
+        inp.nhead,
+        inp.num_layers,
+        inp.dim_ff,
+        inp.max_seq_len,
+    )
+    return model, _count_params(model)
+
+
+def _prepare_train_inputs(inp: TransformerToolInput, model):
+    """Move model to device and validate token / target tensors."""
+    # ponytail: device由入口检测后通过 env var 决定, 这里不重复判断.
+    # 升级路径: 按 n_params 自动选 device (大 model 强制 GPU).
+    _dev = get_torch_device()
+    device = torch.device(_dev)
+    model = model.to(device)
+    try:
+        X = torch.tensor(inp.sequences, dtype=torch.long, device=device)
+    except Exception as e:
+        return ToolResult(data=None, success=False, error=f"bad sequences: {e}")
+    if X.dim() != 2:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"sequences must be 2D (B, T); got {tuple(X.shape)}",
+        )
+    if X.size(1) > inp.max_seq_len:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"seq_len {X.size(1)} > max_seq_len {inp.max_seq_len}",
+        )
+
+    if inp.targets:
+        Y = torch.tensor(inp.targets, dtype=torch.long, device=device)
+        if Y.shape != X.shape:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=(f"targets shape {tuple(Y.shape)} != sequences {tuple(X.shape)}"),
+            )
+    else:
+        # next-token shift
+        Y = X[:, 1:]
+        X = X[:, :-1]
+        if X.size(1) == 0:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="sequences too short for next-token shift",
+            )
+    return model, X, Y
+
+
+def _run_training(model, X, Y, inp: TransformerToolInput) -> list[float]:
+    """Run the epoch / batch loop and return per-epoch mean loss."""
+    opt = torch.optim.AdamW(model.parameters(), lr=inp.lr)
+    loss_fn = nn.CrossEntropyLoss()
+    model.train()
+
+    B = X.size(0)
+    bs = min(inp.batch_size, B)
+    loss_curve: list[float] = []
+    for _ in range(inp.epochs):
+        perm = torch.randperm(B)
+        ep_loss = 0.0
+        n_batches = 0
+        for i in range(0, B, bs):
+            idx = perm[i : i + bs]
+            xb = X[idx]
+            yb = Y[idx]
+            logits = model(xb)  # (b, T, V)
+            loss = loss_fn(logits.reshape(-1, logits.size(-1)), yb.reshape(-1))
+            opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            opt.step()
+            ep_loss += float(loss.item())
+            n_batches += 1
+        loss_curve.append(ep_loss / max(n_batches, 1))
+    return loss_curve
+
+
+def _train_result(
+    model, inp: TransformerToolInput, n_params: int, loss_curve: list[float]
+) -> ToolResult:
+    """Shape the train response, flattening tensors for JSON round-trip."""
+    # Flatten tensors to plain lists so the result survives JSON round-trip.
+    sd = {
+        k: v.detach().cpu().reshape(-1).tolist() for k, v in model.state_dict().items()
+    }
+    shapes = {k: list(v.shape) for k, v in model.state_dict().items()}
+
+    return ToolResult(
+        data={
+            "action": "train",
+            "n_params": n_params,
+            "under_cap": n_params <= _MAX_PARAMS,
+            "epochs": inp.epochs,
+            "loss_curve": loss_curve,
+            "final_loss": loss_curve[-1] if loss_curve else None,
+            "state_dict": sd,
+            "state_dict_shapes": shapes,
+            "model_spec": {
+                "vocab_size": inp.vocab_size,
+                "d_model": inp.d_model,
+                "nhead": inp.nhead,
+                "num_layers": inp.num_layers,
+                "dim_ff": inp.dim_ff,
+                "max_seq_len": inp.max_seq_len,
+            },
+            "message": (
+                f"trained {n_params:,} param Transformer for "
+                f"{inp.epochs} epoch(s); final loss {loss_curve[-1]:.4f}"
+            ),
+        },
+        success=True,
+    )
+
+
+def _build_predict_model(inp: TransformerToolInput) -> Any:
+    """Seed RNG and instantiate the model for a predict call."""
+    torch.manual_seed(inp.seed)
+    return _SeqLM(
+        inp.vocab_size,
+        inp.d_model,
+        inp.nhead,
+        inp.num_layers,
+        inp.dim_ff,
+        inp.max_seq_len,
+    )
+
+
+def _load_state_dict(inp: TransformerToolInput, model):
+    """Rebuild tensors from the flattened state_dict and load them."""
+    # Rebuild tensors from the flattened state_dict using the model's own
+    # current shapes — they're authoritative for this model spec.
+    shapes = {k: list(v.shape) for k, v in model.state_dict().items()}
+    sd: dict[str, torch.Tensor] = {}
+    for k, flat in inp.state_dict.items():
+        t = torch.tensor(flat, dtype=torch.float32)
+        sd[k] = t.reshape(shapes[k]) if k in shapes else t
+    try:
+        model.load_state_dict(sd)
+    except Exception as e:
+        return ToolResult(
+            data=None, success=False, error=f"state_dict load failed: {e}"
+        )
+    return None
+
+
+def _greedy_extend(model, X, max_seq_len: int, predict_len: int) -> list[list[int]]:
+    """Greedy autoregressive extension of each prompt."""
+    cur = X
+    steps: list[list[int]] = []
+    with torch.no_grad():
+        for _ in range(predict_len):
+            if cur.size(1) > max_seq_len:
+                cur = cur[:, -max_seq_len:]
+            logits = model(cur)  # (B, T, V)
+            nxt = logits[:, -1, :].argmax(dim=-1, keepdim=True)  # (B, 1)
+            steps.append(nxt.squeeze(1).tolist())
+            cur = torch.cat([cur, nxt], dim=1)
+    # transpose: list[step] of B-list -> B-list of predict_len
+    return [[step[i] for step in steps] for i in range(X.size(0))]
+
+
 class TransformerTool(HuginnTool):
     """Tiny Transformer trainer/predictor, bounded to 10M parameters."""
 
@@ -151,16 +323,7 @@ class TransformerTool(HuginnTool):
 
     # ── train ───────────────────────────────────────────────────────────
     def _train(self, inp: TransformerToolInput) -> ToolResult:
-        torch.manual_seed(inp.seed)
-        model = _SeqLM(
-            inp.vocab_size,
-            inp.d_model,
-            inp.nhead,
-            inp.num_layers,
-            inp.dim_ff,
-            inp.max_seq_len,
-        )
-        n_params = _count_params(model)
+        model, n_params = _build_train_model(inp)
         if n_params > _MAX_PARAMS:
             return ToolResult(
                 data=None,
@@ -174,109 +337,13 @@ class TransformerTool(HuginnTool):
         if not inp.sequences:
             return ToolResult(data=None, success=False, error="sequences is empty")
 
-        # ponytail: device由入口检测后通过 env var 决定, 这里不重复判断.
-        # 升级路径: 按 n_params 自动选 device (大 model 强制 GPU).
-        _dev = get_torch_device()
-        device = torch.device(_dev)
-        model = model.to(device)
-        try:
-            X = torch.tensor(inp.sequences, dtype=torch.long, device=device)
-        except Exception as e:
-            return ToolResult(data=None, success=False, error=f"bad sequences: {e}")
-        if X.dim() != 2:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"sequences must be 2D (B, T); got {tuple(X.shape)}",
-            )
-        if X.size(1) > inp.max_seq_len:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"seq_len {X.size(1)} > max_seq_len {inp.max_seq_len}",
-            )
+        prepared = _prepare_train_inputs(inp, model)
+        if isinstance(prepared, ToolResult):
+            return prepared
+        model, X, Y = prepared
 
-        if inp.targets:
-            Y = torch.tensor(inp.targets, dtype=torch.long, device=device)
-            if Y.shape != X.shape:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=(
-                        f"targets shape {tuple(Y.shape)} != "
-                        f"sequences {tuple(X.shape)}"
-                    ),
-                )
-        else:
-            # next-token shift
-            Y = X[:, 1:]
-            X = X[:, :-1]
-            if X.size(1) == 0:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="sequences too short for next-token shift",
-                )
-
-        opt = torch.optim.AdamW(model.parameters(), lr=inp.lr)
-        loss_fn = nn.CrossEntropyLoss()
-        model.train()
-
-        B = X.size(0)
-        bs = min(inp.batch_size, B)
-        loss_curve: list[float] = []
-        for _ in range(inp.epochs):
-            perm = torch.randperm(B)
-            ep_loss = 0.0
-            n_batches = 0
-            for i in range(0, B, bs):
-                idx = perm[i : i + bs]
-                xb = X[idx]
-                yb = Y[idx]
-                logits = model(xb)  # (b, T, V)
-                loss = loss_fn(
-                    logits.reshape(-1, logits.size(-1)), yb.reshape(-1)
-                )
-                opt.zero_grad()
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                opt.step()
-                ep_loss += float(loss.item())
-                n_batches += 1
-            loss_curve.append(ep_loss / max(n_batches, 1))
-
-        # Flatten tensors to plain lists so the result survives JSON round-trip.
-        sd = {
-            k: v.detach().cpu().reshape(-1).tolist()
-            for k, v in model.state_dict().items()
-        }
-        shapes = {k: list(v.shape) for k, v in model.state_dict().items()}
-
-        return ToolResult(
-            data={
-                "action": "train",
-                "n_params": n_params,
-                "under_cap": n_params <= _MAX_PARAMS,
-                "epochs": inp.epochs,
-                "loss_curve": loss_curve,
-                "final_loss": loss_curve[-1] if loss_curve else None,
-                "state_dict": sd,
-                "state_dict_shapes": shapes,
-                "model_spec": {
-                    "vocab_size": inp.vocab_size,
-                    "d_model": inp.d_model,
-                    "nhead": inp.nhead,
-                    "num_layers": inp.num_layers,
-                    "dim_ff": inp.dim_ff,
-                    "max_seq_len": inp.max_seq_len,
-                },
-                "message": (
-                    f"trained {n_params:,} param Transformer for "
-                    f"{inp.epochs} epoch(s); final loss {loss_curve[-1]:.4f}"
-                ),
-            },
-            success=True,
-        )
+        loss_curve = _run_training(model, X, Y, inp)
+        return _train_result(model, inp, n_params, loss_curve)
 
     # ── predict ─────────────────────────────────────────────────────────
     def _predict(self, inp: TransformerToolInput) -> ToolResult:
@@ -289,28 +356,10 @@ class TransformerTool(HuginnTool):
                 error="predict requires state_dict from a prior train call",
             )
 
-        torch.manual_seed(inp.seed)
-        model = _SeqLM(
-            inp.vocab_size,
-            inp.d_model,
-            inp.nhead,
-            inp.num_layers,
-            inp.dim_ff,
-            inp.max_seq_len,
-        )
-        # Rebuild tensors from the flattened state_dict using the model's own
-        # current shapes — they're authoritative for this model spec.
-        shapes = {k: list(v.shape) for k, v in model.state_dict().items()}
-        sd: dict[str, torch.Tensor] = {}
-        for k, flat in inp.state_dict.items():
-            t = torch.tensor(flat, dtype=torch.float32)
-            sd[k] = t.reshape(shapes[k]) if k in shapes else t
-        try:
-            model.load_state_dict(sd)
-        except Exception as e:
-            return ToolResult(
-                data=None, success=False, error=f"state_dict load failed: {e}"
-            )
+        model = _build_predict_model(inp)
+        load_error = _load_state_dict(inp, model)
+        if load_error is not None:
+            return load_error
         model.eval()
 
         _dev = get_torch_device()
@@ -325,18 +374,7 @@ class TransformerTool(HuginnTool):
             )
 
         # Greedy autoregressive extension.
-        cur = X
-        steps: list[list[int]] = []
-        with torch.no_grad():
-            for _ in range(inp.predict_len):
-                if cur.size(1) > inp.max_seq_len:
-                    cur = cur[:, -inp.max_seq_len :]
-                logits = model(cur)  # (B, T, V)
-                nxt = logits[:, -1, :].argmax(dim=-1, keepdim=True)  # (B, 1)
-                steps.append(nxt.squeeze(1).tolist())
-                cur = torch.cat([cur, nxt], dim=1)
-        # transpose: list[step] of B-list -> B-list of predict_len
-        extended = [[step[i] for step in steps] for i in range(X.size(0))]
+        extended = _greedy_extend(model, X, inp.max_seq_len, inp.predict_len)
 
         return ToolResult(
             data={
@@ -345,8 +383,7 @@ class TransformerTool(HuginnTool):
                 "predicted_tokens": extended,
                 "predict_len": inp.predict_len,
                 "message": (
-                    f"predicted {inp.predict_len} tokens for "
-                    f"{X.size(0)} sequence(s)"
+                    f"predicted {inp.predict_len} tokens for {X.size(0)} sequence(s)"
                 ),
             },
             success=True,
@@ -354,19 +391,7 @@ class TransformerTool(HuginnTool):
 
 
 # ── self-check: tiny doubling-mod task, 1 epoch, param count under cap ────
-def _selfcheck() -> None:
-    if not _TORCH_AVAILABLE:
-        print("torch not available, skip demo")
-        return
-
-    # Synthetic next-token task: each sequence is [0, 2, 4, ...] mod vocab.
-    # The model should pick up the +2 (mod vocab) pattern.
-    vocab = 16
-    seq_len = 8
-    n_seq = 32
-    seqs = [[(i * 2) % vocab for i in range(seq_len)] for _ in range(n_seq)]
-
-    tool = TransformerTool()
+def _selfcheck_train(tool: TransformerTool, vocab: int, seq_len: int, seqs):
     train_res = tool.call(
         {
             "action": "train",
@@ -395,7 +420,10 @@ def _selfcheck() -> None:
     final_loss = data["final_loss"]
     assert final_loss == final_loss, "loss is NaN"  # NaN != NaN
     assert final_loss < 5.0, f"loss {final_loss} too large; training broken"
+    return data
 
+
+def _selfcheck_predict(tool: TransformerTool, vocab: int, seq_len: int, data) -> None:
     # Round-trip: predict using the just-trained state_dict.
     pred_res = tool.call(
         {
@@ -421,6 +449,23 @@ def _selfcheck() -> None:
         f"predicted={pdata['predicted_tokens'][0]}"
     )
     print("self-check OK")
+
+
+def _selfcheck() -> None:
+    if not _TORCH_AVAILABLE:
+        print("torch not available, skip demo")
+        return
+
+    # Synthetic next-token task: each sequence is [0, 2, 4, ...] mod vocab.
+    # The model should pick up the +2 (mod vocab) pattern.
+    vocab = 16
+    seq_len = 8
+    n_seq = 32
+    seqs = [[(i * 2) % vocab for i in range(seq_len)] for _ in range(n_seq)]
+
+    tool = TransformerTool()
+    data = _selfcheck_train(tool, vocab, seq_len, seqs)
+    _selfcheck_predict(tool, vocab, seq_len, data)
 
 
 if __name__ == "__main__":

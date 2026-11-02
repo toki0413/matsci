@@ -13,17 +13,24 @@ or ask before writing to data/.
 from __future__ import annotations
 
 import fnmatch
+import logging
 import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from huginn.core_types import PermissionMode, PermissionResult, RiskLevel
-from huginn.env_access import env_bool, env_is_set
+from huginn.core_types import (
+    AuthorizationStrength,
+    PermissionMode,
+    PermissionResult,
+    RiskLevel,
+)
+from huginn.env_access import env_bool, env_is_set, env_str
 
-# 危险命令模式 — 统一使用 command_filter 的 _BLOCKED_PATTERNS 作为 single source of truth.
-# permissions.py 补充 git 相关模式 (command_filter 不覆盖 git).
-# ponytail: 以前两处各维护一份重复且不一致的列表, 现在合并.
+logger = logging.getLogger(__name__)
+
+# 危险命令模式 — 唯一来源是 command_filter 的 _BLOCKED_PATTERNS.
+# permissions.py 只补充 command_filter 不覆盖的 git 模式, 不另维护一份重复列表.
 try:
     from huginn.security.command_filter import _BLOCKED_PATTERNS as _CF_PATTERNS
 except ImportError:
@@ -31,28 +38,38 @@ except ImportError:
 
 DANGEROUS_PATTERNS: list[str] = list(_CF_PATTERNS) + [
     r"git\s+push\s+.*--force",  # git push --force
-    r"git\s+push\s+.*-f\b",     # git push -f
-    r"git\s+reset\s+--hard",    # git reset --hard
-    r"git\s+clean\s+-fd",       # git clean -fd
+    r"git\s+push\s+.*-f\b",  # git push -f
+    r"git\s+reset\s+--hard",  # git reset --hard
+    r"git\s+clean\s+-fd",  # git clean -fd
 ]
 
 # Read-only tool names — SSE chat 路径用来区分“可 auto_approve”和“需 ASK”.
 # ponytail: frozenset 常量, O(1) 查找, 不引新依赖.
-# 必须用**注册名** (`file_read_tool`/`grep`/`glob`) —— 早期写成 `read_file`/`ls`/
-# `cat`/`search` 这类短名, 与注册表对不上, `set_mode()` 永不命中, 只读工具在
-# sidecar 路径实际仍走 ASK (MECE 审计记的"允许表死项").
-READ_ONLY_TOOLS: frozenset[str] = frozenset({
-    "file_read_tool", "grep", "glob",
-})
+# 名单必须用**注册名** (`file_read_tool`/`grep`/`glob`): 用 `read_file`/`ls` 这类
+# 短名与注册表对不上, `set_mode()` 不会命中, 只读工具在 sidecar 路径仍会走 ASK.
+READ_ONLY_TOOLS: frozenset[str] = frozenset(
+    {
+        "file_read_tool",
+        "grep",
+        "glob",
+    }
+)
 
 # Write / exec tool names — 显式标记, SSE 路径下不 auto_approve.
 # 与 READ_ONLY_TOOLS 一起被 `routes/interaction.py::chat_stream` 消费:
 # 对两张表的并集按 `is_read_only_tool` 分类 —— 只读放行, 其余强制 ASK.
-WRITE_EXEC_TOOLS: frozenset[str] = frozenset({
-    "file_write_tool", "file_edit_tool", "multi_edit_tool", "notebook_edit_tool",
-    "bash_tool", "code_tool",
-    "vasp_tool", "lammps_tool",
-})
+WRITE_EXEC_TOOLS: frozenset[str] = frozenset(
+    {
+        "file_write_tool",
+        "file_edit_tool",
+        "multi_edit_tool",
+        "notebook_edit_tool",
+        "bash_tool",
+        "code_tool",
+        "vasp_tool",
+        "lammps_tool",
+    }
+)
 
 
 def is_read_only_tool(tool_name: str) -> bool:
@@ -83,10 +100,10 @@ def sidecar_auto_approve() -> bool:
     """非交互 sidecar API 的 auto-approve 策略 (显式配置项, 非硬编码).
 
     sidecar (``/agents/{id}/chat`` / KB 报告) 没有审批回调, ASK 模式的写/执行
-    工具会被直接拒. 旧实现无条件把 ``agent._permission_config.auto_approve_all``
-    置 True —— 任何 API 调用者都能让 agent 静默落盘/执行, 是 demo 阶段的写法.
+    工具会被直接拒. 不得在该路径无条件把 ``auto_approve_all`` 置 True ——
+    任何 API 调用者都能让 agent 静默落盘/执行.
 
-    新策略:
+    策略:
     - ``HUGINN_AUTO_APPROVE`` 显式设置时以它为准 (1/true/yes);
     - 未设置时**仅在 dev 模式** (``HUGINN_DEV_MODE``) 放行 —— 即 loopback 绑定的
       本地单用户桌面端; 生产多用户 server 默认不放行, 需运维显式开启.
@@ -96,14 +113,71 @@ def sidecar_auto_approve() -> bool:
     return env_bool("HUGINN_DEV_MODE")
 
 
-def autoloop_auto_approve() -> bool:
-    """autoloop 是**无人值守**自主循环, 默认放行内部 coder 的写/执行工具.
+def approval_mode() -> str:
+    """审批档位: ``deny`` | ``observe`` | ``workspace`` | ``all`` (默认 ``workspace``).
 
-    默认 True 是有意为之 (否则无 approval_callback 时 coder 形同死码), 但不再是
-    硬编码: ``HUGINN_AUTOLOOP_AUTO_APPROVE=0/false`` 可显式收紧. 危险命令模式
-    (``rm -rf /`` 等) 仍由 adapter 先于该放行判定拦下, 不受此开关影响.
+    - ``deny``: 不自动放行任何写/执行 (需人工审批);
+    - ``observe``: 影子档 — 写/执行工具的策略推断放行**只记录不执行**
+      (对应 dsh 的 ``observe`` accept mode: 先观察 would-approve 一段时间,
+      确认无误后再切 ``workspace``/``all`` 放权); 只读工具不受影响;
+    - ``workspace``: 自动放行, 但工作区外的写被拒 (默认);
+    - ``all``: 完全放行 (必须显式 ``HUGINN_APPROVE_MODE=all``).
+
+    兼容开关: ``HUGINN_AUTOLOOP_AUTO_APPROVE`` 是布尔语义, 只能映射到
+    ``all``/``deny``, 无法表达工作区档; 显式设置时优先于默认档.
     """
-    return env_bool("HUGINN_AUTOLOOP_AUTO_APPROVE")
+    # 注意: HUGINN_APPROVE_MODE 在 env_schema 里声明了默认值 "workspace",
+    # 若直接用 env_str 取值, 未设置时也会拿到 "workspace", 旧开关映射永远走不到.
+    # 必须用 env_is_set 区分「显式设置」与「回落默认」.
+    if env_is_set("HUGINN_APPROVE_MODE"):
+        raw = env_str("HUGINN_APPROVE_MODE").strip().lower()
+        if raw in ("deny", "observe", "workspace", "all"):
+            return raw
+        return "workspace"
+    if env_is_set("HUGINN_AUTOLOOP_AUTO_APPROVE"):
+        return "all" if env_bool("HUGINN_AUTOLOOP_AUTO_APPROVE") else "deny"
+    return "workspace"
+
+
+def observe_mode_enabled() -> bool:
+    """影子审批档: 写/执行工具的策略推断放行**只记录不执行**.
+
+    对应 dsh 的 ``observe`` accept mode —— 新策略先跑影子观察, 确认 would-approve
+    的集合正确后, 才切 ``workspace``/``all`` 真正放权. 只读工具不受影响.
+    """
+    return approval_mode() == "observe"
+
+
+def record_authorization(
+    tool_name: str,
+    strength: AuthorizationStrength,
+    session_id: str = "default",
+    *,
+    reason: str | None = None,
+    arg_keys: list[str] | None = None,
+) -> None:
+    """结构化记录一次授权决策 (dsh 的 evidence 原则: 决策必须可追溯).
+
+    只记录参数**键名**, 绝不记录值 —— 参数值可能含路径 / 令牌 / 数据内容.
+    """
+    logger.info(
+        "permission.decision tool=%s strength=%s session=%s reason=%s arg_keys=%s",
+        tool_name,
+        strength.value,
+        session_id,
+        reason or "-",
+        ",".join(sorted(arg_keys or ())) or "-",
+    )
+
+
+def autoloop_auto_approve() -> bool:
+    """autoloop 是否自动放行写/执行工具.
+
+    默认 ``workspace`` 档: 自动放行, 但 ``PermissionConfig.workspace_root`` 会
+    拒绝工作区外的写; ``all`` 才完全放行. ``deny`` 则回到 ASK.
+    """
+    return approval_mode() in ("workspace", "all")
+
 
 # Default permission rules for material science tools
 # Note: science_* tools (science-skills bridge) are auto-approved via wildcard
@@ -204,14 +278,23 @@ class PermissionConfig:
     # Sandbox 模式: 强制注入 _DEFAULT_SANDBOX_PATH_RULES 硬底线 (跟 path_rules 取并集).
     # 非 sandbox 入口不设, path_rules 仍默认空, 行为不变.
     sandbox_mode: bool = False
-    # ── 细粒度新增 (M5) ──
+    # ── 细粒度权限面 ──
     # 成本预算 (CPU 小时): 超过该预算的工具自动升 ASK. None=不限制 (默认).
     cost_budget_hours: float | None = None
     # 信任自适应: 开启后按 trust score 浮动 medium 风险 (trust 高放行 / 低强制 ASK).
     # 默认 False 保持向后兼容.
     trust_adaptive: bool = False
+    # workspace 档: 非空时, 写/执行工具的目标路径必须落在此根内, 否则 DENY.
+    workspace_root: Path | None = None
 
-    def get_mode(self, tool_name: str) -> PermissionMode:
+    def get_mode(
+        self, tool_name: str, *, ignore_auto: bool = False
+    ) -> PermissionMode:
+        """工具当前生效模式.
+
+        ``ignore_auto=True`` 时忽略 ``auto_approve_all`` 的覆盖, 返回"原本会
+        要求什么" —— 供 observe 影子档判断某次放行是否属于"推断替代人类批准".
+        """
         # 先按 rules / 通配规则算出"原始"模式
         if tool_name in self.rules:
             mode = self.rules[tool_name]
@@ -229,7 +312,7 @@ class PermissionConfig:
                 return PermissionMode.DENY
             return PermissionMode.ASK
 
-        if self.auto_approve_all:
+        if self.auto_approve_all and not ignore_auto:
             return PermissionMode.AUTO
         return mode
 
@@ -237,7 +320,7 @@ class PermissionConfig:
         self.rules[tool_name] = mode
 
 
-# ── 细粒度推断与信任存储 (M5) ─────────────────────────────────────
+# ── 细粒度推断与信任存储 ─────────────────────────────────────────
 # 与 code_act_loop.py 的 risk/trust 算法对齐, 但在此独立实现轻量版,
 # 避免 tool_call 路径因导入 code_act_loop (依赖 ToolRegistry 全量注册) 引入重依赖.
 # trust 是 session 维度, 进程内共享; 升级路径: 持久化到 config/store.
@@ -285,7 +368,9 @@ class PermissionChecker:
     def __init__(self, config: PermissionConfig | None = None):
         self.config = config or PermissionConfig()
 
-    def _check_dangerous(self, tool_name: str, args: dict | None = None) -> tuple[bool, str | None]:
+    def _check_dangerous(
+        self, tool_name: str, args: dict | None = None
+    ) -> tuple[bool, str | None]:
         """检查工具参数是否命中危险模式.
 
         返回 (is_dangerous, matched_pattern). matched_pattern 是命中的正则字符串,
@@ -311,7 +396,9 @@ class PermissionChecker:
 
         return False, None
 
-    def _check_path_rules(self, args: dict | None, tool_name: str = "") -> PermissionMode | None:
+    def _check_path_rules(
+        self, args: dict | None, tool_name: str = ""
+    ) -> PermissionMode | None:
         """Match file path from tool args against path_rules (first match wins).
 
         Looks for common path field names in args: file_path, path, working_dir.
@@ -324,23 +411,7 @@ class PermissionChecker:
         """
         if not args:
             return None
-        if self.config.sandbox_mode:
-            # 默认硬底线在前, 用户 path_rules 在后 -- first match wins, 默认项优先.
-            effective_rules = list(_DEFAULT_SANDBOX_PATH_RULES) + list(self.config.path_rules)
-            # env var HUGINN_SANDBOX_BLOCKED_PATHS: 逗号分隔路径, 只能追加 DENY.
-            for _p in os.environ.get("HUGINN_SANDBOX_BLOCKED_PATHS", "").split(","):
-                _p = _p.strip()
-                if _p:
-                    effective_rules.append((_p, PermissionMode.DENY))
-            # 自检: 默认项是硬底线, 不能被移除. 用户只能追加, 不能放宽.
-            _default_paths = {p for p, _ in _DEFAULT_SANDBOX_PATH_RULES}
-            _effective_paths = {
-                r[1] if len(r) == 3 else r[0] for r in effective_rules
-            }
-            assert _default_paths.issubset(_effective_paths), \
-                "Sandbox default path rules removed -- defaults are a hard floor"
-        else:
-            effective_rules = self.config.path_rules
+        effective_rules = self._effective_path_rules()
         if not effective_rules:
             return None
         # extract path from common field names
@@ -361,6 +432,27 @@ class PermissionChecker:
                 return mode
         return None
 
+    def _effective_path_rules(self) -> list[tuple]:
+        """构建生效路径规则 (sandbox_mode 时注入默认硬底线)."""
+        if not self.config.sandbox_mode:
+            return self.config.path_rules
+        # 默认硬底线在前, 用户 path_rules 在后 -- first match wins, 默认项优先.
+        effective_rules = list(_DEFAULT_SANDBOX_PATH_RULES) + list(
+            self.config.path_rules
+        )
+        # env var HUGINN_SANDBOX_BLOCKED_PATHS: 逗号分隔路径, 只能追加 DENY.
+        for _p in os.environ.get("HUGINN_SANDBOX_BLOCKED_PATHS", "").split(","):
+            _p = _p.strip()
+            if _p:
+                effective_rules.append((_p, PermissionMode.DENY))
+        # 自检: 默认项是硬底线, 不能被移除. 用户只能追加, 不能放宽.
+        _default_paths = {p for p, _ in _DEFAULT_SANDBOX_PATH_RULES}
+        _effective_paths = {r[1] if len(r) == 3 else r[0] for r in effective_rules}
+        assert _default_paths.issubset(_effective_paths), (
+            "Sandbox default path rules removed -- defaults are a hard floor"
+        )
+        return effective_rules
+
     async def check(
         self,
         tool_name: str,
@@ -370,7 +462,7 @@ class PermissionChecker:
         args: dict | None = None,
         session_id: str = "default",
     ) -> PermissionResult:
-        """多阶段细粒度判定 (M5).
+        """多阶段细粒度判定.
 
         判定维度依次叠加, 每命中一个维度记入 matched_rules 供可观测:
           1. 危险命令 (最高优先级, 即使 auto_approve_all 也拦)
@@ -382,39 +474,19 @@ class PermissionChecker:
         matched: list[str] = []
 
         # 阶段1: 危险命令 — 必须放在 get_mode() 之前, 否则 yolo 会直接放行.
-        is_dangerous, matched_pat = self._check_dangerous(tool_name, args)
-        if is_dangerous:
-            matched.append(f"dangerous:{matched_pat}")
-            reason = (
-                f"Tool '{tool_name}' matches dangerous pattern '{matched_pat}' — "
-                "requires explicit approval even in auto-approve mode"
-            )
-            return PermissionResult(
-                mode=PermissionMode.ASK,
-                reason=reason,
-                risk_level=RiskLevel.CRITICAL,
-                matched_rules=matched,
-            )
+        dangerous_result = self._dangerous_result(tool_name, args, matched)
+        if dangerous_result is not None:
+            return dangerous_result
 
         # 阶段2: 路径规则 (工具×路径矩阵 / 通用路径)
-        path_mode = self._check_path_rules(args, tool_name)
-        if path_mode is not None:
-            if path_mode == PermissionMode.DENY:
-                return PermissionResult(
-                    mode=PermissionMode.DENY,
-                    reason="Path blocked by path-level rule",
-                    risk_level=RiskLevel.CRITICAL,
-                    matched_rules=["path:deny"],
-                )
-            if path_mode == PermissionMode.ASK:
-                return PermissionResult(
-                    mode=PermissionMode.ASK,
-                    reason="Path requires approval by path-level rule",
-                    risk_level=RiskLevel.MEDIUM,
-                    matched_rules=["path:ask"],
-                )
-            # AUTO — fall through (path 命中但放行)
-            matched.append("path:auto")
+        path_result = self._path_result(args, tool_name, matched)
+        if path_result is not None:
+            return path_result
+
+        # 阶段2b: workspace 档边界 — 工作区外的写/执行一律 DENY.
+        workspace_result = self._workspace_result(args, tool_name)
+        if workspace_result is not None:
+            return workspace_result
 
         # 阶段3: 工具基础规则 → mode + 风险推断
         mode = self.config.get_mode(tool_name)
@@ -422,7 +494,103 @@ class PermissionChecker:
         matched.append(f"tool:{tool_name}:{mode.value}")
 
         # 阶段4: 成本分级 — 放行工具超预算 → 升 ASK, 风险升 HIGH
+        # 阶段5: 信任自适应 — trust 高放行 medium 以下, 低强制 ASK (high/critical 不浮动)
         cost_hours = self._extract_cost(cost_estimate)
+        mode, risk = self._apply_cost_and_trust(
+            mode, risk, cost_hours, session_id, matched
+        )
+
+        return PermissionChecker._build_result(
+            tool_name, mode, risk, cost_hours, is_destructive, matched
+        )
+
+    def _dangerous_result(
+        self, tool_name: str, args: dict | None, matched: list[str]
+    ) -> PermissionResult | None:
+        """阶段1: 危险命令判定."""
+        is_dangerous, matched_pat = self._check_dangerous(tool_name, args)
+        if not is_dangerous:
+            return None
+        matched.append(f"dangerous:{matched_pat}")
+        reason = (
+            f"Tool '{tool_name}' matches dangerous pattern '{matched_pat}' — "
+            "requires explicit approval even in auto-approve mode"
+        )
+        return PermissionResult(
+            mode=PermissionMode.ASK,
+            reason=reason,
+            risk_level=RiskLevel.CRITICAL,
+            matched_rules=matched,
+            strength=AuthorizationStrength.IGNORE,
+        )
+
+    def _path_result(
+        self, args: dict | None, tool_name: str, matched: list[str]
+    ) -> PermissionResult | None:
+        """阶段2: 路径规则判定."""
+        path_mode = self._check_path_rules(args, tool_name)
+        if path_mode is None:
+            return None
+        if path_mode == PermissionMode.DENY:
+            return PermissionResult(
+                mode=PermissionMode.DENY,
+                reason="Path blocked by path-level rule",
+                risk_level=RiskLevel.CRITICAL,
+                matched_rules=["path:deny"],
+                strength=AuthorizationStrength.IGNORE,
+            )
+        if path_mode == PermissionMode.ASK:
+            return PermissionResult(
+                mode=PermissionMode.ASK,
+                reason="Path requires approval by path-level rule",
+                risk_level=RiskLevel.MEDIUM,
+                matched_rules=["path:ask"],
+                strength=AuthorizationStrength.IGNORE,
+            )
+        # AUTO — fall through (path 命中但放行)
+        matched.append("path:auto")
+        return None
+
+    def _workspace_result(
+        self, args: dict | None, tool_name: str
+    ) -> PermissionResult | None:
+        """阶段2b: workspace 档边界检查 — 工作区外写/执行 DENY."""
+        root = self.config.workspace_root
+        if root is None or tool_name not in WRITE_EXEC_TOOLS or not args:
+            return None
+        path_str = args.get("file_path") or args.get("path")
+        if not path_str:
+            return None
+        try:
+            target = Path(str(path_str)).resolve()
+            base = Path(root).resolve()
+        except OSError:
+            return PermissionResult(
+                mode=PermissionMode.DENY,
+                reason="Path could not be resolved inside the workspace",
+                risk_level=RiskLevel.CRITICAL,
+                matched_rules=["workspace:deny"],
+                strength=AuthorizationStrength.IGNORE,
+            )
+        if target == base or base in target.parents:
+            return None
+        return PermissionResult(
+            mode=PermissionMode.DENY,
+            reason="Path is outside the workspace (HUGINN_APPROVE_MODE=workspace)",
+            risk_level=RiskLevel.CRITICAL,
+            matched_rules=["workspace:deny"],
+            strength=AuthorizationStrength.IGNORE,
+        )
+
+    def _apply_cost_and_trust(
+        self,
+        mode: PermissionMode,
+        risk: RiskLevel,
+        cost_hours: float | None,
+        session_id: str,
+        matched: list[str],
+    ) -> tuple[PermissionMode, RiskLevel]:
+        """阶段4+5: 成本分级与信任自适应."""
         budget = self.config.cost_budget_hours
         if cost_hours is not None and budget is not None and cost_hours > budget:
             matched.append(f"cost:{cost_hours:.1f}>{budget}")
@@ -431,16 +599,34 @@ class PermissionChecker:
             if risk not in (RiskLevel.HIGH, RiskLevel.CRITICAL):
                 risk = RiskLevel.HIGH
 
-        # 阶段5: 信任自适应 — trust 高放行 medium 以下, 低强制 ASK (high/critical 不浮动)
         if self.config.trust_adaptive:
             trust = _get_trust(session_id)
-            if mode == PermissionMode.AUTO and risk in (RiskLevel.MEDIUM, RiskLevel.HIGH) and trust < 0.3:
+            if (
+                mode == PermissionMode.AUTO
+                and risk in (RiskLevel.MEDIUM, RiskLevel.HIGH)
+                and trust < 0.3
+            ):
                 matched.append(f"trust:{trust:.2f}<0.3")
                 mode = PermissionMode.ASK
-            elif mode == PermissionMode.ASK and risk in (RiskLevel.LOW, RiskLevel.MEDIUM) and trust > 0.7:
+            elif (
+                mode == PermissionMode.ASK
+                and risk in (RiskLevel.LOW, RiskLevel.MEDIUM)
+                and trust > 0.7
+            ):
                 matched.append(f"trust:{trust:.2f}>0.7")
                 mode = PermissionMode.AUTO
+        return mode, risk
 
+    @staticmethod
+    def _build_result(
+        tool_name: str,
+        mode: PermissionMode,
+        risk: RiskLevel,
+        cost_hours: float | None,
+        is_destructive: bool,
+        matched: list[str],
+    ) -> PermissionResult:
+        """按最终 mode 组装 PermissionResult."""
         if mode == PermissionMode.DENY:
             return PermissionResult(
                 mode=PermissionMode.DENY,
@@ -448,6 +634,7 @@ class PermissionChecker:
                 risk_level=RiskLevel.CRITICAL,
                 cost_hours=cost_hours,
                 matched_rules=matched,
+                strength=AuthorizationStrength.IGNORE,
             )
 
         if mode == PermissionMode.AUTO:
@@ -456,6 +643,7 @@ class PermissionChecker:
                 risk_level=risk,
                 cost_hours=cost_hours,
                 matched_rules=matched,
+                strength=AuthorizationStrength.INFERRED,
             )
 
         # ASK mode — build a reason string
@@ -475,6 +663,7 @@ class PermissionChecker:
             risk_level=risk,
             cost_hours=cost_hours,
             matched_rules=matched,
+            strength=AuthorizationStrength.IGNORE,
         )
 
     @staticmethod
@@ -486,7 +675,7 @@ class PermissionChecker:
         return float(cpu) if cpu else None
 
 
-# ── P4-2: Standing Rules — (tool, target) 维度常驻授权 ──────────
+# ── Standing Rules — (tool, target) 维度常驻授权 ──────────────────
 #
 # OpenWorker 的 Standing Rules 按 tool→target 授权, e.g. "允许 file_write_tool
 # 写 /tmp/*". approve_always 后记录, 下次同 tool+target 自动放行, 不再调
@@ -505,33 +694,69 @@ class PermissionChecker:
 
 
 class StandingRulesStore:
-    """(tool, target) 维度常驻授权. 线程安全."""
+    """(tool, target) 维度常驻授权, 按策略版本作用域. 线程安全.
+
+    dsh 原则: 策略必须版本化 —— 批准只在授予它时的版本内有效.
+    ``bump_policy_version()`` 递增版本并作废旧规则 (策略变更 / checkpoint
+    resume 时调用), 旧批准不会因为状态恢复而重新获得效力.
+    """
 
     def __init__(self) -> None:
         import threading
+
         self._lock = threading.Lock()
-        # session_id → {(tool_name, target_pattern)}
-        self._rules: dict[str, set[tuple[str, str]]] = {}
+        self._version = 1
+        # session_id → {(tool_name, target_pattern, policy_version)}
+        self._rules: dict[str, set[tuple[str, str, int]]] = {}
 
-    def grant(
-        self, session_id: str, tool_name: str, target_pattern: str = "*"
-    ) -> None:
-        """记录一条 standing rule. target_pattern 支持 fnmatch."""
+    @property
+    def policy_version(self) -> int:
         with self._lock:
-            self._rules.setdefault(session_id, set()).add((tool_name, target_pattern))
+            return self._version
 
-    def is_granted(
-        self, session_id: str, tool_name: str, target: str = "*"
-    ) -> bool:
-        """检查是否命中 standing rule. target 做 fnmatch 匹配."""
+    def grant(self, session_id: str, tool_name: str, target_pattern: str = "*") -> None:
+        """记录一条 standing rule, 绑定当前策略版本. target_pattern 支持 fnmatch."""
         with self._lock:
-            rules = self._rules.get(session_id, set())
-        for r_tool, r_pattern in rules:
-            if r_tool != tool_name:
-                continue
-            if r_pattern == "*" or fnmatch.fnmatch(target, r_pattern):
-                return True
+            self._rules.setdefault(session_id, set()).add(
+                (tool_name, target_pattern, self._version)
+            )
+
+    def is_granted(self, session_id: str, tool_name: str, target: str = "*") -> bool:
+        """检查是否命中**当前版本**的 standing rule. target 做 fnmatch 匹配."""
+        # 持锁判定, 保证与 bump_policy_version 互斥 — 避免并发 bump 后仍返回旧批准.
+        with self._lock:
+            for r_tool, r_pattern, r_version in self._rules.get(session_id, set()):
+                if r_version != self._version:
+                    continue
+                if r_tool != tool_name:
+                    continue
+                if r_pattern == "*" or fnmatch.fnmatch(target, r_pattern):
+                    return True
         return False
+
+    def bump_policy_version(self, reason: str = "") -> int:
+        """递增策略版本并作废旧版本批准, 返回新版本号.
+
+        resume / 策略变更后旧批准必须失效 (dsh: 恢复不等于再授权).
+        """
+        with self._lock:
+            self._version += 1
+            version = self._version
+            dropped = 0
+            for sid in list(self._rules):
+                kept = {r for r in self._rules[sid] if r[2] == version}
+                dropped += len(self._rules[sid]) - len(kept)
+                if kept:
+                    self._rules[sid] = kept
+                else:
+                    del self._rules[sid]
+        logger.info(
+            "permission.policy_version version=%d reason=%s invalidated=%d",
+            version,
+            reason or "-",
+            dropped,
+        )
+        return version
 
     def reset(self, session_id: str | None = None) -> None:
         """清空. 传 session_id 只清该 session."""
@@ -542,17 +767,17 @@ class StandingRulesStore:
                 self._rules.pop(session_id, None)
 
     def list_rules(self, session_id: str | None = None) -> list[dict]:
-        """列出 standing rules (可观测性用)."""
+        """列出 standing rules (可观测性用, 含所属策略版本)."""
         with self._lock:
             if session_id is None:
                 return [
-                    {"session_id": sid, "tool": t, "target": p}
+                    {"session_id": sid, "tool": t, "target": p, "policy_version": v}
                     for sid, rules in self._rules.items()
-                    for t, p in rules
+                    for t, p, v in rules
                 ]
             return [
-                {"session_id": session_id, "tool": t, "target": p}
-                for t, p in self._rules.get(session_id, set())
+                {"session_id": session_id, "tool": t, "target": p, "policy_version": v}
+                for t, p, v in self._rules.get(session_id, set())
             ]
 
 
@@ -564,6 +789,7 @@ def _get_lock():
     global _singleton_lock
     if _singleton_lock is None:
         import threading
+
         _singleton_lock = threading.Lock()
     return _singleton_lock
 

@@ -21,6 +21,115 @@ from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 logger = logging.getLogger(__name__)
 
 
+def _attach_fenics_audit(
+    action: str, data: dict[str, Any], extra: dict[str, Any]
+) -> None:
+    """附加物理审计报告，失败不阻断结果返回."""
+    try:
+        from huginn.execution.physics_auditor import PhysicsAuditor
+
+        auditor = PhysicsAuditor()
+        audit_report = auditor.audit("fenics_tool", action, data, extra)
+        data["physics_audit"] = audit_report.to_dict()
+    except Exception:  # 防御: 审计失败不阻断结果返回
+        logger.debug("audit failure can't block result delivery", exc_info=True)
+
+
+def _fenics_script_generated_result(script_path: Path) -> ToolResult:
+    """FEniCS 缺失时返回已生成的求解脚本."""
+    return ToolResult(
+        data={
+            "action": "solve_pde",
+            "status": "script_generated",
+            "script_path": str(script_path),
+            "message": (
+                "FEniCS not installed. Script saved — run it in a "
+                "FEniCS environment: python fenics_solve.py"
+            ),
+        },
+        success=True,
+    )
+
+
+def _solve_pde_data(result: Any, success: bool, work_dir: Path) -> dict[str, Any]:
+    """构造 solve_pde 的结果 data."""
+    return {
+        "action": "solve_pde",
+        "returncode": result.returncode,
+        "stdout": result.stdout[-2000:] if result.stdout else "",
+        "stderr": result.stderr[-2000:] if result.stderr else "",
+        "working_dir": str(work_dir),
+        "message": (
+            "FEniCS solve completed."
+            if success
+            else f"FEniCS solve failed (exit {result.returncode})."
+        ),
+    }
+
+
+def _mesh_info_script(mesh_path: Path) -> str:
+    """生成 dolfin mesh 信息查询脚本."""
+    return textwrap.dedent(f"""
+        from dolfin import Mesh
+        mesh = Mesh("{mesh_path}")
+        print("dim", mesh.geometry().dim())
+        print("num_vertices", mesh.num_vertices())
+        print("num_cells", mesh.num_cells())
+    """)
+
+
+def _update_mesh_info(info: dict[str, Any], stdout: str) -> None:
+    """从 mesh 查询 stdout 解析 key/value 写入 info."""
+    for line in stdout.splitlines():
+        parts = line.strip().split(maxsplit=1)
+        if len(parts) == 2:
+            key, val = parts
+            try:
+                info[key] = int(val)
+            except ValueError:
+                info[key] = val
+
+
+def _convergence_diff_script(f1: Any, f2: Any) -> str:
+    """生成一对解文件的 L2 差 (errornorm, 失败退回相对 L2) 脚本."""
+    return textwrap.dedent(f"""
+        import sys
+        from dolfin import (
+            Mesh, Function, FunctionSpace, XDMFFile,
+            errornorm, norm,
+        )
+
+        def _load(path):
+            mesh = Mesh()
+            with XDMFFile(path) as f:
+                f.read(mesh)
+            V = FunctionSpace(mesh, "P", 1)
+            u = Function(V)
+            with XDMFFile(path) as f:
+                f.read_checkpoint(V, u, "u")
+            return mesh, V, u
+
+        f1_path = {str(f1)!r}
+        f2_path = {str(f2)!r}
+        try:
+            m1, V1, u1 = _load(f1_path)
+            m2, V2, u2 = _load(f2_path)
+        except Exception as e:
+            print("error", str(e))
+            sys.exit(0)
+
+        try:
+            d = errornorm(u1, u2, "L2")
+            print("diff", d)
+        except Exception as exc:
+            n1 = norm(u1, "L2")
+            n2 = norm(u2, "L2")
+            denom = max(n1, n2, 1e-15)
+            d = abs(n1 - n2) / denom
+            print("diff_rel", d)
+    """)
+
+
 class FenicsToolInput(BaseModel):
     action: Literal["solve_pde", "mesh_info", "convergence_check"] = Field(...)
     working_dir: str | None = Field(default=None)
@@ -104,9 +213,7 @@ class FenicsTool(HuginnTool):
             data=None, success=False, error=f"Unknown action: {input_data.action}"
         )
 
-    def _solve_pde(
-        self, input_data: FenicsToolInput, work_dir: Path
-    ) -> ToolResult:
+    def _solve_pde(self, input_data: FenicsToolInput, work_dir: Path) -> ToolResult:
         if not input_data.script:
             return ToolResult(
                 data=None,
@@ -118,18 +225,7 @@ class FenicsTool(HuginnTool):
         script_path.write_text(input_data.script, encoding="utf-8")
 
         if not _fenics_available(self.sandbox):
-            return ToolResult(
-                data={
-                    "action": "solve_pde",
-                    "status": "script_generated",
-                    "script_path": str(script_path),
-                    "message": (
-                        "FEniCS not installed. Script saved — run it in a "
-                        "FEniCS environment: python fenics_solve.py"
-                    ),
-                },
-                success=True,
-            )
+            return _fenics_script_generated_result(script_path)
 
         try:
             result = self.sandbox.run(
@@ -140,32 +236,17 @@ class FenicsTool(HuginnTool):
                 timeout=300.0,
             )
             success = result.returncode == 0
-            data = {
-                "action": "solve_pde",
-                "returncode": result.returncode,
-                "stdout": result.stdout[-2000:] if result.stdout else "",
-                "stderr": result.stderr[-2000:] if result.stderr else "",
-                "working_dir": str(work_dir),
-                "message": (
-                    "FEniCS solve completed." if success
-                    else f"FEniCS solve failed (exit {result.returncode})."
-                ),
-            }
+            data = _solve_pde_data(result, success, work_dir)
 
             # Physics audit — NaN/Inf, Newton solver convergence, BC issues
-            try:
-                from huginn.execution.physics_auditor import PhysicsAuditor
-
-                auditor = PhysicsAuditor()
-                audit_report = auditor.audit("fenics_tool", "solve_pde", data, {})
-                data["physics_audit"] = audit_report.to_dict()
-            except Exception:  # 防御: 审计失败不阻断结果返回
-                logger.debug("audit failure can't block result delivery", exc_info=True)
+            _attach_fenics_audit("solve_pde", data, {})
 
             return ToolResult(
                 data=data,
                 success=success,
-                error=None if success else f"FEniCS solve failed: {result.stderr[:300]}",
+                error=None
+                if success
+                else f"FEniCS solve failed: {result.stderr[:300]}",
             )
         except SandboxError as e:
             return ToolResult(
@@ -176,9 +257,7 @@ class FenicsTool(HuginnTool):
                 data=None, success=False, error="FEniCS solve timed out (300s)."
             )
 
-    def _mesh_info(
-        self, input_data: FenicsToolInput, work_dir: Path
-    ) -> ToolResult:
+    def _mesh_info(self, input_data: FenicsToolInput, work_dir: Path) -> ToolResult:
         if not input_data.mesh_file:
             return ToolResult(
                 data=None, success=False, error="mesh_info requires 'mesh_file'."
@@ -191,13 +270,7 @@ class FenicsTool(HuginnTool):
                 data=None, success=False, error=f"Mesh file not found: {mesh_path}"
             )
 
-        info_script = textwrap.dedent(f"""
-            from dolfin import Mesh
-            mesh = Mesh("{mesh_path}")
-            print("dim", mesh.geometry().dim())
-            print("num_vertices", mesh.num_vertices())
-            print("num_cells", mesh.num_cells())
-        """)
+        info_script = _mesh_info_script(mesh_path)
 
         try:
             result = self.sandbox.run(
@@ -214,21 +287,16 @@ class FenicsTool(HuginnTool):
                     error=f"FEniCS mesh query failed: {result.stderr[:300]}",
                 )
             info: dict[str, Any] = {"mesh_file": str(mesh_path)}
-            for line in result.stdout.splitlines():
-                parts = line.strip().split(maxsplit=1)
-                if len(parts) == 2:
-                    key, val = parts
-                    try:
-                        info[key] = int(val)
-                    except ValueError:
-                        info[key] = val
+            _update_mesh_info(info, result.stdout)
             return ToolResult(
                 data={"action": "mesh_info", **info},
                 success=True,
             )
         except SandboxError as e:
             return ToolResult(
-                data=None, success=False, error=f"FEniCS mesh query blocked by sandbox: {e}"
+                data=None,
+                success=False,
+                error=f"FEniCS mesh query blocked by sandbox: {e}",
             )
         except subprocess.TimeoutExpired:
             return ToolResult(
@@ -251,91 +319,83 @@ class FenicsTool(HuginnTool):
         sol_files = input_data.solution_files
         diffs: list[float] = []
         method_used = "errornorm"
-        for i in range(len(sol_files) - 1):
-            script = textwrap.dedent(f"""
-                import sys
-                from dolfin import (
-                    Mesh, Function, FunctionSpace, XDMFFile,
-                    errornorm, norm,
-                )
-
-                def _load(path):
-                    mesh = Mesh()
-                    with XDMFFile(path) as f:
-                        f.read(mesh)
-                    V = FunctionSpace(mesh, "P", 1)
-                    u = Function(V)
-                    with XDMFFile(path) as f:
-                        f.read_checkpoint(V, u, "u")
-                    return mesh, V, u
-
-                f1_path = {str(sol_files[i])!r}
-                f2_path = {str(sol_files[i + 1])!r}
-                try:
-                    m1, V1, u1 = _load(f1_path)
-                    m2, V2, u2 = _load(f2_path)
-                except Exception as e:
-                    print("error", str(e))
-                    sys.exit(0)
-
-                try:
-                    d = errornorm(u1, u2, "L2")
-                    print("diff", d)
-                except Exception as exc:
-                    n1 = norm(u1, "L2")
-                    n2 = norm(u2, "L2")
-                    denom = max(n1, n2, 1e-15)
-                    d = abs(n1 - n2) / denom
-                    print("diff_rel", d)
-            """)
-            try:
-                result = self.sandbox.run(
-                    ["python", "-c", script],
-                    cwd=str(work_dir),
-                    capture_output=True,
-                    text=True,
-                    timeout=60.0,
-                )
-                parsed = False
-                for line in result.stdout.splitlines():
-                    parts = line.split()
-                    if len(parts) == 2:
-                        try:
-                            val = float(parts[1])
-                            if parts[0] == "diff_rel":
-                                method_used = "relative_l2"
-                            diffs.append(val)
-                            parsed = True
-                        except ValueError:
-                            logger.debug("best-effort op failed", exc_info=True)
-                    elif parts and parts[0] == "error":
-                        diffs.append(float("nan"))
-                        parsed = True
-                if not parsed:
-                    diffs.append(float("nan"))
-            except subprocess.TimeoutExpired:
-                diffs.append(float("nan"))
-            except Exception:  # 防御: 收敛解析失败记 NaN 继续
-                diffs.append(float("nan"))
+        for f1, f2 in zip(sol_files, sol_files[1:]):
+            pair_diffs, used_rel = self._run_convergence_pair(f1, f2, work_dir)
+            if used_rel:
+                method_used = "relative_l2"
+            diffs.extend(pair_diffs)
 
         valid = [d for d in diffs if d == d]
         converged = len(valid) > 0 and all(d < 0.01 for d in valid)
-        data = {
+        data: dict[str, Any] = {
             "action": "convergence_check",
             "n_solutions": len(sol_files),
             "differences": diffs,
             "method": method_used,
             "converged": converged,
-            "message": (
-                "Convergence check complete — all L2 differences < 1e-2."
-                if converged
-                else "Convergence check complete — some differences exceed tolerance."
-                if valid
-                else "No valid differences computed (check solution file format)."
-            ),
+            "message": self._convergence_message(converged, bool(valid)),
         }
 
         # Physics audit — mesh convergence, NaN in differences
+        self._attach_physics_audit(data)
+        return ToolResult(data=data, success=True)
+
+    def _run_convergence_pair(
+        self, f1: Any, f2: Any, work_dir: Path
+    ) -> tuple[list[float], bool]:
+        """跑一对解文件的 L2 差脚本, 返回 (differences, 是否用了相对 L2)."""
+        script = _convergence_diff_script(f1, f2)
+        try:
+            result = self.sandbox.run(
+                ["python", "-c", script],
+                cwd=str(work_dir),
+                capture_output=True,
+                text=True,
+                timeout=60.0,
+            )
+        except subprocess.TimeoutExpired:
+            return [float("nan")], False
+        except Exception:  # 防御: 收敛解析失败记 NaN 继续
+            return [float("nan")], False
+        diffs, used_rel, parsed = self._parse_convergence_output(result.stdout)
+        if not parsed:
+            diffs.append(float("nan"))
+        return diffs, used_rel
+
+    @staticmethod
+    def _parse_convergence_output(stdout: str) -> tuple[list[float], bool, bool]:
+        """从脚本 stdout 解析 (differences, 是否用 diff_rel, 是否有有效行)."""
+        diffs: list[float] = []
+        used_rel = False
+        parsed = False
+        for line in stdout.splitlines():
+            parts = line.split()
+            if len(parts) == 2:
+                try:
+                    val = float(parts[1])
+                except ValueError:
+                    logger.debug("best-effort op failed", exc_info=True)
+                    continue
+                if parts[0] == "diff_rel":
+                    used_rel = True
+                diffs.append(val)
+                parsed = True
+            elif parts and parts[0] == "error":
+                diffs.append(float("nan"))
+                parsed = True
+        return diffs, used_rel, parsed
+
+    @staticmethod
+    def _convergence_message(converged: bool, has_valid: bool) -> str:
+        if converged:
+            return "Convergence check complete — all L2 differences < 1e-2."
+        if has_valid:
+            return "Convergence check complete — some differences exceed tolerance."
+        return "No valid differences computed (check solution file format)."
+
+    @staticmethod
+    def _attach_physics_audit(data: dict[str, Any]) -> None:
+        """物理审计: 网格收敛 / difference 里的 NaN; 失败不阻断结果返回."""
         try:
             from huginn.execution.physics_auditor import PhysicsAuditor
 
@@ -344,5 +404,3 @@ class FenicsTool(HuginnTool):
             data["physics_audit"] = audit_report.to_dict()
         except Exception:  # 防御: 审计失败不阻断结果返回
             logger.debug("audit failure can't block result delivery", exc_info=True)
-
-        return ToolResult(data=data, success=True)

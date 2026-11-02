@@ -1,3 +1,4 @@
+# governance-gate
 """技能池弥合门禁：SkillTemplate ⇄ SkillRegistry 同步契约。
 
 背景：

@@ -1,3 +1,5 @@
+<!-- manual: true -->
+
 # C-Space (Capability Workspace) — 外部化全局工作区的设计规格
 
 > 对齐: Anthropic 《A global workspace in language models》的 J-Space (GWT) 与"空间/状态工作区"

@@ -202,6 +202,233 @@ def _result_error_kind(result) -> ErrorKind:
     return ErrorKind.FATAL
 
 
+async def _maybe_dispatch_support(
+    command: list[str], context: ToolContext | None
+) -> ToolResult | None:
+    """重活优先走 PersistentTerminal, 否则 dispatch 给 Support subagent.
+
+    返回 None 表示未 dispatch (非重活 / dispatch 未成立), 调用方应降级到本地执行.
+    """
+    is_heavy, reason = _is_heavy_bash(command)
+    if not is_heavy or os.environ.get("HUGINN_CORE_SUPPORT_PROTOCOL", "1") != "1":
+        return None
+
+    # v14 Task 13: PersistentTerminal 路径优先 — 长任务不被枪毙.
+    from huginn.tools.persistent_terminal import (
+        resolve_persistent_terminal_flag,
+    )
+
+    if resolve_persistent_terminal_flag(None):
+        return _dispatch_to_support_bash_persistent(command, context, reason)
+    return await _dispatch_to_support_bash(command, context, reason)
+
+
+def _run_rust_sandbox(
+    command: list[str], timeout: float, work_dir: Path
+) -> ToolResult | None:
+    """Use the Rust sandbox runner when the compiled extension is available.
+
+    P0-7: 默认关闭 — Rust sandbox 在 RDKit+sklearn GPR 等场景静默崩溃
+    返回空 stderr, 导致 "Unknown error" (audit 08: 8 个出分单元 62.5% 有
+    工具层直接背书). 显式 HUGINN_USE_RUST_SANDBOX=1 才启用.
+
+    返回 None 表示未启用或扩展不可用, 调用方应走配置的 backend.
+    """
+    if os.environ.get("HUGINN_USE_RUST_SANDBOX", "").lower() not in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return None
+    try:
+        from huginn_ext.sandbox import (
+            run_sandboxed,  # type: ignore[import-not-found]
+        )
+
+        allowed_base_dirs = [str(work_dir.resolve()), str(Path.cwd().resolve())]
+        result = run_sandboxed(
+            command=command[0],
+            args=command[1:],
+            cwd=str(work_dir),
+            timeout=timeout,
+            allowed_base_dirs=allowed_base_dirs,
+        )
+        return _rust_sandbox_result(command, result)
+    except Exception:
+        # Rust extension not available; proceed to the configured backend.
+        logger.debug(
+            "Rust extension unavailable, proceeding to configured backend",
+            exc_info=True,
+        )
+        return None
+
+
+def _rust_sandbox_result(command: list[str], result: dict) -> ToolResult:
+    """把 Rust sandbox 的原始结果 dict 转成 ToolResult."""
+    if not result["success"]:
+        error = (
+            result.get("stderr") or result.get("message") or "Sandboxed command failed."
+        )
+    else:
+        error = None
+    return ToolResult(
+        data={
+            "command": command,
+            "returncode": result["returncode"],
+            "stdout": result["stdout"],
+            "stderr": result["stderr"],
+            "message": result["message"],
+            "timed_out": result["timed_out"],
+            "suggest_fix": (
+                _suggest_fix(
+                    result["returncode"],
+                    result["stderr"],
+                    result["stdout"],
+                    command,
+                )
+                if not result["success"]
+                else ""
+            ),
+            "stream_progress": _extract_progress(result["stdout"]),
+        },
+        success=result["success"],
+        error=error,
+    )
+
+
+def _run_container_executor(
+    executor: ContainerExecutor,
+    command: list[str],
+    work_dir: Path,
+    timeout: float,
+) -> ToolResult:
+    """ContainerExecutor 路径: 跑命令并组装返回结构."""
+    result = executor.run(
+        command,
+        cwd=work_dir,
+        timeout=timeout,
+        capture_output=True,
+        text=True,
+    )
+    _err = None
+    if not result.success:
+        _tail = (result.stderr or result.stdout or "")[-2000:]
+        _err = f"Command failed (rc={result.returncode}).\n{_tail}"
+    return ToolResult(
+        data={
+            "command": command,
+            "returncode": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "message": ("Command succeeded." if result.success else "Command failed."),
+            "container": True,
+            "suggest_fix": (
+                _suggest_fix(result.returncode, result.stderr, result.stdout, command)
+                if not result.success
+                else ""
+            ),
+            "stream_progress": _extract_progress(result.stdout),
+        },
+        success=result.success,
+        error=_err,
+        error_kind=_result_error_kind(result),
+    )
+
+
+def _run_sandbox_executor(
+    executor: SandboxExecutor,
+    command: list[str],
+    work_dir: Path,
+    timeout: float,
+    capture_output: bool,
+) -> ToolResult:
+    """SandboxExecutor 路径: 跑可回滚命令, 失败时 dispose 副作用."""
+    try:
+        result, _dispose = executor.run_revertible(
+            command,
+            cwd=work_dir,
+            poll_dir=work_dir,
+            timeout=timeout,
+            capture_output=capture_output,
+            text=True,
+        )
+        if result.returncode != 0:
+            _dispose()
+        return _sandbox_result(command, result)
+    except SandboxError as e:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"Sandbox blocked command: {e}",
+            error_kind=ErrorKind.DENIED,
+        )
+    except Exception as e:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"Sandbox execution failed: {e}",
+            error_kind=ErrorKind.FATAL,
+        )
+
+
+def _sandbox_result(command: list[str], result: Any) -> ToolResult:
+    """组装 SandboxExecutor 的 ToolResult."""
+    _err = None
+    if result.returncode != 0:
+        _tail = (result.stderr or result.stdout or "")[-2000:]
+        _err = f"Command failed (rc={result.returncode}).\n{_tail}"
+    return ToolResult(
+        data={
+            "command": command,
+            "returncode": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "message": (
+                "Command succeeded." if result.returncode == 0 else "Command failed."
+            ),
+            "sandbox": True,
+            "suggest_fix": (
+                _suggest_fix(result.returncode, result.stderr, result.stdout, command)
+                if result.returncode != 0
+                else ""
+            ),
+            "stream_progress": _extract_progress(result.stdout),
+        },
+        success=result.returncode == 0,
+        error=_err,
+        error_kind=_result_error_kind(result),
+    )
+
+
+def _scheduler_not_connected_result() -> ToolResult:
+    """后台任务投递失败: scheduler 未接线."""
+    return ToolResult(
+        data=None,
+        success=False,
+        error=(
+            "scheduler not connected: cannot submit background bash task. "
+            "Wire the ToolScheduler (e.g. via context.agent_factory) or inject it."
+        ),
+    )
+
+
+def _background_job_result(job_id: str, cmd: list[str]) -> ToolResult:
+    """后台任务投递成功的返回结构."""
+    return ToolResult(
+        data={
+            "job_id": job_id,
+            "command": cmd,
+            "status": "queued",
+            "background": True,
+            "message": (
+                f"Background bash job {job_id} submitted. "
+                "Use action=status/cancel with this job_id to query or cancel."
+            ),
+        },
+        success=True,
+    )
+
+
 class BashTool(HuginnTool):
     """Run shell commands in the workspace."""
 
@@ -235,7 +462,9 @@ class BashTool(HuginnTool):
     ) -> ToolResult:
         input_data = BashToolInput(**args)
         work_dir = (
-            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
+            Path(input_data.working_dir)
+            if input_data.working_dir
+            else self.default_work_dir()
         )
 
         # status/cancel: 复用 scheduler 查询/取消后台 job, 不执行命令.
@@ -254,85 +483,16 @@ class BashTool(HuginnTool):
 
         # v14 Task 9: bash 重活识别 + 自动 dispatch 给 Support subagent
         # ponytail: 失败时降级到原行为 (直接执行 bash), 不阻塞主流程.
-        is_heavy, reason = _is_heavy_bash(input_data.command)
-        if is_heavy and os.environ.get("HUGINN_CORE_SUPPORT_PROTOCOL", "1") == "1":
-            # v14 Task 13: PersistentTerminal 路径优先 — 长任务不被枪毙.
-            from huginn.tools.persistent_terminal import (
-                resolve_persistent_terminal_flag,
-            )
-
-            if resolve_persistent_terminal_flag(None):
-                dispatched = _dispatch_to_support_bash_persistent(
-                    input_data.command, context, reason
-                )
-                if dispatched is not None:
-                    return dispatched
-            else:
-                dispatched = await _dispatch_to_support_bash(
-                    input_data.command, context, reason
-                )
-                if dispatched is not None:
-                    return dispatched
+        dispatched = await _maybe_dispatch_support(input_data.command, context)
+        if dispatched is not None:
+            return dispatched
 
         # Use the Rust sandbox runner when the compiled extension is available.
-        # P0-7: 默认关闭 — Rust sandbox 在 RDKit+sklearn GPR 等场景静默崩溃
-        # 返回空 stderr, 导致 "Unknown error" (audit 08: 8 个出分单元 62.5% 有
-        # 工具层直接背书). 显式 HUGINN_USE_RUST_SANDBOX=1 才启用.
-        if os.environ.get("HUGINN_USE_RUST_SANDBOX", "").lower() in (
-            "1",
-            "true",
-            "yes",
-        ):
-            try:
-                from huginn_ext.sandbox import (
-                    run_sandboxed,  # type: ignore[import-not-found]
-                )
-
-                allowed_base_dirs = [str(work_dir.resolve()), str(Path.cwd().resolve())]
-                result = run_sandboxed(
-                    command=input_data.command[0],
-                    args=input_data.command[1:],
-                    cwd=str(work_dir),
-                    timeout=input_data.timeout,
-                    allowed_base_dirs=allowed_base_dirs,
-                )
-                if not result["success"]:
-                    error = (
-                        result.get("stderr")
-                        or result.get("message")
-                        or "Sandboxed command failed."
-                    )
-                else:
-                    error = None
-                return ToolResult(
-                    data={
-                        "command": input_data.command,
-                        "returncode": result["returncode"],
-                        "stdout": result["stdout"],
-                        "stderr": result["stderr"],
-                        "message": result["message"],
-                        "timed_out": result["timed_out"],
-                        "suggest_fix": (
-                            _suggest_fix(
-                                result["returncode"],
-                                result["stderr"],
-                                result["stdout"],
-                                input_data.command,
-                            )
-                            if not result["success"]
-                            else ""
-                        ),
-                        "stream_progress": _extract_progress(result["stdout"]),
-                    },
-                    success=result["success"],
-                    error=error,
-                )
-            except Exception:
-                # Rust extension not available; proceed to the configured backend.
-                logger.debug(
-                    "Rust extension unavailable, proceeding to configured backend",
-                    exc_info=True,
-                )
+        rust_result = _run_rust_sandbox(
+            input_data.command, input_data.timeout, work_dir
+        )
+        if rust_result is not None:
+            return rust_result
 
         # 统一走 executor (Container / SandboxExecutor), 保持 command_filter 安全边界.
         return await self._run_executor(
@@ -362,97 +522,14 @@ class BashTool(HuginnTool):
             )
 
         if isinstance(executor, ContainerExecutor):
-            result = executor.run(
-                command,
-                cwd=work_dir,
-                timeout=timeout,
-                capture_output=True,
-                text=True,
-            )
-            _err = None
-            if not result.success:
-                _tail = (result.stderr or result.stdout or "")[-2000:]
-                _err = f"Command failed (rc={result.returncode}).\n{_tail}"
-            return ToolResult(
-                data={
-                    "command": command,
-                    "returncode": result.returncode,
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                    "message": (
-                        "Command succeeded." if result.success else "Command failed."
-                    ),
-                    "container": True,
-                    "suggest_fix": (
-                        _suggest_fix(
-                            result.returncode, result.stderr, result.stdout, command
-                        )
-                        if not result.success
-                        else ""
-                    ),
-                    "stream_progress": _extract_progress(result.stdout),
-                },
-                success=result.success,
-                error=_err,
-                error_kind=_result_error_kind(result),
-            )
+            return _run_container_executor(executor, command, work_dir, timeout)
 
         # SandboxExecutor path
         if isinstance(executor, SandboxExecutor):
-            try:
-                result, _dispose = executor.run_revertible(
-                    command,
-                    cwd=work_dir,
-                    poll_dir=work_dir,
-                    timeout=timeout,
-                    capture_output=capture_output,
-                    text=True,
-                )
-                if result.returncode != 0:
-                    _dispose()
-                _err = None
-                if result.returncode != 0:
-                    _tail = (result.stderr or result.stdout or "")[-2000:]
-                    _err = f"Command failed (rc={result.returncode}).\n{_tail}"
-                return ToolResult(
-                    data={
-                        "command": command,
-                        "returncode": result.returncode,
-                        "stdout": result.stdout,
-                        "stderr": result.stderr,
-                        "message": (
-                            "Command succeeded."
-                            if result.returncode == 0
-                            else "Command failed."
-                        ),
-                        "sandbox": True,
-                        "suggest_fix": (
-                            _suggest_fix(
-                                result.returncode, result.stderr, result.stdout, command
-                            )
-                            if result.returncode != 0
-                            else ""
-                        ),
-                        "stream_progress": _extract_progress(result.stdout),
-                    },
-                    success=result.returncode == 0,
-                    error=_err,
-                    error_kind=_result_error_kind(result),
-                )
-            except SandboxError as e:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"Sandbox blocked command: {e}",
-                    error_kind=ErrorKind.DENIED,
-                )
-            except Exception as e:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error=f"Sandbox execution failed: {e}",
-                    error_kind=ErrorKind.FATAL,
-                )
+            return _run_sandbox_executor(
+                executor, command, work_dir, timeout, capture_output
+            )
+
         return ToolResult(
             data=None,
             success=False,
@@ -479,14 +556,7 @@ class BashTool(HuginnTool):
 
         scheduler = self._resolve_scheduler(context)
         if scheduler is None:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=(
-                    "scheduler not connected: cannot submit background bash task. "
-                    "Wire the ToolScheduler (e.g. via context.agent_factory) or inject it."
-                ),
-            )
+            return _scheduler_not_connected_result()
 
         async def _run() -> ToolResult:
             return await self._run_executor(
@@ -503,19 +573,7 @@ class BashTool(HuginnTool):
             _run,
             working_dir=str(work_dir),
         )
-        return ToolResult(
-            data={
-                "job_id": job_id,
-                "command": cmd,
-                "status": "queued",
-                "background": True,
-                "message": (
-                    f"Background bash job {job_id} submitted. "
-                    "Use action=status/cancel with this job_id to query or cancel."
-                ),
-            },
-            success=True,
-        )
+        return _background_job_result(job_id, cmd)
 
     async def _handle_job_action(
         self,
@@ -580,6 +638,25 @@ async def _dispatch_to_support_bash(
     if context is None or getattr(context, "agent_factory", None) is None:
         return None
 
+    result = await _call_support_subagent(command, context)
+    if result is None:
+        return None
+
+    # v14 Task 10: Čech H¹ 一致性检查 — Support finding vs Core context (原 command 作为 proxy).
+    # ponytail: 真正 Core context 拿不到, 用触发 dispatch 的 command 当 claim proxy.
+    # 升级路径: 从 ToolContext.memory_manager 取最近 N 条 Core message 做 core_context.
+    if result.success and isinstance(result.data, dict):
+        _attach_h1_check_metadata(result, command, context)
+
+    result.metadata["dispatched_to_support"] = True
+    result.metadata["dispatch_reason"] = reason
+    return result
+
+
+async def _call_support_subagent(
+    command: list[str], context: ToolContext
+) -> ToolResult | None:
+    """dispatch 一个 support subagent 跑 command; 失败返回 None (调用方降级)."""
     try:
         from huginn.tools.subagent_tool import SubagentTool
 
@@ -592,46 +669,47 @@ async def _dispatch_to_support_bash(
                 f"$ {' '.join(command)}"
             ),
         }
-        result = await SubagentTool().call(support_input, context)
+        return await SubagentTool().call(support_input, context)
     except Exception:
         # best-effort: dispatch 失败就降级到本地执行, 不阻塞主流程
         return None
 
-    # v14 Task 10: Čech H¹ 一致性检查 — Support finding vs Core context (原 command 作为 proxy).
-    # ponytail: 真正 Core context 拿不到, 用触发 dispatch 的 command 当 claim proxy.
-    # 升级路径: 从 ToolContext.memory_manager 取最近 N 条 Core message 做 core_context.
-    if result.success and isinstance(result.data, dict):
-        finding = result.data.get("summary")
-        if finding:
-            from huginn.agents.subagent import (
-                _check_finding_consistency,
-                _write_support_rejection,
-            )
 
-            core_context = " ".join(command)
-            h1_zero, h1_reason = _check_finding_consistency(finding, core_context)
-            result.metadata["h1_status"] = "zero" if h1_zero else "nonzero"
-            result.metadata["h1_reason"] = h1_reason
-            if not h1_zero:
-                _write_support_rejection(
-                    context.workspace,
-                    finding,
-                    h1_reason,
-                    core_context,
-                )
-                result.data = {
-                    "summary": None,
-                    "message": (
-                        f"Support finding rejected: {h1_reason}. "
-                        "Finding written to .huginn/support_rejections.jsonl for later review."
-                    ),
-                }
-                result.metadata["h1_obstruction"] = True
-                result.metadata["rejection_reason"] = h1_reason
+def _attach_h1_check_metadata(
+    result: ToolResult, command: list[str], context: ToolContext
+) -> None:
+    """v14 Task 10: Čech H¹ 一致性检查 — Support finding vs Core context.
 
-    result.metadata["dispatched_to_support"] = True
-    result.metadata["dispatch_reason"] = reason
-    return result
+    原 command 作为 claim proxy. 命中不一致时改写 result.data 并打 metadata 标记.
+    """
+    finding = result.data.get("summary")
+    if not finding:
+        return
+    from huginn.agents.subagent import (
+        _check_finding_consistency,
+        _write_support_rejection,
+    )
+
+    core_context = " ".join(command)
+    h1_zero, h1_reason = _check_finding_consistency(finding, core_context)
+    result.metadata["h1_status"] = "zero" if h1_zero else "nonzero"
+    result.metadata["h1_reason"] = h1_reason
+    if not h1_zero:
+        _write_support_rejection(
+            context.workspace,
+            finding,
+            h1_reason,
+            core_context,
+        )
+        result.data = {
+            "summary": None,
+            "message": (
+                f"Support finding rejected: {h1_reason}. "
+                "Finding written to .huginn/support_rejections.jsonl for later review."
+            ),
+        }
+        result.metadata["h1_obstruction"] = True
+        result.metadata["rejection_reason"] = h1_reason
 
 
 def _dispatch_to_support_bash_persistent(

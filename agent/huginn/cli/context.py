@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,6 +10,7 @@ from typing import Any
 from rich.console import Console
 
 from huginn.config import HuginnConfig
+from huginn.env_access import env_path
 
 console = Console()
 
@@ -65,9 +65,9 @@ def resolve_abaqus_mcp_path(config_path: str | None = None) -> Path:
     2. abaqus_mcp_server from config
     3. Default: ~/.abaqus-mcp/mcp_server.py
     """
-    env_path = os.environ.get("ABAQUS_MCP_SERVER_PATH")
-    if env_path:
-        return Path(env_path)
+    from_env = env_path("ABAQUS_MCP_SERVER_PATH")
+    if from_env:
+        return from_env
     if config_path:
         return Path(config_path)
     return Path.home() / ".abaqus-mcp" / "mcp_server.py"
@@ -80,57 +80,63 @@ async def init_mcp(abaqus_mcp_server: str | None = None) -> None:
     """Initialize MCP servers and register their tools."""
     global _mcp_manager
     try:
-        from huginn.mcp_client import MCPClientManager, MCPServerConfig
+        from huginn.mcp_client import MCPClientManager
         from huginn.tools.mcp_adapter import register_mcp_tools
 
         _mcp_manager = MCPClientManager()
         base = Path(__file__).parent.parent.parent.parent  # repo root
 
-        mat_db_path = base / "servers" / "mat-db-mcp" / "server.py"
-        if mat_db_path.exists():
-            await _mcp_manager.connect(
-                MCPServerConfig(
-                    name="mat-db",
-                    command="python",
-                    args=[str(mat_db_path)],
-                )
-            )
-            console.print("[green]✓[/green] MCP mat-db connected")
-
-        math_path = base / "servers" / "math-anything-mcp" / "server.py"
-        if math_path.exists():
-            await _mcp_manager.connect(
-                MCPServerConfig(
-                    name="math-anything",
-                    command="python",
-                    args=[str(math_path)],
-                )
-            )
-            console.print("[green]✓[/green] MCP math-anything connected")
-
-        abaqus_path = resolve_abaqus_mcp_path(abaqus_mcp_server)
-        if abaqus_path.exists():
-            try:
-                await _mcp_manager.connect(
-                    MCPServerConfig(
-                        name="abaqus",
-                        command="python",
-                        args=[str(abaqus_path)],
-                    )
-                )
-                console.print("[green]✓[/green] MCP abaqus connected")
-            except Exception as e:
-                console.print(f"[yellow]MCP abaqus connection skipped: {e}[/yellow]")
-        else:
-            console.print(
-                "[dim]Abaqus MCP server not found; install from .abaqus-mcp to enable[/dim]"
-            )
+        await _connect_simple_mcp(
+            _mcp_manager, "mat-db", base / "servers" / "mat-db-mcp" / "server.py"
+        )
+        await _connect_simple_mcp(
+            _mcp_manager,
+            "math-anything",
+            base / "servers" / "math-anything-mcp" / "server.py",
+        )
+        await _connect_abaqus_mcp(_mcp_manager, abaqus_mcp_server)
 
         registered = register_mcp_tools(_mcp_manager)
         if registered:
             console.print(f"[green]✓[/green] Registered {len(registered)} MCP tools")
     except Exception as e:
         console.print(f"[yellow]MCP init warning: {e}[/yellow]")
+
+
+async def _connect_simple_mcp(manager: Any, name: str, script_path: Path) -> None:
+    from huginn.mcp_client import MCPServerConfig
+
+    if script_path.exists():
+        await manager.connect(
+            MCPServerConfig(
+                name=name,
+                command="python",
+                args=[str(script_path)],
+            )
+        )
+        console.print(f"[green]✓[/green] MCP {name} connected")
+
+
+async def _connect_abaqus_mcp(manager: Any, abaqus_mcp_server: str | None) -> None:
+    from huginn.mcp_client import MCPServerConfig
+
+    abaqus_path = resolve_abaqus_mcp_path(abaqus_mcp_server)
+    if abaqus_path.exists():
+        try:
+            await manager.connect(
+                MCPServerConfig(
+                    name="abaqus",
+                    command="python",
+                    args=[str(abaqus_path)],
+                )
+            )
+            console.print("[green]✓[/green] MCP abaqus connected")
+        except Exception as e:
+            console.print(f"[yellow]MCP abaqus connection skipped: {e}[/yellow]")
+    else:
+        console.print(
+            "[dim]Abaqus MCP server not found; install from .abaqus-mcp to enable[/dim]"
+        )
 
 
 async def shutdown_mcp() -> None:
@@ -152,11 +158,7 @@ def build_agent_from_ctx(
 
     cfg = ctx.load_config()
 
-    if cfg.provider == "default" and not cfg.models:
-        ctx.console.print("[yellow]No provider or model pool configured.[/yellow]")
-        ctx.console.print(
-            "[dim]Run `huginn configure` or set HUGINN_PROVIDER / HUGINN_MODELS.[/dim]"
-        )
+    if not _agent_config_ready(ctx, cfg):
         return None
 
     sandbox_cfg = SandboxConfig(dry_run=ctx.dry_run)
@@ -183,24 +185,52 @@ def build_agent_from_ctx(
     # 工具黑名单: agent 没有 disallow 参数, 这里折算成白名单
     # 全量工具减去黑名单, 得到的就是允许注册的工具
     if ctx.disallowed_tools:
-        disallowed_set = set(ctx.disallowed_tools)
-        try:
-            from huginn.tools.registry import ToolRegistry
+        _apply_disallowed_tools(overrides, ctx.disallowed_tools)
 
-            all_tools = set(ToolRegistry.list_tools())
-        except Exception:
-            all_tools = set()
-        allowed = all_tools - disallowed_set
-        # 跟 --allowed-tools 合并: 取交集, 没给白名单就用算出来的这批
-        if overrides.get("tool_filter"):
-            overrides["tool_filter"] = [
-                t for t in overrides["tool_filter"] if t in allowed
-            ]
-        else:
-            overrides["tool_filter"] = sorted(allowed)
+    return _construct_agent(
+        HuginnAgent, ctx, cfg, profile_id, sandbox, audit, overrides
+    )
 
+
+def _agent_config_ready(ctx: CliContext, cfg: HuginnConfig) -> bool:
+    if cfg.provider == "default" and not cfg.models:
+        ctx.console.print("[yellow]No provider or model pool configured.[/yellow]")
+        ctx.console.print(
+            "[dim]Run `huginn configure` or set HUGINN_PROVIDER / HUGINN_MODELS.[/dim]"
+        )
+        return False
+    return True
+
+
+def _apply_disallowed_tools(
+    overrides: dict[str, Any], disallowed_tools: list[str]
+) -> None:
+    disallowed_set = set(disallowed_tools)
     try:
-        agent = HuginnAgent.from_config(
+        from huginn.tools.registry import ToolRegistry
+
+        all_tools = set(ToolRegistry.list_tools())
+    except Exception:
+        all_tools = set()
+    allowed = all_tools - disallowed_set
+    # 跟 --allowed-tools 合并: 取交集, 没给白名单就用算出来的这批
+    if overrides.get("tool_filter"):
+        overrides["tool_filter"] = [t for t in overrides["tool_filter"] if t in allowed]
+    else:
+        overrides["tool_filter"] = sorted(allowed)
+
+
+def _construct_agent(
+    agent_cls: Any,
+    ctx: CliContext,
+    cfg: HuginnConfig,
+    profile_id: str,
+    sandbox: Any,
+    audit: Any,
+    overrides: dict[str, Any],
+) -> Any | None:
+    try:
+        agent = agent_cls.from_config(
             cfg,
             profile_id=profile_id,
             sandbox=sandbox,

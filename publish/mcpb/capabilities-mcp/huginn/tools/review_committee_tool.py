@@ -57,20 +57,44 @@ _IMRAD_CHECKLIST = """IMRaD 7-Dimension Checklist (apply to each manuscript):
 7. References: recent (last 2 years ≥30%)? foundational works cited? self-citation <15%?"""
 
 
+def _error(error: str) -> ToolResult:
+    return ToolResult(data=None, success=False, error=error)
+
+
+def _order_reviews(reviews: dict[str, str]) -> dict[str, str]:
+    """按 FULL_REVIEW_ORDER 排序 reviews, 保证输出顺序稳定."""
+    ordered_reviews = {
+        name: reviews[name] for name in FULL_REVIEW_ORDER if name in reviews
+    }
+    # 单维度模式下调用的 persona 可能不在 FULL_REVIEW_ORDER 之外 (不会发生), 兜底补上
+    for name, text in reviews.items():
+        if name not in ordered_reviews:
+            ordered_reviews[name] = text
+    return ordered_reviews
+
+
+def _build_synthesis_prompt(reviews: dict[str, str], editor_score: int | None) -> str:
+    """拼各 reviewer 报告为合成 prompt 正文."""
+    report_parts = []
+    if editor_score is not None:
+        report_parts.append(f"【主编初筛评分】{editor_score}/10")
+    for name, text in reviews.items():
+        report_parts.append(f"【{name} 报告】\n{text}")
+    return "\n\n".join(report_parts)
+
+
 class ReviewCommitteeToolInput(BaseModel):
-    paper_content: str = Field(
-        ..., description="待审稿的论文全文 (纯文本或 Markdown)"
-    )
-    mode: Literal[
-        "full", "theory", "method", "literature", "logic", "desk_reject"
-    ] = Field(
-        default="full",
-        description=(
-            "审稿模式: full=全面审稿(5 个全调); "
-            "theory=只调 reviewer_1; method=只调 reviewer_2; "
-            "literature=只调 reviewer_3; logic=只调 reviewer_4; "
-            "desk_reject=只调 editor"
-        ),
+    paper_content: str = Field(..., description="待审稿的论文全文 (纯文本或 Markdown)")
+    mode: Literal["full", "theory", "method", "literature", "logic", "desk_reject"] = (
+        Field(
+            default="full",
+            description=(
+                "审稿模式: full=全面审稿(5 个全调); "
+                "theory=只调 reviewer_1; method=只调 reviewer_2; "
+                "literature=只调 reviewer_3; logic=只调 reviewer_4; "
+                "desk_reject=只调 editor"
+            ),
+        )
     )
     target_journal: str | None = Field(
         default=None,
@@ -121,46 +145,23 @@ class ReviewCommitteeTool(HuginnTool):
         # 1. 确定要调度的 persona 列表
         persona_names = self._select_personas(args.mode)
         if not persona_names:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"未知审稿模式: {args.mode}",
-            )
+            return _error(f"未知审稿模式: {args.mode}")
 
         # 2. 取 persona + LLM 客户端
         try:
             personas = self._load_personas(persona_names, context)
         except Exception as exc:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"加载 reviewer persona 失败: {exc}",
-            )
+            return _error(f"加载 reviewer persona 失败: {exc}")
 
         try:
             model = self._get_model(context)
         except Exception as exc:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"初始化 LLM 客户端失败: {exc}",
-            )
+            return _error(f"初始化 LLM 客户端失败: {exc}")
 
         # 3. 并行调度各 reviewer
-        tasks = [
-            self._run_reviewer(name, personas[name], args, model)
-            for name in persona_names
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        reviews: dict[str, str] = {}
-        errors: dict[str, str] = {}
-        for name, res in zip(persona_names, results):
-            if isinstance(res, Exception):
-                logger.warning("reviewer %s 审稿失败: %s", name, res)
-                errors[name] = f"{type(res).__name__}: {res}"
-            else:
-                reviews[name] = res
+        reviews, errors = await self._gather_reviews(
+            persona_names, personas, args, model
+        )
 
         # 4. 解析主编初筛评分
         editor_score = self._parse_editor_score(reviews.get("editor_desk_reject"))
@@ -169,15 +170,7 @@ class ReviewCommitteeTool(HuginnTool):
         synthesis = await self._synthesize(args, reviews, editor_score, model)
 
         # 6. 按 FULL_REVIEW_ORDER 排序 reviews, 保证输出顺序稳定
-        ordered_reviews = {
-            name: reviews[name]
-            for name in FULL_REVIEW_ORDER
-            if name in reviews
-        }
-        # 单维度模式下调用的 persona 可能不在 FULL_REVIEW_ORDER 之外 (不会发生), 兜底补上
-        for name, text in reviews.items():
-            if name not in ordered_reviews:
-                ordered_reviews[name] = text
+        ordered_reviews = _order_reviews(reviews)
 
         data: dict[str, Any] = {
             "editor_score": editor_score,
@@ -194,6 +187,30 @@ class ReviewCommitteeTool(HuginnTool):
 
         return ToolResult(data=data, success=True)
 
+    async def _gather_reviews(
+        self,
+        persona_names: list[str],
+        personas: dict[str, Any],
+        args: ReviewCommitteeToolInput,
+        model: Any,
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """并行调度各 reviewer, 分离成功结果与异常."""
+        tasks = [
+            self._run_reviewer(name, personas[name], args, model)
+            for name in persona_names
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        reviews: dict[str, str] = {}
+        errors: dict[str, str] = {}
+        for name, res in zip(persona_names, results):
+            if isinstance(res, Exception):
+                logger.warning("reviewer %s 审稿失败: %s", name, res)
+                errors[name] = f"{type(res).__name__}: {res}"
+            else:
+                reviews[name] = res
+        return reviews, errors
+
     # ------------------------------------------------------------------ helpers
 
     def _select_personas(self, mode: str) -> list[str]:
@@ -203,9 +220,7 @@ class ReviewCommitteeTool(HuginnTool):
         persona = MODE_PERSONA_MAP.get(mode)
         return [persona] if persona else []
 
-    def _load_personas(
-        self, names: list[str], context: ToolContext
-    ) -> dict[str, Any]:
+    def _load_personas(self, names: list[str], context: ToolContext) -> dict[str, Any]:
         """通过 PersonaManager 加载需要的 persona.
 
         workspace 优先用 context.workspace, 没有就退到 cwd —— 这样 persona
@@ -288,7 +303,9 @@ class ReviewCommitteeTool(HuginnTool):
         lines.append(args.paper_content)
         lines.append("")
         lines.append("=" * 60)
-        lines.append("请开始审查。先按你角色的视角审, 再逐条过 IMRaD 清单, 指出未通过项。批评要尖锐直接并指向具体段落, 禁止讨好型套话, 禁止捏造文献, 写得好的地方也要公正指出。")
+        lines.append(
+            "请开始审查。先按你角色的视角审, 再逐条过 IMRaD 清单, 指出未通过项。批评要尖锐直接并指向具体段落, 禁止讨好型套话, 禁止捏造文献, 写得好的地方也要公正指出。"
+        )
         return "\n".join(lines)
 
     def _parse_editor_score(self, editor_report: str | None) -> int | None:
@@ -331,19 +348,10 @@ class ReviewCommitteeTool(HuginnTool):
         from langchain_core.messages import HumanMessage, SystemMessage
 
         if not reviews:
-            return {
-                "top_3_issues": [],
-                "revision_priority": [],
-                "overall_recommendation": self._fallback_recommendation(editor_score),
-            }
+            return self._fallback_synthesis(editor_score)
 
         # 拼各 reviewer 报告
-        report_parts = []
-        if editor_score is not None:
-            report_parts.append(f"【主编初筛评分】{editor_score}/10")
-        for name, text in reviews.items():
-            report_parts.append(f"【{name} 报告】\n{text}")
-        combined = "\n\n".join(report_parts)
+        combined = _build_synthesis_prompt(reviews, editor_score)
 
         messages = [
             SystemMessage(content=_SYNTHESIS_SYSTEM_PROMPT),
@@ -355,7 +363,9 @@ class ReviewCommitteeTool(HuginnTool):
                 response = await model.ainvoke(messages)
             else:
                 response = await asyncio.to_thread(model.invoke, messages)
-            content = response.content if hasattr(response, "content") else str(response)
+            content = (
+                response.content if hasattr(response, "content") else str(response)
+            )
             if not isinstance(content, str):
                 content = json.dumps(content, ensure_ascii=False)
             parsed = self._parse_synthesis_json(content)
@@ -365,6 +375,9 @@ class ReviewCommitteeTool(HuginnTool):
             logger.warning("合成审稿结论失败, 退回分数兜底: %s", exc)
 
         # 解析失败就按分数兜底
+        return self._fallback_synthesis(editor_score)
+
+    def _fallback_synthesis(self, editor_score: int | None) -> dict[str, Any]:
         return {
             "top_3_issues": [],
             "revision_priority": [],
@@ -397,7 +410,12 @@ class ReviewCommitteeTool(HuginnTool):
                 return None
 
         recommendation = str(data.get("overall_recommendation", "")).strip().lower()
-        if recommendation not in {"accept", "minor_revision", "major_revision", "reject"}:
+        if recommendation not in {
+            "accept",
+            "minor_revision",
+            "major_revision",
+            "reject",
+        }:
             recommendation = self._fallback_recommendation(
                 self._extract_score_from_data(data)
             )

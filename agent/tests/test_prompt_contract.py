@@ -1,3 +1,4 @@
+# governance-gate
 """prompt 面「声明 ↔ 生效」一致性门 (prompt contract).
 
 治理层把 prompt 段建模为"注册面 ↔ 生效面": `prompt_segments.register_prompt_segment`
@@ -30,31 +31,16 @@ import ast
 import importlib.util
 import pathlib
 import sys
-import types
 
 import pytest
 
+from ._import_shim import ensure_namespace_pkg
+
 _AGENT = pathlib.Path(__file__).resolve().parents[1]
 
+ensure_namespace_pkg("huginn", _AGENT / "huginn", ("plugins", "agent"))
 
-def _ensure_namespace_pkg(name: str, path: pathlib.Path) -> None:
-    """把 `name` 装成命名空间包 (只给 `__path__`), 绕过其重依赖 `__init__`.
-
-    已加载的真实包不覆盖 (全量套件里其它测试可能已 import 真实包 —— 那正是我们想要的).
-    """
-    existing = sys.modules.get(name)
-    if existing is not None and getattr(existing, "__path__", None):
-        return
-    pkg = types.ModuleType(name)
-    pkg.__path__ = [str(path)]
-    sys.modules[name] = pkg
-
-
-_ensure_namespace_pkg("huginn", _AGENT / "huginn")
-_ensure_namespace_pkg("huginn.plugins", _AGENT / "huginn" / "plugins")
-_ensure_namespace_pkg("huginn.agent", _AGENT / "huginn" / "agent")
-
-# 导入 prompt_builder 时其模块尾的 `_register_builtin_segments()` 已注册 13 个内置段.
+# 导入 prompt_builder 时其模块尾的 `_register_builtin_segments()` 已注册 14 个内置段.
 import huginn.agent.prompt_builder as pb  # noqa: E402
 import huginn.plugins.prompt_segments as ps  # noqa: E402
 
@@ -63,7 +49,7 @@ _VALID_PATHS = frozenset({"main", "s7", "autoloop"})
 # 关键段 floor (不得从注册/声明中消失). 与治理台账 `PROMPT_SPECS` 同源 (下方交叉核对).
 _REQUIRED_SEGMENTS = (
     "persona", "core_principles", "behavioral_discipline", "response_format",
-    "mode", "phase", "metacog", "tools",
+    "mode", "phase", "metacog", "mechanisms", "tools",
     "multimodal", "writing", "multi_agent_protocol", "thinking", "safety",
 )
 
@@ -355,8 +341,8 @@ def test_safety_spec_source_synchronized():
 def test_main_path_source_uses_declaration_renderer():
     """源级守卫 (G-1): 主路径入口须调用按声明渲染, 不得回退到只渲染 thinking 的硬编码."""
     src = (_AGENT / "huginn" / "agent" / "context.py").read_text(encoding="utf-8")
-    assert "render_prompt_segments_for_path(" in src, (
-        "context.py 不再使用 render_prompt_segments_for_path —— 主路径段注入被改回硬编码?"
+    assert "render_prompt_segments_for_path" in src, (
+        "context.py 不再使用按声明渲染的入口 —— 主路径段注入被改回硬编码?"
     )
     assert 'render_prompt_segment("thinking"' not in src, (
         "context.py 回退到只渲染 thinking 的硬编码 (孤儿段回归)."
@@ -369,6 +355,7 @@ def test_governance_prompt_specs_match_registry():
         "governance_audit_pc", _AGENT / "huginn" / "cli" / "governance_audit.py"
     )
     ga = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = ga  # dataclass 需在 sys.modules 里解析模块 (py3.14)
     spec.loader.exec_module(ga)
     assert set(ga.PROMPT_SPECS) == set(ps.registered_prompt_segments()), (
         f"台账 PROMPT_SPECS={sorted(ga.PROMPT_SPECS)} 与注册表 "

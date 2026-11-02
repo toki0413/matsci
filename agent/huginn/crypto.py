@@ -372,6 +372,18 @@ class KeyManager:
         return vault
 
 
+def _secure_cleanup_temp_dir(temp_dir: Path) -> None:
+    """逐个安全擦除 temp_dir 下的文件, 再删掉目录本身."""
+    for child in temp_dir.rglob("*"):
+        if not child.is_file():
+            continue
+        try:
+            secure_erase_file(child)
+        except Exception:
+            logger.debug("secure erase file failed", exc_info=True)
+    shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 class EncryptedDatabase:
     """File-level encryption wrapper for database files (SQLite/ChromaDB).
 
@@ -426,13 +438,7 @@ class EncryptedDatabase:
         finally:
             # Securely erase all files in temp dir before removing it
             if self._temp_dir and self._temp_dir.exists():
-                for child in self._temp_dir.rglob("*"):
-                    if child.is_file():
-                        try:
-                            secure_erase_file(child)
-                        except Exception:
-                            logger.debug("secure erase file failed", exc_info=True)
-                shutil.rmtree(self._temp_dir, ignore_errors=True)
+                _secure_cleanup_temp_dir(self._temp_dir)
             self._temp_dir = None
             self._plaintext_path = None
 

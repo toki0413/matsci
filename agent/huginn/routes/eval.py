@@ -63,145 +63,48 @@ async def eval_run(params: dict[str, Any]) -> dict[str, Any]:
     """
     from huginn.evaluation.matworld_bench import MatWorldBench
     from huginn.telemetry import TelemetryCollector, save_trajectory
-    from huginn.validation.grader import default_registry
 
     run_id = f"eval_{int(time.time())}_{uuid.uuid4().hex[:6]}"
     collector = TelemetryCollector()
 
     # Filter tasks if requested
     bench = MatWorldBench()
-    categories = params.get("categories")
-    task_ids = params.get("task_ids")
-    if task_ids:
-        bench.tasks = [t for t in bench.tasks if t.id in task_ids]
-    elif categories:
-        bench.tasks = [t for t in bench.tasks if t.category in categories]
+    _filter_bench_tasks(bench, params)
 
     if not bench.tasks:
         return {"success": False, "error": "No matching benchmark tasks"}
 
-    # Try to get the agent for live evaluation; fall back to dry-run
-    agent = None
-    try:
-        from huginn.server_core import get_agent
-        agent = await get_agent()
-    except Exception:
-        logger.info("agent not available, eval will run in dry mode")
+    agent = await _get_eval_agent()
 
     # Run each benchmark task
     results: list[dict[str, Any]] = []
     with collector.span("eval_run", run_id=run_id, task_count=len(bench.tasks)):
         for task in bench.tasks:
-            task_start = time.time()
-            agent_output: dict[str, Any] = {}
+            results.append(
+                await _run_and_grade_task(agent, bench, task, run_id, collector)
+            )
 
-            with collector.span("eval_task", task_id=task.id, category=task.category):
-                if agent is not None:
-                    try:
-                        # Use the agent's astream to get a response.
-                        # Per-task timeout prevents a single hung LLM call
-                        # from stalling the entire benchmark run.
-                        response_text = ""
-                        async with asyncio.timeout(_AGENT_STREAM_TIMEOUT):
-                            async for chunk in agent.astream(
-                                task.prompt, thread_id=f"eval_{run_id}"
-                            ):
-                                if isinstance(chunk, dict):
-                                    response_text += chunk.get("content", "") or ""
-                                elif isinstance(chunk, str):
-                                    response_text += chunk
+    n_pass, n_total, avg_grader = _aggregate_eval_results(results)
+    goal_judge_result = _run_goal_judge(agent, params, results, n_pass, n_total)
+    traj_path = _save_eval_trajectory(collector, run_id, save_trajectory)
 
-                        # Try to parse structured output from the response
-                        agent_output = _parse_agent_output(response_text)
-                        agent_output["_raw_response"] = response_text[:500]
-                    except TimeoutError:
-                        agent_output = {
-                            "__timeout__": f"agent did not respond within {_AGENT_STREAM_TIMEOUT}s"
-                        }
-                        logger.warning(
-                            "eval task %s timed out after %ss", task.id, _AGENT_STREAM_TIMEOUT
-                        )
-                    except Exception as exc:
-                        agent_output = {"__error__": str(exc)}
-                        logger.warning("eval task %s failed: %s", task.id, exc)
-                else:
-                    agent_output = {"__skipped__": "agent not available"}
+    report = _build_eval_report(
+        run_id, results, n_pass, n_total, avg_grader, goal_judge_result, traj_path
+    )
+    _persist_eval_report(report, run_id)
+    return {"success": True, "report": report}
 
-            # Evaluate against expected results
-            bench_result = bench.evaluate(task.id, agent_output)
 
-            # Grade with GraderRegistry
-            grader = default_registry()
-            grader_results = grader.evaluate_all({
-                "output": agent_output,
-                "task": {
-                    "id": task.id,
-                    "category": task.category,
-                    "expected": task.expected_result,
-                },
-            })
-
-            results.append({
-                "task_id": task.id,
-                "category": task.category,
-                "prompt": task.prompt,
-                "passed": bench_result.passed,
-                "score": bench_result.score,
-                "details": bench_result.details,
-                "grader_scores": [
-                    {"name": g.name, "score": g.score, "passed": g.passed, "message": g.message}
-                    for g in grader_results
-                ],
-                "exec_time_seconds": round(time.time() - task_start, 2),
-            })
-
-    # Aggregate
-    n_pass = sum(1 for r in results if r["passed"])
-    n_total = len(results)
-    avg_grader = 0.0
-    grader_count = 0
-    for r in results:
-        for g in r["grader_scores"]:
-            avg_grader += g["score"]
-            grader_count += 1
-    avg_grader = round(avg_grader / grader_count, 4) if grader_count else 0.0
-
-    # GoalJudge — overall objective assessment
-    goal_judge_result = None
-    goal = params.get("goal", f"Pass {n_total} materials science benchmark tasks")
-    try:
-        from huginn.evaluation.goal_judge import GoalJudge
-
-        # Use verification model if available, else pass None for rule-based
-        judge_llm = None
-        if agent is not None and getattr(agent, "model_router", None):
-            with contextlib.suppress(Exception):
-                judge_llm = agent.model_router.select_verification()
-
-        judge = GoalJudge(llm=judge_llm)
-        final_output = f"Benchmark pass rate: {n_pass}/{n_total} ({n_pass/n_total*100:.1f}%)\n"
-        final_output += "\n".join(
-            f"  {r['task_id']}: {'PASS' if r['passed'] else 'FAIL'} (score={r['score']})"
-            for r in results
-        )
-        goal_judge_result = judge.judge(
-            objective=goal,
-            trajectory=None,
-            final_output=final_output,
-        )
-    except Exception as exc:
-        logger.warning("GoalJudge failed: %s", exc)
-        goal_judge_result = {"error": str(exc)}
-
-    # Save trajectory
-    traj_path = _eval_dir() / f"{run_id}_trajectory.json"
-    try:
-        save_trajectory(collector, traj_path, metadata={"run_id": run_id, "type": "eval"})
-    except Exception:
-        logger.debug("trajectory save failed", exc_info=True)
-
-    # Build and persist eval report
-    report = {
+def _build_eval_report(
+    run_id: str,
+    results: list[dict[str, Any]],
+    n_pass: int,
+    n_total: int,
+    avg_grader: float,
+    goal_judge_result: Any,
+    traj_path: Path,
+) -> dict[str, Any]:
+    return {
         "run_id": run_id,
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "categories": list({r["category"] for r in results}),
@@ -215,6 +118,155 @@ async def eval_run(params: dict[str, Any]) -> dict[str, Any]:
         "trajectory_path": str(traj_path),
     }
 
+
+def _filter_bench_tasks(bench, params: dict[str, Any]) -> None:
+    """Apply task_ids (precedence) or categories filters to the bench suite."""
+    categories = params.get("categories")
+    task_ids = params.get("task_ids")
+    if task_ids:
+        bench.tasks = [t for t in bench.tasks if t.id in task_ids]
+    elif categories:
+        bench.tasks = [t for t in bench.tasks if t.category in categories]
+
+
+async def _get_eval_agent():
+    """Try to get the live agent; fall back to None (dry-run)."""
+    try:
+        from huginn.server_core import get_agent
+
+        return await get_agent()
+    except Exception:
+        logger.info("agent not available, eval will run in dry mode")
+        return None
+
+
+async def _collect_agent_output(agent, task, run_id: str) -> dict[str, Any]:
+    """Stream one task through the agent with a per-task timeout."""
+    try:
+        # Use the agent's astream to get a response.
+        # Per-task timeout prevents a single hung LLM call
+        # from stalling the entire benchmark run.
+        response_text = ""
+        async with asyncio.timeout(_AGENT_STREAM_TIMEOUT):
+            async for chunk in agent.astream(task.prompt, thread_id=f"eval_{run_id}"):
+                if isinstance(chunk, dict):
+                    response_text += chunk.get("content", "") or ""
+                elif isinstance(chunk, str):
+                    response_text += chunk
+
+        # Try to parse structured output from the response
+        agent_output = _parse_agent_output(response_text)
+        agent_output["_raw_response"] = response_text[:500]
+        return agent_output
+    except TimeoutError:
+        logger.warning(
+            "eval task %s timed out after %ss", task.id, _AGENT_STREAM_TIMEOUT
+        )
+        return {"__timeout__": f"agent did not respond within {_AGENT_STREAM_TIMEOUT}s"}
+    except Exception as exc:
+        logger.warning("eval task %s failed: %s", task.id, exc)
+        return {"__error__": str(exc)}
+
+
+async def _run_and_grade_task(agent, bench, task, run_id, collector) -> dict[str, Any]:
+    """Run one benchmark task and grade it, returning its results row."""
+    from huginn.validation.grader import default_registry
+
+    task_start = time.time()
+    with collector.span("eval_task", task_id=task.id, category=task.category):
+        if agent is not None:
+            agent_output = await _collect_agent_output(agent, task, run_id)
+        else:
+            agent_output = {"__skipped__": "agent not available"}
+
+    # Evaluate against expected results
+    bench_result = bench.evaluate(task.id, agent_output)
+
+    # Grade with GraderRegistry
+    grader_results = default_registry().evaluate_all(
+        {
+            "output": agent_output,
+            "task": {
+                "id": task.id,
+                "category": task.category,
+                "expected": task.expected_result,
+            },
+        }
+    )
+
+    return {
+        "task_id": task.id,
+        "category": task.category,
+        "prompt": task.prompt,
+        "passed": bench_result.passed,
+        "score": bench_result.score,
+        "details": bench_result.details,
+        "grader_scores": [
+            {"name": g.name, "score": g.score, "passed": g.passed, "message": g.message}
+            for g in grader_results
+        ],
+        "exec_time_seconds": round(time.time() - task_start, 2),
+    }
+
+
+def _aggregate_eval_results(results: list[dict[str, Any]]) -> tuple[int, int, float]:
+    """Aggregate pass count, total count, and mean grader score."""
+    n_pass = sum(1 for r in results if r["passed"])
+    n_total = len(results)
+    avg_grader = 0.0
+    grader_count = 0
+    for r in results:
+        for g in r["grader_scores"]:
+            avg_grader += g["score"]
+            grader_count += 1
+    avg_grader = round(avg_grader / grader_count, 4) if grader_count else 0.0
+    return n_pass, n_total, avg_grader
+
+
+def _run_goal_judge(agent, params, results, n_pass: int, n_total: int):
+    """GoalJudge — overall objective assessment (rule-based fallback)."""
+    goal = params.get("goal", f"Pass {n_total} materials science benchmark tasks")
+    try:
+        from huginn.evaluation.goal_judge import GoalJudge
+
+        # Use verification model if available, else pass None for rule-based
+        judge_llm = None
+        if agent is not None and getattr(agent, "model_router", None):
+            with contextlib.suppress(Exception):
+                judge_llm = agent.model_router.select_verification()
+
+        judge = GoalJudge(llm=judge_llm)
+        final_output = (
+            f"Benchmark pass rate: {n_pass}/{n_total} ({n_pass / n_total * 100:.1f}%)\n"
+        )
+        final_output += "\n".join(
+            f"  {r['task_id']}: {'PASS' if r['passed'] else 'FAIL'} (score={r['score']})"
+            for r in results
+        )
+        return judge.judge(
+            objective=goal,
+            trajectory=None,
+            final_output=final_output,
+        )
+    except Exception as exc:
+        logger.warning("GoalJudge failed: %s", exc)
+        return {"error": str(exc)}
+
+
+def _save_eval_trajectory(collector, run_id: str, save_trajectory) -> Path:
+    """Persist the telemetry trajectory; return its path regardless of failure."""
+    traj_path = _eval_dir() / f"{run_id}_trajectory.json"
+    try:
+        save_trajectory(
+            collector, traj_path, metadata={"run_id": run_id, "type": "eval"}
+        )
+    except Exception:
+        logger.debug("trajectory save failed", exc_info=True)
+    return traj_path
+
+
+def _persist_eval_report(report: dict[str, Any], run_id: str) -> None:
+    """Write the eval report JSON to disk; failures are logged, not raised."""
     report_path = _eval_dir() / f"{run_id}.json"
     try:
         report_path.write_text(
@@ -223,8 +275,6 @@ async def eval_run(params: dict[str, Any]) -> dict[str, Any]:
         )
     except Exception as exc:
         logger.warning("eval report save failed: %s", exc)
-
-    return {"success": True, "report": report}
 
 
 @router.get("/eval/history")
@@ -235,14 +285,16 @@ async def eval_history(limit: int = 20) -> dict[str, Any]:
         for p in sorted(_eval_dir().glob("eval_*.json"), reverse=True)[:limit]:
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
-                runs.append({
-                    "run_id": data.get("run_id", p.stem),
-                    "timestamp": data.get("timestamp", ""),
-                    "total": data.get("total", 0),
-                    "passed": data.get("passed", 0),
-                    "pass_rate": data.get("pass_rate", 0.0),
-                    "avg_grader_score": data.get("avg_grader_score", 0.0),
-                })
+                runs.append(
+                    {
+                        "run_id": data.get("run_id", p.stem),
+                        "timestamp": data.get("timestamp", ""),
+                        "total": data.get("total", 0),
+                        "passed": data.get("passed", 0),
+                        "pass_rate": data.get("pass_rate", 0.0),
+                        "avg_grader_score": data.get("avg_grader_score", 0.0),
+                    }
+                )
             except Exception:
                 logger.debug("best-effort op failed", exc_info=True)
                 continue
@@ -266,14 +318,7 @@ async def eval_results(run_id: str) -> dict[str, Any]:
         return {"success": False, "error": str(exc)}
 
 
-@router.post("/eval/analyze")
-async def eval_analyze(params: dict[str, Any]) -> dict[str, Any]:
-    """Analyze failure patterns from past eval runs.
-
-    Clusters failures by category and grader, showing which
-    dimensions are the weakest.
-    """
-    limit = int(params.get("limit", 10))
+def _load_recent_eval_runs(limit: int) -> list[dict[str, Any]]:
     runs: list[dict[str, Any]] = []
     try:
         for p in sorted(_eval_dir().glob("eval_*.json"), reverse=True)[:limit]:
@@ -285,11 +330,15 @@ async def eval_analyze(params: dict[str, Any]) -> dict[str, Any]:
                 continue
     except Exception:
         logger.debug("eval runs glob skipped", exc_info=True)
+    return runs
 
-    if not runs:
-        return {"success": True, "analysis": {"message": "no past eval runs found"}}
 
-    # Aggregate failures by category and task
+def _accumulate_failure_stats(
+    runs: list[dict[str, Any]],
+) -> tuple[
+    dict[str, dict[str, int]], dict[str, dict[str, int]], dict[str, dict[str, int]]
+]:
+    """按 category / task / grader 聚合失败统计."""
     category_stats: dict[str, dict[str, int]] = {}
     task_stats: dict[str, dict[str, int]] = {}
     grader_stats: dict[str, dict[str, int]] = {}
@@ -316,30 +365,55 @@ async def eval_analyze(params: dict[str, Any]) -> dict[str, Any]:
                 else:
                     grader_stats[gname]["failed"] += 1
 
-    # Find weakest categories
-    weak_categories = sorted(
+    return category_stats, task_stats, grader_stats
+
+
+def _pass_rate_rows(
+    stats: dict[str, dict[str, int]], label: str
+) -> list[dict[str, Any]]:
+    """按通过率升序的 breakdown 行."""
+    return sorted(
         [
             {
-                "category": k,
+                label: k,
                 "pass_rate": round(v["passed"] / v["total"], 4) if v["total"] else 0.0,
                 **v,
             }
-            for k, v in category_stats.items()
+            for k, v in stats.items()
         ],
         key=lambda x: x["pass_rate"],
     )
 
-    weak_tasks = sorted(
-        [
-            {
-                "task_id": k,
-                "pass_rate": round(v["passed"] / v["total"], 4) if v["total"] else 0.0,
-                **v,
-            }
-            for k, v in task_stats.items()
-        ],
-        key=lambda x: x["pass_rate"],
-    )
+
+def _grader_breakdown(grader_stats: dict[str, dict[str, int]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "grader": k,
+            "pass_rate": round(v["passed"] / v["total"], 4) if v["total"] else 0.0,
+            **v,
+        }
+        for k, v in sorted(grader_stats.items())
+    ]
+
+
+@router.post("/eval/analyze")
+async def eval_analyze(params: dict[str, Any]) -> dict[str, Any]:
+    """Analyze failure patterns from past eval runs.
+
+    Clusters failures by category and grader, showing which
+    dimensions are the weakest.
+    """
+    limit = int(params.get("limit", 10))
+    runs = _load_recent_eval_runs(limit)
+
+    if not runs:
+        return {"success": True, "analysis": {"message": "no past eval runs found"}}
+
+    category_stats, task_stats, grader_stats = _accumulate_failure_stats(runs)
+
+    # Find weakest categories
+    weak_categories = _pass_rate_rows(category_stats, "category")
+    weak_tasks = _pass_rate_rows(task_stats, "task_id")
 
     return {
         "success": True,
@@ -348,14 +422,7 @@ async def eval_analyze(params: dict[str, Any]) -> dict[str, Any]:
             "total_tasks": sum(v["total"] for v in task_stats.values()),
             "category_breakdown": weak_categories,
             "task_breakdown": weak_tasks,
-            "grader_breakdown": [
-                {
-                    "grader": k,
-                    "pass_rate": round(v["passed"] / v["total"], 4) if v["total"] else 0.0,
-                    **v,
-                }
-                for k, v in sorted(grader_stats.items())
-            ],
+            "grader_breakdown": _grader_breakdown(grader_stats),
         },
     }
 

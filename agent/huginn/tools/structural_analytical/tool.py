@@ -14,6 +14,52 @@ from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool, ToolProfile
 
 
+def _structural_dimension_checks(args, beam, sym_units, check_expression_dimensions):
+    """按 action 生成对应的量纲自检条目."""
+    checks: list[dict] = []
+    if args.action == "beam_modal" and beam is not None:
+        checks.append(
+            {
+                "name": "beam_modal_frequency",
+                "expr": "beta**2 * sqrt(E * I / (rho * A * L**4))",
+                **check_expression_dimensions(
+                    "beta**2 * sqrt(E * I / (rho * A * L**4))", sym_units, "1/s"
+                ),
+            }
+        )
+    elif args.action == "beam_buckling" and beam is not None:
+        checks.append(
+            {
+                "name": "beam_euler_buckling_load",
+                "expr": "pi**2 * E * I / L**2",
+                **check_expression_dimensions("pi**2 * E * I / (L**2)", sym_units, "N"),
+            }
+        )
+    elif args.action in ("plate_static", "plate_modal", "plate_buckling"):
+        # 板类共用: 弯曲刚度 D = E·h³/(12(1-ν²)), 量纲须为 N·m (M·L²·T⁻²·L).
+        checks.append(
+            {
+                "name": "plate_bending_stiffness",
+                "expr": "E * h**3 / (1 - nu**2)",
+                **check_expression_dimensions(
+                    "E * h**3 / (1 - nu**2)", sym_units, "N*m"
+                ),
+            }
+        )
+    elif args.action == "shell_buckling":
+        # Donnell 轴向临界应力 σ_cl = E·h/(R·√(3(1-ν²))) → Pa
+        checks.append(
+            {
+                "name": "shell_axial_buckling_stress",
+                "expr": "E * h / (R * sqrt(3 * (1 - nu**2)))",
+                **check_expression_dimensions(
+                    "E * h / (R * sqrt(3 * (1 - nu**2)))", sym_units, "Pa"
+                ),
+            }
+        )
+    return checks
+
+
 def _structural_dimensional_precheck(args: StructuralAnalyticalInput) -> dict:
     """解析求解前的量纲自检(契约层, 非学习).
 
@@ -35,46 +81,68 @@ def _structural_dimensional_precheck(args: StructuralAnalyticalInput) -> dict:
 
     beam = args.beam
     sym_units = {
-        "E": "Pa", "rho": "kg/m3", "nu": "1",
-        "L": "m", "h": "m", "R": "m",
-        "I": "m4", "A": "m2", "a": "m", "b": "m",
+        "E": "Pa",
+        "rho": "kg/m3",
+        "nu": "1",
+        "L": "m",
+        "h": "m",
+        "R": "m",
+        "I": "m4",
+        "A": "m2",
+        "a": "m",
+        "b": "m",
         "beta": "1",
     }
 
-    if args.action == "beam_modal" and beam is not None:
-        checks.append({
-            "name": "beam_modal_frequency",
-            "expr": "beta**2 * sqrt(E * I / (rho * A * L**4))",
-            **check_expression_dimensions(
-                "beta**2 * sqrt(E * I / (rho * A * L**4))", sym_units, "1/s"),
-        })
-    elif args.action == "beam_buckling" and beam is not None:
-        checks.append({
-            "name": "beam_euler_buckling_load",
-            "expr": "pi**2 * E * I / L**2",
-            **check_expression_dimensions(
-                "pi**2 * E * I / (L**2)", sym_units, "N"),
-        })
-    elif args.action in ("plate_static", "plate_modal", "plate_buckling"):
-        # 板类共用: 弯曲刚度 D = E·h³/(12(1-ν²)), 量纲须为 N·m (M·L²·T⁻²·L).
-        checks.append({
-            "name": "plate_bending_stiffness",
-            "expr": "E * h**3 / (1 - nu**2)",
-            **check_expression_dimensions(
-                "E * h**3 / (1 - nu**2)", sym_units, "N*m"),
-        })
-    elif args.action == "shell_buckling":
-        # Donnell 轴向临界应力 σ_cl = E·h/(R·√(3(1-ν²))) → Pa
-        checks.append({
-            "name": "shell_axial_buckling_stress",
-            "expr": "E * h / (R * sqrt(3 * (1 - nu**2)))",
-            **check_expression_dimensions(
-                "E * h / (R * sqrt(3 * (1 - nu**2)))", sym_units, "Pa"),
-        })
+    checks.extend(
+        _structural_dimension_checks(args, beam, sym_units, check_expression_dimensions)
+    )
 
     hard_fail = any(c.get("ok") is False and c.get("error") for c in checks)
-    return {"ok": not hard_fail, "checks": checks,
-            "error": None if not hard_fail else "结构解析量纲自检未通过"}
+    return {
+        "ok": not hard_fail,
+        "checks": checks,
+        "error": None if not hard_fail else "结构解析量纲自检未通过",
+    }
+
+
+def _dispatch_structural_action(args: StructuralAnalyticalInput) -> ToolResult:
+    """按 action 分派到具体解析求解器."""
+    if args.action in ("beam_static", "beam_modal", "beam_buckling"):
+        from .beams import beam_buckling, beam_modal, beam_static
+
+        if args.action == "beam_static":
+            return beam_static(args)
+        if args.action == "beam_modal":
+            return beam_modal(args)
+        return beam_buckling(args)
+
+    if args.action in ("plate_static", "plate_modal", "plate_buckling"):
+        from .plates import plate_buckling, plate_modal, plate_static
+
+        if args.action == "plate_static":
+            return plate_static(args)
+        if args.action == "plate_modal":
+            return plate_modal(args)
+        return plate_buckling(args)
+
+    if args.action in ("shell_buckling", "shell_modal"):
+        from .shells import shell_buckling, shell_modal
+
+        if args.action == "shell_buckling":
+            return shell_buckling(args)
+        return shell_modal(args)
+
+    if args.action == "stress_concentration":
+        from .stress_concentration import stress_concentration
+
+        return stress_concentration(args)
+
+    return ToolResult(
+        data=None,
+        success=False,
+        error=f"Unknown action: {args.action}",
+    )
 
 
 class BeamSpec(BaseModel):
@@ -203,15 +271,17 @@ class StructuralAnalyticalInput(BaseModel):
     shell_load_type: Literal["axial", "external_pressure", "torsion"] = "axial"
 
     # stress_concentration
-    notch_type: Literal[
-        "hole", "elliptical_hole", "fillet", "groove", "shoulder"
-    ] = "hole"
+    notch_type: Literal["hole", "elliptical_hole", "fillet", "groove", "shoulder"] = (
+        "hole"
+    )
     notch_geometry: dict[str, float] = Field(
         default_factory=dict,
         description="hole: {d, D}; elliptical_hole: {a, b}; fillet/groove/shoulder: {d, D, r}",
     )
     notch_load: Literal["tension", "bending", "torsion"] = "tension"
-    material_uts: float | None = Field(default=None, gt=0, description="极限抗拉强度, Pa")
+    material_uts: float | None = Field(
+        default=None, gt=0, description="极限抗拉强度, Pa"
+    )
 
     unit: str = Field(default="SI")
 
@@ -232,9 +302,7 @@ class StructuralAnalyticalInput(BaseModel):
             "euler_bernoulli",
             "timoshenko",
         ):
-            raise ValueError(
-                "beam_* requires theory in (euler_bernoulli, timoshenko)"
-            )
+            raise ValueError("beam_* requires theory in (euler_bernoulli, timoshenko)")
         if self.action.startswith("plate_") and self.theory not in (
             "kirchhoff",
             "mindlin",
@@ -289,42 +357,10 @@ class StructuralAnalyticalTool(HuginnTool):
                     error=pre["error"] or "结构解析量纲自检未通过",
                 )
 
-            if args.action in ("beam_static", "beam_modal", "beam_buckling"):
-                from .beams import beam_buckling, beam_modal, beam_static
-
-                if args.action == "beam_static":
-                    return beam_static(args)
-                if args.action == "beam_modal":
-                    return beam_modal(args)
-                return beam_buckling(args)
-
-            if args.action in ("plate_static", "plate_modal", "plate_buckling"):
-                from .plates import plate_buckling, plate_modal, plate_static
-
-                if args.action == "plate_static":
-                    return plate_static(args)
-                if args.action == "plate_modal":
-                    return plate_modal(args)
-                return plate_buckling(args)
-
-            if args.action in ("shell_buckling", "shell_modal"):
-                from .shells import shell_buckling, shell_modal
-
-                if args.action == "shell_buckling":
-                    return shell_buckling(args)
-                return shell_modal(args)
-
-            if args.action == "stress_concentration":
-                from .stress_concentration import stress_concentration
-
-                return stress_concentration(args)
-
-            return ToolResult(
-                data=None, success=False,
-                error=f"Unknown action: {args.action}",
-            )
+            return _dispatch_structural_action(args)
         except Exception as exc:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"Structural analytical failed: {exc}",
             )

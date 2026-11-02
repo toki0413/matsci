@@ -22,6 +22,72 @@ from huginn.tools.base import HuginnTool, ToolProfile
 logger = logging.getLogger(__name__)
 
 
+def _openmm_not_installed(action: str, pdb: Path) -> ToolResult:
+    """openmm 缺失时的跳过结果."""
+    return ToolResult(
+        data={"action": action, "status": "skipped", "pdb_file": str(pdb)},
+        success=True,
+        error="openmm not installed. Install with: conda install -c conda-forge openmm",
+    )
+
+
+def _attach_openmm_audit(
+    action: str, data: dict[str, Any], params: dict[str, Any]
+) -> None:
+    """附加物理审计报告，失败不阻断结果返回."""
+    try:
+        from huginn.execution.physics_auditor import PhysicsAuditor
+
+        auditor = PhysicsAuditor()
+        audit = auditor.audit("openmm_tool", action, data, params)
+        data["physics_audit"] = audit.to_dict()
+    except Exception:  # 防御: 审计失败不阻断结果返回
+        logger.debug("audit failure can't block result delivery", exc_info=True)
+
+
+def _minimize_data(
+    inp: OpenMMToolInput, e0: float, ef: float, out_pdb: Path
+) -> dict[str, Any]:
+    """组装能量最小化结果."""
+    return {
+        "action": "energy_minimize",
+        "forcefield": inp.forcefield,
+        "initial_energy_kj_mol": round(e0, 2),
+        "final_energy_kj_mol": round(ef, 2),
+        "energy_change_kj_mol": round(e0 - ef, 2),
+        "converged": abs(e0 - ef) > 0.01,
+        "output_pdb": str(out_pdb),
+        "message": "Energy minimization complete.",
+    }
+
+
+def _md_data(
+    inp: OpenMMToolInput,
+    final_pe: float,
+    out_pdb: Path,
+    traj_file: Path,
+    log_file: Path,
+    time_series: Any,
+) -> dict[str, Any]:
+    """组装 MD 运行结果."""
+    return {
+        "action": "md_run",
+        "forcefield": inp.forcefield,
+        "ensemble": inp.ensemble,
+        "temperature_k": inp.temperature,
+        "pressure_atm": inp.pressure,
+        "timestep_fs": inp.timestep_fs,
+        "n_steps": inp.n_steps,
+        "equilibration_steps": inp.equilibration_steps,
+        "final_energy_kj_mol": round(final_pe, 2),
+        "output_pdb": str(out_pdb),
+        "trajectory_dcd": str(traj_file),
+        "md_log": str(log_file),
+        "time_series": time_series,
+        "message": f"MD run complete: {inp.n_steps} steps at {inp.temperature}K.",
+    }
+
+
 class OpenMMToolInput(BaseModel):
     action: Literal["energy_minimize", "md_run", "analyze"] = Field(...)
     working_dir: str | None = Field(default=None)
@@ -29,13 +95,18 @@ class OpenMMToolInput(BaseModel):
     # Structure input — PDB or topology files
     pdb_file: str | None = Field(default=None, description="Input .pdb structure file")
     topology_file: str | None = Field(
-        default=None, description="Topology file (prmtop/top/gro) if not embedded in PDB"
+        default=None,
+        description="Topology file (prmtop/top/gro) if not embedded in PDB",
     )
 
     # Force field selection
-    forcefield: Literal["amber14-all", "amber14/protein.ff14SB", "charmm36", "amber99sbildn.xml", "amoeba2013.xml"] = Field(
-        default="amber14-all", description="Force field XML name"
-    )
+    forcefield: Literal[
+        "amber14-all",
+        "amber14/protein.ff14SB",
+        "charmm36",
+        "amber99sbildn.xml",
+        "amoeba2013.xml",
+    ] = Field(default="amber14-all", description="Force field XML name")
     water_model: Literal["tip3p", "tip3pfb", "tip4pew", "spce"] = Field(
         default="tip3p", description="Water model for explicit solvent"
     )
@@ -46,21 +117,37 @@ class OpenMMToolInput(BaseModel):
     # MD run params
     temperature: float = Field(default=300.0, gt=0, description="Temperature (K)")
     pressure: float = Field(default=1.0, description="Pressure (atm) — only for NPT")
-    timestep_fs: float = Field(default=2.0, gt=0, description="Integration timestep (fs)")
+    timestep_fs: float = Field(
+        default=2.0, gt=0, description="Integration timestep (fs)"
+    )
     n_steps: int = Field(default=5000, ge=1, description="Number of MD steps")
-    equilibration_steps: int = Field(default=500, ge=0, description="Equilibration steps before production")
-    ensemble: Literal["nvt", "npt"] = Field(default="npt", description="Thermodynamic ensemble")
+    equilibration_steps: int = Field(
+        default=500, ge=0, description="Equilibration steps before production"
+    )
+    ensemble: Literal["nvt", "npt"] = Field(
+        default="npt", description="Thermodynamic ensemble"
+    )
 
     # Minimize params
-    max_iterations: int = Field(default=1000, ge=0, description="Max minimization iterations (0 = until converged)")
+    max_iterations: int = Field(
+        default=1000,
+        ge=0,
+        description="Max minimization iterations (0 = until converged)",
+    )
 
     # Output
     output_pdb: str | None = Field(default=None, description="Output PDB after run")
-    trajectory_dcd: str | None = Field(default=None, description="Trajectory output .dcd file")
-    report_interval: int = Field(default=500, ge=1, description="Steps between state reports")
+    trajectory_dcd: str | None = Field(
+        default=None, description="Trajectory output .dcd file"
+    )
+    report_interval: int = Field(
+        default=500, ge=1, description="Steps between state reports"
+    )
 
     # Analysis
-    trajectory_file: str | None = Field(default=None, description="Trajectory file for analysis")
+    trajectory_file: str | None = Field(
+        default=None, description="Trajectory file for analysis"
+    )
     analysis_type: Literal["rmsd", "energy", "temperature", "radius_gyration"] = Field(
         default="rmsd", description="Analysis type"
     )
@@ -110,92 +197,134 @@ class OpenMMTool(HuginnTool):
             return self._md_run(input_data, work_dir)
         if input_data.action == "analyze":
             return self._analyze(input_data, work_dir)
-        return ToolResult(data=None, success=False, error=f"Unknown action: {input_data.action}")
+        return ToolResult(
+            data=None, success=False, error=f"Unknown action: {input_data.action}"
+        )
 
     # ── energy_minimize ──────────────────────────────────────
 
     def _energy_minimize(self, inp: OpenMMToolInput, work_dir: Path) -> ToolResult:
         pdb = self._resolve_file(inp.pdb_file, work_dir)
         if pdb is None:
-            return ToolResult(data=None, success=False, error=f"PDB file not found: {inp.pdb_file}")
+            return ToolResult(
+                data=None, success=False, error=f"PDB file not found: {inp.pdb_file}"
+            )
 
         try:
             from openmm import LangevinMiddleIntegrator, Platform
             from openmm.app import ForceField, Modeller, PDBFile
             from openmm.unit import kelvin, kilojoules_per_mole, nanometers, picoseconds
         except ImportError:
-            return ToolResult(
-                data={"action": "energy_minimize", "status": "skipped", "pdb_file": str(pdb)},
-                success=True,
-                error="openmm not installed. Install with: conda install -c conda-forge openmm",
-            )
+            return _openmm_not_installed("energy_minimize", pdb)
 
         try:
-            pdb_struct = PDBFile(str(pdb))
-            forcefield = ForceField(inp.forcefield, f"{inp.water_model}.xml")
-
-            modeller = Modeller(pdb_struct.topology, pdb_struct.positions)
-            if inp.solvent == "explicit":
-                modeller.addHydrogens(forcefield, pH=7.0)
-                modeller.addSolvent(forcefield, model=inp.water_model, padding=1.0*nanometers)
-
-            system = forcefield.createSystem(modeller.topology,
-                                              nonbondedMethod=self._nonbonded_method(inp),
-                                              nonbondedCutoff=1.0*nanometers,
-                                              constraints=self._constraints(inp))
-
-            integrator = LangevinMiddleIntegrator(inp.temperature*kelvin, 1.0/picoseconds, inp.timestep_fs*0.001*picoseconds)
-            platform = Platform.getPlatformByName("CPU")  # ponytail: GPU if available, but CPU is safer default
-            sim = self._make_simulation(modeller, system, integrator, platform)
+            sim, modeller = self._build_min_sim(
+                inp,
+                pdb,
+                PDBFile,
+                ForceField,
+                Modeller,
+                LangevinMiddleIntegrator,
+                Platform,
+                kelvin,
+                nanometers,
+                picoseconds,
+            )
             sim.context.setPositions(modeller.positions)
 
-            # Report initial energy
-            state0 = sim.context.getState(getEnergy=True)
-            e0 = state0.getPotentialEnergy().value_in_unit(kilojoules_per_mole)
+            e0, ef, out_pdb = self._run_minimization(
+                inp, sim, modeller, work_dir, PDBFile, kilojoules_per_mole
+            )
 
-            # Minimize
-            if inp.max_iterations > 0:
-                sim.minimizeEnergy(maxIterations=inp.max_iterations)
-            else:
-                sim.minimizeEnergy()
-
-            state = sim.context.getState(getEnergy=True, getPositions=True)
-            ef = state.getPotentialEnergy().value_in_unit(kilojoules_per_mole)
-
-            out_pdb = Path(inp.output_pdb) if inp.output_pdb else work_dir / "minimized.pdb"
-            with open(out_pdb, "w") as f:
-                PDBFile.writeFile(modeller.topology, state.getPositions(), f)
-
-            data = {
-                "action": "energy_minimize",
-                "forcefield": inp.forcefield,
-                "initial_energy_kj_mol": round(e0, 2),
-                "final_energy_kj_mol": round(ef, 2),
-                "energy_change_kj_mol": round(e0 - ef, 2),
-                "converged": abs(e0 - ef) > 0.01,
-                "output_pdb": str(out_pdb),
-                "message": "Energy minimization complete.",
-            }
+            data = _minimize_data(inp, e0, ef, out_pdb)
 
             # Physics audit — energy should decrease, not increase
-            try:
-                from huginn.execution.physics_auditor import PhysicsAuditor
-                auditor = PhysicsAuditor()
-                audit = auditor.audit("openmm_tool", "energy_minimize", data, inp.model_dump())
-                data["physics_audit"] = audit.to_dict()
-            except Exception:  # 防御: 审计失败不阻断结果返回
-                logger.debug("audit failure can't block result delivery", exc_info=True)
+            _attach_openmm_audit("energy_minimize", data, inp.model_dump())
 
             return ToolResult(data=data)
         except Exception as exc:
-            return ToolResult(data=None, success=False, error=f"OpenMM minimization failed: {exc}")
+            return ToolResult(
+                data=None, success=False, error=f"OpenMM minimization failed: {exc}"
+            )
+
+    def _build_min_sim(
+        self,
+        inp: OpenMMToolInput,
+        pdb: Path,
+        pdb_file_cls: Any,
+        force_field_cls: Any,
+        modeller_cls: Any,
+        integrator_cls: Any,
+        platform_cls: Any,
+        kelvin_unit: Any,
+        nanometer_unit: Any,
+        picosecond_unit: Any,
+    ) -> tuple[Any, Any]:
+        """构建能量最小化的 system/integrator/simulation, 返回 (sim, modeller)."""
+        pdb_struct = pdb_file_cls(str(pdb))
+        forcefield = force_field_cls(inp.forcefield, f"{inp.water_model}.xml")
+
+        modeller = modeller_cls(pdb_struct.topology, pdb_struct.positions)
+        if inp.solvent == "explicit":
+            modeller.addHydrogens(forcefield, pH=7.0)
+            modeller.addSolvent(
+                forcefield, model=inp.water_model, padding=1.0 * nanometer_unit
+            )
+
+        system = forcefield.createSystem(
+            modeller.topology,
+            nonbondedMethod=self._nonbonded_method(inp),
+            nonbondedCutoff=1.0 * nanometer_unit,
+            constraints=self._constraints(inp),
+        )
+
+        integrator = integrator_cls(
+            inp.temperature * kelvin_unit,
+            1.0 / picosecond_unit,
+            inp.timestep_fs * 0.001 * picosecond_unit,
+        )
+        platform = platform_cls.getPlatformByName(
+            "CPU"
+        )  # ponytail: GPU if available, but CPU is safer default
+        sim = self._make_simulation(modeller, system, integrator, platform)
+        return sim, modeller
+
+    def _run_minimization(
+        self,
+        inp: OpenMMToolInput,
+        sim: Any,
+        modeller: Any,
+        work_dir: Path,
+        pdb_file_cls: Any,
+        energy_unit: Any,
+    ) -> tuple[float, float, Path]:
+        """执行能量最小化并写出结果 PDB, 返回 (初能量, 末能量, 输出路径)."""
+        # Report initial energy
+        state0 = sim.context.getState(getEnergy=True)
+        e0 = state0.getPotentialEnergy().value_in_unit(energy_unit)
+
+        # Minimize
+        if inp.max_iterations > 0:
+            sim.minimizeEnergy(maxIterations=inp.max_iterations)
+        else:
+            sim.minimizeEnergy()
+
+        state = sim.context.getState(getEnergy=True, getPositions=True)
+        ef = state.getPotentialEnergy().value_in_unit(energy_unit)
+
+        out_pdb = Path(inp.output_pdb) if inp.output_pdb else work_dir / "minimized.pdb"
+        with open(out_pdb, "w") as f:
+            pdb_file_cls.writeFile(modeller.topology, state.getPositions(), f)
+        return e0, ef, out_pdb
 
     # ── md_run ───────────────────────────────────────────────
 
     def _md_run(self, inp: OpenMMToolInput, work_dir: Path) -> ToolResult:
         pdb = self._resolve_file(inp.pdb_file, work_dir)
         if pdb is None:
-            return ToolResult(data=None, success=False, error=f"PDB file not found: {inp.pdb_file}")
+            return ToolResult(
+                data=None, success=False, error=f"PDB file not found: {inp.pdb_file}"
+            )
 
         try:
             from openmm import LangevinMiddleIntegrator, MonteCarloBarostat, Platform
@@ -208,100 +337,168 @@ class OpenMMTool(HuginnTool):
             )
             from openmm.unit import atmospheres, kelvin, nanometers, picoseconds
         except ImportError:
-            return ToolResult(
-                data={"action": "md_run", "status": "skipped", "pdb_file": str(pdb)},
-                success=True,
-                error="openmm not installed. Install with: conda install -c conda-forge openmm",
-            )
+            return _openmm_not_installed("md_run", pdb)
 
         try:
-            pdb_struct = PDBFile(str(pdb))
-            forcefield = ForceField(inp.forcefield, f"{inp.water_model}.xml")
-
-            modeller = Modeller(pdb_struct.topology, pdb_struct.positions)
-            modeller.addHydrogens(forcefield, pH=7.0)
-            if inp.solvent == "explicit":
-                modeller.addSolvent(forcefield, model=inp.water_model, padding=1.0*nanometers)
-
-            system = forcefield.createSystem(modeller.topology,
-                                              nonbondedMethod=self._nonbonded_method(inp),
-                                              nonbondedCutoff=1.0*nanometers,
-                                              constraints=self._constraints(inp))
-
-            if inp.ensemble == "npt":
-                system.addForce(MonteCarloBarostat(inp.pressure*atmospheres, inp.temperature*kelvin))
-
-            integrator = LangevinMiddleIntegrator(
-                inp.temperature*kelvin, 1.0/picoseconds, inp.timestep_fs*0.001*picoseconds
+            sim, modeller = self._build_md_sim(
+                inp,
+                pdb,
+                PDBFile,
+                ForceField,
+                Modeller,
+                LangevinMiddleIntegrator,
+                MonteCarloBarostat,
+                Platform,
+                atmospheres,
+                kelvin,
+                nanometers,
+                picoseconds,
             )
-            platform = Platform.getPlatformByName("CPU")
-            sim = self._make_simulation(modeller, system, integrator, platform)
 
-            # Reporters
-            traj_file = Path(inp.trajectory_dcd) if inp.trajectory_dcd else work_dir / "trajectory.dcd"
-            log_file = work_dir / "md_log.csv"
-            sim.reporters.append(DCDReporter(str(traj_file), inp.report_interval))
-            sim.reporters.append(StateDataReporter(
-                str(log_file), inp.report_interval,
-                step=True, potentialEnergy=True, kineticEnergy=True,
-                temperature=True, volume=True, speed=True,
-            ))
+            traj_file, log_file = self._attach_md_reporters(
+                inp, sim, work_dir, DCDReporter, StateDataReporter
+            )
 
-            # Minimize + equilibrate
-            sim.minimizeEnergy(maxIterations=100)
-            if inp.equilibration_steps > 0:
-                sim.step(inp.equilibration_steps)
+            self._run_md_steps(inp, sim)
 
-            # Production
-            sim.step(inp.n_steps)
-
-            # Final state
-            state = sim.context.getState(getEnergy=True, getPositions=True)
-            from openmm.unit import kilojoules_per_mole
-            final_pe = state.getPotentialEnergy().value_in_unit(kilojoules_per_mole)
-
-            out_pdb = Path(inp.output_pdb) if inp.output_pdb else work_dir / "final.pdb"
-            with open(out_pdb, "w") as f:
-                PDBFile.writeFile(modeller.topology, state.getPositions(), f)
-
-            # Parse the log for time series
-            time_series = self._parse_md_log(log_file)
-
-            data = {
-                "action": "md_run",
-                "forcefield": inp.forcefield,
-                "ensemble": inp.ensemble,
-                "temperature_k": inp.temperature,
-                "pressure_atm": inp.pressure,
-                "timestep_fs": inp.timestep_fs,
-                "n_steps": inp.n_steps,
-                "equilibration_steps": inp.equilibration_steps,
-                "final_energy_kj_mol": round(final_pe, 2),
-                "output_pdb": str(out_pdb),
-                "trajectory_dcd": str(traj_file),
-                "md_log": str(log_file),
-                "time_series": time_series,
-                "message": f"MD run complete: {inp.n_steps} steps at {inp.temperature}K.",
-            }
-
-            try:
-                from huginn.execution.physics_auditor import PhysicsAuditor
-                auditor = PhysicsAuditor()
-                audit = auditor.audit("openmm_tool", "md_run", data, inp.model_dump())
-                data["physics_audit"] = audit.to_dict()
-            except Exception:  # 防御: 审计失败不阻断结果返回
-                logger.debug("audit failure can't block result delivery", exc_info=True)
-
-            return ToolResult(data=data)
+            return self._finalize_md(
+                inp, modeller, sim, work_dir, traj_file, log_file, PDBFile
+            )
         except Exception as exc:
-            return ToolResult(data=None, success=False, error=f"OpenMM MD failed: {exc}")
+            return ToolResult(
+                data=None, success=False, error=f"OpenMM MD failed: {exc}"
+            )
+
+    def _build_md_sim(
+        self,
+        inp: OpenMMToolInput,
+        pdb: Path,
+        pdb_file_cls: Any,
+        force_field_cls: Any,
+        modeller_cls: Any,
+        integrator_cls: Any,
+        barostat_cls: Any,
+        platform_cls: Any,
+        atmosphere_unit: Any,
+        kelvin_unit: Any,
+        nanometer_unit: Any,
+        picosecond_unit: Any,
+    ) -> tuple[Any, Any]:
+        """构建 MD 的 system/integrator/simulation, 返回 (sim, modeller)."""
+        pdb_struct = pdb_file_cls(str(pdb))
+        forcefield = force_field_cls(inp.forcefield, f"{inp.water_model}.xml")
+
+        modeller = modeller_cls(pdb_struct.topology, pdb_struct.positions)
+        modeller.addHydrogens(forcefield, pH=7.0)
+        if inp.solvent == "explicit":
+            modeller.addSolvent(
+                forcefield, model=inp.water_model, padding=1.0 * nanometer_unit
+            )
+
+        system = forcefield.createSystem(
+            modeller.topology,
+            nonbondedMethod=self._nonbonded_method(inp),
+            nonbondedCutoff=1.0 * nanometer_unit,
+            constraints=self._constraints(inp),
+        )
+
+        if inp.ensemble == "npt":
+            system.addForce(
+                barostat_cls(
+                    inp.pressure * atmosphere_unit, inp.temperature * kelvin_unit
+                )
+            )
+
+        integrator = integrator_cls(
+            inp.temperature * kelvin_unit,
+            1.0 / picosecond_unit,
+            inp.timestep_fs * 0.001 * picosecond_unit,
+        )
+        platform = platform_cls.getPlatformByName("CPU")
+        sim = self._make_simulation(modeller, system, integrator, platform)
+        return sim, modeller
+
+    def _run_md_steps(self, inp: OpenMMToolInput, sim: Any) -> None:
+        """执行最小化 / 平衡 / 生产三段 MD."""
+        # Minimize + equilibrate
+        sim.minimizeEnergy(maxIterations=100)
+        if inp.equilibration_steps > 0:
+            sim.step(inp.equilibration_steps)
+
+        # Production
+        sim.step(inp.n_steps)
+
+    def _attach_md_reporters(
+        self,
+        inp: OpenMMToolInput,
+        sim: Any,
+        work_dir: Path,
+        dcd_reporter_cls: Any,
+        state_reporter_cls: Any,
+    ) -> tuple[Path, Path]:
+        """挂载 DCD 轨迹与 CSV 日志 reporter, 返回 (轨迹路径, 日志路径)."""
+        # Reporters
+        traj_file = (
+            Path(inp.trajectory_dcd)
+            if inp.trajectory_dcd
+            else work_dir / "trajectory.dcd"
+        )
+        log_file = work_dir / "md_log.csv"
+        sim.reporters.append(dcd_reporter_cls(str(traj_file), inp.report_interval))
+        sim.reporters.append(
+            state_reporter_cls(
+                str(log_file),
+                inp.report_interval,
+                step=True,
+                potentialEnergy=True,
+                kineticEnergy=True,
+                temperature=True,
+                volume=True,
+                speed=True,
+            )
+        )
+        return traj_file, log_file
+
+    def _finalize_md(
+        self,
+        inp: OpenMMToolInput,
+        modeller: Any,
+        sim: Any,
+        work_dir: Path,
+        traj_file: Path,
+        log_file: Path,
+        pdb_file_cls: Any,
+    ) -> ToolResult:
+        """读取最终状态, 写出结果 PDB 并组装 MD 结果."""
+        from openmm.unit import kilojoules_per_mole
+
+        # Final state
+        state = sim.context.getState(getEnergy=True, getPositions=True)
+        final_pe = state.getPotentialEnergy().value_in_unit(kilojoules_per_mole)
+
+        out_pdb = Path(inp.output_pdb) if inp.output_pdb else work_dir / "final.pdb"
+        with open(out_pdb, "w") as f:
+            pdb_file_cls.writeFile(modeller.topology, state.getPositions(), f)
+
+        # Parse the log for time series
+        time_series = self._parse_md_log(log_file)
+
+        data = _md_data(inp, final_pe, out_pdb, traj_file, log_file, time_series)
+
+        _attach_openmm_audit("md_run", data, inp.model_dump())
+
+        return ToolResult(data=data)
 
     # ── analyze ──────────────────────────────────────────────
 
     def _analyze(self, inp: OpenMMToolInput, work_dir: Path) -> ToolResult:
         traj = self._resolve_file(inp.trajectory_file, work_dir)
         if traj is None:
-            return ToolResult(data=None, success=False, error=f"Trajectory file not found: {inp.trajectory_file}")
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"Trajectory file not found: {inp.trajectory_file}",
+            )
 
         try:
             from openmm.app import DCDFile, PDBFile
@@ -315,7 +512,11 @@ class OpenMMTool(HuginnTool):
         try:
             pdb_file = self._resolve_file(inp.pdb_file, work_dir)
             if pdb_file is None:
-                return ToolResult(data=None, success=False, error="PDB file needed as topology reference for analysis")
+                return ToolResult(
+                    data=None,
+                    success=False,
+                    error="PDB file needed as topology reference for analysis",
+                )
 
             pdb = PDBFile(str(pdb_file))
             dcd = DCDFile.open(str(traj))
@@ -328,7 +529,11 @@ class OpenMMTool(HuginnTool):
                 return self._analyze_temperature(traj)
             if inp.analysis_type == "radius_gyration":
                 return self._analyze_rg(dcd, pdb)
-            return ToolResult(data=None, success=False, error=f"Unknown analysis type: {inp.analysis_type}")
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"Unknown analysis type: {inp.analysis_type}",
+            )
         except Exception as exc:
             return ToolResult(data=None, success=False, error=f"Analysis failed: {exc}")
 
@@ -341,30 +546,46 @@ class OpenMMTool(HuginnTool):
         rmsds = []
         for i in range(n_frames):
             frame = dcd.readPositions(i)
-            diff = np.array([(frame[j].value_in_unit(nanometers) - ref_pos[j].value_in_unit(nanometers)) for j in range(len(ref_pos))])
+            diff = np.array(
+                [
+                    (
+                        frame[j].value_in_unit(nanometers)
+                        - ref_pos[j].value_in_unit(nanometers)
+                    )
+                    for j in range(len(ref_pos))
+                ]
+            )
             rmsd = np.sqrt(np.mean(np.sum(diff**2, axis=1))) * 10  # nm → Å
             rmsds.append(round(float(rmsd), 3))
 
-        return ToolResult(data={
-            "analysis_type": "rmsd",
-            "n_frames": len(rmsds),
-            "rmsd_values_angstrom": rmsds,
-            "mean_rmsd": round(float(np.mean(rmsds)), 3) if rmsds else None,
-            "max_rmsd": round(float(np.max(rmsds)), 3) if rmsds else None,
-            "message": "RMSD trajectory analysis complete.",
-        })
+        return ToolResult(
+            data={
+                "analysis_type": "rmsd",
+                "n_frames": len(rmsds),
+                "rmsd_values_angstrom": rmsds,
+                "mean_rmsd": round(float(np.mean(rmsds)), 3) if rmsds else None,
+                "max_rmsd": round(float(np.max(rmsds)), 3) if rmsds else None,
+                "message": "RMSD trajectory analysis complete.",
+            }
+        )
 
     def _analyze_energy(self, traj_path: Path) -> ToolResult:
         """Parse energy from the MD log CSV."""
         log_path = traj_path.parent / "md_log.csv"
         if not log_path.exists():
-            return ToolResult(data=None, success=False, error="md_log.csv not found alongside trajectory")
+            return ToolResult(
+                data=None,
+                success=False,
+                error="md_log.csv not found alongside trajectory",
+            )
         energies = self._parse_md_log(log_path)
-        return ToolResult(data={
-            "analysis_type": "energy",
-            **energies,
-            "message": "Energy trajectory analysis complete.",
-        })
+        return ToolResult(
+            data={
+                "analysis_type": "energy",
+                **energies,
+                "message": "Energy trajectory analysis complete.",
+            }
+        )
 
     def _analyze_temperature(self, traj_path: Path) -> ToolResult:
         log_path = traj_path.parent / "md_log.csv"
@@ -372,13 +593,26 @@ class OpenMMTool(HuginnTool):
             return ToolResult(data=None, success=False, error="md_log.csv not found")
         series = self._parse_md_log(log_path)
         temps = series.get("temperatures", [])
-        return ToolResult(data={
-            "analysis_type": "temperature",
-            "temperatures": temps,
-            "mean_temperature": round(sum(temps) / len(temps), 2) if temps else None,
-            "temperature_std": round((sum((t - sum(temps)/len(temps))**2 for t in temps) / len(temps))**0.5, 2) if temps else None,
-            "message": "Temperature trajectory analysis complete.",
-        })
+        return ToolResult(
+            data={
+                "analysis_type": "temperature",
+                "temperatures": temps,
+                "mean_temperature": round(sum(temps) / len(temps), 2)
+                if temps
+                else None,
+                "temperature_std": round(
+                    (
+                        sum((t - sum(temps) / len(temps)) ** 2 for t in temps)
+                        / len(temps)
+                    )
+                    ** 0.5,
+                    2,
+                )
+                if temps
+                else None,
+                "message": "Temperature trajectory analysis complete.",
+            }
+        )
 
     def _analyze_rg(self, dcd, pdb) -> ToolResult:
         import numpy as np
@@ -390,16 +624,18 @@ class OpenMMTool(HuginnTool):
             frame = dcd.readPositions(i)
             coords = np.array([p.value_in_unit(nanometers) for p in frame])
             center = coords.mean(axis=0)
-            rg = np.sqrt(np.mean(np.sum((coords - center)**2, axis=1)))
+            rg = np.sqrt(np.mean(np.sum((coords - center) ** 2, axis=1)))
             rgs.append(round(float(rg), 3))
 
-        return ToolResult(data={
-            "analysis_type": "radius_gyration",
-            "n_frames": len(rgs),
-            "rg_values_nm": rgs,
-            "mean_rg": round(float(np.mean(rgs)), 3) if rgs else None,
-            "message": "Radius of gyration analysis complete.",
-        })
+        return ToolResult(
+            data={
+                "analysis_type": "radius_gyration",
+                "n_frames": len(rgs),
+                "rg_values_nm": rgs,
+                "mean_rg": round(float(np.mean(rgs)), 3) if rgs else None,
+                "message": "Radius of gyration analysis complete.",
+            }
+        )
 
     # ── helpers ──────────────────────────────────────────────
 
@@ -414,6 +650,7 @@ class OpenMMTool(HuginnTool):
     @staticmethod
     def _nonbonded_method(inp: OpenMMToolInput):
         from openmm.app import PME, CutoffNonPeriodic, NoCutoff
+
         if inp.solvent == "explicit":
             return PME
         if inp.solvent == "implicit":
@@ -423,6 +660,7 @@ class OpenMMTool(HuginnTool):
     @staticmethod
     def _constraints(inp: OpenMMToolInput):
         from openmm.app import AllBonds, HBonds
+
         if inp.solvent == "vacuum":
             return AllBonds
         return HBonds
@@ -430,6 +668,7 @@ class OpenMMTool(HuginnTool):
     @staticmethod
     def _make_simulation(modeller, system, integrator, platform):
         from openmm.app import Simulation
+
         return Simulation(modeller.topology, system, integrator, platform)
 
     @staticmethod

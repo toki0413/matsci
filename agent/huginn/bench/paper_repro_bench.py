@@ -201,177 +201,226 @@ def _eval_nernst(output: str) -> tuple[bool, str, float]:
 def build_repro_tasks() -> list[BenchmarkTask]:
     """论文复现 benchmark: 10 题, 覆盖公式/拟合/代码/图表/ML/磁/热/电."""
     return [
-        BenchmarkTask(
-            id="repro-hall-petch",
-            category="reproduction",
-            prompt=(
-                "一篇论文研究了低碳钢的屈服强度与晶粒尺寸的关系，提出 Hall-Petch 关系: "
-                "σ = σ₀ + k/√d，其中 σ₀=50 MPa，k=0.4 MPa·√m。"
-                "请计算当晶粒尺寸 d=10 μm 时的屈服强度 σ（MPa）。"
-            ),
-            evaluator=_eval_hall_petch,
-            tags=["reproduction", "formula", "metallurgy"],
-            requires_api_key=True,
-            reference="σ = 50 + 0.4/sqrt(10e-6) = 176.5 MPa",
-        ),
-        BenchmarkTask(
-            id="repro-arrhenius",
-            category="reproduction",
-            prompt=(
-                "论文测量了某反应在不同温度下的速率常数:\n"
-                "  T=300K, k=0.01 s⁻¹\n"
-                "  T=400K, k=0.1 s⁻¹\n"
-                "  T=500K, k=1.0 s⁻¹\n"
-                "  T=600K, k=10.0 s⁻¹\n"
-                "用 Arrhenius 方程 k = A·exp(-Ea/(RT)) 拟合，计算活化能 Ea (kJ/mol)。"
-                "R=8.314 J/(mol·K)。"
-            ),
-            evaluator=_eval_arrhenius,
-            tags=["reproduction", "fitting", "kinetics"],
-            requires_api_key=True,
-            reference="Ea ≈ 23.0 kJ/mol (ln(k) vs 1/T 线性拟合, 斜率=-Ea/R)",
-        ),
-        BenchmarkTask(
-            id="repro-debye-code",
-            category="reproduction",
-            prompt=(
-                "论文中用 Debye 模型计算晶格比热容:\n"
-                "  Cv = 9Nk_B(T/θ_D)³ ∫₀^(θ_D/T) x⁴eˣ/(eˣ-1)² dx\n"
-                "请用 Python 实现函数 debye_cv(T, theta_D, N, kB)，"
-                "返回给定温度下的比热容。回复只包含代码块。"
-            ),
-            evaluator=_eval_debye_code,
-            tags=["reproduction", "code", "thermal"],
-            requires_api_key=True,
-            is_code_task=True,
-            reference="Python 函数 def debye_cv + scipy.integrate.quad + exp + theta_D",
-        ),
-        BenchmarkTask(
-            id="repro-bragg",
-            category="reproduction",
-            prompt=(
-                "论文用 XRD 表征了硅样品。硅为立方晶系，晶格常数 a=5.43 Å。"
-                "使用 Cu Kα 辐射 (λ=1.54 Å)，计算 (111) 晶面的 Bragg 衍射角 θ（度）。"
-                "Bragg 公式: 2d sinθ = nλ，n=1，d = a/√(h²+k²+l²)。"
-            ),
-            evaluator=_eval_bragg,
-            tags=["reproduction", "diffraction", "crystallography"],
-            requires_api_key=True,
-            reference="d=3.135Å, sinθ=0.2456, θ=14.22°",
-        ),
-        BenchmarkTask(
-            id="repro-linear-regression",
-            category="reproduction",
-            prompt=(
-                "论文用线性回归模型 y = w·x + b 预测合金硬度。训练数据:\n"
-                "  x=[1, 2, 3, 4] (成分比例)\n"
-                "  y=[2, 4, 6, 8] (硬度 GPa)\n"
-                "用最小二乘法计算回归系数 w 和 b。"
-            ),
-            evaluator=_eval_linear_regression,
-            tags=["reproduction", "ml", "regression"],
-            requires_api_key=True,
-            reference="w=2.0, b=0.0",
-        ),
-        BenchmarkTask(
-            id="repro-curie-weiss",
-            category="reproduction",
-            prompt=(
-                "论文测量了某顺磁材料的磁化率，符合 Curie-Weiss 定律: "
-                "χ = C/(T-θ)，其中 C=1.0 K·emu/mol，θ=50 K。"
-                "计算 T=300 K 时的磁化率 χ (emu/mol)。"
-            ),
-            evaluator=_eval_curie_weiss,
-            tags=["reproduction", "magnetic"],
-            requires_api_key=True,
-            reference="χ = 1.0/(300-50) = 0.004 emu/mol",
-        ),
-        BenchmarkTask(
-            id="repro-hooke",
-            category="reproduction",
-            prompt=(
-                "论文测量了钢的弹性形变，符合胡克定律 σ = Eε。"
-                "弹性模量 E=210 GPa，应变 ε=0.002。"
-                "计算应力 σ (MPa)。"
-            ),
-            evaluator=_eval_hooke,
-            tags=["reproduction", "mechanical"],
-            requires_api_key=True,
-            reference="σ = 210*0.002 = 0.42 GPa = 420 MPa",
-        ),
-        BenchmarkTask(
-            id="repro-debye-temp",
-            category="reproduction",
-            prompt=(
-                "论文用德拜模型描述晶格振动，德拜温度 θD = hνmax/kB，"
-                "其中 h=6.626×10⁻³⁴ J·s，kB=1.381×10⁻²³ J/K，"
-                "最大声子频率 νmax=10 THz (10×10¹² Hz)。"
-                "计算德拜温度 θD (K)。"
-            ),
-            evaluator=_eval_debye_temp,
-            tags=["reproduction", "thermal", "phonon"],
-            requires_api_key=True,
-            reference="θD = 6.626e-34*10e12/1.381e-23 = 479.6 K",
-        ),
-        BenchmarkTask(
-            id="repro-fermi-energy",
-            category="reproduction",
-            prompt=(
-                "论文计算了铜的费米能级，用自由电子气模型: "
-                "EF = (ℏ²/2m)(3π²n)^(2/3)，"
-                "其中 ℏ=1.055×10⁻³⁴ J·s，m=9.11×10⁻³¹ kg，"
-                "电子浓度 n=1.0×10²⁸ m⁻³。"
-                "计算费米能级 EF (eV)。1 eV = 1.602×10⁻¹⁹ J。"
-            ),
-            evaluator=_eval_fermi_energy,
-            tags=["reproduction", "electronic"],
-            requires_api_key=True,
-            reference="EF ≈ 1.66 eV",
-        ),
-        BenchmarkTask(
-            id="repro-nernst",
-            category="reproduction",
-            prompt=(
-                "论文研究了电化学反应，电池电动势符合 Nernst 方程: "
-                "E = E₀ - (RT/nF)lnQ，"
-                "其中 E₀=1.1 V，T=298 K，n=2，"
-                "R=8.314 J/(mol·K)，F=96485 C/mol，Q=0.01。"
-                "计算电池电动势 E (V)。"
-            ),
-            evaluator=_eval_nernst,
-            tags=["reproduction", "electrochemistry"],
-            requires_api_key=True,
-            reference="E = 1.1 + (8.314*298/(2*96485))*ln(100) = 1.159 V",
-        ),
+        _repro_task_hall_petch(),
+        _repro_task_arrhenius(),
+        _repro_task_debye_code(),
+        _repro_task_bragg(),
+        _repro_task_linear_regression(),
+        _repro_task_curie_weiss(),
+        _repro_task_hooke(),
+        _repro_task_debye_temp(),
+        _repro_task_fermi_energy(),
+        _repro_task_nernst(),
     ]
+
+
+def _repro_task_hall_petch() -> BenchmarkTask:
+    """Hall-Petch 晶粒尺寸 → 屈服强度."""
+    return BenchmarkTask(
+        id="repro-hall-petch",
+        category="reproduction",
+        prompt=(
+            "一篇论文研究了低碳钢的屈服强度与晶粒尺寸的关系，提出 Hall-Petch 关系: "
+            "σ = σ₀ + k/√d，其中 σ₀=50 MPa，k=0.4 MPa·√m。"
+            "请计算当晶粒尺寸 d=10 μm 时的屈服强度 σ（MPa）。"
+        ),
+        evaluator=_eval_hall_petch,
+        tags=["reproduction", "formula", "metallurgy"],
+        requires_api_key=True,
+        reference="σ = 50 + 0.4/sqrt(10e-6) = 176.5 MPa",
+    )
+
+
+def _repro_task_arrhenius() -> BenchmarkTask:
+    """Arrhenius 速率常数序列 → 活化能拟合."""
+    return BenchmarkTask(
+        id="repro-arrhenius",
+        category="reproduction",
+        prompt=(
+            "论文测量了某反应在不同温度下的速率常数:\n"
+            "  T=300K, k=0.01 s⁻¹\n"
+            "  T=400K, k=0.1 s⁻¹\n"
+            "  T=500K, k=1.0 s⁻¹\n"
+            "  T=600K, k=10.0 s⁻¹\n"
+            "用 Arrhenius 方程 k = A·exp(-Ea/(RT)) 拟合，计算活化能 Ea (kJ/mol)。"
+            "R=8.314 J/(mol·K)。"
+        ),
+        evaluator=_eval_arrhenius,
+        tags=["reproduction", "fitting", "kinetics"],
+        requires_api_key=True,
+        reference="Ea ≈ 23.0 kJ/mol (ln(k) vs 1/T 线性拟合, 斜率=-Ea/R)",
+    )
+
+
+def _repro_task_debye_code() -> BenchmarkTask:
+    """Debye 比热容公式 → 代码实现."""
+    return BenchmarkTask(
+        id="repro-debye-code",
+        category="reproduction",
+        prompt=(
+            "论文中用 Debye 模型计算晶格比热容:\n"
+            "  Cv = 9Nk_B(T/θ_D)³ ∫₀^(θ_D/T) x⁴eˣ/(eˣ-1)² dx\n"
+            "请用 Python 实现函数 debye_cv(T, theta_D, N, kB)，"
+            "返回给定温度下的比热容。回复只包含代码块。"
+        ),
+        evaluator=_eval_debye_code,
+        tags=["reproduction", "code", "thermal"],
+        requires_api_key=True,
+        is_code_task=True,
+        reference="Python 函数 def debye_cv + scipy.integrate.quad + exp + theta_D",
+    )
+
+
+def _repro_task_bragg() -> BenchmarkTask:
+    """Bragg 衍射角计算."""
+    return BenchmarkTask(
+        id="repro-bragg",
+        category="reproduction",
+        prompt=(
+            "论文用 XRD 表征了硅样品。硅为立方晶系，晶格常数 a=5.43 Å。"
+            "使用 Cu Kα 辐射 (λ=1.54 Å)，计算 (111) 晶面的 Bragg 衍射角 θ（度）。"
+            "Bragg 公式: 2d sinθ = nλ，n=1，d = a/√(h²+k²+l²)。"
+        ),
+        evaluator=_eval_bragg,
+        tags=["reproduction", "diffraction", "crystallography"],
+        requires_api_key=True,
+        reference="d=3.135Å, sinθ=0.2456, θ=14.22°",
+    )
+
+
+def _repro_task_linear_regression() -> BenchmarkTask:
+    """最小二乘回归系数."""
+    return BenchmarkTask(
+        id="repro-linear-regression",
+        category="reproduction",
+        prompt=(
+            "论文用线性回归模型 y = w·x + b 预测合金硬度。训练数据:\n"
+            "  x=[1, 2, 3, 4] (成分比例)\n"
+            "  y=[2, 4, 6, 8] (硬度 GPa)\n"
+            "用最小二乘法计算回归系数 w 和 b。"
+        ),
+        evaluator=_eval_linear_regression,
+        tags=["reproduction", "ml", "regression"],
+        requires_api_key=True,
+        reference="w=2.0, b=0.0",
+    )
+
+
+def _repro_task_curie_weiss() -> BenchmarkTask:
+    """Curie-Weiss 磁化率."""
+    return BenchmarkTask(
+        id="repro-curie-weiss",
+        category="reproduction",
+        prompt=(
+            "论文测量了某顺磁材料的磁化率，符合 Curie-Weiss 定律: "
+            "χ = C/(T-θ)，其中 C=1.0 K·emu/mol，θ=50 K。"
+            "计算 T=300 K 时的磁化率 χ (emu/mol)。"
+        ),
+        evaluator=_eval_curie_weiss,
+        tags=["reproduction", "magnetic"],
+        requires_api_key=True,
+        reference="χ = 1.0/(300-50) = 0.004 emu/mol",
+    )
+
+
+def _repro_task_hooke() -> BenchmarkTask:
+    """胡克定律应力."""
+    return BenchmarkTask(
+        id="repro-hooke",
+        category="reproduction",
+        prompt=(
+            "论文测量了钢的弹性形变，符合胡克定律 σ = Eε。"
+            "弹性模量 E=210 GPa，应变 ε=0.002。"
+            "计算应力 σ (MPa)。"
+        ),
+        evaluator=_eval_hooke,
+        tags=["reproduction", "mechanical"],
+        requires_api_key=True,
+        reference="σ = 210*0.002 = 0.42 GPa = 420 MPa",
+    )
+
+
+def _repro_task_debye_temp() -> BenchmarkTask:
+    """德拜温度换算."""
+    return BenchmarkTask(
+        id="repro-debye-temp",
+        category="reproduction",
+        prompt=(
+            "论文用德拜模型描述晶格振动，德拜温度 θD = hνmax/kB，"
+            "其中 h=6.626×10⁻³⁴ J·s，kB=1.381×10⁻²³ J/K，"
+            "最大声子频率 νmax=10 THz (10×10¹² Hz)。"
+            "计算德拜温度 θD (K)。"
+        ),
+        evaluator=_eval_debye_temp,
+        tags=["reproduction", "thermal", "phonon"],
+        requires_api_key=True,
+        reference="θD = 6.626e-34*10e12/1.381e-23 = 479.6 K",
+    )
+
+
+def _repro_task_fermi_energy() -> BenchmarkTask:
+    """自由电子气费米能级."""
+    return BenchmarkTask(
+        id="repro-fermi-energy",
+        category="reproduction",
+        prompt=(
+            "论文计算了铜的费米能级，用自由电子气模型: "
+            "EF = (ℏ²/2m)(3π²n)^(2/3)，"
+            "其中 ℏ=1.055×10⁻³⁴ J·s，m=9.11×10⁻³¹ kg，"
+            "电子浓度 n=1.0×10²⁸ m⁻³。"
+            "计算费米能级 EF (eV)。1 eV = 1.602×10⁻¹⁹ J。"
+        ),
+        evaluator=_eval_fermi_energy,
+        tags=["reproduction", "electronic"],
+        requires_api_key=True,
+        reference="EF ≈ 1.66 eV",
+    )
+
+
+def _repro_task_nernst() -> BenchmarkTask:
+    """Nernst 电池电动势."""
+    return BenchmarkTask(
+        id="repro-nernst",
+        category="reproduction",
+        prompt=(
+            "论文研究了电化学反应，电池电动势符合 Nernst 方程: "
+            "E = E₀ - (RT/nF)lnQ，"
+            "其中 E₀=1.1 V，T=298 K，n=2，"
+            "R=8.314 J/(mol·K)，F=96485 C/mol，Q=0.01。"
+            "计算电池电动势 E (V)。"
+        ),
+        evaluator=_eval_nernst,
+        tags=["reproduction", "electrochemistry"],
+        requires_api_key=True,
+        reference="E = 1.1 + (8.314*298/(2*96485))*ln(100) = 1.159 V",
+    )
 
 
 # ── self-check ─────────────────────────────────────────────────
 
-def _selfcheck() -> None:
-    """验证 10 题: 正确答案 pass, 错误答案 fail."""
-    tasks = build_repro_tasks()
-    assert len(tasks) == 10, f"expected 10 repro tasks, got {len(tasks)}"
+def _assert_eval(task: BenchmarkTask, good: str, bad: str, label: str) -> None:
+    """单题双断言: 正确解 pass, 错误解 fail."""
+    r = task.evaluate(good)
+    assert r.passed, f"{label} correct should pass: {r.reason}"
+    r = task.evaluate(bad)
+    assert not r.passed, f"{label} wrong should fail"
 
+
+def _sc_formula_tasks(tasks: list[BenchmarkTask]) -> None:
+    """T1/T2/T4/T5: 公式 / 拟合 / 衍射 / 回归."""
     # T1 Hall-Petch: 正确 ~176.5
-    t1 = tasks[0]
-    r = t1.evaluate("屈服强度 σ = 176.5 MPa")
-    assert r.passed, f"T1 correct should pass: {r.reason}"
-
-    r = t1.evaluate("σ = 50 MPa")
-    assert not r.passed, "T1 wrong should fail"
-
+    _assert_eval(tasks[0], "屈服强度 σ = 176.5 MPa", "σ = 50 MPa", "T1")
     # T2 Arrhenius: 正确 ~23
-    t2 = tasks[1]
-    r = t2.evaluate("活化能 Ea = 23.0 kJ/mol")
-    assert r.passed, f"T2 correct should pass: {r.reason}"
+    _assert_eval(tasks[1], "活化能 Ea = 23.0 kJ/mol", "Ea = 100 kJ/mol", "T2")
+    # T4 Bragg: 正确 ~14.22
+    _assert_eval(tasks[3], "θ = 14.22°", "θ = 30°", "T4")
+    # T5 Linear regression: 正确 w=2, b=0
+    _assert_eval(tasks[4], "w = 2.0, b = 0.0", "w = 5.0, b = 1.0", "T5")
 
-    r = t2.evaluate("Ea = 100 kJ/mol")
-    assert not r.passed, "T2 wrong should fail"
 
-    # T3 Debye code: 正确结构
-    t3 = tasks[2]
-    r = t3.evaluate(
+def _sc_code_task(tasks: list[BenchmarkTask]) -> None:
+    """T3 Debye 代码题: 正确结构 pass, 无关代码 fail."""
+    good_code = (
         "def debye_cv(T, theta_D, N, kB):\n"
         "    from scipy.integrate import quad\n"
         "    x_max = theta_D / T\n"
@@ -379,62 +428,30 @@ def _selfcheck() -> None:
         "    integral, _ = quad(integrand, 0, x_max)\n"
         "    return 9 * N * kB * (T/theta_D)**3 * integral"
     )
-    assert r.passed, f"T3 correct should pass: {r.reason}"
+    _assert_eval(tasks[2], good_code, "print('hello')", "T3")
 
-    r = t3.evaluate("print('hello')")
-    assert not r.passed, "T3 wrong should fail"
 
-    # T4 Bragg: 正确 ~14.22
-    t4 = tasks[3]
-    r = t4.evaluate("θ = 14.22°")
-    assert r.passed, f"T4 correct should pass: {r.reason}"
-
-    r = t4.evaluate("θ = 30°")
-    assert not r.passed, "T4 wrong should fail"
-
-    # T5 Linear regression: 正确 w=2, b=0
-    t5 = tasks[4]
-    r = t5.evaluate("w = 2.0, b = 0.0")
-    assert r.passed, f"T5 correct should pass: {r.reason}"
-
-    r = t5.evaluate("w = 5.0, b = 1.0")
-    assert not r.passed, "T5 wrong should fail"
-
+def _sc_property_tasks(tasks: list[BenchmarkTask]) -> None:
+    """T6–T10: 磁 / 力 / 热 / 电 物性数值题."""
     # T6 Curie-Weiss: 正确 ~0.004
-    t6 = tasks[5]
-    r = t6.evaluate("磁化率 χ = 0.004 emu/mol")
-    assert r.passed, f"T6 correct should pass: {r.reason}"
-    r = t6.evaluate("χ = 0.1")
-    assert not r.passed, "T6 wrong should fail"
-
+    _assert_eval(tasks[5], "磁化率 χ = 0.004 emu/mol", "χ = 0.1", "T6")
     # T7 Hooke: 正确 ~420 MPa
-    t7 = tasks[6]
-    r = t7.evaluate("应力 σ = 420 MPa")
-    assert r.passed, f"T7 correct should pass: {r.reason}"
-    r = t7.evaluate("σ = 100 MPa")
-    assert not r.passed, "T7 wrong should fail"
-
+    _assert_eval(tasks[6], "应力 σ = 420 MPa", "σ = 100 MPa", "T7")
     # T8 Debye temp: 正确 ~480 K
-    t8 = tasks[7]
-    r = t8.evaluate("德拜温度 θD = 479.6 K")
-    assert r.passed, f"T8 correct should pass: {r.reason}"
-    r = t8.evaluate("θD = 200 K")
-    assert not r.passed, "T8 wrong should fail"
-
+    _assert_eval(tasks[7], "德拜温度 θD = 479.6 K", "θD = 200 K", "T8")
     # T9 Fermi energy: 正确 ~1.66 eV
-    t9 = tasks[8]
-    r = t9.evaluate("费米能级 EF = 1.66 eV")
-    assert r.passed, f"T9 correct should pass: {r.reason}"
-    r = t9.evaluate("EF = 5.0 eV")
-    assert not r.passed, "T9 wrong should fail"
-
+    _assert_eval(tasks[8], "费米能级 EF = 1.66 eV", "EF = 5.0 eV", "T9")
     # T10 Nernst: 正确 ~1.159 V
-    t10 = tasks[9]
-    r = t10.evaluate("电池电动势 E = 1.159 V")
-    assert r.passed, f"T10 correct should pass: {r.reason}"
-    r = t10.evaluate("E = 1.0 V")
-    assert not r.passed, "T10 wrong should fail"
+    _assert_eval(tasks[9], "电池电动势 E = 1.159 V", "E = 1.0 V", "T10")
 
+
+def _selfcheck() -> None:
+    """验证 10 题: 正确答案 pass, 错误答案 fail."""
+    tasks = build_repro_tasks()
+    assert len(tasks) == 10, f"expected 10 repro tasks, got {len(tasks)}"
+    _sc_formula_tasks(tasks)
+    _sc_code_task(tasks)
+    _sc_property_tasks(tasks)
     print(f"PASS: paper_repro_bench ({len(tasks)} tasks)")
 
 

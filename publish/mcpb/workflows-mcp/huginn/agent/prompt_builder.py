@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import logging
 
+from huginn.agent_modes import PROMPT_MODES
+
 logger = logging.getLogger(__name__)
 
 
@@ -57,6 +59,11 @@ _MODE_INSTRUCTIONS = {
         "literature into a coherent conclusion; reconcile contradictions explicitly."
     ),
 }
+
+# 词表单一来源 (A3): 键集必须等于 agent_modes.PROMPT_MODES, 增删 mode 时一处改.
+assert set(_MODE_INSTRUCTIONS) == set(PROMPT_MODES), (
+    "mode 词表漂移: _MODE_INSTRUCTIONS 键集 != agent_modes.PROMPT_MODES"
+)
 
 
 def mode_segment(mode: str) -> str:
@@ -399,6 +406,13 @@ def _thinking_plugin(mode, phase, metacog_state, system_prompt):
     )
 
 
+def _mechanisms_plugin(mode, phase, metacog_state, system_prompt):
+    """机制普查段: 把 Catalog 已启用接入项投影进 prompt (三路径共用同一实现)."""
+    from huginn.agent.mechanism_census import census_text
+
+    return census_text()
+
+
 def _register_builtin_segments() -> None:
     from huginn.plugins.prompt_segments import register_prompt_segment
 
@@ -410,6 +424,7 @@ def _register_builtin_segments() -> None:
     register_prompt_segment("mode", _mode_plugin)
     register_prompt_segment("phase", _phase_plugin)
     register_prompt_segment("metacog", _metacog_plugin)
+    register_prompt_segment("mechanisms", _mechanisms_plugin)
     register_prompt_segment("tools", _tools_plugin)
     register_prompt_segment("multimodal", _multimodal_plugin)
     register_prompt_segment("writing", _writing_plugin)

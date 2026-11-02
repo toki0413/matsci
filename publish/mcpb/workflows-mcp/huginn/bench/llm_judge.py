@@ -27,12 +27,13 @@ from .task import TaskResult
 @dataclass
 class JudgeRubric:
     """单个 rubric 维度."""
-    correctness: float = 0.0       # 结果数值正确性
-    methodology: float = 0.0       # 方法/推导合理性
-    completeness: float = 0.0      # 回答完整性
-    code_quality: float = 0.0      # 代码质量 (代码题)
+
+    correctness: float = 0.0  # 结果数值正确性
+    methodology: float = 0.0  # 方法/推导合理性
+    completeness: float = 0.0  # 回答完整性
+    code_quality: float = 0.0  # 代码质量 (代码题)
     reason: str = ""
-    strict: bool = False           # B1: strict 模式 (0/1 判定, 不算加权分)
+    strict: bool = False  # B1: strict 模式 (0/1 判定, 不算加权分)
     strict_passed: bool | None = None  # B1: strict 模式下 [judge] 字段解析结果
 
     @property
@@ -42,7 +43,12 @@ class JudgeRubric:
             return 1.0 if self.strict_passed else 0.0
         weights = {"correctness": 0.5, "methodology": 0.3, "completeness": 0.2}
         if self.code_quality > 0:
-            weights = {"correctness": 0.4, "methodology": 0.2, "completeness": 0.2, "code_quality": 0.2}
+            weights = {
+                "correctness": 0.4,
+                "methodology": 0.2,
+                "completeness": 0.2,
+                "code_quality": 0.2,
+            }
         total = sum(getattr(self, k) * v for k, v in weights.items())
         return round(total, 3)
 
@@ -93,6 +99,7 @@ def _parse_strict_response(text: str) -> tuple[str, bool]:
     ponytail: regex 提取 [judge] 字段, 不上 JSON parser.
     """
     import re
+
     reason = ""
     judge = False
     reason_m = re.search(r"\[reason\](.*?)(?:\[judge\]|$)", text, re.DOTALL)
@@ -114,7 +121,9 @@ def _build_judge_prompt(
     is_code_task: bool = False,
 ) -> str:
     """构造 judge prompt."""
-    ref_section = f"\n参考答案: {reference}" if reference else "\n参考答案: (无, 凭你的知识判断)"
+    ref_section = (
+        f"\n参考答案: {reference}" if reference else "\n参考答案: (无, 凭你的知识判断)"
+    )
     code_hint = "\n注意: 这是代码题, code_quality 维度需评估." if is_code_task else ""
     return f"""请评估以下 AI agent 的回答.
 
@@ -164,42 +173,76 @@ def judge_task(
 
     B1: strict=True 时用 8 条铁律 prompt + 0/1 判定, 不算加权总分.
     """
-    key = api_key or os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("HUGINN_API_KEY")
+    key = (
+        api_key
+        or os.environ.get("DEEPSEEK_API_KEY")
+        or os.environ.get("HUGINN_API_KEY")
+    )
     if not key:
         return JudgeRubric(reason="无 API key, 跳过 LLM judge", strict=strict)
 
     try:
-        # langchain_openai 只在 judge 路径用到, 惰性导入 — 打包时不带它
-        # (见 build_sidecar.py 的 exclude), 但 llm_judge 被 autoloop 导入链
-        # 拉到, 顶层 import 会在 sidecar 启动时直接崩.
-        from langchain_openai import ChatOpenAI
-
-        llm = ChatOpenAI(
-            model=model,
-            api_key=key,
-            base_url=base_url,
-            temperature=0.0,
-            max_tokens=500,
+        text = _invoke_judge_llm(
+            task_prompt,
+            agent_output,
+            reference,
+            is_code_task,
+            key,
+            model,
+            base_url,
+            strict,
         )
-        prompt = _build_judge_prompt(task_prompt, agent_output, reference, is_code_task)
-        system_msg = JUDGE_STRICT_SYSTEM if strict else JUDGE_SYSTEM
-        resp = llm.invoke([
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": prompt},
-        ])
-        text = resp.content if hasattr(resp, "content") else str(resp)
-        text = str(text)
         if strict:
-            reason, passed = _parse_strict_response(text)
-            return JudgeRubric(
-                reason=reason, strict=True, strict_passed=passed,
-                correctness=1.0 if passed else 0.0,
-                methodology=1.0 if passed else 0.0,
-                completeness=1.0 if passed else 0.0,
-            )
+            return _strict_judge_rubric(text)
         return _parse_judge_response(text)
     except Exception as e:
         return JudgeRubric(reason=f"judge 调用失败: {e}", strict=strict)
+
+
+def _invoke_judge_llm(
+    task_prompt: str,
+    agent_output: str,
+    reference: str | None,
+    is_code_task: bool,
+    key: str,
+    model: str,
+    base_url: str,
+    strict: bool,
+) -> str:
+    # langchain_openai 只在 judge 路径用到, 惰性导入 — 打包时不带它
+    # (见 build_sidecar.py 的 exclude), 但 llm_judge 被 autoloop 导入链
+    # 拉到, 顶层 import 会在 sidecar 启动时直接崩.
+    from langchain_openai import ChatOpenAI
+
+    llm = ChatOpenAI(
+        model=model,
+        api_key=key,
+        base_url=base_url,
+        temperature=0.0,
+        max_tokens=500,
+    )
+    prompt = _build_judge_prompt(task_prompt, agent_output, reference, is_code_task)
+    system_msg = JUDGE_STRICT_SYSTEM if strict else JUDGE_SYSTEM
+    resp = llm.invoke(
+        [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": prompt},
+        ]
+    )
+    text = resp.content if hasattr(resp, "content") else str(resp)
+    return str(text)
+
+
+def _strict_judge_rubric(text: str) -> JudgeRubric:
+    reason, passed = _parse_strict_response(text)
+    return JudgeRubric(
+        reason=reason,
+        strict=True,
+        strict_passed=passed,
+        correctness=1.0 if passed else 0.0,
+        methodology=1.0 if passed else 0.0,
+        completeness=1.0 if passed else 0.0,
+    )
 
 
 def judge_with_regex_fallback(
@@ -215,7 +258,11 @@ def judge_with_regex_fallback(
     threshold: regex score >= threshold 时直接采纳, 不调 judge.
     """
     # regex 高分直接采纳 (score 为 None 时按 passed=True 的 1.0 处理)
-    regex_score = regex_result.score if regex_result.score is not None else (1.0 if regex_result.passed else 0.0)
+    regex_score = (
+        regex_result.score
+        if regex_result.score is not None
+        else (1.0 if regex_result.passed else 0.0)
+    )
     if regex_result.passed and regex_score >= threshold:
         return regex_result
 
@@ -245,8 +292,14 @@ def _selfcheck() -> None:
     ponytail: mock judge 响应文本验解析逻辑, 不调真 LLM.
     ceiling: 没验真 LLM 返回的多样性 (edge case 见 acceptance test).
     """
-    import os
+    _selfcheck_parse()
+    _selfcheck_rubric()
+    _selfcheck_no_key()
 
+    print("llm_judge B1 selfcheck OK")
+
+
+def _selfcheck_parse() -> None:
     # 1. _parse_strict_response: [judge]True → passed=True
     text_true = "[reason]全部满足铁律1-7, 数值单位均正确[judge]True"
     reason_t, passed_t = _parse_strict_response(text_true)
@@ -268,6 +321,8 @@ def _selfcheck() -> None:
     assert "解析失败" in reason_b, f"应提示解析失败: {reason_b}"
     print(f"3. parse no [judge] → passed={passed_b} (保守) OK")
 
+
+def _selfcheck_rubric() -> None:
     # 4. JudgeRubric strict=True + strict_passed=True → passed=True, score=1.0
     r_true = JudgeRubric(strict=True, strict_passed=True, reason="全部满足")
     assert r_true.passed is True, "strict_passed=True → passed 应 True"
@@ -286,6 +341,10 @@ def _selfcheck() -> None:
     assert r_normal.strict is False
     print(f"6. 非 strict 模式加权 score={r_normal.score} → passed={r_normal.passed} OK")
 
+
+def _selfcheck_no_key() -> None:
+    import os
+
     # 7. judge_task 无 API key 时返回 strict 标记
     orig_key = os.environ.pop("DEEPSEEK_API_KEY", None)
     orig_key2 = os.environ.pop("HUGINN_API_KEY", None)
@@ -294,14 +353,14 @@ def _selfcheck() -> None:
         assert rubric.strict is True, "无 key 时 strict 标记应保留"
         assert "无 API key" in rubric.reason, f"reason 应提示无 key: {rubric.reason}"
         assert rubric.passed is False, "无 key 时 passed 应 False"
-        print(f"7. judge_task no key + strict=True → strict={rubric.strict}, passed={rubric.passed} OK")
+        print(
+            f"7. judge_task no key + strict=True → strict={rubric.strict}, passed={rubric.passed} OK"
+        )
     finally:
         if orig_key:
             os.environ["DEEPSEEK_API_KEY"] = orig_key
         if orig_key2:
             os.environ["HUGINN_API_KEY"] = orig_key2
-
-    print("llm_judge B1 selfcheck OK")
 
 
 if __name__ == "__main__":

@@ -14,23 +14,57 @@ from huginn.cli.design_system import get_design_system
 from huginn.config import HuginnConfig
 
 SUITES = [
-    "general", "mmlu", "sciq", "arc",
-    "gpqa", "cmmlu", "mmlu_pro", "external",
-    "physics", "lineage", "repro", "optim", "research",
+    "general",
+    "mmlu",
+    "sciq",
+    "arc",
+    "gpqa",
+    "cmmlu",
+    "mmlu_pro",
+    "external",
+    "physics",
+    "lineage",
+    "repro",
+    "optim",
+    "research",
 ]
 
 
 @click.command()
-@click.option("--suite", "-s", default="general", type=click.Choice(SUITES),
-              help="Benchmark suite: general/mmlu/sciq/arc/gpqa/cmmlu/mmlu_pro/external/physics/lineage/repro/optim/research")
-@click.option("--evolve", is_flag=True, help="Run evolution cycle after benchmarking (general only)")
-@click.option("--categories", "-c", help="Comma-separated categories to run (general only)")
-@click.option("--max-tasks", "-n", type=int, default=None, help="Limit task count (for mmlu/sciq/arc)")
+@click.option(
+    "--suite",
+    "-s",
+    default="general",
+    type=click.Choice(SUITES),
+    help="Benchmark suite: general/mmlu/sciq/arc/gpqa/cmmlu/mmlu_pro/external/physics/lineage/repro/optim/research",
+)
+@click.option(
+    "--evolve",
+    is_flag=True,
+    help="Run evolution cycle after benchmarking (general only)",
+)
+@click.option(
+    "--categories", "-c", help="Comma-separated categories to run (general only)"
+)
+@click.option(
+    "--max-tasks",
+    "-n",
+    type=int,
+    default=None,
+    help="Limit task count (for mmlu/sciq/arc)",
+)
 @click.option("--re-ask", is_flag=True, help="B2: re-ask consistency")
 @click.option("--output", "-o", default="bench_report.json", help="Report output path")
 @click.pass_obj
-def bench(ctx: CliContext, suite: str, evolve: bool, categories: str | None,
-          max_tasks: int | None, re_ask: bool, output: str) -> None:
+def bench(
+    ctx: CliContext,
+    suite: str,
+    evolve: bool,
+    categories: str | None,
+    max_tasks: int | None,
+    re_ask: bool,
+    output: str,
+) -> None:
     """Run benchmark suite against Huginn agent (DeepSeek v4-flash)."""
     ds = get_design_system()
     cfg = (
@@ -40,21 +74,7 @@ def bench(ctx: CliContext, suite: str, evolve: bool, categories: str | None,
     )
 
     if suite == "research":
-        # Benchmark 多 trial 场景, 走 rcb 包提供的 entry 函数
-        try:
-            from huginn.cli.rcb import run_multi_trial
-        except ImportError:
-            run_multi_trial = None
-        if callable(run_multi_trial):
-            run_multi_trial(trials=max_tasks or 3)
-        else:
-            ds.dialog(
-                title="Bench",
-                content=(
-                    "[yellow]多 trial benchmark 需要走独立脚本:[/yellow]\n"
-                    "  python -m huginn.cli.rcb_runner --trials 3"
-                ),
-            )
+        _run_research_suite(ds, max_tasks)
         return
 
     from huginn.bench import BenchmarkRunner, get_suite_tasks
@@ -64,19 +84,17 @@ def bench(ctx: CliContext, suite: str, evolve: bool, categories: str | None,
         ds.error(f"未知 suite: {suite}")
         return
 
-    # ponytail: bench 命令注入 MemoryManager; 升级路径是 bench 复用 live agent 的 memory
-    try:
-        from huginn.memory.manager import MemoryManager
-        mem = MemoryManager()
-    except Exception:
-        mem = None
+    mem = _make_bench_memory_manager()
 
     runner = BenchmarkRunner(tasks=tasks, config=cfg, memory_manager=mem)
     cats = (
         [c.strip() for c in categories.split(",") if c.strip()] if categories else None
     )
 
-    ds.dialog(title="Bench", content=f"[bold blue]Running suite: {suite} ({len(tasks)} tasks)[/bold blue]")
+    ds.dialog(
+        title="Bench",
+        content=f"[bold blue]Running suite: {suite} ({len(tasks)} tasks)[/bold blue]",
+    )
 
     report = runner.run(
         evolve=evolve and suite == "general",
@@ -86,6 +104,20 @@ def bench(ctx: CliContext, suite: str, evolve: bool, categories: str | None,
     report_path = ctx.workspace / output
     runner.save_report(report, report_path)
 
+    _print_bench_report(ds, suite, report, report_path)
+
+
+def _make_bench_memory_manager():
+    # ponytail: bench 命令注入 MemoryManager; 升级路径是 bench 复用 live agent 的 memory
+    try:
+        from huginn.memory.manager import MemoryManager
+
+        return MemoryManager()
+    except Exception:
+        return None
+
+
+def _print_bench_report(ds, suite: str, report, report_path) -> None:
     ds.dialog(
         title="Bench",
         content=(
@@ -109,3 +141,21 @@ def bench(ctx: CliContext, suite: str, evolve: bool, categories: str | None,
             ds.success(f"{r.task_id}: {r.reason}")
         else:
             ds.error(f"{r.task_id}: {r.reason}")
+
+
+def _run_research_suite(ds, max_tasks: int | None) -> None:
+    # Benchmark 多 trial 场景, 走 rcb 包提供的 entry 函数
+    try:
+        from huginn.cli.rcb import run_multi_trial
+    except ImportError:
+        run_multi_trial = None
+    if callable(run_multi_trial):
+        run_multi_trial(trials=max_tasks or 3)
+    else:
+        ds.dialog(
+            title="Bench",
+            content=(
+                "[yellow]多 trial benchmark 需要走独立脚本:[/yellow]\n"
+                "  python -m huginn.cli.rcb_runner --trials 3"
+            ),
+        )

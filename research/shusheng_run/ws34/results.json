@@ -1,0 +1,69 @@
+{
+  "full_dataset_fit": {
+    "log_log_regression": {
+      "A": 0.3636906578524829,
+      "p": 0.9998727420724831,
+      "Ea_J_per_mol": 109890.8992253146
+    },
+    "nonlinear_least_squares": {
+      "A": 0.39663783005275705,
+      "p": 0.9876317624278088,
+      "Ea_J_per_mol": 108869.24037977027
+    }
+  },
+  "bootstrap_statistics": {
+    "log_log": {
+      "A_mean": 0.36716027323049616,
+      "A_std": 0.020511560115717024,
+      "p_mean": 1.0004579187592924,
+      "p_std": 0.002455906128511322,
+      "Ea_mean": 109889.83784053096,
+      "Ea_std": 151.7124076611766
+    },
+    "nls": {
+      "A_mean": 0.3916380409643292,
+      "A_std": 0.04402592389597783,
+      "p_mean": 0.988434686804069,
+      "p_std": 0.01053507508027448,
+      "Ea_mean": 108998.28726915694,
+      "Ea_std": 739.1737965218517
+    }
+  },
+  "model_comparison": {
+    "arrhenius_model": {
+      "RSS": 790683137.4851236,
+      "AIC": 1218.8189810413808,
+      "BIC": 1225.7714453819897,
+      "n_parameters": 3
+    },
+    "fick_model": {
+      "RSS": 256181468725.32117,
+      "AIC": 1650.3747834230353,
+      "BIC": 1655.009759650108,
+      "n_parameters": 2,
+      "fixed_p": 2.0
+    },
+    "aic_difference": -431.55580238165453,
+    "bic_difference": -429.2383142681183
+  },
+  "prediction": {
+    "temperature_K": 650.0,
+    "radius_m": 2e-06,
+    "log_log_prediction": {
+      "t50_seconds": 494.0230257511401,
+      "bootstrap_mean": 494.0636560010837,
+      "bootstrap_std": 2.0067224226679174
+    },
+    "nls_prediction": {
+      "t50_seconds": 523.6796275356412,
+      "bootstrap_mean": 520.9283275700492,
+      "bootstrap_std": 19.89790720114104
+    }
+  },
+  "metadata": {
+    "n_data_points": 75,
+    "bootstrap_iterations": 50,
+    "random_seed": 42,
+    "gas_constant_J_per_mol_K": 8.314
+  }
+}

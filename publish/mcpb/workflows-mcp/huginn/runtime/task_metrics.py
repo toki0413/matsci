@@ -46,6 +46,38 @@ def _metrics_path(workspace: Path) -> Path:
     return Path(workspace).resolve() / HUGINN_DIR_NAME / "task_metrics.json"
 
 
+def _health_avg_update(task_metrics: TaskMetrics, tool_health) -> float:
+    health_avg = task_metrics.tool_call_health_avg
+    if (
+        tool_health is not None
+        and hasattr(tool_health, "is_anomalous")
+        and tool_health.is_anomalous()
+    ):
+        # ponytail: 简单指数衰减 *0.9, 不做 EWMA. 升级路径: alpha 可调的加权平均.
+        health_avg = max(0.0, health_avg * 0.9)
+    return health_avg
+
+
+def _estimate_remaining(
+    task_metrics: TaskMetrics, task_state, completed: int
+) -> int | None:
+    """估算剩余分钟数: 用 task_state.created_at 算平均每步耗时, 线性外推."""
+    # ponytail: 线性外推, 不建模非线性 (后期步骤可能更慢/更快). 升级路径: 近期窗口加权.
+    estimated = task_metrics.estimated_remaining
+    if completed > 0 and task_metrics.total_steps > 0:
+        created_at = getattr(task_state, "created_at", None)
+        if created_at is not None:
+            try:
+                elapsed_sec = datetime.now().timestamp() - float(created_at)
+                if elapsed_sec > 0:
+                    avg_per_step_min = elapsed_sec / 60.0 / completed
+                    remaining_steps = max(0, task_metrics.total_steps - completed)
+                    estimated = int(remaining_steps * avg_per_step_min)
+            except (TypeError, ValueError):
+                pass
+    return estimated
+
+
 def update_metrics(
     task_metrics: TaskMetrics,
     step_evaluation,
@@ -71,29 +103,13 @@ def update_metrics(
     )
     pmk_cycles = task_metrics.pmk_cycle_count + (1 if pmk_feedback.strip() else 0)
 
-    health_avg = task_metrics.tool_call_health_avg
-    if tool_health is not None and hasattr(tool_health, "is_anomalous") and tool_health.is_anomalous():
-        # ponytail: 简单指数衰减 *0.9, 不做 EWMA. 升级路径: alpha 可调的加权平均.
-        health_avg = max(0.0, health_avg * 0.9)
+    health_avg = _health_avg_update(task_metrics, tool_health)
 
     progress = task_metrics.progress
     if target_chain_progress is not None:
         progress = float(target_chain_progress)
 
-    # 估算剩余分钟数: 用 task_state.created_at 算平均每步耗时, 线性外推
-    # ponytail: 线性外推, 不建模非线性 (后期步骤可能更慢/更快). 升级路径: 近期窗口加权.
-    estimated = task_metrics.estimated_remaining
-    if completed > 0 and task_metrics.total_steps > 0:
-        created_at = getattr(task_state, "created_at", None)
-        if created_at is not None:
-            try:
-                elapsed_sec = datetime.now().timestamp() - float(created_at)
-                if elapsed_sec > 0:
-                    avg_per_step_min = elapsed_sec / 60.0 / completed
-                    remaining_steps = max(0, task_metrics.total_steps - completed)
-                    estimated = int(remaining_steps * avg_per_step_min)
-            except (TypeError, ValueError):
-                pass
+    estimated = _estimate_remaining(task_metrics, task_state, completed)
 
     return replace(
         task_metrics,
@@ -139,7 +155,9 @@ if __name__ == "__main__":
         # 1. 基本更新: completed_steps +1, drift/redirect/pmk 都不增, 原对象不变
         m0 = TaskMetrics(task_id="t1", total_steps=10)
         se_ok = SimpleNamespace(
-            on_track="true", deviation="", pmk_feedback="",
+            on_track="true",
+            deviation="",
+            pmk_feedback="",
             tool_call_health=None,
         )
         m1 = update_metrics(m0, se_ok, task_state=None)
@@ -154,7 +172,9 @@ if __name__ == "__main__":
 
         # 2. 漂移: on_track="false" → drift_count +1; 无 pmk_feedback 不算重定向
         se_drift = SimpleNamespace(
-            on_track="false", deviation="差太远", pmk_feedback="",
+            on_track="false",
+            deviation="差太远",
+            pmk_feedback="",
             tool_call_health=None,
         )
         m2 = update_metrics(m1, se_drift, task_state=None)
@@ -164,8 +184,10 @@ if __name__ == "__main__":
 
         # 3. 重定向 + PMK 循环: deviation + pmk_feedback 都非空
         se_redir = SimpleNamespace(
-            on_track="false", deviation="方向偏了",
-            pmk_feedback="建议改用 XX 方法", tool_call_health=None,
+            on_track="false",
+            deviation="方向偏了",
+            pmk_feedback="建议改用 XX 方法",
+            tool_call_health=None,
         )
         m3 = update_metrics(m2, se_redir, task_state=None)
         assert m3.drift_count == 2
@@ -179,7 +201,9 @@ if __name__ == "__main__":
                 return True
 
         se_anom = SimpleNamespace(
-            on_track="true", deviation="", pmk_feedback="",
+            on_track="true",
+            deviation="",
+            pmk_feedback="",
             tool_call_health=_TH(),
         )
         m4 = update_metrics(m3, se_anom, task_state=None)
@@ -202,9 +226,13 @@ if __name__ == "__main__":
         m6b = update_metrics(m6a, se_ok, task_state=ts)
         # 2 步 ≈ 10 分钟 → 5 分钟/步, 剩 8 步 ≈ 40 分钟
         assert m6b.estimated_remaining is not None
-        assert 25 <= m6b.estimated_remaining <= 80, f"estimated: {m6b.estimated_remaining}"
+        assert 25 <= m6b.estimated_remaining <= 80, (
+            f"estimated: {m6b.estimated_remaining}"
+        )
         # task_state=None 时 estimated_remaining 保持 None
-        m6c = update_metrics(TaskMetrics(task_id="t1", total_steps=10), se_ok, task_state=None)
+        m6c = update_metrics(
+            TaskMetrics(task_id="t1", total_steps=10), se_ok, task_state=None
+        )
         assert m6c.estimated_remaining is None
         print(f"6. estimated_remaining OK (≈{m6b.estimated_remaining}min)")
 

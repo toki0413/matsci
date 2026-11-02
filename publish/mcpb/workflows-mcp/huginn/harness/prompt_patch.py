@@ -13,6 +13,7 @@ toggle: cfg.feature_flags.harness_prompt_patch (默认 off, mtime auto reload).
 看 r_phys 生成新 patch. Beta(α, β) 信念独立维护 (跟 ToolBelief 数学同,
 key schema 不同), 不复用 ToolBelief 避免污染 skill 进化数据.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -46,6 +47,7 @@ class PromptPatch:
     directive_in: 生成此 patch 时用的 RSI directive (修 P4: directive
     从 memory 软检索改成 patch store 定向读, find_by_directive 反查).
     """
+
     id: str
     phase: str
     block_name: str
@@ -93,6 +95,7 @@ class PromptPatchStore:
     跨 iter 状态持久: 进程内单例 + 磁盘文件. 失败静默, 不阻塞主循环.
     跟 _get_evolution (engine.py:460) 同模式懒加载.
     """
+
     _instance: PromptPatchStore | None = None
     _lock = threading.Lock()
 
@@ -206,6 +209,74 @@ class PromptPatchStore:
         return None
 
 
+def _apply_h3_block_subset(
+    phase: str, blocks: list[tuple[str, str]]
+) -> list[tuple[str, str]]:
+    # H3 接入: toggle on 时按 UCB 选 block 子集 (核心 block 必保留)
+    try:
+        from huginn.harness.joint_optimizer import select_block_subset_for_phase
+
+        return select_block_subset_for_phase(phase, blocks)
+    except Exception:
+        logger.debug("H3 block subset in apply_patches failed", exc_info=True)
+        return blocks
+
+
+def _load_phase_patches(phase: str) -> list[PromptPatch] | None:
+    try:
+        store = PromptPatchStore.get_instance()
+        return store.list_patches(phase=phase)
+    except Exception:
+        logger.debug("apply_patches: store fail", exc_info=True)
+        return None
+
+
+def _filter_by_adoption_gate(good: list[PromptPatch]) -> list[PromptPatch]:
+    # 门控接入: 默认 advisory (只评分不拦), 绝不因门控排除候选而拖累 agent.
+    # 显式开启 strict gate (harness_adoption_gate) 才跳过 RED 的自动采纳.
+    # 无论哪种模式, store 都保留数据, 门控只影响"是否自动用", 永不删除.
+    try:
+        from huginn.harness.adoption_gate import AdoptionGate
+
+        if AdoptionGate.get_instance().enabled():
+            good = [p for p in good if AdoptionGate.get_instance().should_adopt(p.id)]
+    except Exception:
+        logger.debug("adoption_gate filter in apply_patches failed", exc_info=True)
+    return good
+
+
+def _pick_best_per_block(good: list[PromptPatch]) -> dict[str, PromptPatch]:
+    by_block: dict[str, PromptPatch] = {}
+    for p in good:
+        cur = by_block.get(p.block_name)
+        if cur is None or (
+            p.alpha / max(1, p.alpha + p.beta)
+            > cur.alpha / max(1, cur.alpha + cur.beta)
+        ):
+            by_block[p.block_name] = p
+    return by_block
+
+
+def _apply_patch_map(
+    blocks: list[tuple[str, str]],
+    by_block: dict[str, PromptPatch],
+) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    for name, text in blocks:
+        p = by_block.get(name)
+        if p is None:
+            out.append((name, text))
+            continue
+        if p.op == "replace":
+            new_text = p.new_text
+        elif p.op == "prepend":
+            new_text = p.new_text + "\n" + text
+        else:  # append
+            new_text = text + "\n" + p.new_text
+        out.append((name, new_text))
+    return out
+
+
 def apply_patches(
     blocks: list[tuple[str, str]],
     phase: str,
@@ -225,63 +296,119 @@ def apply_patches(
     """
     if not _harness_enabled("harness_prompt_patch"):
         return blocks
-    # H3 接入: toggle on 时按 UCB 选 block 子集 (核心 block 必保留)
-    try:
-        from huginn.harness.joint_optimizer import select_block_subset_for_phase
-        blocks = select_block_subset_for_phase(phase, blocks)
-    except Exception:
-        logger.debug("H3 block subset in apply_patches failed", exc_info=True)
-    try:
-        store = PromptPatchStore.get_instance()
-        patches = store.list_patches(phase=phase)
-    except Exception:
-        logger.debug("apply_patches: store fail", exc_info=True)
-        return blocks
+    blocks = _apply_h3_block_subset(phase, blocks)
+    patches = _load_phase_patches(phase)
     if not patches:
         return blocks
-    good = [
-        p for p in patches
-        if p.alpha / max(1, p.alpha + p.beta) >= 0.5
-    ]
+    good = [p for p in patches if p.alpha / max(1, p.alpha + p.beta) >= 0.5]
     if not good:
         return blocks
-    # 门控接入: 默认 advisory (只评分不拦), 绝不因门控排除候选而拖累 agent.
-    # 显式开启 strict gate (harness_adoption_gate) 才跳过 RED 的自动采纳.
-    # 无论哪种模式, store 都保留数据, 门控只影响"是否自动用", 永不删除.
-    try:
-        from huginn.harness.adoption_gate import AdoptionGate
+    good = _filter_by_adoption_gate(good)
+    if not good:
+        return blocks
+    by_block = _pick_best_per_block(good)
+    return _apply_patch_map(blocks, by_block)
 
-        if AdoptionGate.get_instance().enabled():
-            good = [
-                p for p in good
-                if AdoptionGate.get_instance().should_adopt(p.id)
-            ]
+
+def _select_improv_template() -> tuple[str | None, Any]:
+    # M-R1: 生成臂 + 改进器模板从 meta-improver 取 (champion 覆盖 / canary 候选 / baseline).
+    # Lazy import 保证 toggle off 时零开销 + 无循环依赖 (meta_improver 不 import 本模块).
+    _arm_id: str | None = None
+    _improv_template = None
+    try:
+        from huginn.harness.meta_improver import MetaImprover
+
+        _arm_id, _improv_template = MetaImprover.get_instance().select_generation_arm()
     except Exception:
-        logger.debug("adoption_gate filter in apply_patches failed", exc_info=True)
-    if not good:
-        return blocks
-    by_block: dict[str, PromptPatch] = {}
-    for p in good:
-        cur = by_block.get(p.block_name)
-        if cur is None or (
-            p.alpha / max(1, p.alpha + p.beta)
-            > cur.alpha / max(1, cur.alpha + cur.beta)
-        ):
-            by_block[p.block_name] = p
-    out: list[tuple[str, str]] = []
-    for name, text in blocks:
-        p = by_block.get(name)
-        if p is None:
-            out.append((name, text))
-            continue
-        if p.op == "replace":
-            new_text = p.new_text
-        elif p.op == "prepend":
-            new_text = p.new_text + "\n" + text
-        else:  # append
-            new_text = text + "\n" + p.new_text
-        out.append((name, new_text))
-    return out
+        _arm_id, _improv_template = None, None
+    if not _improv_template:
+        from huginn.harness.meta_improver import DEFAULT_IMPROV_TEMPLATE
+
+        _improv_template = DEFAULT_IMPROV_TEMPLATE
+    return _arm_id, _improv_template
+
+
+def _format_improv_prompt(
+    template: Any,
+    phase: str,
+    block_names: list[str],
+    r_phys: float | None,
+    directive: str,
+) -> str:
+    try:
+        return template.format(
+            phase=phase,
+            block_names=block_names,
+            r_phys=(f"{r_phys:.2f}" if r_phys is not None else "None"),
+            directive=directive or "",
+        )
+    except Exception:
+        logger.debug("improv template format failed; fallback default", exc_info=True)
+        from huginn.harness.meta_improver import DEFAULT_IMPROV_TEMPLATE
+
+        return DEFAULT_IMPROV_TEMPLATE.format(
+            phase=phase,
+            block_names=block_names,
+            r_phys=(f"{r_phys:.2f}" if r_phys is not None else "None"),
+            directive=directive or "",
+        )
+
+
+def _parse_patch_payload(
+    response: str | None, block_names: list[str]
+) -> tuple[str, str, str] | None:
+    if not (response and response.strip()):
+        return None
+    txt = response.strip()
+    if txt.startswith("```"):
+        txt = txt.split("\n", 1)[-1].rsplit("```", 1)[0]
+    try:
+        d = json.loads(txt)
+    except Exception:
+        logger.debug("generate_patch JSON parse fail: %s", txt[:200])
+        return None
+    block_name = d.get("block_name", "")
+    if block_name not in block_names:
+        logger.debug(
+            "generate_patch: block_name %s not in %s",
+            block_name,
+            block_names,
+        )
+        return None
+    op = d.get("op", "replace")
+    if op not in ("replace", "prepend", "append"):
+        op = "replace"
+    new_text = str(d.get("new_text", ""))[:500]
+    if not new_text.strip():
+        return None
+    return block_name, op, new_text
+
+
+async def _note_patch_generation(
+    phase: str,
+    blocks: list[tuple[str, str]],
+    r_phys: float | None,
+    directive: str,
+    llm_chat_fn: Any,
+    patch: PromptPatch,
+    arm_id: str | None,
+) -> None:
+    # M-R1: 成功产 patch 后喂给 meta-improver (记 patch→生成臂 + 计数到阈值触发 maybe_propose).
+    # Lazy import, meta 层默认 off 时静默 no-op.
+    try:
+        from huginn.harness.meta_improver import MetaImprover
+
+        await MetaImprover.get_instance().note_generation(
+            phase,
+            blocks,
+            r_phys,
+            directive,
+            llm_chat_fn,
+            patch_id=patch.id,
+            arm_id=arm_id,
+        )
+    except Exception:
+        logger.debug("meta_improver note_generation failed", exc_info=True)
 
 
 async def generate_patch(
@@ -304,62 +431,19 @@ async def generate_patch(
     if r_phys is None or r_phys > 0.7:
         return None
     block_names = [name for name, _ in blocks]
-    # M-R1: 生成臂 + 改进器模板从 meta-improver 取 (champion 覆盖 / canary 候选 / baseline).
-    # Lazy import 保证 toggle off 时零开销 + 无循环依赖 (meta_improver 不 import 本模块).
-    _arm_id: str | None = None
-    _improv_template = None
-    try:
-        from huginn.harness.meta_improver import MetaImprover
-        _arm_id, _improv_template = MetaImprover.get_instance().select_generation_arm()
-    except Exception:
-        _arm_id, _improv_template = None, None
-    if not _improv_template:
-        from huginn.harness.meta_improver import DEFAULT_IMPROV_TEMPLATE
-        _improv_template = DEFAULT_IMPROV_TEMPLATE
-    try:
-        prompt = _improv_template.format(
-            phase=phase,
-            block_names=block_names,
-            r_phys=(f"{r_phys:.2f}" if r_phys is not None else "None"),
-            directive=directive or "",
-        )
-    except Exception:
-        logger.debug("improv template format failed; fallback default", exc_info=True)
-        from huginn.harness.meta_improver import DEFAULT_IMPROV_TEMPLATE
-        prompt = DEFAULT_IMPROV_TEMPLATE.format(
-            phase=phase,
-            block_names=block_names,
-            r_phys=(f"{r_phys:.2f}" if r_phys is not None else "None"),
-            directive=directive or "",
-        )
+    _arm_id, _improv_template = _select_improv_template()
+    prompt = _format_improv_prompt(
+        _improv_template, phase, block_names, r_phys, directive
+    )
     try:
         response = await llm_chat_fn(prompt, task="summarize")
     except Exception:
         logger.debug("generate_patch LLM fail", exc_info=True)
         return None
-    if not (response and response.strip()):
+    payload = _parse_patch_payload(response, block_names)
+    if payload is None:
         return None
-    txt = response.strip()
-    if txt.startswith("```"):
-        txt = txt.split("\n", 1)[-1].rsplit("```", 1)[0]
-    try:
-        d = json.loads(txt)
-    except Exception:
-        logger.debug("generate_patch JSON parse fail: %s", txt[:200])
-        return None
-    block_name = d.get("block_name", "")
-    if block_name not in block_names:
-        logger.debug(
-            "generate_patch: block_name %s not in %s",
-            block_name, block_names,
-        )
-        return None
-    op = d.get("op", "replace")
-    if op not in ("replace", "prepend", "append"):
-        op = "replace"
-    new_text = str(d.get("new_text", ""))[:500]
-    if not new_text.strip():
-        return None
+    block_name, op, new_text = payload
     patch = PromptPatch(
         id=f"pp_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}",
         phase=phase,
@@ -369,45 +453,25 @@ async def generate_patch(
         directive_in=directive[:300],
     )
     PromptPatchStore.get_instance().add_patch(patch)
-    # M-R1: 成功产 patch 后喂给 meta-improver (记 patch→生成臂 + 计数到阈值触发 maybe_propose).
-    # Lazy import, meta 层默认 off 时静默 no-op.
-    try:
-        from huginn.harness.meta_improver import MetaImprover
-
-        await MetaImprover.get_instance().note_generation(
-            phase, blocks, r_phys, directive, llm_chat_fn,
-            patch_id=patch.id, arm_id=_arm_id,
-        )
-    except Exception:
-        logger.debug("meta_improver note_generation failed", exc_info=True)
+    await _note_patch_generation(
+        phase, blocks, r_phys, directive, llm_chat_fn, patch, _arm_id
+    )
     return patch
 
 
-def _selfcheck() -> None:
-    """H1 selfcheck: apply_patches + Beta 更新 + body 占位符降级."""
-    import shutil
-    import tempfile
-
-    import huginn.harness.prompt_patch as pp
-
-    # 1. toggle off: passthrough
+def _selfcheck_toggle_off(pp: Any) -> list[tuple[str, str]]:
+    """1. toggle off: passthrough."""
     # 注意: 全部走 pp. 前缀, 避免 python -m 时 __main__ 跟 sys.modules 里的
     # huginn.harness.prompt_patch 是两份模块对象, monkey-patch 失效.
     blocks = [("body", "original {context}"), ("mem", "mem text")]
     out = pp.apply_patches(blocks, "hypothesize")
     assert out is blocks, "toggle off should return same list"
     print("1. apply_patches toggle off → passthrough OK")
+    return blocks
 
-    # 2. toggle on: 模拟 patch 应用
-    orig = pp._harness_enabled
-    pp._harness_enabled = lambda key, default=False: (
-        True if key == "harness_prompt_patch" else default
-    )
-    tmp = tempfile.mkdtemp()
-    os.environ["HUGINN_CACHE_DIR"] = tmp
-    pp.PromptPatchStore._instance = None
 
-    store = pp.PromptPatchStore.get_instance()
+def _selfcheck_apply_patch(pp: Any, store: Any, blocks: list[tuple[str, str]]) -> None:
+    """2. toggle on: 模拟 patch 应用."""
     p = pp.PromptPatch(
         id="test1",
         phase="hypothesize",
@@ -427,7 +491,9 @@ def _selfcheck() -> None:
     assert "mem text" in out[1][1], f"original mem lost: {out[1][1]}"
     print("2. apply_patches toggle on + prepend patch OK")
 
-    # 3. body replace 缺 {context} → 降级 prepend
+
+def _selfcheck_body_degrade(pp: Any, store: Any) -> None:
+    """3. body replace 缺 {context} → 降级 prepend."""
     p2 = pp.PromptPatch(
         id="test2",
         phase="hypothesize",
@@ -439,13 +505,17 @@ def _selfcheck() -> None:
     assert p2.op == "prepend", f"body replace should degrade: {p2.op}"
     print("3. body replace missing {context} → prepend degrade OK")
 
-    # 4. update_alpha_beta 持久化
+
+def _selfcheck_persistence(store: Any) -> None:
+    """4. update_alpha_beta 持久化."""
     store.update_alpha_beta("test2", success=True)
     p2_reload = store._patches["test2"]
     assert p2_reload.alpha == 2, f"alpha should be 2: {p2_reload.alpha}"
     print("4. update_alpha_beta persistence OK")
 
-    # 5. find_by_directive 反查 (P4 修复点)
+
+def _selfcheck_find_by_directive(pp: Any, store: Any) -> None:
+    """5. find_by_directive 反查 (P4 修复点)."""
     p3 = pp.PromptPatch(
         id="test3",
         phase="hypothesize",
@@ -458,6 +528,30 @@ def _selfcheck() -> None:
     found = store.find_by_directive("avoid VASP when kpoints < 4")
     assert found is not None and found.id == "test3"
     print("5. find_by_directive (P4 fix) OK")
+
+
+def _selfcheck() -> None:
+    """H1 selfcheck: apply_patches + Beta 更新 + body 占位符降级."""
+    import shutil
+    import tempfile
+
+    import huginn.harness.prompt_patch as pp
+
+    blocks = _selfcheck_toggle_off(pp)
+
+    orig = pp._harness_enabled
+    pp._harness_enabled = lambda key, default=False: (
+        True if key == "harness_prompt_patch" else default
+    )
+    tmp = tempfile.mkdtemp()
+    os.environ["HUGINN_CACHE_DIR"] = tmp
+    pp.PromptPatchStore._instance = None
+
+    store = pp.PromptPatchStore.get_instance()
+    _selfcheck_apply_patch(pp, store, blocks)
+    _selfcheck_body_degrade(pp, store)
+    _selfcheck_persistence(store)
+    _selfcheck_find_by_directive(pp, store)
 
     # 清理
     shutil.rmtree(tmp, ignore_errors=True)

@@ -4,6 +4,7 @@
 Dimer 由两个相近点 R ± d*τ 组成, 旋转 τ 找最低曲率方向 (最负本征值对应本征矢),
 然后沿 τ 把 R 平移到鞍点.
 """
+
 from __future__ import annotations
 
 import math
@@ -37,9 +38,7 @@ async def dimer_rotate(
     rng = np.random.default_rng(0)
 
     # 算 R 处能量 (一次)
-    e0, _ = await eval_single(
-        R.reshape(-1, 3), atomic_numbers, cell, args, context
-    )
+    e0, _ = await eval_single(R.reshape(-1, 3), atomic_numbers, cell, args, context)
 
     best_tau = tau.copy()
     best_curv = float("inf")
@@ -57,19 +56,27 @@ async def dimer_rotate(
             best_tau = tau.copy()
 
         # 旋转: 在垂直 tau 的子空间里随机扰动方向, 沿降低曲率方向走一步
-        perp = rng.standard_normal(n)
-        perp -= np.dot(perp, tau) * tau
-        nrm = np.linalg.norm(perp)
-        if nrm < 1e-12:
+        tau_new = _dimer_rotate_step(tau, rng, n)
+        if tau_new is None:
             break
-        perp = perp / nrm
-        # 试探旋转一个小角度
-        theta = 0.05
-        tau_new = tau * math.cos(theta) + perp * math.sin(theta)
-        tau_new /= np.linalg.norm(tau_new) + 1e-12
         tau = tau_new
 
     return best_tau, best_curv
+
+
+def _dimer_rotate_step(tau: np.ndarray, rng, n: int) -> np.ndarray | None:
+    """在垂直 tau 的子空间里随机扰动方向, 走一步; 退化时返回 None."""
+    perp = rng.standard_normal(n)
+    perp -= np.dot(perp, tau) * tau
+    nrm = np.linalg.norm(perp)
+    if nrm < 1e-12:
+        return None
+    perp = perp / nrm
+    # 试探旋转一个小角度
+    theta = 0.05
+    tau_new = tau * math.cos(theta) + perp * math.sin(theta)
+    tau_new /= np.linalg.norm(tau_new) + 1e-12
+    return tau_new
 
 
 async def estimate_hessian_along_mode(
@@ -86,9 +93,7 @@ async def estimate_hessian_along_mode(
     这里只算一维曲率作为最低本征值近似, 其余本征值用 0 填充.
     完整 Hessian 对角化需要 N^2 次评估, 太贵, 简化掉.
     """
-    e0, _ = await eval_single(
-        R.reshape(-1, 3), atomic_numbers, cell, args, context
-    )
+    e0, _ = await eval_single(R.reshape(-1, 3), atomic_numbers, cell, args, context)
     R1 = (R + d * tau).reshape(-1, 3)
     R2 = (R - d * tau).reshape(-1, 3)
     e1, _ = await eval_single(R1, atomic_numbers, cell, args, context)

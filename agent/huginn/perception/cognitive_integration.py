@@ -21,6 +21,7 @@ Usage:
         print(state.proposed_hypothesis)
         print(state.recommended_tools)
 """
+
 from __future__ import annotations
 
 import time
@@ -36,6 +37,7 @@ from huginn.perception.semantic_alignment import SemanticAligner, SemanticConfli
 @dataclass
 class TemporalMemory:
     """A remembered perception event with decay."""
+
     timestamp: float
     modality: str
     summary: str
@@ -51,6 +53,7 @@ class TemporalMemory:
 @dataclass
 class PerceptionSnapshot:
     """Integrated cognitive state from multi-modal perception."""
+
     timestamp: float
     workspace: str
 
@@ -80,13 +83,17 @@ class PerceptionSnapshot:
 
     def suggests_action(self) -> bool:
         """Whether the current state suggests taking an action."""
-        meaningful_actions = [a for a in self.recommended_actions if a != "wait_for_activity"]
-        is_idle_hypothesis = self.proposed_hypothesis and "workspace is idle" in self.proposed_hypothesis
+        meaningful_actions = [
+            a for a in self.recommended_actions if a != "wait_for_activity"
+        ]
+        is_idle_hypothesis = (
+            self.proposed_hypothesis and "workspace is idle" in self.proposed_hypothesis
+        )
         return bool(
-            self.errors_present or
-            self.conflicts or
-            (self.proposed_hypothesis and not is_idle_hypothesis) or
-            meaningful_actions
+            self.errors_present
+            or self.conflicts
+            or (self.proposed_hypothesis and not is_idle_hypothesis)
+            or meaningful_actions
         )
 
 
@@ -104,59 +111,23 @@ class CognitiveIntegrator:
         self._last_integration_time = now
 
         # Extract from snapshot (duck typing — works with PerceptionSnapshot or dict)
-        workspace = getattr(snapshot, "workspace", ".")
-        if isinstance(workspace, str) and not workspace:
-            workspace = "."
-        if hasattr(snapshot, "get"):
-            workspace = snapshot.get("workspace", workspace)
-        file_events = getattr(snapshot, "file_events", [])
-        if hasattr(snapshot, "get"):
-            file_events = snapshot.get("file_events", file_events)
-        terminal_status = getattr(snapshot, "terminal_status", None)
-        if hasattr(snapshot, "get"):
-            terminal_status = snapshot.get("terminal_status", terminal_status)
-        browser_tabs = getattr(snapshot, "browser_tabs", [])
-        if hasattr(snapshot, "get"):
-            browser_tabs = snapshot.get("browser_tabs", browser_tabs)
-        sim_updates = getattr(snapshot, "simulation_updates", [])
-        if hasattr(snapshot, "get"):
-            sim_updates = snapshot.get("simulation_updates", sim_updates)
+        workspace, file_events, terminal_status, browser_tabs, sim_updates = (
+            CognitiveIntegrator._read_snapshot(snapshot)
+        )
 
         state = PerceptionSnapshot(timestamp=now, workspace=workspace)
 
         # ── File events summary ──
-        if file_events:
-            modified = [e.path for e in file_events if e.event_type == "modified"]
-            created = [e.path for e in file_events if e.event_type == "created"]
-            state.file_summary = f"{len(modified)} modified, {len(created)} created"
-            if modified:
-                # Infer active task from file names
-                state.active_task = self._infer_task_from_files(modified)
+        CognitiveIntegrator._apply_file_events(self, state, file_events)
 
         # ── Terminal summary ──
-        if terminal_status:
-            state.terminal_summary = terminal_status.last_output[:200]
-            state.errors_present = terminal_status.error_detected
-            state.warnings_present = terminal_status.warning_count > 0
-            state.simulation_running = terminal_status.is_running
+        CognitiveIntegrator._apply_terminal(state, terminal_status)
 
         # ── Browser summary ──
-        if browser_tabs:
-            active = [t for t in browser_tabs if t.active]
-            state.browser_summary = f"{len(browser_tabs)} tabs, {len(active)} active"
-            if active:
-                urls = [t.url for t in active]
-                if any("band" in u or "dos" in u or "structure" in u for u in urls):
-                    state.active_task = state.active_task or "visual analysis"
+        CognitiveIntegrator._apply_browser(state, browser_tabs)
 
         # ── Simulation summary ──
-        if sim_updates:
-            latest = sim_updates[-1]
-            state.simulation_summary = f"{latest.simulator}: {latest.status}"
-            state.simulation_running = latest.status == "running"
-            state.simulation_converged = latest.status == "converged"
-            if latest.status == "error":
-                state.errors_present = True
+        CognitiveIntegrator._apply_simulation(state, sim_updates)
 
         # ── Cross-modal conflict detection ──
         modalities = self._extract_modalities(state, snapshot)
@@ -177,7 +148,76 @@ class CognitiveIntegrator:
 
         return state
 
-    def _extract_modalities(self, state: PerceptionSnapshot, snapshot: Any) -> list[tuple[str, str]]:
+    @staticmethod
+    def _read_snapshot(
+        snapshot: Any,
+    ) -> tuple[str, list[Any], Any, list[Any], list[Any]]:
+        """Read workspace plus the optional event lists from a duck-typed snapshot."""
+        workspace = getattr(snapshot, "workspace", ".")
+        if isinstance(workspace, str) and not workspace:
+            workspace = "."
+        if hasattr(snapshot, "get"):
+            workspace = snapshot.get("workspace", workspace)
+        file_events = CognitiveIntegrator._snapshot_field(snapshot, "file_events", [])
+        terminal_status = CognitiveIntegrator._snapshot_field(
+            snapshot, "terminal_status", None
+        )
+        browser_tabs = CognitiveIntegrator._snapshot_field(snapshot, "browser_tabs", [])
+        sim_updates = CognitiveIntegrator._snapshot_field(
+            snapshot, "simulation_updates", []
+        )
+        return workspace, file_events, terminal_status, browser_tabs, sim_updates
+
+    @staticmethod
+    def _snapshot_field(snapshot: Any, name: str, default: Any) -> Any:
+        """Read a field from a duck-typed snapshot (object attr or dict key)."""
+        value = getattr(snapshot, name, default)
+        if hasattr(snapshot, "get"):
+            value = snapshot.get(name, value)
+        return value
+
+    def _apply_file_events(
+        self, state: PerceptionSnapshot, file_events: list[Any]
+    ) -> None:
+        if file_events:
+            modified = [e.path for e in file_events if e.event_type == "modified"]
+            created = [e.path for e in file_events if e.event_type == "created"]
+            state.file_summary = f"{len(modified)} modified, {len(created)} created"
+            if modified:
+                # Infer active task from file names
+                state.active_task = self._infer_task_from_files(modified)
+
+    @staticmethod
+    def _apply_terminal(state: PerceptionSnapshot, terminal_status: Any) -> None:
+        if terminal_status:
+            state.terminal_summary = terminal_status.last_output[:200]
+            state.errors_present = terminal_status.error_detected
+            state.warnings_present = terminal_status.warning_count > 0
+            state.simulation_running = terminal_status.is_running
+
+    @staticmethod
+    def _apply_browser(state: PerceptionSnapshot, browser_tabs: list[Any]) -> None:
+        if browser_tabs:
+            active = [t for t in browser_tabs if t.active]
+            state.browser_summary = f"{len(browser_tabs)} tabs, {len(active)} active"
+            if active:
+                urls = [t.url for t in active]
+                if any("band" in u or "dos" in u or "structure" in u for u in urls):
+                    state.active_task = state.active_task or "visual analysis"
+
+    @staticmethod
+    def _apply_simulation(state: PerceptionSnapshot, sim_updates: list[Any]) -> None:
+        if sim_updates:
+            latest = sim_updates[-1]
+            state.simulation_summary = f"{latest.simulator}: {latest.status}"
+            state.simulation_running = latest.status == "running"
+            state.simulation_converged = latest.status == "converged"
+            if latest.status == "error":
+                state.errors_present = True
+
+    def _extract_modalities(
+        self, state: PerceptionSnapshot, snapshot: Any
+    ) -> list[tuple[str, str]]:
         """Extract (modality, text) pairs for conflict detection."""
         modalities = []
         if state.file_summary:
@@ -210,7 +250,9 @@ class CognitiveIntegrator:
             return "structure analysis"
         return "code development"
 
-    def _update_memory(self, now: float, state: PerceptionSnapshot, snapshot: Any) -> None:
+    def _update_memory(
+        self, now: float, state: PerceptionSnapshot, snapshot: Any
+    ) -> None:
         """Store current state to temporal memory."""
         summary = f"{state.file_summary}; {state.terminal_summary[:50]}"
         vec = self.aligner.embed(summary)
@@ -219,13 +261,19 @@ class CognitiveIntegrator:
             importance = 2.0
         if state.conflicts:
             importance = 2.5
-        self.memory.append(TemporalMemory(
-            timestamp=now, modality="integrated",
-            summary=summary, embedding=vec,
-            importance=importance,
-        ))
+        self.memory.append(
+            TemporalMemory(
+                timestamp=now,
+                modality="integrated",
+                summary=summary,
+                embedding=vec,
+                importance=importance,
+            )
+        )
 
-    def _retrieve_relevant_memory(self, now: float, state: PerceptionSnapshot, top_k: int = 3) -> list[TemporalMemory]:
+    def _retrieve_relevant_memory(
+        self, now: float, state: PerceptionSnapshot, top_k: int = 3
+    ) -> list[TemporalMemory]:
         """Retrieve most relevant past memories."""
         if not self.memory:
             return []
@@ -238,10 +286,14 @@ class CognitiveIntegrator:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [mem for _, mem in scored[:top_k]]
 
-    def _generate_hypothesis(self, state: PerceptionSnapshot, memory: list[TemporalMemory]) -> str:
+    def _generate_hypothesis(
+        self, state: PerceptionSnapshot, memory: list[TemporalMemory]
+    ) -> str:
         """Generate a hypothesis from current state and memory."""
         if state.errors_present and state.simulation_running:
-            return "Simulation may be failing due to convergence issues; check parameters"
+            return (
+                "Simulation may be failing due to convergence issues; check parameters"
+            )
         if state.conflicts:
             c = state.conflicts[0]
             return f"Conflict detected: {c.description} between {c.source_a} and {c.source_b}"

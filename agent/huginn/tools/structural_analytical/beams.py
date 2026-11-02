@@ -45,52 +45,67 @@ def _shear_factor(section_type: str) -> float:
     return _RECT_SHEAR_FACTOR
 
 
-def beam_static(args: Any) -> ToolResult:
-    """单跨等截面梁静态挠度. 用经典公式 + 叠加法."""
-    beam = args.beam
-    E, I = beam.youngs_modulus, beam.resolved_I()  # noqa: E741
-    L = beam.length
-    A = beam.resolved_A()
-    bc = args.boundary
-    theory = args.theory
+def _beam_point_deflection(xs, bc, value, pos, E, I_moment, L):
+    """集中力挠度贡献；bc 不支持时返回 None."""
+    if bc == "cantilever" and abs(pos - L) < 1e-9:
+        # 端部集中力: δ(x) = P x^2 (3L - x) / (6 EI)
+        return value * xs**2 * (3 * L - xs) / (6 * E * I_moment)
 
-    xs = np.linspace(0.0, L, args.n_points)
+    w = np.zeros_like(xs)
+    if bc == "simply_supported" and abs(pos - L / 2) < 1e-9:
+        # 中点集中力: 对 x<=L/2, δ = P x (3L^2 - 4x^2) / (48 EI)
+        left = xs <= L / 2
+        w[left] += (
+            value * xs[left] * (3 * L**2 - 4 * xs[left] ** 2) / (48 * E * I_moment)
+        )
+        # 对称: 右半段镜像
+        right = xs >= L / 2
+        xr = L - xs[right]
+        w[right] += value * xr * (3 * L**2 - 4 * xr**2) / (48 * E * I_moment)
+        return w
+    if bc == "fixed_fixed" and abs(pos - L / 2) < 1e-9:
+        # 中点集中力: δ(x) = P x^2 (3L - 4x)^2 / (192 EI) for x<=L/2 (简化的对称形)
+        left = xs <= L / 2
+        w_l = value * xs[left] ** 2 * (3 * L - 4 * xs[left]) ** 2 / (192 * E * I_moment)
+        w[left] += w_l
+        right = xs >= L / 2
+        xr = L - xs[right]
+        w_r = value * xr**2 * (3 * L - 4 * xr) ** 2 / (192 * E * I_moment)
+        w[right] += w_r
+        return w
+    return None
+
+
+def _beam_udl_deflection(xs, bc, value, E, I_moment, L):
+    """均布载荷挠度贡献；bc 不支持时返回 None."""
+    if bc == "cantilever":
+        # 全跨均布: δ(x) = q x^2 (6L^2 - 4Lx + x^2) / (24 EI)
+        return value * xs**2 * (6 * L**2 - 4 * L * xs + xs**2) / (24 * E * I_moment)
+    if bc == "simply_supported":
+        # 全跨均布: δ(x) = q x (L^3 - 2L x^2 + x^3) / (24 EI)
+        return value * xs * (L**3 - 2 * L * xs**2 + xs**3) / (24 * E * I_moment)
+    return None
+
+
+def _beam_static_load_deflection(loads, xs, E, I_moment, L, bc):
+    """叠加各载荷的弯曲挠度；遇到不支持的组合返回 (None, 错误结果)."""
     w = np.zeros_like(xs)
 
     # 简化: 按几种标准 case 叠加. 不做通用积分, 只识别常见 load/BC 组合.
-    for load in args.loads:
+    for load in loads:
         ltype = load.get("type")
         value = float(load.get("value", 0.0))
         pos = float(load.get("position", L if ltype == "udl" else L))
 
-        if bc == "cantilever" and ltype == "point" and abs(pos - L) < 1e-9:
-            # 端部集中力: δ(x) = P x^2 (3L - x) / (6 EI)
-            w += value * xs**2 * (3 * L - xs) / (6 * E * I)
-        elif bc == "cantilever" and ltype == "udl":
-            # 全跨均布: δ(x) = q x^2 (6L^2 - 4Lx + x^2) / (24 EI)
-            w += value * xs**2 * (6 * L**2 - 4 * L * xs + xs**2) / (24 * E * I)
-        elif bc == "simply_supported" and ltype == "point" and abs(pos - L / 2) < 1e-9:
-            # 中点集中力: 对 x<=L/2, δ = P x (3L^2 - 4x^2) / (48 EI)
-            left = xs <= L / 2
-            w[left] += value * xs[left] * (3 * L**2 - 4 * xs[left] ** 2) / (48 * E * I)
-            # 对称: 右半段镜像
-            right = xs >= L / 2
-            xr = L - xs[right]
-            w[right] += value * xr * (3 * L**2 - 4 * xr**2) / (48 * E * I)
-        elif bc == "simply_supported" and ltype == "udl":
-            # 全跨均布: δ(x) = q x (L^3 - 2L x^2 + x^3) / (24 EI)
-            w += value * xs * (L**3 - 2 * L * xs**2 + xs**3) / (24 * E * I)
-        elif bc == "fixed_fixed" and ltype == "point" and abs(pos - L / 2) < 1e-9:
-            # 中点集中力: δ(x) = P x^2 (3L - 4x)^2 / (192 EI) for x<=L/2 (简化的对称形)
-            left = xs <= L / 2
-            w_l = value * xs[left] ** 2 * (3 * L - 4 * xs[left]) ** 2 / (192 * E * I)
-            w[left] += w_l
-            right = xs >= L / 2
-            xr = L - xs[right]
-            w_r = value * xr**2 * (3 * L - 4 * xr) ** 2 / (192 * E * I)
-            w[right] += w_r
+        if ltype == "point":
+            contribution = _beam_point_deflection(xs, bc, value, pos, E, I_moment, L)
+        elif ltype == "udl":
+            contribution = _beam_udl_deflection(xs, bc, value, E, I_moment, L)
         else:
-            return ToolResult(
+            contribution = None
+
+        if contribution is None:
+            return None, ToolResult(
                 data=None,
                 success=False,
                 error=(
@@ -100,33 +115,36 @@ def beam_static(args: Any) -> ToolResult:
                     "fixed_fixed+point(中点)."
                 ),
             )
+        w += contribution
+    return w, None
 
-    # Timoshenko 剪切修正: w = w_b + w_s, 剪切挠度近似按 load 类型加一个端部挠度修正
-    # 简化做法: 对端部/中点挠度加 PL/(κAG) (point) 或 qL²/(8κAG) (udl)
-    if theory == "timoshenko":
-        G = E / (2 * (1 + beam.poissons_ratio))
-        kappa = _shear_factor(beam.section_type)
-        w_shear = np.zeros_like(xs)
-        for load in args.loads:
-            ltype = load.get("type")
-            value = float(load.get("value", 0.0))
-            if ltype == "point":
-                # 简化: 取端部/中点位置的剪切挠度, 整段近似抛物线
-                if bc == "cantilever":
-                    w_shear += value * xs / (kappa * G * A * L) * (1 - xs / (2 * L))
-                elif bc == "simply_supported":
-                    # 中点最大: PL/(4 κAG), 沿 x 用 sin(πx/L) 形状近似
-                    w_shear += value * L / (4 * kappa * G * A) * np.sin(math.pi * xs / L)
-            elif ltype == "udl":
-                if bc == "cantilever":
-                    w_shear += value * xs * (2 * L - xs) / (2 * kappa * G * A)
-                elif bc == "simply_supported":
-                    # 中点最大: 5qL²/(48 κAG) (近似)
-                    w_shear += (
-                        5 * value * L**2 / (48 * kappa * G * A) * np.sin(math.pi * xs / L)
-                    )
-        w += w_shear
 
+def _beam_timoshenko_shear(loads, xs, bc, L, A, G, kappa):
+    """Timoshenko 剪切挠度修正项."""
+    w_shear = np.zeros_like(xs)
+    for load in loads:
+        ltype = load.get("type")
+        value = float(load.get("value", 0.0))
+        if ltype == "point":
+            # 简化: 取端部/中点位置的剪切挠度, 整段近似抛物线
+            if bc == "cantilever":
+                w_shear += value * xs / (kappa * G * A * L) * (1 - xs / (2 * L))
+            elif bc == "simply_supported":
+                # 中点最大: PL/(4 κAG), 沿 x 用 sin(πx/L) 形状近似
+                w_shear += value * L / (4 * kappa * G * A) * np.sin(math.pi * xs / L)
+        elif ltype == "udl":
+            if bc == "cantilever":
+                w_shear += value * xs * (2 * L - xs) / (2 * kappa * G * A)
+            elif bc == "simply_supported":
+                # 中点最大: 5qL²/(48 κAG) (近似)
+                w_shear += (
+                    5 * value * L**2 / (48 * kappa * G * A) * np.sin(math.pi * xs / L)
+                )
+    return w_shear
+
+
+def _beam_static_response(w, xs, beam, E, I_moment, A):
+    """由挠度曲线求最大挠度 / 弯矩 / 弯曲应力."""
     max_idx = int(np.argmax(np.abs(w)))
     max_deflection = float(w[max_idx])
     max_deflection_location = float(xs[max_idx])
@@ -134,7 +152,7 @@ def beam_static(args: Any) -> ToolResult:
     # 弯矩近似: M = -EI w''  (用有限差分)
     if len(xs) >= 3:
         d2w = np.gradient(np.gradient(w, xs), xs)
-        moments = -E * I * d2w
+        moments = -E * I_moment * d2w
         max_moment = float(np.max(np.abs(moments)))
     else:
         max_moment = 0.0
@@ -145,16 +163,44 @@ def beam_static(args: Any) -> ToolResult:
     elif beam.section_type == "circular":
         c = beam.section_dims["d"] / 2.0
     else:
-        c = (I / A) ** 0.5  # 回转半径近似
-    max_bending_stress = max_moment * c / I if I > 0 else 0.0
+        c = (I_moment / A) ** 0.5  # 回转半径近似
+    max_bending_stress = max_moment * c / I_moment if I_moment > 0 else 0.0
+
+    return {
+        "max_deflection": max_deflection,
+        "max_deflection_location": max_deflection_location,
+        "deflection_curve": {"x": xs.tolist(), "w": w.tolist()},
+        "max_bending_stress": float(max_bending_stress),
+        "max_moment": float(max_moment),
+    }
+
+
+def beam_static(args: Any) -> ToolResult:
+    """单跨等截面梁静态挠度. 用经典公式 + 叠加法."""
+    beam = args.beam
+    E, I = beam.youngs_modulus, beam.resolved_I()  # noqa: E741
+    L = beam.length
+    A = beam.resolved_A()
+    bc = args.boundary
+    theory = args.theory
+
+    xs = np.linspace(0.0, L, args.n_points)
+
+    # 简化: 按几种标准 case 叠加. 不做通用积分, 只识别常见 load/BC 组合.
+    w, error = _beam_static_load_deflection(args.loads, xs, E, I, L, bc)
+    if error is not None:
+        return error
+
+    # Timoshenko 剪切修正: w = w_b + w_s, 剪切挠度近似按 load 类型加一个端部挠度修正
+    # 简化做法: 对端部/中点挠度加 PL/(κAG) (point) 或 qL²/(8κAG) (udl)
+    if theory == "timoshenko":
+        G = E / (2 * (1 + beam.poissons_ratio))
+        kappa = _shear_factor(beam.section_type)
+        w += _beam_timoshenko_shear(args.loads, xs, bc, L, A, G, kappa)
 
     return ToolResult(
         data={
-            "max_deflection": max_deflection,
-            "max_deflection_location": max_deflection_location,
-            "deflection_curve": {"x": xs.tolist(), "w": w.tolist()},
-            "max_bending_stress": float(max_bending_stress),
-            "max_moment": float(max_moment),
+            **_beam_static_response(w, xs, beam, E, I, A),
             "theory": theory,
             "boundary": bc,
             "loads": args.loads,
@@ -163,13 +209,66 @@ def beam_static(args: Any) -> ToolResult:
     )
 
 
+def _beam_modal_angular_frequencies(args, beam, betas, n, E, I_moment, L, A):
+    """计算前 n 阶角频率 (Euler-Bernoulli + 可选 Timoshenko 修正)."""
+    rho = beam.density
+    # b 已经是 β_n L (无量纲), 直接平方
+    omega_eb = [b**2 * math.sqrt(E * I_moment / (rho * A * L**4)) for b in betas[:n]]
+
+    # Timoshenko 修正: ω = ω_EB / sqrt(1 + (βL)^2 (EI/(κAGL²)) + (βL r/L)²)
+    if args.theory == "timoshenko":
+        G = E / (2 * (1 + beam.poissons_ratio))
+        kappa = _shear_factor(beam.section_type)
+        r2 = I_moment / A  # 回转半径平方
+        omega = []
+        for b, w_eb in zip(betas[:n], omega_eb, strict=True):
+            beta_L = b  # b 就是 β_n L
+            corr = math.sqrt(
+                1.0
+                + beta_L**2 * E * I_moment / (kappa * G * A * L**2)
+                + beta_L**2 * r2 / L**2
+            )
+            omega.append(w_eb / corr)
+        return omega
+    return omega_eb
+
+
+def _beam_modal_shapes(betas, n, bc, L):
+    """计算前 n 阶归一化模态形状 (Euler-Bernoulli 标准)."""
+    xs = np.linspace(0.0, L, 101)
+    mode_shapes = []
+    for i, b in enumerate(betas[:n]):
+        beta_L = b  # b 就是 β_n L
+        if bc == "simply_supported":
+            phi = np.sin(beta_L * xs / L)
+        elif bc == "cantilever":
+            # 标准悬臂模态: cosh(βx) - cos(βx) - σ(sinh(βx) - sin(βx))
+            sigma = (math.sinh(beta_L) + math.sin(beta_L)) / (
+                math.cosh(beta_L) + math.cos(beta_L)
+            )
+            bx = beta_L * xs / L
+            phi = np.cosh(bx) - np.cos(bx) - sigma * (np.sinh(bx) - np.sin(bx))
+        elif bc == "fixed_fixed":
+            sigma = (math.sinh(beta_L) - math.sin(beta_L)) / (
+                math.cosh(beta_L) - math.cos(beta_L)
+            )
+            bx = beta_L * xs / L
+            phi = np.cosh(bx) - np.cos(bx) - sigma * (np.sinh(bx) - np.sin(bx))
+        else:
+            # fixed_pinned 等用 sin 近似
+            phi = np.sin(beta_L * xs / L)
+        # 归一化: 最大幅值=1
+        phi = phi / max(abs(phi).max(), 1e-30)
+        mode_shapes.append({"n": i + 1, "x": xs.tolist(), "phi": phi.tolist()})
+    return mode_shapes
+
+
 def beam_modal(args: Any) -> ToolResult:
     """梁自由振动模态. ω_n = (β_n L)^2 sqrt(EI/(ρ A L^4))."""
     beam = args.beam
     E, I = beam.youngs_modulus, beam.resolved_I()  # noqa: E741
     L = beam.length
     A = beam.resolved_A()
-    rho = beam.density
     bc = args.boundary
 
     if bc not in _BETA_NL:
@@ -186,58 +285,9 @@ def beam_modal(args: Any) -> ToolResult:
         betas.append(betas[-1] + math.pi)  # 近似: 高阶近似按 π 递增 (粗)
         # 注意: 这只是 fallback, 实际工程应用只取前几阶
 
-    # b 已经是 β_n L (无量纲), 直接平方
-    omega_eb = [b**2 * math.sqrt(E * I / (rho * A * L**4)) for b in betas[:n]]
-
-    # Timoshenko 修正: ω = ω_EB / sqrt(1 + (βL)^2 (EI/(κAGL²)) + (βL r/L)²)
-    if args.theory == "timoshenko":
-        G = E / (2 * (1 + beam.poissons_ratio))
-        kappa = _shear_factor(beam.section_type)
-        r2 = I / A  # 回转半径平方
-        omega = []
-        for b, w_eb in zip(betas[:n], omega_eb, strict=True):
-            beta_L = b  # b 就是 β_n L
-            corr = math.sqrt(
-                1.0
-                + beta_L**2 * E * I / (kappa * G * A * L**2)
-                + beta_L**2 * r2 / L**2
-            )
-            omega.append(w_eb / corr)
-    else:
-        omega = omega_eb
-
+    omega = _beam_modal_angular_frequencies(args, beam, betas, n, E, I, L, A)
     freqs_hz = [w / (2 * math.pi) for w in omega]
-
-    # 模态形状 (Euler-Bernoulli 标准)
-    xs = np.linspace(0.0, L, 101)
-    mode_shapes = []
-    for i, b in enumerate(betas[:n]):
-        beta_L = b  # b 就是 β_n L
-        if bc == "simply_supported":
-            phi = np.sin(beta_L * xs / L)
-        elif bc == "cantilever":
-            # 标准悬臂模态: cosh(βx) - cos(βx) - σ(sinh(βx) - sin(βx))
-            sigma = (
-                (math.sinh(beta_L) + math.sin(beta_L))
-                / (math.cosh(beta_L) + math.cos(beta_L))
-            )
-            bx = beta_L * xs / L
-            phi = np.cosh(bx) - np.cos(bx) - sigma * (np.sinh(bx) - np.sin(bx))
-        elif bc == "fixed_fixed":
-            sigma = (
-                (math.sinh(beta_L) - math.sin(beta_L))
-                / (math.cosh(beta_L) - math.cos(beta_L))
-            )
-            bx = beta_L * xs / L
-            phi = np.cosh(bx) - np.cos(bx) - sigma * (np.sinh(bx) - np.sin(bx))
-        else:
-            # fixed_pinned 等用 sin 近似
-            phi = np.sin(beta_L * xs / L)
-        # 归一化: 最大幅值=1
-        phi = phi / max(abs(phi).max(), 1e-30)
-        mode_shapes.append(
-            {"n": i + 1, "x": xs.tolist(), "phi": phi.tolist()}
-        )
+    mode_shapes = _beam_modal_shapes(betas, n, bc, L)
 
     return ToolResult(
         data={

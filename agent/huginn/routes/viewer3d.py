@@ -45,70 +45,181 @@ ws_router = APIRouter(tags=["viewer3d-ws"])
 # ── 元素数据: CPK 颜色 + 共价半径 ────────────────────────────────
 # 数据来源: Jmol 颜色表 + Cordero 共价半径表, 手工摘录常用元素
 _ELEMENT_COLORS: dict[str, list[float]] = {
-    "H": [1.00, 1.00, 1.00], "He": [0.85, 1.00, 1.00],
-    "Li": [0.80, 0.50, 0.25], "Be": [0.76, 1.00, 0.00],
-    "B": [1.00, 0.71, 0.71], "C": [0.30, 0.30, 0.30],
-    "N": [0.19, 0.31, 0.97], "O": [1.00, 0.05, 0.05],
-    "F": [0.56, 0.87, 0.31], "Ne": [0.70, 0.89, 0.96],
-    "Na": [0.67, 0.36, 0.94], "Mg": [0.54, 1.00, 0.00],
-    "Al": [0.75, 0.65, 0.65], "Si": [0.94, 0.78, 0.63],
-    "P": [1.00, 0.50, 0.00], "S": [1.00, 1.00, 0.19],
-    "Cl": [0.12, 0.94, 0.12], "Ar": [0.50, 0.81, 0.89],
-    "K": [0.56, 0.25, 0.83], "Ca": [0.24, 1.00, 0.00],
-    "Sc": [0.90, 0.90, 0.90], "Ti": [0.75, 0.76, 0.78],
-    "V": [0.65, 0.65, 0.67], "Cr": [0.54, 0.60, 0.78],
-    "Mn": [0.61, 0.48, 0.78], "Fe": [0.88, 0.40, 0.20],
-    "Co": [0.94, 0.56, 0.63], "Ni": [0.31, 0.82, 0.31],
-    "Cu": [0.78, 0.50, 0.20], "Zn": [0.49, 0.50, 0.69],
-    "Ga": [0.76, 0.56, 0.56], "Ge": [0.40, 0.56, 0.56],
-    "As": [0.74, 0.50, 0.89], "Se": [1.00, 0.63, 0.00],
-    "Br": [0.65, 0.16, 0.16], "Kr": [0.36, 0.72, 0.82],
-    "Rb": [0.44, 0.18, 0.69], "Sr": [0.00, 1.00, 0.00],
-    "Y": [0.58, 1.00, 1.00], "Zr": [0.58, 0.88, 0.88],
-    "Nb": [0.45, 0.76, 0.79], "Mo": [0.33, 0.71, 0.71],
-    "Tc": [0.23, 0.62, 0.62], "Ru": [0.14, 0.56, 0.56],
-    "Rh": [0.04, 0.49, 0.55], "Pd": [0.00, 0.41, 0.52],
-    "Ag": [0.75, 0.75, 0.75], "Cd": [1.00, 0.85, 0.56],
-    "In": [0.65, 0.46, 0.45], "Sn": [0.40, 0.50, 0.50],
-    "Sb": [0.62, 0.39, 0.71], "Te": [0.83, 0.48, 0.00],
-    "I": [0.58, 0.00, 0.58], "Xe": [0.26, 0.62, 0.69],
-    "Cs": [0.34, 0.09, 0.56], "Ba": [0.00, 0.79, 0.00],
-    "La": [0.44, 0.83, 1.00], "Ce": [1.00, 1.00, 0.78],
-    "Pr": [0.85, 1.00, 0.78], "Nd": [0.78, 1.00, 0.78],
-    "Pm": [0.64, 1.00, 0.78], "Sm": [0.56, 1.00, 0.78],
-    "Eu": [0.38, 1.00, 0.78], "Gd": [0.27, 1.00, 0.78],
-    "Tb": [0.19, 1.00, 0.78], "Dy": [0.12, 1.00, 0.78],
-    "Ho": [0.00, 1.00, 0.61], "Er": [0.00, 0.90, 0.46],
-    "Tm": [0.00, 0.83, 0.32], "Yb": [0.00, 0.75, 0.22],
-    "Lu": [0.00, 0.67, 0.14], "Hf": [0.30, 0.76, 1.00],
-    "Ta": [0.30, 0.65, 1.00], "W": [0.13, 0.58, 0.84],
-    "Re": [0.15, 0.49, 0.67], "Os": [0.15, 0.40, 0.59],
-    "Ir": [0.09, 0.33, 0.53], "Pt": [0.82, 0.82, 0.88],
-    "Au": [1.00, 0.82, 0.14], "Hg": [0.72, 0.72, 0.82],
-    "Tl": [0.65, 0.33, 0.30], "Pb": [0.34, 0.35, 0.38],
-    "Bi": [0.62, 0.31, 0.71], "U": [0.00, 0.56, 1.00],
+    "H": [1.00, 1.00, 1.00],
+    "He": [0.85, 1.00, 1.00],
+    "Li": [0.80, 0.50, 0.25],
+    "Be": [0.76, 1.00, 0.00],
+    "B": [1.00, 0.71, 0.71],
+    "C": [0.30, 0.30, 0.30],
+    "N": [0.19, 0.31, 0.97],
+    "O": [1.00, 0.05, 0.05],
+    "F": [0.56, 0.87, 0.31],
+    "Ne": [0.70, 0.89, 0.96],
+    "Na": [0.67, 0.36, 0.94],
+    "Mg": [0.54, 1.00, 0.00],
+    "Al": [0.75, 0.65, 0.65],
+    "Si": [0.94, 0.78, 0.63],
+    "P": [1.00, 0.50, 0.00],
+    "S": [1.00, 1.00, 0.19],
+    "Cl": [0.12, 0.94, 0.12],
+    "Ar": [0.50, 0.81, 0.89],
+    "K": [0.56, 0.25, 0.83],
+    "Ca": [0.24, 1.00, 0.00],
+    "Sc": [0.90, 0.90, 0.90],
+    "Ti": [0.75, 0.76, 0.78],
+    "V": [0.65, 0.65, 0.67],
+    "Cr": [0.54, 0.60, 0.78],
+    "Mn": [0.61, 0.48, 0.78],
+    "Fe": [0.88, 0.40, 0.20],
+    "Co": [0.94, 0.56, 0.63],
+    "Ni": [0.31, 0.82, 0.31],
+    "Cu": [0.78, 0.50, 0.20],
+    "Zn": [0.49, 0.50, 0.69],
+    "Ga": [0.76, 0.56, 0.56],
+    "Ge": [0.40, 0.56, 0.56],
+    "As": [0.74, 0.50, 0.89],
+    "Se": [1.00, 0.63, 0.00],
+    "Br": [0.65, 0.16, 0.16],
+    "Kr": [0.36, 0.72, 0.82],
+    "Rb": [0.44, 0.18, 0.69],
+    "Sr": [0.00, 1.00, 0.00],
+    "Y": [0.58, 1.00, 1.00],
+    "Zr": [0.58, 0.88, 0.88],
+    "Nb": [0.45, 0.76, 0.79],
+    "Mo": [0.33, 0.71, 0.71],
+    "Tc": [0.23, 0.62, 0.62],
+    "Ru": [0.14, 0.56, 0.56],
+    "Rh": [0.04, 0.49, 0.55],
+    "Pd": [0.00, 0.41, 0.52],
+    "Ag": [0.75, 0.75, 0.75],
+    "Cd": [1.00, 0.85, 0.56],
+    "In": [0.65, 0.46, 0.45],
+    "Sn": [0.40, 0.50, 0.50],
+    "Sb": [0.62, 0.39, 0.71],
+    "Te": [0.83, 0.48, 0.00],
+    "I": [0.58, 0.00, 0.58],
+    "Xe": [0.26, 0.62, 0.69],
+    "Cs": [0.34, 0.09, 0.56],
+    "Ba": [0.00, 0.79, 0.00],
+    "La": [0.44, 0.83, 1.00],
+    "Ce": [1.00, 1.00, 0.78],
+    "Pr": [0.85, 1.00, 0.78],
+    "Nd": [0.78, 1.00, 0.78],
+    "Pm": [0.64, 1.00, 0.78],
+    "Sm": [0.56, 1.00, 0.78],
+    "Eu": [0.38, 1.00, 0.78],
+    "Gd": [0.27, 1.00, 0.78],
+    "Tb": [0.19, 1.00, 0.78],
+    "Dy": [0.12, 1.00, 0.78],
+    "Ho": [0.00, 1.00, 0.61],
+    "Er": [0.00, 0.90, 0.46],
+    "Tm": [0.00, 0.83, 0.32],
+    "Yb": [0.00, 0.75, 0.22],
+    "Lu": [0.00, 0.67, 0.14],
+    "Hf": [0.30, 0.76, 1.00],
+    "Ta": [0.30, 0.65, 1.00],
+    "W": [0.13, 0.58, 0.84],
+    "Re": [0.15, 0.49, 0.67],
+    "Os": [0.15, 0.40, 0.59],
+    "Ir": [0.09, 0.33, 0.53],
+    "Pt": [0.82, 0.82, 0.88],
+    "Au": [1.00, 0.82, 0.14],
+    "Hg": [0.72, 0.72, 0.82],
+    "Tl": [0.65, 0.33, 0.30],
+    "Pb": [0.34, 0.35, 0.38],
+    "Bi": [0.62, 0.31, 0.71],
+    "U": [0.00, 0.56, 1.00],
 }
 
 # 共价半径 (Å), Cordero 2008; 未知元素回退到 1.5
 _COVALENT_RADII: dict[str, float] = {
-    "H": 0.31, "He": 0.28, "Li": 1.28, "Be": 0.96, "B": 0.84,
-    "C": 0.76, "N": 0.71, "O": 0.66, "F": 0.57, "Ne": 0.58,
-    "Na": 1.66, "Mg": 1.41, "Al": 1.21, "Si": 1.11, "P": 1.07,
-    "S": 1.05, "Cl": 1.02, "Ar": 1.06, "K": 2.03, "Ca": 1.76,
-    "Sc": 1.70, "Ti": 1.60, "V": 1.53, "Cr": 1.39, "Mn": 1.39,
-    "Fe": 1.32, "Co": 1.26, "Ni": 1.24, "Cu": 1.32, "Zn": 1.22,
-    "Ga": 1.22, "Ge": 1.20, "As": 1.19, "Se": 1.20, "Br": 1.20,
-    "Kr": 1.16, "Rb": 2.20, "Sr": 1.95, "Y": 1.90, "Zr": 1.75,
-    "Nb": 1.64, "Mo": 1.54, "Tc": 1.47, "Ru": 1.46, "Rh": 1.42,
-    "Pd": 1.39, "Ag": 1.45, "Cd": 1.44, "In": 1.42, "Sn": 1.39,
-    "Sb": 1.39, "Te": 1.38, "I": 1.39, "Xe": 1.40, "Cs": 2.44,
-    "Ba": 2.15, "La": 2.07, "Ce": 2.04, "Pr": 2.03, "Nd": 2.01,
-    "Pm": 1.99, "Sm": 1.98, "Eu": 1.98, "Gd": 1.96, "Tb": 1.94,
-    "Dy": 1.92, "Ho": 1.92, "Er": 1.89, "Tm": 1.90, "Yb": 1.87,
-    "Lu": 1.87, "Hf": 1.75, "Ta": 1.70, "W": 1.62, "Re": 1.51,
-    "Os": 1.44, "Ir": 1.41, "Pt": 1.36, "Au": 1.36, "Hg": 1.32,
-    "Tl": 1.45, "Pb": 1.46, "Bi": 1.48, "Po": 1.40, "At": 1.50,
-    "Rn": 1.50, "U": 1.70,
+    "H": 0.31,
+    "He": 0.28,
+    "Li": 1.28,
+    "Be": 0.96,
+    "B": 0.84,
+    "C": 0.76,
+    "N": 0.71,
+    "O": 0.66,
+    "F": 0.57,
+    "Ne": 0.58,
+    "Na": 1.66,
+    "Mg": 1.41,
+    "Al": 1.21,
+    "Si": 1.11,
+    "P": 1.07,
+    "S": 1.05,
+    "Cl": 1.02,
+    "Ar": 1.06,
+    "K": 2.03,
+    "Ca": 1.76,
+    "Sc": 1.70,
+    "Ti": 1.60,
+    "V": 1.53,
+    "Cr": 1.39,
+    "Mn": 1.39,
+    "Fe": 1.32,
+    "Co": 1.26,
+    "Ni": 1.24,
+    "Cu": 1.32,
+    "Zn": 1.22,
+    "Ga": 1.22,
+    "Ge": 1.20,
+    "As": 1.19,
+    "Se": 1.20,
+    "Br": 1.20,
+    "Kr": 1.16,
+    "Rb": 2.20,
+    "Sr": 1.95,
+    "Y": 1.90,
+    "Zr": 1.75,
+    "Nb": 1.64,
+    "Mo": 1.54,
+    "Tc": 1.47,
+    "Ru": 1.46,
+    "Rh": 1.42,
+    "Pd": 1.39,
+    "Ag": 1.45,
+    "Cd": 1.44,
+    "In": 1.42,
+    "Sn": 1.39,
+    "Sb": 1.39,
+    "Te": 1.38,
+    "I": 1.39,
+    "Xe": 1.40,
+    "Cs": 2.44,
+    "Ba": 2.15,
+    "La": 2.07,
+    "Ce": 2.04,
+    "Pr": 2.03,
+    "Nd": 2.01,
+    "Pm": 1.99,
+    "Sm": 1.98,
+    "Eu": 1.98,
+    "Gd": 1.96,
+    "Tb": 1.94,
+    "Dy": 1.92,
+    "Ho": 1.92,
+    "Er": 1.89,
+    "Tm": 1.90,
+    "Yb": 1.87,
+    "Lu": 1.87,
+    "Hf": 1.75,
+    "Ta": 1.70,
+    "W": 1.62,
+    "Re": 1.51,
+    "Os": 1.44,
+    "Ir": 1.41,
+    "Pt": 1.36,
+    "Au": 1.36,
+    "Hg": 1.32,
+    "Tl": 1.45,
+    "Pb": 1.46,
+    "Bi": 1.48,
+    "Po": 1.40,
+    "At": 1.50,
+    "Rn": 1.50,
+    "U": 1.70,
 }
 
 _DEFAULT_COLOR = [1.0, 0.41, 0.71]  # 未知元素用粉色
@@ -126,6 +237,7 @@ def _covalent_radius(symbol: str) -> float:
 
 # ── 轻量结构解析器 ────────────────────────────────────────────
 # 优先使用 pymatgen, 不可用时回退到手写解析器, 保证模块可独立加载
+
 
 def _parse_structure(text: str, fmt: str) -> dict[str, Any]:
     """Parse a structure string into a JSON-serializable dict.
@@ -166,19 +278,21 @@ def _parse_xyz(text: str) -> list[dict[str, Any]]:
         parts = line.strip().split()
         if len(parts) >= 4:
             sym = parts[0]
-            atoms.append({
-                "element": sym,
-                "position": [float(parts[1]), float(parts[2]), float(parts[3])],
-                "radius": _covalent_radius(sym),
-                "color": _element_color(sym),
-            })
+            atoms.append(
+                {
+                    "element": sym,
+                    "position": [float(parts[1]), float(parts[2]), float(parts[3])],
+                    "radius": _covalent_radius(sym),
+                    "color": _element_color(sym),
+                }
+            )
     return atoms
 
 
-def _parse_poscar(text: str) -> tuple[list[dict[str, Any]], dict[str, Any] | None, str]:
-    lines = text.strip().splitlines()
-    if len(lines) < 8:
-        return [], None, "invalid POSCAR"
+def _poscar_header(
+    lines: list[str],
+) -> tuple[str, dict[str, Any], list[str], list[int], bool, int]:
+    """解析 POSCAR 的标题 / 晶胞 / 元素与数量 / 坐标类型."""
     title = lines[0].strip()
     scale = float(lines[1].strip() or "1.0")
     a = [float(x) * scale for x in lines[2].strip().split()]
@@ -202,6 +316,36 @@ def _parse_poscar(text: str) -> tuple[list[dict[str, Any]], dict[str, Any] | Non
         first_coord_idx = 8
 
     is_direct = coord_line.startswith("d") or coord_line.startswith("f")
+    return title, cell, species, counts, is_direct, first_coord_idx
+
+
+def _poscar_atom(
+    sp: str, parts: list[str], cell: dict[str, Any], is_direct: bool
+) -> dict[str, Any]:
+    """由一行坐标拼出原子字典."""
+    x, y, z = float(parts[0]), float(parts[1]), float(parts[2])
+    a, b, c = cell["a"], cell["b"], cell["c"]
+    if is_direct:
+        # 笛卡尔坐标 = x*a + y*b + z*c
+        cx = x * a[0] + y * b[0] + z * c[0]
+        cy = x * a[1] + y * b[1] + z * c[1]
+        cz = x * a[2] + y * b[2] + z * c[2]
+    else:
+        cx, cy, cz = x, y, z
+    return {
+        "element": sp,
+        "position": [cx, cy, cz],
+        "radius": _covalent_radius(sp),
+        "color": _element_color(sp),
+    }
+
+
+def _parse_poscar(text: str) -> tuple[list[dict[str, Any]], dict[str, Any] | None, str]:
+    lines = text.strip().splitlines()
+    if len(lines) < 8:
+        return [], None, "invalid POSCAR"
+    title, cell, species, counts, is_direct, first_coord_idx = _poscar_header(lines)
+
     atoms: list[dict[str, Any]] = []
     idx = first_coord_idx
     for sp, cnt in zip(species, counts):
@@ -210,42 +354,49 @@ def _parse_poscar(text: str) -> tuple[list[dict[str, Any]], dict[str, Any] | Non
                 break
             parts = lines[idx].strip().split()
             if len(parts) >= 3:
-                x, y, z = float(parts[0]), float(parts[1]), float(parts[2])
-                if is_direct:
-                    # 笛卡尔坐标 = x*a + y*b + z*c
-                    cx = x * a[0] + y * b[0] + z * c[0]
-                    cy = x * a[1] + y * b[1] + z * c[1]
-                    cz = x * a[2] + y * b[2] + z * c[2]
-                else:
-                    cx, cy, cz = x, y, z
-                atoms.append({
-                    "element": sp,
-                    "position": [cx, cy, cz],
-                    "radius": _covalent_radius(sp),
-                    "color": _element_color(sp),
-                })
+                atoms.append(_poscar_atom(sp, parts, cell, is_direct))
             idx += 1
     return atoms, cell, title
 
 
-def _parse_cif(text: str) -> tuple[list[dict[str, Any]], dict[str, Any] | None, str]:
-    """解析 CIF, 优先用 pymatgen, 失败回退到正则提取原子坐标."""
-    try:
-        return _parse_via_pymatgen(text, "cif")
-    except Exception:
-        logger.debug("parse via pymatgen failed", exc_info=True)
+def _cif_cell_from_regex(
+    text: str,
+) -> tuple[dict[str, Any] | None, float | None, float | None, float | None]:
+    """正则兜底: 提取 _cell_length_a 等晶胞参数."""
 
-    # 正则兜底: 提取 _cell_length_a 等和 _atom_site 数据
     def _g(pat: str) -> float | None:
         m = re.search(pat, text, re.IGNORECASE)
         return float(m.group(1)) if m else None
 
-    la, lb, lc = _g(r"_cell_length_a\s+([\d.]+)"), _g(r"_cell_length_b\s+([\d.]+)"), _g(r"_cell_length_c\s+([\d.]+)")
-    an, bn, cn = _g(r"_cell_angle_alpha\s+([\d.]+)"), _g(r"_cell_angle_beta\s+([\d.]+)"), _g(r"_cell_angle_gamma\s+([\d.]+)")
+    la, lb, lc = (
+        _g(r"_cell_length_a\s+([\d.]+)"),
+        _g(r"_cell_length_b\s+([\d.]+)"),
+        _g(r"_cell_length_c\s+([\d.]+)"),
+    )
+    an, bn, cn = (
+        _g(r"_cell_angle_alpha\s+([\d.]+)"),
+        _g(r"_cell_angle_beta\s+([\d.]+)"),
+        _g(r"_cell_angle_gamma\s+([\d.]+)"),
+    )
     cell = None
     if la and lb and lc:
-        cell = {"a": [la, 0, 0], "b": [0, lb, 0], "c": [0, 0, lc], "angles": [an or 90, bn or 90, cn or 90]}
+        cell = {
+            "a": [la, 0, 0],
+            "b": [0, lb, 0],
+            "c": [0, 0, lc],
+            "angles": [an or 90, bn or 90, cn or 90],
+        }
+    return cell, la, lb, lc
 
+
+def _cif_atoms_from_regex(
+    text: str,
+    cell: dict[str, Any] | None,
+    la: float | None,
+    lb: float | None,
+    lc: float | None,
+) -> list[dict[str, Any]]:
+    """正则兜底: 从 _atom_site 数据块提取原子坐标."""
     atoms: list[dict[str, Any]] = []
     # 找到 _atom_site 行后开始读
     in_atoms = False
@@ -269,30 +420,54 @@ def _parse_cif(text: str) -> tuple[list[dict[str, Any]], dict[str, Any] | None, 
                 pos = [fx, fy, fz]  # 分数坐标
                 if cell:
                     # 笛卡尔近似 (正交晶系), 严格的话需要 pymatgen
-                    pos = [fx * la, fy * lb, fz * lc] if (la and lb and lc) else [fx, fy, fz]
-                atoms.append({
-                    "element": sym,
-                    "position": pos,
-                    "radius": _covalent_radius(sym),
-                    "color": _element_color(sym),
-                })
+                    pos = (
+                        [fx * la, fy * lb, fz * lc]
+                        if (la and lb and lc)
+                        else [fx, fy, fz]
+                    )
+                atoms.append(
+                    {
+                        "element": sym,
+                        "position": pos,
+                        "radius": _covalent_radius(sym),
+                        "color": _element_color(sym),
+                    }
+                )
+    return atoms
+
+
+def _parse_cif(text: str) -> tuple[list[dict[str, Any]], dict[str, Any] | None, str]:
+    """解析 CIF, 优先用 pymatgen, 失败回退到正则提取原子坐标."""
+    try:
+        return _parse_via_pymatgen(text, "cif")
+    except Exception:
+        logger.debug("parse via pymatgen failed", exc_info=True)
+
+    # 正则兜底: 提取 _cell_length_a 等和 _atom_site 数据
+    cell, la, lb, lc = _cif_cell_from_regex(text)
+    atoms = _cif_atoms_from_regex(text, cell, la, lb, lc)
     return atoms, cell, "CIF structure"
 
 
-def _parse_via_pymatgen(text: str, fmt: str) -> tuple[list[dict[str, Any]], dict[str, Any] | None, str]:
+def _parse_via_pymatgen(
+    text: str, fmt: str
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None, str]:
     """用 pymatgen 解析结构, 不可用则抛错."""
 
     from pymatgen.core import Structure  # 延迟导入
+
     s = Structure.from_str(text, fmt=fmt if fmt != "poscar" else "poscar")
     atoms: list[dict[str, Any]] = []
     for site in s:
         sym = site.specie.symbol
-        atoms.append({
-            "element": sym,
-            "position": list(site.coords),
-            "radius": _covalent_radius(sym),
-            "color": _element_color(sym),
-        })
+        atoms.append(
+            {
+                "element": sym,
+                "position": list(site.coords),
+                "radius": _covalent_radius(sym),
+                "color": _element_color(sym),
+            }
+        )
     cell = None
     if s.lattice is not None:
         mat = s.lattice.matrix
@@ -330,6 +505,7 @@ def _detect_bonds(atoms: list[dict[str, Any]]) -> list[list[int]]:
 
 # ── 轨迹解析 ────────────────────────────────────────────────────
 
+
 def _parse_trajectory(text: str, fmt: str) -> dict[str, Any]:
     """Parse a trajectory file into a list of frames."""
     fmt = fmt.lower()
@@ -338,6 +514,30 @@ def _parse_trajectory(text: str, fmt: str) -> dict[str, Any]:
     if fmt in ("xyz", "traj"):
         return _parse_xyz_trajectory(text)
     return {"frames": [], "error": f"unsupported trajectory format: {fmt}"}
+
+
+def _xdatcar_frame_positions(
+    lines: list[str],
+    i: int,
+    n_atoms: int,
+    a: list[float],
+    b: list[float],
+    c: list[float],
+) -> tuple[list[list[float]], int]:
+    """读一帧的 Direct 坐标并转成笛卡尔, 返回 (positions, 下一个行号)."""
+    positions: list[list[float]] = []
+    for _ in range(n_atoms):
+        if i >= len(lines):
+            break
+        parts = lines[i].strip().split()
+        if len(parts) >= 3:
+            fx, fy, fz = float(parts[0]), float(parts[1]), float(parts[2])
+            cx = fx * a[0] + fy * b[0] + fz * c[0]
+            cy = fx * a[1] + fy * b[1] + fz * c[1]
+            cz = fx * a[2] + fy * b[2] + fz * c[2]
+            positions.append([cx, cy, cz])
+        i += 1
+    return positions, i
 
 
 def _parse_xdatcar(text: str) -> dict[str, Any]:
@@ -365,27 +565,24 @@ def _parse_xdatcar(text: str) -> dict[str, Any]:
         # 帧头类似 "X 1.0" 或者直接是坐标
         if line.lower().startswith("direct") or re.match(r"^[A-Za-z]+\s+[\d.]+$", line):
             i += 1
-            positions: list[list[float]] = []
-            for _ in range(n_atoms):
-                if i >= len(lines):
-                    break
-                parts = lines[i].strip().split()
-                if len(parts) >= 3:
-                    fx, fy, fz = float(parts[0]), float(parts[1]), float(parts[2])
-                    cx = fx * a[0] + fy * b[0] + fz * c[0]
-                    cy = fx * a[1] + fy * b[1] + fz * c[1]
-                    cz = fx * a[2] + fy * b[2] + fz * c[2]
-                    positions.append([cx, cy, cz])
-                i += 1
+            positions, i = _xdatcar_frame_positions(lines, i, n_atoms, a, b, c)
             if positions:
-                frames.append({
-                    "positions": positions,
-                    "energy": None,
-                    "step": len(frames),
-                })
+                frames.append(
+                    {
+                        "positions": positions,
+                        "energy": None,
+                        "step": len(frames),
+                    }
+                )
         else:
             i += 1
-    return {"frames": frames, "n_atoms": n_atoms, "cell": cell, "species": species, "title": title}
+    return {
+        "frames": frames,
+        "n_atoms": n_atoms,
+        "cell": cell,
+        "species": species,
+        "title": title,
+    }
 
 
 def _parse_xyz_trajectory(text: str) -> dict[str, Any]:
@@ -417,12 +614,15 @@ def _parse_xyz_trajectory(text: str) -> dict[str, Any]:
             if len(parts) >= 4:
                 positions.append([float(parts[1]), float(parts[2]), float(parts[3])])
         if positions:
-            frames.append({"positions": positions, "energy": energy, "step": len(frames)})
+            frames.append(
+                {"positions": positions, "energy": energy, "step": len(frames)}
+            )
         i += 2 + n
     return {"frames": frames, "n_atoms": len(frames[0]["positions"]) if frames else 0}
 
 
 # ── Pydantic 请求模型 ────────────────────────────────────────────
+
 
 class LoadRequest(BaseModel):
     file_path: str | None = Field(None, description="结构文件绝对路径")
@@ -440,16 +640,19 @@ class TrajectoryRequest(BaseModel):
 
 # ── REST 端点 ────────────────────────────────────────────────────
 
+
 @router.get("/elements")
 async def get_elements() -> dict[str, Any]:
     """返回元素表 (CPK 颜色 + 共价半径), 供前端初始化用."""
     elements = []
     for sym, color in _ELEMENT_COLORS.items():
-        elements.append({
-            "symbol": sym,
-            "color": color,
-            "covalent_radius": _COVALENT_RADII.get(sym, _DEFAULT_RADIUS),
-        })
+        elements.append(
+            {
+                "symbol": sym,
+                "color": color,
+                "covalent_radius": _COVALENT_RADII.get(sym, _DEFAULT_RADIUS),
+            }
+        )
     return {
         "elements": elements,
         "default_color": _DEFAULT_COLOR,
@@ -482,7 +685,10 @@ async def load_structure(req: LoadRequest) -> dict[str, Any]:
             suf = p.suffix.lower().lstrip(".")
             fmt = {"vasp": "poscar", "poscar": "poscar", "cif": "cif"}.get(suf, "xyz")
     else:
-        return {"success": False, "error": "either file_path or content must be provided"}
+        return {
+            "success": False,
+            "error": "either file_path or content must be provided",
+        }
 
     try:
         result = _parse_structure(text, fmt)
@@ -521,6 +727,7 @@ async def load_trajectory(req: TrajectoryRequest) -> dict[str, Any]:
 # ── WebSocket: 实时原子位置 + 力的回传 ──────────────────────────────
 # 协议设计参考 MolGame: 双向 JSON 消息, 客户端发 force, 服务端推 frame/telemetry
 
+
 # 每个 session 维护一个 force 队列, 模拟器消费后回推位置
 # 这里实现一个内置的 mock 模拟器 (谐振子), 真实 MD 引擎可以替换 _SIM_HOST
 class _MockSim:
@@ -541,7 +748,9 @@ class _MockSim:
 
     def step_once(self, dt: float = 0.5) -> None:
         # 弹簧力 + 外力, k=1, 平衡位置 = 初始位置
-        for _i, (p, v, m, f) in enumerate(zip(self.positions, self.velocities, self.masses, self.forces)):
+        for _i, (p, v, m, f) in enumerate(
+            zip(self.positions, self.velocities, self.masses, self.forces)
+        ):
             ax = (-p[0] + f[0]) / m
             ay = (-p[1] + f[1]) / m
             az = (-p[2] + f[2]) / m
@@ -556,14 +765,182 @@ class _MockSim:
             f[1] *= 0.5
             f[2] *= 0.5
         # 能量 = 0.5 * (m * v^2 + k * x^2)
-        ke = sum(0.5 * m * (v[0]**2 + v[1]**2 + v[2]**2)
-                 for m, v in zip(self.masses, self.velocities))
-        pe = sum(0.5 * (p[0]**2 + p[1]**2 + p[2]**2) for p in self.positions)
+        ke = sum(
+            0.5 * m * (v[0] ** 2 + v[1] ** 2 + v[2] ** 2)
+            for m, v in zip(self.masses, self.velocities)
+        )
+        pe = sum(0.5 * (p[0] ** 2 + p[1] ** 2 + p[2] ** 2) for p in self.positions)
         self.energy = ke + pe
         # 温度 ~ <KE> / kB, 这里只给个量级
         n = max(len(self.masses), 1)
         self.temperature = (2.0 / 3.0) * ke / n
         self.step += 1
+
+
+async def _viewer3d_stream_frames(
+    websocket: WebSocket,
+    sim: _MockSim,
+    force_queue: asyncio.Queue[tuple[int, list[float]]],
+) -> None:
+    """每 50ms 推一帧, 模拟实时 MD."""
+    try:
+        while sim is not None:
+            # 先消费用户施加的力
+            while not force_queue.empty():
+                idx, f = await force_queue.get()
+                sim.apply_force(idx, f)
+            sim.step_once(dt=0.05)
+            msg = {
+                "type": "frame",
+                "positions": sim.positions,
+                "energy": sim.energy,
+                "temperature": sim.temperature,
+                "step": sim.step,
+                "timestamp": time.time(),
+            }
+            await websocket.send_text(json.dumps(msg))
+            await asyncio.sleep(0.05)  # 20 fps
+    except Exception as e:
+        logger.warning("viewer3d stream stopped: %s", e)
+
+
+async def _viewer3d_handle_hello(
+    websocket: WebSocket, msg: dict[str, Any]
+) -> _MockSim | None:
+    """解析结构并回发初始结构; 结构不可用时返回 None."""
+    # 初始化: 解析结构并启动模拟器
+    content = msg.get("content")
+    fmt = msg.get("format", "xyz")
+    file_path = msg.get("file_path")
+    if file_path and not content:
+        p = Path(file_path)
+        content = p.read_text(encoding="utf-8", errors="replace") if p.exists() else ""
+    if not content:
+        await websocket.send_text(
+            json.dumps({"type": "error", "message": "no structure content"})
+        )
+        return None
+    try:
+        struct = _parse_structure(content, fmt)
+    except Exception as e:
+        await websocket.send_text(
+            json.dumps({"type": "error", "message": f"parse failed: {e}"})
+        )
+        return None
+    atoms = struct["atoms"]
+    # 质量用原子序数近似, H=1, C=12 之类, 这里简化为 1.0
+    masses = [1.0 for _ in atoms]
+    sim = _MockSim([a["position"] for a in atoms], masses)
+    # 发送初始结构
+    await websocket.send_text(
+        json.dumps(
+            {
+                "type": "structure",
+                "atoms": atoms,
+                "bonds": struct["bonds"],
+                "cell": struct["cell"],
+                "title": struct["title"],
+                "streaming": msg.get("stream", True),
+            }
+        )
+    )
+    return sim
+
+
+async def _viewer3d_handle_force(
+    websocket: WebSocket,
+    msg: dict[str, Any],
+    sim: _MockSim | None,
+    force_queue: asyncio.Queue[tuple[int, list[float]]],
+) -> None:
+    """用户拖拽原子施加力."""
+    if sim is None:
+        await websocket.send_text(
+            json.dumps({"type": "error", "message": "no simulation running"})
+        )
+        return
+    atom_idx = int(msg.get("atom_idx", -1))
+    force = msg.get("force", [0.0, 0.0, 0.0])
+    await force_queue.put((atom_idx, force))
+    await websocket.send_text(
+        json.dumps(
+            {
+                "type": "force_ack",
+                "atom_idx": atom_idx,
+                "force": force,
+            }
+        )
+    )
+
+
+async def _viewer3d_handle_pause(
+    websocket: WebSocket, stream_task: asyncio.Task | None
+) -> asyncio.Task | None:
+    """暂停推帧."""
+    if stream_task and not stream_task.done():
+        stream_task.cancel()
+        stream_task = None
+    await websocket.send_text(json.dumps({"type": "paused"}))
+    return stream_task
+
+
+async def _viewer3d_handle_resume(
+    websocket: WebSocket,
+    sim: _MockSim | None,
+    stream_task: asyncio.Task | None,
+    force_queue: asyncio.Queue[tuple[int, list[float]]],
+) -> asyncio.Task | None:
+    """恢复推帧."""
+    if sim and (stream_task is None or stream_task.done()):
+        stream_task = asyncio.create_task(
+            _viewer3d_stream_frames(websocket, sim, force_queue)
+        )
+    await websocket.send_text(json.dumps({"type": "resumed"}))
+    return stream_task
+
+
+async def _viewer3d_authorize(websocket: WebSocket) -> bool:
+    """WebSocket 路由不走 router 级依赖, 手动鉴权 (和其他 WS 端点一致)."""
+    try:
+        require_api_key(request=None, websocket=websocket)
+    except Exception as auth_exc:
+        logger.warning("viewer3d WebSocket auth failed: %s", auth_exc)
+        await websocket.close(code=4001, reason="Unauthorized")
+        return False
+    return True
+
+
+async def _viewer3d_handle_message(
+    websocket: WebSocket,
+    msg: dict[str, Any],
+    sim: _MockSim | None,
+    stream_task: asyncio.Task | None,
+    force_queue: asyncio.Queue[tuple[int, list[float]]],
+) -> tuple[_MockSim | None, asyncio.Task | None]:
+    """按消息类型分发, 返回更新后的 (sim, stream_task)."""
+    mtype = msg.get("type", "")
+
+    if mtype == "hello":
+        sim = await _viewer3d_handle_hello(websocket, msg)
+        if sim is not None and msg.get("stream", True):
+            stream_task = asyncio.create_task(
+                _viewer3d_stream_frames(websocket, sim, force_queue)
+            )
+    elif mtype == "force":
+        await _viewer3d_handle_force(websocket, msg, sim, force_queue)
+    elif mtype == "pause":
+        stream_task = await _viewer3d_handle_pause(websocket, stream_task)
+    elif mtype == "resume":
+        stream_task = await _viewer3d_handle_resume(
+            websocket, sim, stream_task, force_queue
+        )
+    elif mtype == "ping":
+        await websocket.send_text(json.dumps({"type": "pong"}))
+    else:
+        await websocket.send_text(
+            json.dumps({"type": "error", "message": f"unknown type: {mtype}"})
+        )
+    return sim, stream_task
 
 
 @ws_router.websocket("/ws/viewer3d")
@@ -574,12 +951,7 @@ async def viewer3d_websocket(websocket: WebSocket) -> None:
     * 推送 frame (原子位置 + 能量 + 温度)
     * 接收 force 事件并转发到模拟器
     """
-    # WebSocket 路由不走 router 级依赖, 手动鉴权 (和其他 WS 端点一致)
-    try:
-        require_api_key(request=None, websocket=websocket)
-    except Exception as auth_exc:
-        logger.warning("viewer3d WebSocket auth failed: %s", auth_exc)
-        await websocket.close(code=4001, reason="Unauthorized")
+    if not await _viewer3d_authorize(websocket):
         return
 
     await websocket.accept()
@@ -588,101 +960,20 @@ async def viewer3d_websocket(websocket: WebSocket) -> None:
     # 用户施加的力队列: 原子索引 -> 力向量
     force_queue: asyncio.Queue[tuple[int, list[float]]] = asyncio.Queue()
 
-    async def _stream_frames() -> None:
-        """每 50ms 推一帧, 模拟实时 MD."""
-        try:
-            while sim is not None:
-                # 先消费用户施加的力
-                while not force_queue.empty():
-                    idx, f = await force_queue.get()
-                    sim.apply_force(idx, f)
-                sim.step_once(dt=0.05)
-                msg = {
-                    "type": "frame",
-                    "positions": sim.positions,
-                    "energy": sim.energy,
-                    "temperature": sim.temperature,
-                    "step": sim.step,
-                    "timestamp": time.time(),
-                }
-                await websocket.send_text(json.dumps(msg))
-                await asyncio.sleep(0.05)  # 20 fps
-        except Exception as e:
-            logger.warning("viewer3d stream stopped: %s", e)
-
     try:
         while True:
             raw = await websocket.receive_text()
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
-                await websocket.send_text(json.dumps({"type": "error", "message": "invalid JSON"}))
+                await websocket.send_text(
+                    json.dumps({"type": "error", "message": "invalid JSON"})
+                )
                 continue
 
-            mtype = msg.get("type", "")
-
-            if mtype == "hello":
-                # 初始化: 解析结构并启动模拟器
-                content = msg.get("content")
-                fmt = msg.get("format", "xyz")
-                file_path = msg.get("file_path")
-                if file_path and not content:
-                    p = Path(file_path)
-                    content = p.read_text(encoding="utf-8", errors="replace") if p.exists() else ""
-                if not content:
-                    await websocket.send_text(json.dumps({"type": "error", "message": "no structure content"}))
-                    continue
-                try:
-                    struct = _parse_structure(content, fmt)
-                except Exception as e:
-                    await websocket.send_text(json.dumps({"type": "error", "message": f"parse failed: {e}"}))
-                    continue
-                atoms = struct["atoms"]
-                # 质量用原子序数近似, H=1, C=12 之类, 这里简化为 1.0
-                masses = [1.0 for _ in atoms]
-                sim = _MockSim([a["position"] for a in atoms], masses)
-                # 发送初始结构
-                await websocket.send_text(json.dumps({
-                    "type": "structure",
-                    "atoms": atoms,
-                    "bonds": struct["bonds"],
-                    "cell": struct["cell"],
-                    "title": struct["title"],
-                    "streaming": msg.get("stream", True),
-                }))
-                if msg.get("stream", True):
-                    stream_task = asyncio.create_task(_stream_frames())
-
-            elif mtype == "force":
-                # 用户拖拽原子施加力
-                if sim is None:
-                    await websocket.send_text(json.dumps({"type": "error", "message": "no simulation running"}))
-                    continue
-                atom_idx = int(msg.get("atom_idx", -1))
-                force = msg.get("force", [0.0, 0.0, 0.0])
-                await force_queue.put((atom_idx, force))
-                await websocket.send_text(json.dumps({
-                    "type": "force_ack",
-                    "atom_idx": atom_idx,
-                    "force": force,
-                }))
-
-            elif mtype == "pause":
-                if stream_task and not stream_task.done():
-                    stream_task.cancel()
-                    stream_task = None
-                await websocket.send_text(json.dumps({"type": "paused"}))
-
-            elif mtype == "resume":
-                if sim and (stream_task is None or stream_task.done()):
-                    stream_task = asyncio.create_task(_stream_frames())
-                await websocket.send_text(json.dumps({"type": "resumed"}))
-
-            elif mtype == "ping":
-                await websocket.send_text(json.dumps({"type": "pong"}))
-
-            else:
-                await websocket.send_text(json.dumps({"type": "error", "message": f"unknown type: {mtype}"}))
+            sim, stream_task = await _viewer3d_handle_message(
+                websocket, msg, sim, stream_task, force_queue
+            )
 
     except WebSocketDisconnect:
         logger.info("viewer3d websocket disconnected")

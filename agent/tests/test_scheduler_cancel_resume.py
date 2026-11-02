@@ -104,11 +104,8 @@ def test_cancel_running_task():
 # ── (c) recover/redeploy 后 orphaned 作业可 resume ───────────────────────
 
 
-def _test_resume_orphaned_impl(tmp_path):
-    db = tmp_path / "campaigns.sqlite"
-    store = SqliteCampaignStore(db)
-
-    # Phase 1: "崩溃"遗留一个 running 作业
+def _seed_orphaned_job(store) -> None:
+    """Phase 1: "崩溃"遗留一个 running 作业."""
     store.upsert_job(
         JobRecord(
             job_id="job_x",
@@ -120,41 +117,48 @@ def _test_resume_orphaned_impl(tmp_path):
         )
     )
 
-    # Phase 2: 新进程, 同一 store, 新 scheduler
+
+async def _resume_orphaned_roundtrip(scheduler, store) -> None:
+    """Phase 2: 新进程, 同一 store, 新 scheduler — recover 后 resume 并跑完."""
+    scheduler.start()
+    summary = scheduler.recover()
+    assert summary["orphaned"] == 1
+    assert store.get_job("job_x").status == "orphaned"
+
+    executed: list[bool] = []
+
+    async def factory():
+        executed.append(True)
+        return "done"
+
+    def provider(job_id, rec):
+        return factory
+
+    resumed = scheduler.resume_orphaned(factory_provider=provider)
+    assert resumed == 1
+    assert store.get_job("job_x").status == "queued", "resume 应先重新排队"
+
+    # drainer 吸收并跑到 finished
+    for _ in range(200):
+        rec = store.get_job("job_x")
+        if rec is not None and rec.status == "finished":
+            break
+        await asyncio.sleep(0.01)
+    assert store.get_job("job_x").status == "finished"
+    assert executed == [True], "恢复后的 factory 应当被真实执行"
+    scheduler.stop()
+
+
+def _test_resume_orphaned_impl(tmp_path):
+    db = tmp_path / "campaigns.sqlite"
+    store = SqliteCampaignStore(db)
+
+    _seed_orphaned_job(store)
+
     scheduler = ToolScheduler(
         store=store, policy=AdmissionPolicy(max_concurrent_heavy=2)
     )
-
-    async def run():
-        scheduler.start()
-        summary = scheduler.recover()
-        assert summary["orphaned"] == 1
-        assert store.get_job("job_x").status == "orphaned"
-
-        executed: list[bool] = []
-
-        async def factory():
-            executed.append(True)
-            return "done"
-
-        def provider(job_id, rec):
-            return factory
-
-        resumed = scheduler.resume_orphaned(factory_provider=provider)
-        assert resumed == 1
-        assert store.get_job("job_x").status == "queued", "resume 应先重新排队"
-
-        # drainer 吸收并跑到 finished
-        for _ in range(200):
-            rec = store.get_job("job_x")
-            if rec is not None and rec.status == "finished":
-                break
-            await asyncio.sleep(0.01)
-        assert store.get_job("job_x").status == "finished"
-        assert executed == [True], "恢复后的 factory 应当被真实执行"
-        scheduler.stop()
-
-    asyncio.run(run())
+    asyncio.run(_resume_orphaned_roundtrip(scheduler, store))
     store.close()
 
 

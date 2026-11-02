@@ -44,7 +44,7 @@ class ConsensusScoringInput(BaseModel):
     # scores[model_name][candidate_idx] = score
     model_scores: dict[str, list[float]] | None = Field(
         default=None,
-        description="Per-model raw scores: {model_name: [score1, score2, ...]}"
+        description="Per-model raw scores: {model_name: [score1, score2, ...]}",
     )
 
     # Candidate names
@@ -61,14 +61,16 @@ class ConsensusScoringInput(BaseModel):
     # Borda params
     borda_variant: Literal["standard", "dowdall", "fractional"] = Field(
         default="standard",
-        description="standard: n-rank; dowdall: 1/rank; fractional: for ties"
+        description="standard: n-rank; dowdall: 1/rank; fractional: for ties",
     )
 
     # RRA params
     alpha: float = Field(default=0.05, ge=0, le=1, description="RRA significance level")
 
     # Z-score params
-    use_robust: bool = Field(default=True, description="Use median/MAD instead of mean/std")
+    use_robust: bool = Field(
+        default=True, description="Use median/MAD instead of mean/std"
+    )
 
     # Rank uncertainty params
     n_bootstrap: int = Field(default=500, ge=0, le=5000)
@@ -91,10 +93,14 @@ class ConsensusScoringTool(HuginnTool):
     )
     input_schema = ConsensusScoringInput
 
-    async def _execute(self, args: ConsensusScoringInput, context: ToolContext) -> ToolResult:
+    async def _execute(
+        self, args: ConsensusScoringInput, context: ToolContext
+    ) -> ToolResult:
         try:
             if not args.model_scores:
-                return ToolResult(data=None, success=False, error="model_scores required")
+                return ToolResult(
+                    data=None, success=False, error="model_scores required"
+                )
 
             if args.action == "borda":
                 return self._borda(args)
@@ -106,7 +112,9 @@ class ConsensusScoringTool(HuginnTool):
                 return self._z_score(args)
             if args.action == "rank_uncertainty":
                 return self._rank_uncertainty(args)
-            return ToolResult(data=None, success=False, error=f"Unknown action: {args.action}")
+            return ToolResult(
+                data=None, success=False, error=f"Unknown action: {args.action}"
+            )
         except Exception as exc:
             return ToolResult(data=None, success=False, error=str(exc))
 
@@ -119,48 +127,21 @@ class ConsensusScoringTool(HuginnTool):
         n_candidates = len(next(iter(scores.values())))
 
         # Compute ranks per model
-        borda_scores = np.zeros(n_candidates)
-        for name in model_names:
-            model_vals = np.array(scores[name])
-            ranks = self._rank_values(model_vals, args.maximize)
-            w = args.model_weights.get(name, 1.0) if args.model_weights else 1.0
-
-            if args.borda_variant == "standard":
-                # n - rank (top candidate gets n points)
-                borda_scores += w * (n_candidates - ranks)
-            elif args.borda_variant == "dowdall":
-                # 1 / rank (Dowdall system)
-                borda_scores += w * (1.0 / np.maximum(ranks + 1, 1))
-            elif args.borda_variant == "fractional":
-                borda_scores += w * (n_candidates - ranks)
+        borda_scores = self._borda_scores(args, model_names, scores, n_candidates)
 
         # Final ranking
         final_ranks = self._rank_values(borda_scores, maximize=True)
 
         # Also compute per-model agreement
-        all_ranks = np.array([
-            self._rank_values(np.array(scores[name]), args.maximize)
-            for name in model_names
-        ])
+        all_ranks = self._model_rank_matrix(args, scores, model_names)
 
         # Kendall's W (coefficient of concordance)
         k_w = self._kendalls_w(all_ranks)
 
         # Identify consensus candidates (ranked high by ALL models)
-        consensus = []
-        for i in range(n_candidates):
-            model_ranks = all_ranks[:, i]
-            consensus.append({
-                "candidate_index": i,
-                "candidate_name": args.candidate_names[i] if args.candidate_names else f"cand_{i}",
-                "borda_score": round(float(borda_scores[i]), 4),
-                "final_rank": int(final_ranks[i]),
-                "model_ranks": {name: int(all_ranks[j, i]) for j, name in enumerate(model_names)},
-                "best_rank": int(np.min(model_ranks)),
-                "worst_rank": int(np.max(model_ranks)),
-                "rank_range": int(np.max(model_ranks) - np.min(model_ranks)),
-                "unanimous_top3": bool(np.all(model_ranks < 3)),
-            })
+        consensus = self._borda_entries(
+            args, n_candidates, borda_scores, final_ranks, all_ranks, model_names
+        )
 
         consensus.sort(key=lambda x: x["borda_score"], reverse=True)
 
@@ -182,6 +163,76 @@ class ConsensusScoringTool(HuginnTool):
 
         return ToolResult(data=data)
 
+    def _borda_scores(
+        self,
+        args: ConsensusScoringInput,
+        model_names: list[str],
+        scores: dict[str, list[float]],
+        n_candidates: int,
+    ) -> np.ndarray:
+        # Compute ranks per model
+        borda_scores = np.zeros(n_candidates)
+        for name in model_names:
+            model_vals = np.array(scores[name])
+            ranks = self._rank_values(model_vals, args.maximize)
+            w = args.model_weights.get(name, 1.0) if args.model_weights else 1.0
+
+            if args.borda_variant == "standard":
+                # n - rank (top candidate gets n points)
+                borda_scores += w * (n_candidates - ranks)
+            elif args.borda_variant == "dowdall":
+                # 1 / rank (Dowdall system)
+                borda_scores += w * (1.0 / np.maximum(ranks + 1, 1))
+            elif args.borda_variant == "fractional":
+                borda_scores += w * (n_candidates - ranks)
+        return borda_scores
+
+    def _model_rank_matrix(
+        self,
+        args: ConsensusScoringInput,
+        scores: dict[str, list[float]],
+        model_names: list[str],
+    ) -> np.ndarray:
+        # Also compute per-model agreement
+        return np.array(
+            [
+                self._rank_values(np.array(scores[name]), args.maximize)
+                for name in model_names
+            ]
+        )
+
+    def _borda_entries(
+        self,
+        args: ConsensusScoringInput,
+        n_candidates: int,
+        borda_scores: np.ndarray,
+        final_ranks: np.ndarray,
+        all_ranks: np.ndarray,
+        model_names: list[str],
+    ) -> list[dict]:
+        # Identify consensus candidates (ranked high by ALL models)
+        consensus = []
+        for i in range(n_candidates):
+            model_ranks = all_ranks[:, i]
+            consensus.append(
+                {
+                    "candidate_index": i,
+                    "candidate_name": args.candidate_names[i]
+                    if args.candidate_names
+                    else f"cand_{i}",
+                    "borda_score": round(float(borda_scores[i]), 4),
+                    "final_rank": int(final_ranks[i]),
+                    "model_ranks": {
+                        name: int(all_ranks[j, i]) for j, name in enumerate(model_names)
+                    },
+                    "best_rank": int(np.min(model_ranks)),
+                    "worst_rank": int(np.max(model_ranks)),
+                    "rank_range": int(np.max(model_ranks) - np.min(model_ranks)),
+                    "unanimous_top3": bool(np.all(model_ranks < 3)),
+                }
+            )
+        return consensus
+
     # ── Robust Rank Aggregation ─────────────────────────────
 
     def _rra(self, args: ConsensusScoringInput) -> ToolResult:
@@ -198,16 +249,65 @@ class ConsensusScoringTool(HuginnTool):
         n_candidates = len(next(iter(scores.values())))
 
         # Compute normalized ranks [0, 1] per model
+        all_ranks = self._rra_rank_matrix(
+            args, scores, model_names, n_models, n_candidates
+        )
+
+        rra_scores, rra_pvalues = self._rra_scores_from_ranks(
+            all_ranks, n_models, n_candidates
+        )
+
+        final_ranks = self._rank_values(rra_scores, maximize=True)
+
+        raw = (rra_scores, rra_pvalues, final_ranks)
+        results = self._rra_entries(args, n_candidates, raw, all_ranks, model_names)
+
+        results.sort(key=lambda x: x["rra_score"], reverse=True)
+
+        n_sig = sum(1 for r in results if r["significant"])
+
+        return ToolResult(
+            data={
+                "action": "robust_rank_aggregation",
+                "n_models": n_models,
+                "n_candidates": n_candidates,
+                "alpha": args.alpha,
+                "n_significant": n_sig,
+                "ranking": results[:20],
+                "message": (
+                    f"RRA: {n_sig}/{n_candidates} candidates significant at α={args.alpha}. "
+                    f"Top: {results[0]['candidate_name']} (score={results[0]['rra_score']:.2f}, p={results[0]['p_value']:.4e})."
+                ),
+            }
+        )
+
+    def _rra_rank_matrix(
+        self,
+        args: ConsensusScoringInput,
+        scores: dict[str, list[float]],
+        model_names: list[str],
+        n_models: int,
+        n_candidates: int,
+    ) -> np.ndarray:
+        # Compute normalized ranks [0, 1] per model
         all_ranks = np.zeros((n_models, n_candidates))
         for j, name in enumerate(model_names):
             model_vals = np.array(scores[name])
             all_ranks[j] = self._rank_values(model_vals, args.maximize) / n_candidates
+        return all_ranks
 
+    def _rra_scores_from_ranks(
+        self,
+        all_ranks: np.ndarray,
+        n_models: int,
+        n_candidates: int,
+    ) -> tuple[np.ndarray, np.ndarray]:
         # For each candidate, the ranks across models are order statistics
         # Under null (random rankings), r_(k) ~ Beta(k, n+1-k)
         # RRA score = -log10(p-value)
         try:
             from scipy.stats import beta as beta_dist
+
             has_scipy = True
         except ImportError:
             logger.debug("best-effort op failed", exc_info=True)
@@ -234,37 +334,36 @@ class ConsensusScoringTool(HuginnTool):
             corrected_p = min(1.0, min_p * n_models)
             rra_pvalues[i] = corrected_p
             rra_scores[i] = -math.log10(max(corrected_p, 1e-30))
+        return rra_scores, rra_pvalues
 
-        final_ranks = self._rank_values(rra_scores, maximize=True)
-
+    def _rra_entries(
+        self,
+        args: ConsensusScoringInput,
+        n_candidates: int,
+        raw: tuple[np.ndarray, np.ndarray, np.ndarray],
+        all_ranks: np.ndarray,
+        model_names: list[str],
+    ) -> list[dict]:
+        rra_scores, rra_pvalues, final_ranks = raw
         results = []
         for i in range(n_candidates):
-            results.append({
-                "candidate_index": i,
-                "candidate_name": args.candidate_names[i] if args.candidate_names else f"cand_{i}",
-                "rra_score": round(float(rra_scores[i]), 4),
-                "p_value": float(rra_pvalues[i]),
-                "significant": bool(rra_pvalues[i] < args.alpha),
-                "final_rank": int(final_ranks[i]),
-                "model_ranks": {name: round(float(all_ranks[j, i]), 3) for j, name in enumerate(model_names)},
-            })
-
-        results.sort(key=lambda x: x["rra_score"], reverse=True)
-
-        n_sig = sum(1 for r in results if r["significant"])
-
-        return ToolResult(data={
-            "action": "robust_rank_aggregation",
-            "n_models": n_models,
-            "n_candidates": n_candidates,
-            "alpha": args.alpha,
-            "n_significant": n_sig,
-            "ranking": results[:20],
-            "message": (
-                f"RRA: {n_sig}/{n_candidates} candidates significant at α={args.alpha}. "
-                f"Top: {results[0]['candidate_name']} (score={results[0]['rra_score']:.2f}, p={results[0]['p_value']:.4e})."
-            ),
-        })
+            results.append(
+                {
+                    "candidate_index": i,
+                    "candidate_name": args.candidate_names[i]
+                    if args.candidate_names
+                    else f"cand_{i}",
+                    "rra_score": round(float(rra_scores[i]), 4),
+                    "p_value": float(rra_pvalues[i]),
+                    "significant": bool(rra_pvalues[i] < args.alpha),
+                    "final_rank": int(final_ranks[i]),
+                    "model_ranks": {
+                        name: round(float(all_ranks[j, i]), 3)
+                        for j, name in enumerate(model_names)
+                    },
+                }
+            )
+        return results
 
     # ── Copeland's method ──────────────────────────────────
 
@@ -279,6 +378,44 @@ class ConsensusScoringTool(HuginnTool):
         n_models = len(model_names)
         n_candidates = len(next(iter(scores.values())))
 
+        # Build pairwise win matrix
+        copeland = self._copeland_scores(args, model_names, scores, n_candidates)
+
+        final_ranks = self._rank_values(copeland, maximize=True)
+
+        results = self._copeland_entries(args, n_candidates, copeland, final_ranks)
+
+        results.sort(key=lambda x: x["copeland_score"], reverse=True)
+
+        # Check for Condorcet winner (beats all others)
+        condorcet_idx = int(np.argmax(copeland))
+        is_condorcet = copeland[condorcet_idx] == n_candidates - 1
+
+        return ToolResult(
+            data={
+                "action": "copeland",
+                "n_models": n_models,
+                "n_candidates": n_candidates,
+                "condorcet_winner": results[0]["candidate_name"]
+                if is_condorcet
+                else None,
+                "has_condorcet_winner": is_condorcet,
+                "ranking": results[:20],
+                "message": (
+                    f"Copeland: top = {results[0]['candidate_name']} "
+                    f"(score={results[0]['copeland_score']:+d}). "
+                    f"Condorcet winner: {'yes' if is_condorcet else 'no (cycle exists)'}."
+                ),
+            }
+        )
+
+    def _copeland_scores(
+        self,
+        args: ConsensusScoringInput,
+        model_names: list[str],
+        scores: dict[str, list[float]],
+        n_candidates: int,
+    ) -> np.ndarray:
         # Build pairwise win matrix
         copeland = np.zeros(n_candidates)
         for i in range(n_candidates):
@@ -306,37 +443,28 @@ class ConsensusScoringTool(HuginnTool):
                 elif wins < losses:
                     copeland[i] -= 1
                 # tie: 0
+        return copeland
 
-        final_ranks = self._rank_values(copeland, maximize=True)
-
+    def _copeland_entries(
+        self,
+        args: ConsensusScoringInput,
+        n_candidates: int,
+        copeland: np.ndarray,
+        final_ranks: np.ndarray,
+    ) -> list[dict]:
         results = []
         for i in range(n_candidates):
-            results.append({
-                "candidate_index": i,
-                "candidate_name": args.candidate_names[i] if args.candidate_names else f"cand_{i}",
-                "copeland_score": int(copeland[i]),
-                "final_rank": int(final_ranks[i]),
-            })
-
-        results.sort(key=lambda x: x["copeland_score"], reverse=True)
-
-        # Check for Condorcet winner (beats all others)
-        condorcet_idx = int(np.argmax(copeland))
-        is_condorcet = copeland[condorcet_idx] == n_candidates - 1
-
-        return ToolResult(data={
-            "action": "copeland",
-            "n_models": n_models,
-            "n_candidates": n_candidates,
-            "condorcet_winner": results[0]["candidate_name"] if is_condorcet else None,
-            "has_condorcet_winner": is_condorcet,
-            "ranking": results[:20],
-            "message": (
-                f"Copeland: top = {results[0]['candidate_name']} "
-                f"(score={results[0]['copeland_score']:+d}). "
-                f"Condorcet winner: {'yes' if is_condorcet else 'no (cycle exists)'}."
-            ),
-        })
+            results.append(
+                {
+                    "candidate_index": i,
+                    "candidate_name": args.candidate_names[i]
+                    if args.candidate_names
+                    else f"cand_{i}",
+                    "copeland_score": int(copeland[i]),
+                    "final_rank": int(final_ranks[i]),
+                }
+            )
+        return results
 
     # ── Z-score fusion ──────────────────────────────────────
 
@@ -350,6 +478,54 @@ class ConsensusScoringTool(HuginnTool):
         n_models = len(model_names)
         n_candidates = len(next(iter(scores.values())))
 
+        z_scores = self._standardized_scores(
+            args, scores, model_names, n_models, n_candidates
+        )
+
+        # Weighted average
+        weights = self._model_weight_vector(args, model_names, n_models)
+
+        combined = z_scores.T @ weights  # (n_candidates,)
+
+        # Uncertainty: disagreement between models
+        disagreement = np.std(z_scores, axis=0)  # per-candidate model spread
+
+        final_ranks = self._rank_values(combined, maximize=True)
+
+        results = self._z_score_entries(
+            args,
+            n_candidates,
+            combined,
+            disagreement,
+            final_ranks,
+            z_scores,
+            model_names,
+        )
+
+        results.sort(key=lambda x: x["combined_z"], reverse=True)
+
+        return ToolResult(
+            data={
+                "action": "z_score",
+                "robust": args.use_robust,
+                "n_models": n_models,
+                "n_candidates": n_candidates,
+                "ranking": results[:20],
+                "message": (
+                    f"Z-score fusion: top = {results[0]['candidate_name']} "
+                    f"(z={results[0]['combined_z']:.2f}, confidence={results[0]['confidence']:.3f})."
+                ),
+            }
+        )
+
+    def _standardized_scores(
+        self,
+        args: ConsensusScoringInput,
+        scores: dict[str, list[float]],
+        model_names: list[str],
+        n_models: int,
+        n_candidates: int,
+    ) -> np.ndarray:
         z_scores = np.zeros((n_models, n_candidates))
         for j, name in enumerate(model_names):
             vals = np.array(scores[name])
@@ -365,49 +541,51 @@ class ConsensusScoringTool(HuginnTool):
                 # Standard: mean + std
                 z = (vals - np.mean(vals)) / (np.std(vals, ddof=1) + 1e-10)
             z_scores[j] = z
+        return z_scores
 
+    def _model_weight_vector(
+        self,
+        args: ConsensusScoringInput,
+        model_names: list[str],
+        n_models: int,
+    ) -> np.ndarray:
         # Weighted average
         weights = np.ones(n_models)
         if args.model_weights:
             for j, name in enumerate(model_names):
                 weights[j] = args.model_weights.get(name, 1.0)
         weights = weights / weights.sum()
+        return weights
 
-        combined = z_scores.T @ weights  # (n_candidates,)
-
-        # Uncertainty: disagreement between models
-        disagreement = np.std(z_scores, axis=0)  # per-candidate model spread
-
-        final_ranks = self._rank_values(combined, maximize=True)
-
+    def _z_score_entries(
+        self,
+        args: ConsensusScoringInput,
+        n_candidates: int,
+        combined: np.ndarray,
+        disagreement: np.ndarray,
+        final_ranks: np.ndarray,
+        z_scores: np.ndarray,
+        model_names: list[str],
+    ) -> list[dict]:
         results = []
         for i in range(n_candidates):
-            results.append({
-                "candidate_index": i,
-                "candidate_name": args.candidate_names[i] if args.candidate_names else f"cand_{i}",
-                "combined_z": round(float(combined[i]), 4),
-                "model_disagreement": round(float(disagreement[i]), 4),
-                "final_rank": int(final_ranks[i]),
-                "model_z_scores": {
-                    name: round(float(z_scores[j, i]), 4)
-                    for j, name in enumerate(model_names)
-                },
-                "confidence": round(float(1.0 / (1.0 + disagreement[i])), 4),
-            })
-
-        results.sort(key=lambda x: x["combined_z"], reverse=True)
-
-        return ToolResult(data={
-            "action": "z_score",
-            "robust": args.use_robust,
-            "n_models": n_models,
-            "n_candidates": n_candidates,
-            "ranking": results[:20],
-            "message": (
-                f"Z-score fusion: top = {results[0]['candidate_name']} "
-                f"(z={results[0]['combined_z']:.2f}, confidence={results[0]['confidence']:.3f})."
-            ),
-        })
+            results.append(
+                {
+                    "candidate_index": i,
+                    "candidate_name": args.candidate_names[i]
+                    if args.candidate_names
+                    else f"cand_{i}",
+                    "combined_z": round(float(combined[i]), 4),
+                    "model_disagreement": round(float(disagreement[i]), 4),
+                    "final_rank": int(final_ranks[i]),
+                    "model_z_scores": {
+                        name: round(float(z_scores[j, i]), 4)
+                        for j, name in enumerate(model_names)
+                    },
+                    "confidence": round(float(1.0 / (1.0 + disagreement[i])), 4),
+                }
+            )
+        return results
 
     # ── Rank uncertainty ────────────────────────────────────
 
@@ -418,6 +596,46 @@ class ConsensusScoringTool(HuginnTool):
         n_models = len(model_names)
         n_candidates = len(next(iter(scores.values())))
 
+        rank_probs = self._bootstrap_rank_probs(
+            args, scores, model_names, n_models, n_candidates
+        )
+
+        # Expected rank and entropy
+        expected_ranks = np.sum(rank_probs * np.arange(n_candidates)[:, None], axis=1)
+        rank_entropy = -np.sum(
+            rank_probs * np.log(np.maximum(rank_probs, 1e-30)), axis=1
+        )
+        max_entropy = math.log(n_candidates)
+
+        results = self._rank_uncertainty_entries(
+            args, n_candidates, rank_probs, expected_ranks, rank_entropy, max_entropy
+        )
+
+        results.sort(key=lambda x: x["expected_rank"])
+
+        return ToolResult(
+            data={
+                "action": "rank_uncertainty",
+                "n_bootstrap": args.n_bootstrap,
+                "n_models": n_models,
+                "n_candidates": n_candidates,
+                "ranking": results[:20],
+                "message": (
+                    f"Rank uncertainty: most stable candidate = {results[0]['candidate_name']} "
+                    f"(expected rank={results[0]['expected_rank']:.2f}, "
+                    f"stability={results[0]['rank_stability']})."
+                ),
+            }
+        )
+
+    def _bootstrap_rank_probs(
+        self,
+        args: ConsensusScoringInput,
+        scores: dict[str, list[float]],
+        model_names: list[str],
+        n_models: int,
+        n_candidates: int,
+    ) -> np.ndarray:
         all_scores = np.array([scores[name] for name in model_names])
 
         # Bootstrap: resample models with replacement, compute consensus rank
@@ -430,7 +648,9 @@ class ConsensusScoringTool(HuginnTool):
             sampled = all_scores[idx]
 
             # Simple average as consensus
-            consensus = np.mean(sampled, axis=0) if args.maximize else -np.mean(sampled, axis=0)
+            consensus = (
+                np.mean(sampled, axis=0) if args.maximize else -np.mean(sampled, axis=0)
+            )
             ranks = self._rank_values(consensus, maximize=True)
 
             for i in range(n_candidates):
@@ -438,43 +658,44 @@ class ConsensusScoringTool(HuginnTool):
 
         # Rank probabilities
         rank_probs = rank_counts / args.n_bootstrap
+        return rank_probs
 
-        # Expected rank and entropy
-        expected_ranks = np.sum(rank_probs * np.arange(n_candidates)[:, None], axis=1)
-        rank_entropy = -np.sum(rank_probs * np.log(np.maximum(rank_probs, 1e-30)), axis=1)
-        max_entropy = math.log(n_candidates)
-
+    def _rank_uncertainty_entries(
+        self,
+        args: ConsensusScoringInput,
+        n_candidates: int,
+        rank_probs: np.ndarray,
+        expected_ranks: np.ndarray,
+        rank_entropy: np.ndarray,
+        max_entropy: float,
+    ) -> list[dict]:
         results = []
         for i in range(n_candidates):
             most_likely_rank = int(np.argmax(rank_probs[i]))
-            results.append({
-                "candidate_index": i,
-                "candidate_name": args.candidate_names[i] if args.candidate_names else f"cand_{i}",
-                "expected_rank": round(float(expected_ranks[i]), 2),
-                "most_likely_rank": most_likely_rank,
-                "rank_probability": round(float(rank_probs[i, most_likely_rank]), 4),
-                "rank_entropy": round(float(rank_entropy[i]), 4),
-                "normalized_entropy": round(float(rank_entropy[i] / max_entropy), 4),
-                "rank_stability": "stable" if rank_entropy[i] / max_entropy < 0.3
-                                  else "moderate" if rank_entropy[i] / max_entropy < 0.6
-                                  else "unstable",
-                "rank_distribution": [round(float(p), 4) for p in rank_probs[i]],
-            })
-
-        results.sort(key=lambda x: x["expected_rank"])
-
-        return ToolResult(data={
-            "action": "rank_uncertainty",
-            "n_bootstrap": args.n_bootstrap,
-            "n_models": n_models,
-            "n_candidates": n_candidates,
-            "ranking": results[:20],
-            "message": (
-                f"Rank uncertainty: most stable candidate = {results[0]['candidate_name']} "
-                f"(expected rank={results[0]['expected_rank']:.2f}, "
-                f"stability={results[0]['rank_stability']})."
-            ),
-        })
+            results.append(
+                {
+                    "candidate_index": i,
+                    "candidate_name": args.candidate_names[i]
+                    if args.candidate_names
+                    else f"cand_{i}",
+                    "expected_rank": round(float(expected_ranks[i]), 2),
+                    "most_likely_rank": most_likely_rank,
+                    "rank_probability": round(
+                        float(rank_probs[i, most_likely_rank]), 4
+                    ),
+                    "rank_entropy": round(float(rank_entropy[i]), 4),
+                    "normalized_entropy": round(
+                        float(rank_entropy[i] / max_entropy), 4
+                    ),
+                    "rank_stability": "stable"
+                    if rank_entropy[i] / max_entropy < 0.3
+                    else "moderate"
+                    if rank_entropy[i] / max_entropy < 0.6
+                    else "unstable",
+                    "rank_distribution": [round(float(p), 4) for p in rank_probs[i]],
+                }
+            )
+        return results
 
     # ── Helpers ─────────────────────────────────────────────
 
@@ -495,8 +716,8 @@ class ConsensusScoringTool(HuginnTool):
             while j + 1 < len(sorted_vals) and sorted_vals[j + 1] == sorted_vals[i]:
                 j += 1
             if j > i:
-                avg_rank = np.mean(ranks[temp[i:j + 1]])
-                ranks[temp[i:j + 1]] = avg_rank
+                avg_rank = np.mean(ranks[temp[i : j + 1]])
+                ranks[temp[i : j + 1]] = avg_rank
             i = j + 1
         return ranks
 
@@ -512,5 +733,5 @@ class ConsensusScoringTool(HuginnTool):
         R = rank_matrix.sum(axis=0)  # sum of ranks per candidate
         R_bar = R.mean()
         S = np.sum((R - R_bar) ** 2)
-        W = 12 * S / (k ** 2 * (n ** 3 - n))
+        W = 12 * S / (k**2 * (n**3 - n))
         return float(np.clip(W, 0, 1))

@@ -163,6 +163,46 @@ def _extract_paths_from_tool_input(tool_input: dict) -> set[str]:
     return paths
 
 
+def _index_task_paths(tasks: list[dict]) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """建 task→paths 与 path→tasks 两张反查表."""
+    # task_id -> tool_input 里出现的路径集合
+    task_paths: dict[str, set[str]] = {}
+    # path -> 引用过它的 task_id 集合 (反查上游产出归属哪个 task)
+    path_to_tasks: dict[str, set[str]] = {}
+    for t in tasks:
+        tid = t["id"]
+        paths = _extract_paths_from_tool_input(t.get("tool_input") or {})
+        task_paths[tid] = paths
+        for p in paths:
+            path_to_tasks.setdefault(p, set()).add(tid)
+    return task_paths, path_to_tasks
+
+
+def _upstream_ids_for_path(
+    p: str,
+    bid: str,
+    provenance_registry,
+    path_to_tasks: dict[str, set[str]],
+) -> list[str]:
+    """对一个消费路径 p, 返回可能是 bid 上游的 task id 列表 (按溯源链)."""
+    entry = provenance_registry.find_by_path(p)
+    if entry is None:
+        # registry 里没记录, 判不了上游
+        return []
+    upstream_ids: list[str] = []
+    # get_lineage 返回 p 的溯源链 (含 p 自己), 链头是最新产出
+    chain = provenance_registry.get_lineage(p, depth=5)
+    for e in chain:
+        upstream = e.file_path
+        if upstream == p:
+            # p 本身是 B 消费的产出, 上游归属看链后续 entry
+            continue
+        for aid in path_to_tasks.get(upstream, ()):
+            if aid != bid:
+                upstream_ids.append(aid)
+    return upstream_ids
+
+
 def infer_dependencies_from_provenance(
     tasks: list[dict],
     provenance_registry,
@@ -188,39 +228,21 @@ def infer_dependencies_from_provenance(
     if provenance_registry is None:
         return []
 
-    # task_id -> tool_input 里出现的路径集合
-    task_paths: dict[str, set[str]] = {}
-    # path -> 引用过它的 task_id 集合 (反查上游产出归属哪个 task)
-    path_to_tasks: dict[str, set[str]] = {}
-    for t in tasks:
-        tid = t["id"]
-        paths = _extract_paths_from_tool_input(t.get("tool_input") or {})
-        task_paths[tid] = paths
-        for p in paths:
-            path_to_tasks.setdefault(p, set()).add(tid)
+    task_paths, path_to_tasks = _index_task_paths(tasks)
 
     inferred: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for t in tasks:
         bid = t["id"]
         for p in task_paths.get(bid, ()):
-            entry = provenance_registry.find_by_path(p)
-            if entry is None:
-                # registry 里没记录, 判不了上游
-                continue
-            # get_lineage 返回 p 的溯源链 (含 p 自己), 链头是最新产出
-            chain = provenance_registry.get_lineage(p, depth=5)
-            for e in chain:
-                upstream = e.file_path
-                if upstream == p:
-                    # p 本身是 B 消费的产出, 上游归属看链后续 entry
+            for aid in _upstream_ids_for_path(
+                p, bid, provenance_registry, path_to_tasks
+            ):
+                edge = (aid, bid)
+                if edge in seen:
                     continue
-                for aid in path_to_tasks.get(upstream, ()):
-                    if aid != bid:
-                        edge = (aid, bid)
-                        if edge not in seen:
-                            seen.add(edge)
-                            inferred.append(edge)
+                seen.add(edge)
+                inferred.append(edge)
     return inferred
 
 

@@ -38,7 +38,9 @@ class VAEToolInput(BaseModel):
     epochs: int = Field(default=50, ge=1)
     lr: float = Field(default=1e-3, gt=0)
     batch_size: int = Field(default=32, ge=1)
-    n_samples: int = Field(default=10, ge=1, description="Samples for the sample action")
+    n_samples: int = Field(
+        default=10, ge=1, description="Samples for the sample action"
+    )
     state_dict: dict[str, Any] | None = Field(
         default=None, description="Trained weights returned by the train action"
     )
@@ -95,6 +97,29 @@ def _vae_loss(recon_x, x, mu, logvar):
     return mse + kl
 
 
+def _run_training(model, loader, opt, n_samples: int, epochs: int, dev) -> list[float]:
+    loss_curve: list[float] = []
+    for _ in range(epochs):
+        total = 0.0
+        for (xb,) in loader:
+            xb = xb.to(dev)
+            opt.zero_grad()
+            recon, mu, logvar = model(xb)
+            loss = _vae_loss(recon, xb, mu, logvar) / xb.size(0)
+            loss.backward()
+            opt.step()
+            total += loss.item() * xb.size(0)
+        loss_curve.append(total / n_samples)
+    return loss_curve
+
+
+def _latent_stats(model, torch, X, dev) -> tuple[list[float], list[float]]:
+    # latent stats over the full training set
+    with torch.no_grad():
+        mu_all, _ = model.encode(torch.from_numpy(X).to(dev))
+        return mu_all.mean(dim=0).tolist(), mu_all.var(dim=0).tolist()
+
+
 class VAETool(HuginnTool):
     """Variational autoencoder for tabular data (train / encode / decode / sample)."""
 
@@ -122,9 +147,7 @@ class VAETool(HuginnTool):
         try:
             import torch  # noqa: F401
         except ImportError:
-            return ToolResult(
-                data=None, success=False, error="torch not available"
-            )
+            return ToolResult(data=None, success=False, error="torch not available")
 
         data = VAEToolInput(**args)
         try:
@@ -155,6 +178,7 @@ class VAETool(HuginnTool):
             np.random.seed(args.seed)
 
         from huginn.tools.sci import get_torch_device
+
         _dev = get_torch_device()
         model = _build_vae(input_dim, args.latent_dim, args.hidden_dim, args.n_layers)
         model = model.to(_dev)
@@ -165,24 +189,10 @@ class VAETool(HuginnTool):
             shuffle=True,
         )
 
-        loss_curve: list[float] = []
-        for _ in range(args.epochs):
-            total = 0.0
-            for (xb,) in loader:
-                xb = xb.to(_dev)
-                opt.zero_grad()
-                recon, mu, logvar = model(xb)
-                loss = _vae_loss(recon, xb, mu, logvar) / xb.size(0)
-                loss.backward()
-                opt.step()
-                total += loss.item() * xb.size(0)
-            loss_curve.append(total / len(X))
+        loss_curve = _run_training(model, loader, opt, len(X), args.epochs, _dev)
 
         # latent stats over the full training set
-        with torch.no_grad():
-            mu_all, _ = model.encode(torch.from_numpy(X).to(_dev))
-            latent_mean = mu_all.mean(dim=0).tolist()
-            latent_var = mu_all.var(dim=0).tolist()
+        latent_mean, latent_var = _latent_stats(model, torch, X, _dev)
 
         return ToolResult(
             data={
@@ -214,11 +224,11 @@ class VAETool(HuginnTool):
                 error=f"{args.action} requires state_dict from a previous train call.",
             )
         from huginn.tools.sci import get_torch_device
+
         _dev = get_torch_device()
         model = _build_vae(input_dim, args.latent_dim, args.hidden_dim, args.n_layers)
         sd = {
-            k: torch.tensor(v, dtype=torch.float32)
-            for k, v in args.state_dict.items()
+            k: torch.tensor(v, dtype=torch.float32) for k, v in args.state_dict.items()
         }
         model.load_state_dict(sd)
         model = model.to(_dev)
@@ -241,6 +251,7 @@ class VAETool(HuginnTool):
         if self._is_error(model):
             return model  # type: ignore[return-value]
         from huginn.tools.sci import get_torch_device
+
         _dev = get_torch_device()
         with torch.no_grad():
             mu, logvar = model.encode(torch.from_numpy(X).to(_dev))
@@ -267,6 +278,7 @@ class VAETool(HuginnTool):
         if self._is_error(model):
             return model  # type: ignore[return-value]
         from huginn.tools.sci import get_torch_device
+
         _dev = get_torch_device()
         with torch.no_grad():
             recon = model.decode(torch.from_numpy(Z).to(_dev))
@@ -291,6 +303,7 @@ class VAETool(HuginnTool):
         if self._is_error(model):
             return model  # type: ignore[return-value]
         from huginn.tools.sci import get_torch_device
+
         _dev = get_torch_device()
         with torch.no_grad():
             z = torch.randn(args.n_samples, args.latent_dim, device=_dev)
@@ -319,16 +332,18 @@ if __name__ == "__main__":
     X, _ = make_classification(n_samples=200, n_features=20, random_state=0)
     tool = VAETool()
 
-    res = tool.call({
-        "action": "train",
-        "X": X.tolist(),
-        "latent_dim": 4,
-        "hidden_dim": 32,
-        "n_layers": 2,
-        "epochs": 1,
-        "batch_size": 32,
-        "seed": 0,
-    })
+    res = tool.call(
+        {
+            "action": "train",
+            "X": X.tolist(),
+            "latent_dim": 4,
+            "hidden_dim": 32,
+            "n_layers": 2,
+            "epochs": 1,
+            "batch_size": 32,
+            "seed": 0,
+        }
+    )
     assert res.success, res.error
     d = res.data
     assert "state_dict" in d
@@ -339,39 +354,45 @@ if __name__ == "__main__":
     assert len(d["latent_mean"]) == d["latent_dim"]
 
     # round-trip: encode -> decode, shapes must line up
-    enc = tool.call({
-        "action": "encode",
-        "X_encode": X[:5].tolist(),
-        "state_dict": d["state_dict"],
-        "latent_dim": d["latent_dim"],
-        "hidden_dim": d["hidden_dim"],
-        "n_layers": d["n_layers"],
-    })
+    enc = tool.call(
+        {
+            "action": "encode",
+            "X_encode": X[:5].tolist(),
+            "state_dict": d["state_dict"],
+            "latent_dim": d["latent_dim"],
+            "hidden_dim": d["hidden_dim"],
+            "n_layers": d["n_layers"],
+        }
+    )
     assert enc.success, enc.error
     assert len(enc.data["z_mean"]) == 5
 
-    dec = tool.call({
-        "action": "decode",
-        "Z": enc.data["z_mean"],
-        "state_dict": d["state_dict"],
-        "latent_dim": d["latent_dim"],
-        "hidden_dim": d["hidden_dim"],
-        "n_layers": d["n_layers"],
-        "input_dim": d["input_dim"],
-    })
+    dec = tool.call(
+        {
+            "action": "decode",
+            "Z": enc.data["z_mean"],
+            "state_dict": d["state_dict"],
+            "latent_dim": d["latent_dim"],
+            "hidden_dim": d["hidden_dim"],
+            "n_layers": d["n_layers"],
+            "input_dim": d["input_dim"],
+        }
+    )
     assert dec.success, dec.error
     assert len(dec.data["X_recon"]) == 5
 
-    smp = tool.call({
-        "action": "sample",
-        "n_samples": 3,
-        "state_dict": d["state_dict"],
-        "latent_dim": d["latent_dim"],
-        "hidden_dim": d["hidden_dim"],
-        "n_layers": d["n_layers"],
-        "input_dim": d["input_dim"],
-        "seed": 1,
-    })
+    smp = tool.call(
+        {
+            "action": "sample",
+            "n_samples": 3,
+            "state_dict": d["state_dict"],
+            "latent_dim": d["latent_dim"],
+            "hidden_dim": d["hidden_dim"],
+            "n_layers": d["n_layers"],
+            "input_dim": d["input_dim"],
+            "seed": 1,
+        }
+    )
     assert smp.success, smp.error
     assert len(smp.data["samples"]) == 3
 

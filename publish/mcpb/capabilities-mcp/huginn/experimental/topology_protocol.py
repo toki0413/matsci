@@ -24,6 +24,7 @@ Protocol 用 runtime_checkable, duck typing 不强求继承. 各类只需加一�
 
 # 架构状态: 研究探索层 — 未接入主循环, 保留作为 future hook. 如需启用, 在 huginn/events/unified_bus.py 订阅 cognitive.* 事件并接入.
 """
+
 from __future__ import annotations
 
 import json
@@ -82,11 +83,15 @@ class HippocampusView:
             set of entry JSON strings (top_k 相似记忆)
         """
         from huginn.metacog.visual_hippocampus import recall
+
         top_k = int(radius) if radius is not None else 5
         results = recall(
-            self._history, query=x if isinstance(x, str) else None,
+            self._history,
+            query=x if isinstance(x, str) else None,
             text_query=x if isinstance(x, str) else None,
-            top_k=top_k, decay=True, tau_s=self._tau_s,
+            top_k=top_k,
+            decay=True,
+            tau_s=self._tau_s,
         )
         return {json.dumps(r["entry"], ensure_ascii=False) for r in results}
 
@@ -169,18 +174,13 @@ def neighborhood_of(obj: Any, x: Any, radius: float | None = None) -> set[Any]:
 # ── selfcheck ──────────────────────────────────────────────────────────────
 
 
-def _selfcheck() -> None:
-    """A selfcheck: Protocol + 4 类对象的邻域查询."""
-    print("=" * 70)
-    print("A 拓扑 Protocol: 统一邻域接口验证")
-    print("=" * 70)
-    print()
-
-    # 1. StructureCognitiveMap (已有类, 直接满足 Protocol)
+def _sc_structure_map():
+    """[1] StructureCognitiveMap (已有类, 直接满足 Protocol)."""
     print("[1] StructureCognitiveMap (delegation to query_neighbors)")
     import numpy as np
 
     from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
+
     # 4 原子方形: (0,0,0) (1,0,0) (0,1,0) (1,1,0), cutoff=1.5
     m = StructureCognitiveMap.from_coords(
         species=["A", "B", "C", "D"],
@@ -193,13 +193,21 @@ def _selfcheck() -> None:
     assert 1 in n and 2 in n, f"expected 1,2 in neighborhood, got {n}"
     print(f"    atom 0 邻域 (cutoff=1.5): {sorted(n)}")
     # 验证 isinstance(Protocol) — runtime_checkable
-    assert isinstance(m, SupportsNeighborhood), "StructureCognitiveMap should satisfy Protocol"
-    print(f"    isinstance(SupportsNeighborhood): {isinstance(m, SupportsNeighborhood)}")
+    assert isinstance(m, SupportsNeighborhood), (
+        "StructureCognitiveMap should satisfy Protocol"
+    )
+    print(
+        f"    isinstance(SupportsNeighborhood): {isinstance(m, SupportsNeighborhood)}"
+    )
     print()
+    return m
 
-    # 2. ImageIndex (已有类, delegation to search)
+
+def _sc_image_index():
+    """[2] ImageIndex (已有类, delegation to search)."""
     print("[2] ImageIndex (delegation to search)")
     from huginn.perception.image_index import ImageIndex
+
     idx = ImageIndex()  # in-memory, no encoder
     idx.set_encoder(None)  # 离线模式, 关掉 CLIP lazy load
     idx.add_image_bytes(b"fake1", metadata={"caption": "lattice 4Å cubic"})
@@ -210,12 +218,18 @@ def _selfcheck() -> None:
     assert isinstance(n, set)
     print(f"    text_query='lattice' 邻域: {len(n)} matches")
     assert isinstance(idx, SupportsNeighborhood), "ImageIndex should satisfy Protocol"
-    print(f"    isinstance(SupportsNeighborhood): {isinstance(idx, SupportsNeighborhood)}")
+    print(
+        f"    isinstance(SupportsNeighborhood): {isinstance(idx, SupportsNeighborhood)}"
+    )
     print()
+    return idx
 
-    # 3. hippocampus history (list[str], adapter)
+
+def _sc_hippocampus():
+    """[3] hippocampus history (list[str], adapter)."""
     print("[3] hippocampus history (adapter wrapper)")
     from huginn.metacog.visual_hippocampus import record
+
     h: list[str] = []
     record(h, "[bands] peak=2.5 lattice", ts=100.0)
     record(h, "[lattice] d=4Å cubic", ts=200.0)
@@ -225,11 +239,18 @@ def _selfcheck() -> None:
     assert isinstance(n, set)
     assert len(n) >= 1, f"expected ≥1 lattice match, got {n}"
     print(f"    query='lattice' 邻域: {len(n)} entries")
-    assert isinstance(view, SupportsNeighborhood), "HippocampusView should satisfy Protocol"
-    print(f"    isinstance(SupportsNeighborhood): {isinstance(view, SupportsNeighborhood)}")
+    assert isinstance(view, SupportsNeighborhood), (
+        "HippocampusView should satisfy Protocol"
+    )
+    print(
+        f"    isinstance(SupportsNeighborhood): {isinstance(view, SupportsNeighborhood)}"
+    )
     print()
+    return h
 
-    # 4. M6 boxes (list[dict], adapter)
+
+def _sc_boxes():
+    """[4] M6 boxes (list[dict], adapter)."""
     print("[4] M6 box primitives (adapter wrapper)")
     boxes = [
         {"label": "region0", "coordinates": [100, 100, 200, 200]},
@@ -244,11 +265,18 @@ def _selfcheck() -> None:
     assert "region2" in n, f"region2 should be in neighborhood, got {n}"
     assert "region1" not in n, f"region1 (中心 550,550) 距离太远, got {n}"
     print(f"    中心 (150,150), 半径 100 → 邻域: {sorted(n)}")
-    assert isinstance(view, SupportsNeighborhood), "BoxPrimitivesView should satisfy Protocol"
-    print(f"    isinstance(SupportsNeighborhood): {isinstance(view, SupportsNeighborhood)}")
+    assert isinstance(view, SupportsNeighborhood), (
+        "BoxPrimitivesView should satisfy Protocol"
+    )
+    print(
+        f"    isinstance(SupportsNeighborhood): {isinstance(view, SupportsNeighborhood)}"
+    )
     print()
+    return boxes
 
-    # 5. 通用 helper: neighborhood_of 自动 dispatch
+
+def _sc_dispatch(m, idx, h, boxes) -> None:
+    """[5] 通用 helper: neighborhood_of 自动 dispatch."""
     print("[5] neighborhood_of 通用 dispatch")
     # cognitive_map
     n = neighborhood_of(m, 0, radius=1.5)
@@ -265,7 +293,9 @@ def _selfcheck() -> None:
     print(f"    boxes → {sorted(n)}")
     print()
 
-    # 6. 同一接口, 不同载体 — 拓扑统一性
+
+def _sc_uniformity(m, idx, h, boxes) -> None:
+    """[6] 同一接口, 不同载体 — 拓扑统一性."""
     print("[6] 拓扑统一性: 同一 neighborhood 接口, 4 种不同载体")
     providers = [
         ("StructureCognitiveMap", m, 0, 1.5),
@@ -276,8 +306,25 @@ def _selfcheck() -> None:
     for name, obj, x, r in providers:
         n = obj.neighborhood(x, radius=r)
         assert isinstance(n, set)
-        print(f"    {name:25s}.neighborhood({x!r}, {r}) → {type(n).__name__} of size {len(n)}")
+        print(
+            f"    {name:25s}.neighborhood({x!r}, {r}) → {type(n).__name__} of size {len(n)}"
+        )
     print()
+
+
+def _selfcheck() -> None:
+    """A selfcheck: Protocol + 4 类对象的邻域查询."""
+    print("=" * 70)
+    print("A 拓扑 Protocol: 统一邻域接口验证")
+    print("=" * 70)
+    print()
+
+    m = _sc_structure_map()
+    idx = _sc_image_index()
+    h = _sc_hippocampus()
+    boxes = _sc_boxes()
+    _sc_dispatch(m, idx, h, boxes)
+    _sc_uniformity(m, idx, h, boxes)
 
     print("=" * 70)
     print("结论")

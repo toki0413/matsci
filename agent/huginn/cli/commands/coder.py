@@ -27,26 +27,7 @@ def coder(
     from huginn.config import get_settings
 
     settings = get_settings()
-    if ctx.config_path:
-        from huginn.config import HuginnConfig
-
-        try:
-            file_cfg = HuginnConfig.load(ctx.config_path)
-            settings.config = file_cfg
-            ctx.console.print(f"[green]✓[/green] Loaded config from {ctx.config_path}")
-        except Exception as e:
-            ctx.console.print(f"[yellow]Config load warning: {e}[/yellow]")
-
-    # Apply CLI overrides to the loaded config
-    settings.config.apply_overrides(
-        provider=ctx.provider,
-        model=ctx.model,
-        base_url=ctx.base_url,
-        ollama_url=ctx.ollama_url,
-        thinking=ctx.thinking,
-    )
-    if max_iterations is not None:
-        settings.coder.max_iterations = max_iterations
+    _apply_coder_config(ctx, settings, max_iterations)
 
     permission_config = PermissionConfig(auto_approve_all=auto_approve)
     if auto_approve:
@@ -54,21 +35,11 @@ def coder(
             "[yellow]Auto-approve enabled for this coder session[/yellow]"
         )
 
-    def approval_callback(tool_name: str, reason: str) -> bool:
-        ctx.console.print(f"[yellow]{reason}[/yellow]")
-        answer = (
-            ctx.console.input(f"Approve [bold]{tool_name}[/bold]? [y/N]: ")
-            .strip()
-            .lower()
-        )
-        return answer in ("y", "yes")
+    approval_callback = _make_coder_approval_callback(ctx)
 
-    if not task:
-        try:
-            task = ctx.console.input("[bold green]Coder task:[/bold green] ").strip()
-        except (EOFError, KeyboardInterrupt):
-            ctx.console.print("\n[yellow]Cancelled.[/yellow]")
-            return
+    task = _resolve_coder_task(ctx, task)
+    if task is None:
+        return
 
     if not task:
         ctx.console.print("[yellow]No task provided.[/yellow]")
@@ -96,3 +67,49 @@ def coder(
         ctx.console.print(Markdown(final))
     except Exception as e:
         ctx.console.print(f"[red]Coder failed: {e}[/red]")
+
+
+def _apply_coder_config(ctx: CliContext, settings, max_iterations: int | None) -> None:
+    if ctx.config_path:
+        from huginn.config import HuginnConfig
+
+        try:
+            file_cfg = HuginnConfig.load(ctx.config_path)
+            settings.config = file_cfg
+            ctx.console.print(f"[green]✓[/green] Loaded config from {ctx.config_path}")
+        except Exception as e:
+            ctx.console.print(f"[yellow]Config load warning: {e}[/yellow]")
+
+    # Apply CLI overrides to the loaded config
+    settings.config.apply_overrides(
+        provider=ctx.provider,
+        model=ctx.model,
+        base_url=ctx.base_url,
+        ollama_url=ctx.ollama_url,
+        thinking=ctx.thinking,
+    )
+    if max_iterations is not None:
+        settings.coder.max_iterations = max_iterations
+
+
+def _make_coder_approval_callback(ctx: CliContext):
+    def approval_callback(tool_name: str, reason: str) -> bool:
+        ctx.console.print(f"[yellow]{reason}[/yellow]")
+        answer = (
+            ctx.console.input(f"Approve [bold]{tool_name}[/bold]? [y/N]: ")
+            .strip()
+            .lower()
+        )
+        return answer in ("y", "yes")
+
+    return approval_callback
+
+
+def _resolve_coder_task(ctx: CliContext, task: str | None) -> str | None:
+    if not task:
+        try:
+            task = ctx.console.input("[bold green]Coder task:[/bold green] ").strip()
+        except (EOFError, KeyboardInterrupt):
+            ctx.console.print("\n[yellow]Cancelled.[/yellow]")
+            return None
+    return task

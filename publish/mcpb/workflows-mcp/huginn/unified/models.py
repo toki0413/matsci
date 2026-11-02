@@ -172,6 +172,36 @@ def heat_equation_2d(
     )
 
 
+def _one_d_kohn_sham_energy(n_sym: sp.Expr) -> EnergyFunctional:
+    """Hohenberg-Kohn energy functional for the 1D Kohn-Sham problem."""
+    v_ext = sp.Symbol("v_ext")
+    C_tf = sp.Rational(3, 10)  # placeholder coefficient
+    energy_expr = (
+        C_tf * n_sym ** (sp.Rational(5, 3))
+        + v_ext * n_sym
+        + sp.Rational(1, 2) * n_sym * sp.Symbol("V_H")
+        - sp.Rational(3, 4)
+        * (3 / sp.pi) ** (sp.Rational(1, 3))
+        * n_sym ** (sp.Rational(4, 3))
+    )
+    return EnergyFunctional(
+        name="hohenberg_kohn_1d",
+        expression=energy_expr,
+        variables=[n_sym],
+        parameters={"v_ext": v_ext},
+        description="E[n] = T_s[n] + ∫ v_ext n + E_H[n] + E_xc[n]",
+    )
+
+
+def _one_d_kohn_sham_xc(n_sym: sp.Expr) -> ConstitutiveModel:
+    """LDA exchange-correlation model for the 1D Kohn-Sham problem."""
+    return ConstitutiveModel(
+        name="lda_xc_1d",
+        expression=-((3 / sp.pi) ** (sp.Rational(1, 3))) * n_sym ** (sp.Rational(1, 3)),
+        parameters={},
+    )
+
+
 def one_d_kohn_sham_dft() -> UnifiedProblem:
     """1D Kohn-Sham DFT as a self-consistent energy problem.
 
@@ -183,28 +213,8 @@ def one_d_kohn_sham_dft() -> UnifiedProblem:
     domain = Domain.continuum_1d(x, bounds=(0.0, 1.0))
 
     # Simplified 1D energy functional: Thomas-Fermi-like kinetic + external + Hartree + XC
-    v_ext = sp.Symbol("v_ext")
-    C_tf = sp.Rational(3, 10)  # placeholder coefficient
-    energy_expr = (
-        C_tf * n_sym ** (sp.Rational(5, 3))
-        + v_ext * n_sym
-        + sp.Rational(1, 2) * n_sym * sp.Symbol("V_H")
-        - sp.Rational(3, 4)
-        * (3 / sp.pi) ** (sp.Rational(1, 3))
-        * n_sym ** (sp.Rational(4, 3))
-    )
-    energy = EnergyFunctional(
-        name="hohenberg_kohn_1d",
-        expression=energy_expr,
-        variables=[n_sym],
-        parameters={"v_ext": v_ext},
-        description="E[n] = T_s[n] + ∫ v_ext n + E_H[n] + E_xc[n]",
-    )
-    xc = ConstitutiveModel(
-        name="lda_xc_1d",
-        expression=-((3 / sp.pi) ** (sp.Rational(1, 3))) * n_sym ** (sp.Rational(1, 3)),
-        parameters={},
-    )
+    energy = _one_d_kohn_sham_energy(n_sym)
+    xc = _one_d_kohn_sham_xc(n_sym)
     return UnifiedProblem(
         name="one_d_kohn_sham_dft",
         description="1D Kohn-Sham DFT derived from a density functional.",

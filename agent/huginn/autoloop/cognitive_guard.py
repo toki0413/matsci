@@ -10,6 +10,7 @@ import 再导出, 对外契约不变 (``from huginn.autoloop.cognitive_loop impo
 - 只做 duck-typing (step_eval / heat_engine / kb 等), 不引入 CognitiveLoop 子类, 不绑定 LLM.
 - 文件 I/O / 记忆 / 指标等有副作用者留在 cognitive_loop (段 3+ 再处理).
 """
+
 from __future__ import annotations
 
 import json
@@ -40,7 +41,11 @@ def update_heat_engine_after_step(
     if heat_engine is None:
         return
     try:
-        _eq = (getattr(step_eval, "evidence_quality", "unknown") or "unknown").lower().strip()
+        _eq = (
+            (getattr(step_eval, "evidence_quality", "unknown") or "unknown")
+            .lower()
+            .strip()
+        )
         _t_hot_proxy = {"low": 0.8, "medium": 0.5, "high": 0.2}.get(_eq, 0.5)
         _ot = (getattr(step_eval, "on_track", "unsure") or "unsure").lower().strip()
         _t_cold_proxy = {"true": 0.7, "false": 0.2}.get(_ot, 0.4)
@@ -53,6 +58,66 @@ def update_heat_engine_after_step(
         )
     except Exception as exc:
         logger.debug("update_heat_engine_after_step failed: %s", exc)
+
+
+def _detect_drift_info(evals_history: list) -> tuple | None:
+    """AV4: detect_drift 包装 (失败 → None, 记 debug 日志)."""
+    drift_info: tuple | None = None
+    try:
+        from huginn.metacog.target_chain import detect_drift as _detect_drift
+
+        drift_info = _detect_drift(evals_history, window=3)
+    except Exception as exc:
+        logger.debug("AV4 detect_drift failed: %s", exc)
+    return drift_info
+
+
+def _update_task_metrics(
+    task_metrics: Any,
+    step_eval: Any,
+    task_state: Any,
+    workspace: Any,
+    run_id: str,
+    max_iterations: int,
+    target_chain_progress: float | None,
+) -> Any:
+    """AV4: TaskMetrics 滚动更新 (失败 → 原样返回 task_metrics)."""
+    try:
+        from huginn.runtime.task_metrics import (
+            TaskMetrics,
+        )
+        from huginn.runtime.task_metrics import (
+            load_metrics as _lm,
+        )
+        from huginn.runtime.task_metrics import (
+            save_metrics as _sm,
+        )
+        from huginn.runtime.task_metrics import (
+            update_metrics as _um,
+        )
+
+        if task_metrics is None:
+            import time
+
+            task_metrics = _lm(run_id, workspace) or TaskMetrics(
+                task_id=run_id,
+                total_steps=max_iterations * 6,
+            )
+            if task_state is None:
+                from types import SimpleNamespace
+
+                task_state = SimpleNamespace(created_at=time.time())
+        # target_chain_progress 透传 — update_metrics 接受 None (autoloop 路径).
+        task_metrics = _um(
+            task_metrics,
+            step_eval,
+            task_state=task_state,
+            target_chain_progress=target_chain_progress,
+        )
+        _sm(task_metrics, workspace)
+    except Exception as exc:
+        logger.debug("AV4 TaskMetrics update failed: %s", exc)
+    return task_metrics
 
 
 def update_drift_and_metrics(
@@ -73,44 +138,16 @@ def update_drift_and_metrics(
     target_chain_progress: RCB 路径算的 chain 平均进度, 透传给 update_metrics.
       autoloop 不传 (默认 None), 行为不变.
     """
-    drift_info: tuple | None = None
-    try:
-        from huginn.metacog.target_chain import detect_drift as _detect_drift
-        drift_info = _detect_drift(evals_history, window=3)
-    except Exception as exc:
-        logger.debug("AV4 detect_drift failed: %s", exc)
-
-    try:
-        from huginn.runtime.task_metrics import (
-            TaskMetrics,
-        )
-        from huginn.runtime.task_metrics import (
-            load_metrics as _lm,
-        )
-        from huginn.runtime.task_metrics import (
-            save_metrics as _sm,
-        )
-        from huginn.runtime.task_metrics import (
-            update_metrics as _um,
-        )
-        if task_metrics is None:
-            import time
-            task_metrics = _lm(run_id, workspace) or TaskMetrics(
-                task_id=run_id, total_steps=max_iterations * 6,
-            )
-            if task_state is None:
-                from types import SimpleNamespace
-                task_state = SimpleNamespace(created_at=time.time())
-        # target_chain_progress 透传 — update_metrics 接受 None (autoloop 路径).
-        task_metrics = _um(
-            task_metrics, step_eval,
-            task_state=task_state,
-            target_chain_progress=target_chain_progress,
-        )
-        _sm(task_metrics, workspace)
-    except Exception as exc:
-        logger.debug("AV4 TaskMetrics update failed: %s", exc)
-
+    drift_info = _detect_drift_info(evals_history)
+    task_metrics = _update_task_metrics(
+        task_metrics,
+        step_eval,
+        task_state,
+        workspace,
+        run_id,
+        max_iterations,
+        target_chain_progress,
+    )
     return drift_info, task_metrics
 
 
@@ -140,142 +177,210 @@ def build_pmk_state(
     ponytail: 三/四段文本拼接, 不上 LLM 抽取; 升级路径接 LLM 立场抽取.
     """
     try:
-        _persona_text = ""
-        if persona is not None:
-            _persona_text = str(
-                getattr(persona, "description", None)
-                or (persona.get("description") if isinstance(persona, dict) else "")
-                or ""
-            )
-        _mem_text = ""
-        if last_step_eval is not None:
-            _pmk_fb = getattr(last_step_eval, "pmk_feedback", "") or ""
-            for _seg in _pmk_fb.split(";"):
-                _seg = _seg.strip()
-                if _seg.lower().startswith("memory:"):
-                    _mem_text = _seg[len("memory:"):].strip()
-                    break
-        # 时序结合: M 路补 recall(since=...) — 让 PMK 看到本会话新写入的记忆,
-        # 不只是 last_step_eval 的 pmk_feedback. ponytail: 失败静默, 不阻塞 PMK.
-        if mem_mgr is not None and since:
-            try:
-                _ts_mem = mem_mgr.recall_for_prompt(
-                    getattr(last_step_eval, "attempted", "") or "",
-                    max_entries=2, since=since,
-                )
-                if _ts_mem:
-                    _mem_text = (_mem_text + " | recent: " + _ts_mem[:200]).strip()
-            except Exception:  # 防御: 记忆召回失败跳过
-                logger.debug("memory recall_for_prompt skipped", exc_info=True)
-        # 桥 H: M 路补 failed_directions — 让 PMK 一致性检查感知"persona 推荐
-        # 的方向 vs 已知失败方向"的冲突. 顺带接通 recall_procedural 死代码
-        # (procedural memory = stable_principles 关键词召回).
-        if mem_mgr is not None:
-            try:
-                _failed = mem_mgr.recall_failed_directions(limit=3)
-                if _failed:
-                    _f_lines = [
-                        f"{h[:60]} ({r[:40]})" for h, r, _ in _failed if h
-                    ]
-                    _mem_text = (
-                        _mem_text + " | failed_directions: "
-                        + " ; ".join(_f_lines)
-                    ).strip()
-            except Exception:  # 防御: 失败方向召回跳过
-                logger.debug("failed_directions recall skipped", exc_info=True)
-            try:
-                _attempted = getattr(last_step_eval, "attempted", "") or ""
-                _proc = mem_mgr.recall_procedural(_attempted, top_k=2)
-                if _proc:
-                    _mem_text = (
-                        _mem_text + " | procedural: "
-                        + " ; ".join(p[:60] for p in _proc)
-                    ).strip()
-            except Exception:  # 防御: 程序性召回跳过
-                logger.debug("procedural recall skipped", exc_info=True)
-        _kb_text = ""
-        if kb is not None and last_step_eval is not None:
-            try:
-                _kb_query = getattr(last_step_eval, "attempted", "") or ""
-                # 桥 RAG: 优先走去重的检索 (query_with_dedup), 吃到 RAG 升级后的
-                # BM25 中文分词 + 近似去重, 跟 _build_kb_text 同一检索路径.
-                # 无该方法时回退旧 query, 不破坏既有调用方.
-                _kb_hits = (
-                    kb.query_with_dedup(_kb_query, top_k=top_k, since=since)
-                    if hasattr(kb, "query_with_dedup")
-                    else kb.query(_kb_query, top_k=top_k, since=since)
-                )
-                if _kb_hits:
-                    _kb_text = " ".join(
-                        str(h.get("content", "") if isinstance(h, dict) else h)
-                        for h in _kb_hits[:top_k]
-                    )[:200]
-            except Exception:  # 防御: 知识库查询失败跳过
-                logger.debug("kb query skipped", exc_info=True)
-        # 桥 C: evolution_rules 作为 Knowledge 路 — 让 PMK 一致性检查能看到
-        # 历史教训, 不只 ChromaDB 检索. 路径对齐 context_builder.build_evolution_rules.
-        try:
-            _base = str(get_runtime_home())
-            _rules_path = Path(_base) / "logs" / "evolution_rules.json"
-            if _rules_path.exists():
-                with _rules_path.open("r", encoding="utf-8") as _rf:
-                    _rules = json.load(_rf)
-                if isinstance(_rules, list):
-                    _top_rules = sorted(
-                        _rules, key=lambda r: r.get("confidence", 0), reverse=True
-                    )[:3]
-                    _lessons = []
-                    for r in _top_rules:
-                        if r.get("confidence", 0) <= 0.3:
-                            continue
-                        _act = r.get("action", "")
-                        # action 在 EvolutionRule 里是 str, 但历史数据可能是 dict.
-                        # 两种都处理, 不假设格式.
-                        if isinstance(_act, dict):
-                            _desc = str(_act.get("description", ""))[:80]
-                        else:
-                            _desc = str(_act)[:80]
-                        _lessons.append(f"{r.get('rule_id','')}: {_desc}")
-                    if _lessons:
-                        _kb_text = (
-                            "[learned_lessons] "
-                            + " | ".join(_lessons)
-                            + " | "
-                            + _kb_text
-                        ).strip(" |")
-        except Exception:  # 防御: 演化规则加载失败跳过
-            logger.debug("evolution_rules load skipped", exc_info=True)
-        # 桥 D: stable_principles 作为 Knowledge 路 — 蒸馏出的原则直接作为 KB 立场,
-        # 让 PMK 能检测 persona/memory 与长期原则的冲突. load_stable_principles 返回 list[str].
-        try:
-            from huginn.memory.longterm import load_stable_principles
-            _principles = load_stable_principles()
-            if _principles:
-                _p_texts = [str(p)[:80] for p in _principles[:3] if p]
-                if _p_texts:
-                    _kb_text = (
-                        "[stable_principles] "
-                        + " | ".join(_p_texts)
-                        + " | "
-                        + _kb_text
-                    ).strip(" |")
-        except Exception:  # 防御: 原则加载失败跳过
-            logger.debug("stable_principles load skipped", exc_info=True)
-        _result: dict[str, str] = {}
-        if _persona_text:
-            _result["persona"] = _persona_text
-        if _mem_text:
-            _result["memory"] = _mem_text
-        if _kb_text:
-            _result["kb"] = _kb_text
-        # P3 结合: 物理时序作为第四路 (PMKT) — 让一致性检查感知系统动力学.
-        if timeseries_ctx:
-            _result["timeseries"] = timeseries_ctx
-        if _result:
-            return _result
+        persona_text = _pmk_persona_text(persona)
+        mem_text = _pmk_enrich_memory(
+            _pmk_memory_text(last_step_eval), mem_mgr, last_step_eval, since
+        )
+        kb_text = _pmk_enrich_kb(_pmk_kb_text(kb, last_step_eval, top_k, since))
+        return _pmk_assemble(persona_text, mem_text, kb_text, timeseries_ctx)
     except Exception as exc:
         logger.debug("AV4 build_pmk_state failed: %s", exc)
     return None
+
+
+def _pmk_persona_text(persona: Any) -> str:
+    """Extract the persona description as the P stance."""
+    if persona is None:
+        return ""
+    return str(
+        getattr(persona, "description", None)
+        or (persona.get("description") if isinstance(persona, dict) else "")
+        or ""
+    )
+
+
+def _pmk_memory_text(last_step_eval: Any) -> str:
+    """Extract the "memory:" segment of the previous step's pmk_feedback."""
+    if last_step_eval is None:
+        return ""
+    pmk_fb = getattr(last_step_eval, "pmk_feedback", "") or ""
+    for seg in pmk_fb.split(";"):
+        seg = seg.strip()
+        if seg.lower().startswith("memory:"):
+            return seg[len("memory:") :].strip()
+    return ""
+
+
+def _pmk_enrich_memory(
+    mem_text: str, mem_mgr: Any, last_step_eval: Any, since: str | None
+) -> str:
+    """Append recent / failed-direction / procedural recalls to the M stance."""
+    if mem_mgr is None:
+        return mem_text
+    mem_text = _pmk_recall_recent(mem_text, mem_mgr, last_step_eval, since)
+    mem_text = _pmk_recall_failed(mem_text, mem_mgr)
+    return _pmk_recall_procedural(mem_text, mem_mgr, last_step_eval)
+
+
+def _pmk_recall_recent(
+    mem_text: str, mem_mgr: Any, last_step_eval: Any, since: str | None
+) -> str:
+    """时序结合: M 路补 recall(since=...) — 让 PMK 看到本会话新写入的记忆.
+
+    不只是 last_step_eval 的 pmk_feedback. ponytail: 失败静默, 不阻塞 PMK.
+    """
+    if not since:
+        return mem_text
+    try:
+        ts_mem = mem_mgr.recall_for_prompt(
+            getattr(last_step_eval, "attempted", "") or "",
+            max_entries=2,
+            since=since,
+        )
+        if not ts_mem:
+            return mem_text
+        return (mem_text + " | recent: " + ts_mem[:200]).strip()
+    except Exception:  # 防御: 记忆召回失败跳过
+        logger.debug("memory recall_for_prompt skipped", exc_info=True)
+        return mem_text
+
+
+def _pmk_recall_failed(mem_text: str, mem_mgr: Any) -> str:
+    """桥 H: M 路补 failed_directions — 感知"persona 推荐方向 vs 已知失败方向".
+
+    顺带接通 recall_procedural 死代码 (procedural memory = stable_principles
+    关键词召回).
+    """
+    try:
+        failed = mem_mgr.recall_failed_directions(limit=3)
+        if not failed:
+            return mem_text
+        lines = [f"{h[:60]} ({r[:40]})" for h, r, _ in failed if h]
+        return (mem_text + " | failed_directions: " + " ; ".join(lines)).strip()
+    except Exception:  # 防御: 失败方向召回跳过
+        logger.debug("failed_directions recall skipped", exc_info=True)
+        return mem_text
+
+
+def _pmk_recall_procedural(mem_text: str, mem_mgr: Any, last_step_eval: Any) -> str:
+    """M 路补 procedural — 接通 recall_procedural 死代码."""
+    try:
+        attempted = getattr(last_step_eval, "attempted", "") or ""
+        proc = mem_mgr.recall_procedural(attempted, top_k=2)
+        if not proc:
+            return mem_text
+        return (mem_text + " | procedural: " + " ; ".join(p[:60] for p in proc)).strip()
+    except Exception:  # 防御: 程序性召回跳过
+        logger.debug("procedural recall skipped", exc_info=True)
+        return mem_text
+
+
+def _pmk_kb_text(kb: Any, last_step_eval: Any, top_k: int, since: str | None) -> str:
+    """KB retrieval via the dedup path when available, first 200 chars."""
+    if kb is None or last_step_eval is None:
+        return ""
+    try:
+        query = getattr(last_step_eval, "attempted", "") or ""
+        # 桥 RAG: 优先走去重的检索 (query_with_dedup), 吃到 RAG 升级后的
+        # BM25 中文分词 + 近似去重, 跟 _build_kb_text 同一检索路径.
+        # 无该方法时回退旧 query, 不破坏既有调用方.
+        hits = (
+            kb.query_with_dedup(query, top_k=top_k, since=since)
+            if hasattr(kb, "query_with_dedup")
+            else kb.query(query, top_k=top_k, since=since)
+        )
+        if not hits:
+            return ""
+        return " ".join(
+            str(h.get("content", "") if isinstance(h, dict) else h)
+            for h in hits[:top_k]
+        )[:200]
+    except Exception:  # 防御: 知识库查询失败跳过
+        logger.debug("kb query skipped", exc_info=True)
+        return ""
+
+
+def _prepend_pmk_block(base: str, tag: str, body: str) -> str:
+    """Prefix a labelled block to the KB stance when the body is non-empty."""
+    if not body:
+        return base
+    return (f"{tag} " + body + " | " + base).strip(" |")
+
+
+def _evolution_action_desc(rule: dict) -> str:
+    """action 在 EvolutionRule 里是 str, 但历史数据可能是 dict. 两种都处理."""
+    action = rule.get("action", "")
+    if isinstance(action, dict):
+        return str(action.get("description", ""))[:80]
+    return str(action)[:80]
+
+
+def _pmk_learned_lessons() -> str:
+    """桥 C: top-3 high-confidence evolution rules as a "lesson" string.
+
+    让 PMK 一致性检查能看到历史教训, 不只 ChromaDB 检索.
+    路径对齐 context_builder.build_evolution_rules.
+    """
+    try:
+        rules_path = Path(str(get_runtime_home())) / "logs" / "evolution_rules.json"
+        if not rules_path.exists():
+            return ""
+        with rules_path.open("r", encoding="utf-8") as rf:
+            rules = json.load(rf)
+        if not isinstance(rules, list):
+            return ""
+        top_rules = sorted(rules, key=lambda r: r.get("confidence", 0), reverse=True)[
+            :3
+        ]
+        lessons = [
+            f"{r.get('rule_id', '')}: {_evolution_action_desc(r)}"
+            for r in top_rules
+            if r.get("confidence", 0) > 0.3
+        ]
+        return " | ".join(lessons)
+    except Exception:  # 防御: 演化规则加载失败跳过
+        logger.debug("evolution_rules load skipped", exc_info=True)
+        return ""
+
+
+def _pmk_stable_principles() -> str:
+    """桥 D: distilled long-term principles as a KB stance."""
+    try:
+        from huginn.memory.longterm import load_stable_principles
+
+        principles = load_stable_principles()
+        if not principles:
+            return ""
+        return " | ".join(str(p)[:80] for p in principles[:3] if p)
+    except Exception:  # 防御: 原则加载失败跳过
+        logger.debug("stable_principles load skipped", exc_info=True)
+        return ""
+
+
+def _pmk_enrich_kb(kb_text: str) -> str:
+    """Bridge C/D: prepend learned lessons then stable principles to KB."""
+    kb_text = _prepend_pmk_block(kb_text, "[learned_lessons]", _pmk_learned_lessons())
+    return _prepend_pmk_block(kb_text, "[stable_principles]", _pmk_stable_principles())
+
+
+def _pmk_assemble(
+    persona_text: str,
+    mem_text: str,
+    kb_text: str,
+    timeseries_ctx: str | None,
+) -> dict[str, str] | None:
+    """Assemble the non-empty stances; None when everything is empty."""
+    result: dict[str, str] = {}
+    if persona_text:
+        result["persona"] = persona_text
+    if mem_text:
+        result["memory"] = mem_text
+    if kb_text:
+        result["kb"] = kb_text
+    # P3 结合: 物理时序作为第四路 (PMKT) — 让一致性检查感知系统动力学.
+    if timeseries_ctx:
+        result["timeseries"] = timeseries_ctx
+    return result or None
 
 
 def check_pause_decision(
@@ -305,8 +410,10 @@ def check_pause_decision(
         from huginn.runtime.task_lifecycle import (
             should_pause_for_decision as _spd,
         )
+
         _pause, _reason, _opts = _spd(
-            evals_history, target_chains,
+            evals_history,
+            target_chains,
             kb_recall_empty=(kb is None),
             fired_intentions=fired_intentions or [],
             pmk_state=pmk_state,

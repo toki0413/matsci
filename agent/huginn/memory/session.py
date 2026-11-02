@@ -85,6 +85,7 @@ class SessionContext:
         """
         try:
             from huginn.config import get_config
+
             cfg = get_config()
             # 只有当 config 字段非默认值时才覆盖, 避免覆盖用户显式传入的值.
             if cfg.wm_token_budget and cfg.wm_token_budget != 8192:
@@ -121,7 +122,9 @@ class SessionContext:
         """追加一条结构化推理记录 (带 cap 截断)."""
         self.reasoning_records.append(record)
         if len(self.reasoning_records) > self.max_reasoning_records:
-            self.reasoning_records = self.reasoning_records[-self.max_reasoning_records :]
+            self.reasoning_records = self.reasoning_records[
+                -self.max_reasoning_records :
+            ]
 
     def last_pending_reasoning(self) -> Any | None:
         """返回最近一条未回映的 pre_action/plan 记录 (自校验从它开始回填)."""
@@ -133,7 +136,9 @@ class SessionContext:
                 continue
         return None
 
-    def mark_reasoning_outcome(self, record: Any, outcome: Any, verified_by: str = "") -> None:
+    def mark_reasoning_outcome(
+        self, record: Any, outcome: Any, verified_by: str = ""
+    ) -> None:
         """回填一条推理记录的执行结果 (自校验闭环)."""
         try:
             record.outcome = outcome
@@ -207,13 +212,17 @@ class SessionContext:
         self.last_summarize_at = datetime.now().isoformat()
         if self.episodic_sink is not None:
             with contextlib.suppress(Exception):
-                self.episodic_sink(summary, {
-                    "source": "wm_sliding_window",
-                    "session_id": self.session_id,
-                    "summarized_count": len(to_summarize),
-                })  # EM sink 失败不阻塞 session
+                self.episodic_sink(
+                    summary,
+                    {
+                        "source": "wm_sliding_window",
+                        "session_id": self.session_id,
+                        "summarized_count": len(to_summarize),
+                    },
+                )  # EM sink 失败不阻塞 session
         # summary 作为 system message 注回, 让后续 LLM 看到压缩上下文
         from huginn.core_types import AgentMessage as _AM  # noqa: N814
+
         summary_msg = _AM(
             role="system",
             content=f"[Compacted context summary]\n{summary}",
@@ -249,6 +258,25 @@ class SessionContext:
         复用 trajectory_pattern._summarize_trajectory 的模式 (不引依赖,
         本地实现一份). 输出 ~500 token 文本.
         """
+        tool_names, assistant_first_lines, tool_key_fields = self._collect_rule_parts(
+            messages
+        )
+        parts = [f"[rule-based summary of {len(messages)} messages]"]
+        if tool_names:
+            parts.append(f"Tools: {', '.join(tool_names[:20])}")
+        if assistant_first_lines:
+            parts.append("Assistant turns:")
+            for line in assistant_first_lines[:8]:
+                parts.append(f"  - {line}")
+        if tool_key_fields:
+            parts.append("Key results:")
+            for kf in tool_key_fields[:10]:
+                parts.append(f"  - {kf}")
+        return "\n".join(parts)
+
+    def _collect_rule_parts(
+        self, messages: list[AgentMessage]
+    ) -> tuple[list[str], list[str], list[str]]:
         tool_names: list[str] = []
         assistant_first_lines: list[str] = []
         tool_key_fields: list[str] = []
@@ -283,22 +311,12 @@ class SessionContext:
                     # 没 key field 也截前 200 字符
                     if not key_field_re.search(c) and len(tool_key_fields) < 10:
                         tool_key_fields.append(c.strip()[:200])
-        parts = [f"[rule-based summary of {len(messages)} messages]"]
-        if tool_names:
-            parts.append(f"Tools: {', '.join(tool_names[:20])}")
-        if assistant_first_lines:
-            parts.append("Assistant turns:")
-            for line in assistant_first_lines[:8]:
-                parts.append(f"  - {line}")
-        if tool_key_fields:
-            parts.append("Key results:")
-            for kf in tool_key_fields[:10]:
-                parts.append(f"  - {kf}")
-        return "\n".join(parts)
+        return tool_names, assistant_first_lines, tool_key_fields
 
     def _summarize_window_ngram(self, messages: list[AgentMessage]) -> str:
         """ngram: 0 LLM. 抽高频 2-3 gram top-N. ponytail: 简单 Counter."""
         from collections import Counter
+
         text_parts: list[str] = []
         for m in messages:
             c = m.content
@@ -310,8 +328,8 @@ class SessionContext:
                     text_parts.append(txt)
         text = " ".join(text_parts)
         # 简单 2-gram (按词)
-        words = re.findall(r'\S+', text)
-        bigrams = [f"{words[i]} {words[i+1]}" for i in range(len(words)-1)]
+        words = re.findall(r"\S+", text)
+        bigrams = [f"{words[i]} {words[i + 1]}" for i in range(len(words) - 1)]
         top = Counter(bigrams).most_common(15)
         parts = [f"[ngram summary of {len(messages)} messages, top-15 bigrams]"]
         for gram, cnt in top:
@@ -339,8 +357,7 @@ class SessionContext:
             joined = "\n".join(text_parts)[:6000]
             prompt = (
                 "Summarize the following agent messages into a concise context "
-                "(key actions, results, current state). Under 500 tokens.\n\n"
-                + joined
+                "(key actions, results, current state). Under 500 tokens.\n\n" + joined
             )
             resp = llm_chat_fn(prompt)
             if isinstance(resp, str) and resp.strip():
@@ -358,6 +375,7 @@ class SessionContext:
             "user_preferences": self.user_preferences,
         }
 
+
 def _run_c1_selfcheck() -> None:
     """C1: WM sliding window + rule-based summarize selfcheck.
 
@@ -373,14 +391,27 @@ def _run_c1_selfcheck() -> None:
 
     from huginn.core_types import AgentMessage
 
+    sc2 = _selfcheck_compact(_os, AgentMessage)
+    _selfcheck_summarize_strategies(_os, sc2, AgentMessage)
+    _selfcheck_episodic_sink(_os, AgentMessage)
+
+    _os.environ.pop("HUGINN_EXTREME_DISPATCH", None)
+    _os.environ.pop("HUGINN_WM_SUMMARIZE", None)
+    print("SessionContext C1 selfcheck OK")
+
+
+def _selfcheck_compact(_os: Any, agent_message: Any) -> SessionContext:
+    """非极限模式 + 极限模式 token 超预算两段自检, 返回极限模式下的 session."""
     # ── 非极限模式: summaries 应始终空, 走原 max_messages 逻辑 ──
     _os.environ.pop("HUGINN_EXTREME_DISPATCH", None)
     _os.environ.pop("HUGINN_WM_SUMMARIZE", None)
     sc = SessionContext(max_messages=5)
     for i in range(20):
-        sc.add_message(AgentMessage(role="user", content=f"msg {i}" * 50))
+        sc.add_message(agent_message(role="user", content=f"msg {i}" * 50))
     assert len(sc.summaries) == 0, "非极限模式不应触发 summarize"
-    assert len(sc.messages) <= 5 + 1, f"原逻辑应截到 max_messages, got {len(sc.messages)}"
+    assert len(sc.messages) <= 5 + 1, (
+        f"原逻辑应截到 max_messages, got {len(sc.messages)}"
+    )
     print("C1-A non-extreme: no summarize, max_messages truncate OK")
 
     # ── 极限模式 + token 超预算: 触发 sliding window ──
@@ -388,10 +419,12 @@ def _run_c1_selfcheck() -> None:
     sc2 = SessionContext(token_budget=200)  # 故意调小, 加几条就超
     sc2._summarize_check_every = 1  # 每次 add 都检查 (测试用)
     for i in range(20):
-        sc2.add_message(AgentMessage(
-            role="assistant",
-            content=f"Assistant turn {i}. " + "x" * 200,
-        ))
+        sc2.add_message(
+            agent_message(
+                role="assistant",
+                content=f"Assistant turn {i}. " + "x" * 200,
+            )
+        )
     assert len(sc2.summaries) >= 1, (
         f"极限模式 + 超预算应触发 summarize, got {len(sc2.summaries)} summaries"
     )
@@ -401,17 +434,30 @@ def _run_c1_selfcheck() -> None:
         for m in sc2.messages
     )
     assert has_summary_msg, "compact 后应有 summary system message"
-    print(f"C1-B extreme + over budget: {len(sc2.summaries)} summaries, summary msg injected OK")
+    print(
+        f"C1-B extreme + over budget: {len(sc2.summaries)} summaries, summary msg injected OK"
+    )
+    return sc2
 
+
+def _selfcheck_summarize_strategies(
+    _os: Any, sc2: SessionContext, agent_message: Any
+) -> None:
+    """rule / ngram / llm 三种 summarize 策略 + llm 无 chat_fn fallback 自检."""
     # ── rule 策略: 抽 tool 名字 + assistant 首句 + tool key field ──
     _os.environ["HUGINN_WM_SUMMARIZE"] = "rule"
     msgs = [
-        AgentMessage(role="assistant", content={
-            "content": "Let me run DFT calculation.",
-            "tool_calls": [{"function": {"name": "run_dft"}}],
-        }),
-        AgentMessage(role="tool", content='{"energy": -4.5, "success": true, "r_phys": 0.85}'),
-        AgentMessage(role="assistant", content="The calculation converged."),
+        agent_message(
+            role="assistant",
+            content={
+                "content": "Let me run DFT calculation.",
+                "tool_calls": [{"function": {"name": "run_dft"}}],
+            },
+        ),
+        agent_message(
+            role="tool", content='{"energy": -4.5, "success": true, "r_phys": 0.85}'
+        ),
+        agent_message(role="assistant", content="The calculation converged."),
     ]
     out = sc2._summarize_window_rule(msgs)
     assert "run_dft" in out, f"rule 应抽 tool 名字, got: {out!r}"
@@ -423,17 +469,26 @@ def _run_c1_selfcheck() -> None:
     # ── ngram 策略: 抽 bigram ──
     _os.environ["HUGINN_WM_SUMMARIZE"] = "ngram"
     msgs2 = [
-        AgentMessage(role="user", content="band gap calculation band gap result band gap"),
+        agent_message(
+            role="user", content="band gap calculation band gap result band gap"
+        ),
     ]
     out2 = sc2._summarize_window_ngram(msgs2)
     assert "band gap" in out2, f"ngram 应抓 'band gap' bigram, got: {out2!r}"
     assert "(3x)" in out2 or "(2x)" in out2, f"ngram 应显示频次, got: {out2!r}"
     print("C1-D ngram strategy: bigram count OK")
 
+    _selfcheck_llm_strategy(_os, sc2, msgs)
+
+
+def _selfcheck_llm_strategy(_os: Any, sc2: SessionContext, msgs: list[Any]) -> None:
+    """llm 策略 (注入 fake llm_chat_fn) 与无 chat_fn fallback rule 自检."""
     # ── llm 策略: 调注入的 fake llm_chat_fn ──
     _os.environ["HUGINN_WM_SUMMARIZE"] = "llm"
+
     def _fake_llm(prompt: str) -> str:
         return "FAKE LLM SUMMARY"
+
     out3 = sc2.summarize_window(msgs, llm_chat_fn=_fake_llm)
     assert "FAKE LLM SUMMARY" in out3, f"llm 策略应用 fake 返回, got: {out3!r}"
     print("C1-E llm strategy: injected fake llm OK")
@@ -445,28 +500,27 @@ def _run_c1_selfcheck() -> None:
     )
     print("C1-F llm strategy without chat_fn → rule fallback OK")
 
+
+def _selfcheck_episodic_sink(_os: Any, agent_message: Any) -> None:
+    """episodic_sink 回调被调用自检."""
     # ── episodic_sink 回调被调用 ──
     _os.environ["HUGINN_WM_SUMMARIZE"] = "rule"
     sink_calls: list[tuple[str, dict]] = []
+
     def _sink(text: str, meta: dict) -> None:
         sink_calls.append((text, meta))
+
     sc3 = SessionContext(token_budget=100)
     sc3._summarize_check_every = 1
     sc3.episodic_sink = _sink
     for i in range(15):
-        sc3.add_message(AgentMessage(role="user", content=f"msg {i} " + "y" * 200))
-    assert len(sink_calls) >= 1, (
-        f"episodic_sink 应被调用, got {len(sink_calls)} calls"
-    )
+        sc3.add_message(agent_message(role="user", content=f"msg {i} " + "y" * 200))
+    assert len(sink_calls) >= 1, f"episodic_sink 应被调用, got {len(sink_calls)} calls"
     assert all(isinstance(t, str) and t for t, _ in sink_calls), "sink 应收非空 str"
     assert all(m.get("source") == "wm_sliding_window" for _, m in sink_calls), (
         "sink metadata source 应为 wm_sliding_window"
     )
     print(f"C1-G episodic_sink: {len(sink_calls)} calls, metadata OK")
-
-    _os.environ.pop("HUGINN_EXTREME_DISPATCH", None)
-    _os.environ.pop("HUGINN_WM_SUMMARIZE", None)
-    print("SessionContext C1 selfcheck OK")
 
 
 if __name__ == "__main__":

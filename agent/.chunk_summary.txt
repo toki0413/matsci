@@ -1,0 +1,14 @@
+chunk 1 rc=1 |   File "/workspace/venv/lib/python3.14/site-packages/huggingface_hub/file_download.py", line 1763, in _get_metadata_or_catch_error
+chunk 2 rc=1 |   File "/workspace/venv/lib/python3.14/site-packages/huggingface_hub/file_download.py", line 1763, in _get_metadata_or_catch_error
+chunk 3 rc=1 |   File "/workspace/venv/lib/python3.14/site-packages/huggingface_hub/file_download.py", line 1763, in _get_metadata_or_catch_error
+chunk 4 rc=1 | 2 failed, 556 passed in 247.07s (0:04:07)
+FAILED tests/test_config_contracts.py::test_all_contract_docs_are_not_drifted - AssertionError: 以下契约文档与代码漂移, 请用 `python -m huginn.cli.config_audit --<mode> --out docs/<name>.md` 重新生成: plugins-contract.md, events-contract.md, errors-contract.md
+FAILED tests/test_contract_audit.py::test_field_audit_golden_parity[http_field] - AssertionError: http_field 契约与 golden 漂移. 若为有意变更, 重新生成并评审 diff: HUGINN_REGEN_FIELD_GOLDEN=1 pytest tests/test_contract_audit.py -k golden_parity
+chunk 5 rc=1 |   File "/workspace/venv/lib/python3.14/site-packages/huggingface_hub/file_download.py", line 1763, in _get_metadata_or_catch_error
+chunk 6 rc=1 |   File "/workspace/venv/lib/python3.14/site-packages/huggingface_hub/file_download.py", line 1763, in _get_metadata_or_catch_error
+chunk 7 rc=1 |   File "/workspace/venv/lib/python3.14/site-packages/huggingface_hub/file_download.py", line 1763, in _get_metadata_or_catch_error
+chunk 8 rc=1 |   File "/workspace/venv/lib/python3.14/site-packages/huggingface_hub/file_download.py", line 1763, in _get_metadata_or_catch_error
+chunk 9 rc=1 |   File "/workspace/venv/lib/python3.14/site-packages/huggingface_hub/file_download.py", line 1763, in _get_metadata_or_catch_error
+chunk 10 rc=0 | 402 passed, 3 skipped, 2 warnings in 18.12s
+chunk 11 rc=1 |   File "/workspace/venv/lib/python3.14/site-packages/huggingface_hub/file_download.py", line 1763, in _get_metadata_or_catch_error
+chunk 12 rc=1 |   File "/workspace/venv/lib/python3.14/site-packages/huggingface_hub/file_download.py", line 1763, in _get_metadata_or_catch_error

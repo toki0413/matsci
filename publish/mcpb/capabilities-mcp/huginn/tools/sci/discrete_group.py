@@ -13,6 +13,7 @@ group_action_orbits 用 scipy.sparse.csgraph.connected_components.
 ponytail: sympy.combinatorics 优先, 不引 GAP/SageMath.
 大群 (|G| > 10^4) 走 LLM 跨域类比. 升级路径: Schreier-Sims + 表示论 (sage).
 """
+
 from __future__ import annotations
 
 import logging
@@ -43,6 +44,7 @@ def _get_group(handle: str) -> Any | None:
 def _parse_perm(s: str) -> Any:
     """(1 2 3) 或 (1 2)(3 4) → sympy Permutation."""
     from sympy.combinatorics import Permutation
+
     s = s.strip()
     if not s.startswith("("):
         return Permutation([])
@@ -51,7 +53,7 @@ def _parse_perm(s: str) -> Any:
     while i < len(s):
         if s[i] == "(":
             j = s.index(")", i)
-            cyc = [int(x) - 1 for x in s[i + 1:j].split()]
+            cyc = [int(x) - 1 for x in s[i + 1 : j].split()]
             if cyc:
                 cycles.append(cyc)
             i = j + 1
@@ -66,17 +68,20 @@ def _parse_perm_list(specs: list[str]) -> list[Any]:
 
 def _from_generators(gen_strs: list[str]) -> Any:
     from sympy.combinatorics import PermutationGroup
+
     return PermutationGroup(_parse_perm_list(gen_strs))
 
 
 def _cyclic_group(n: int) -> Any:
     from sympy.combinatorics import Permutation, PermutationGroup
+
     # 单 n-cycle: (0 1 2 ... n-1), 不是 n 个 transposition 的乘积
     return PermutationGroup([Permutation(list(range(1, n)) + [0])])
 
 
 def _dihedral_group(n: int) -> Any:
     from sympy.combinatorics import Permutation, PermutationGroup
+
     # r = 单 n-cycle (0 1 ... n-1)
     r = Permutation(list(range(1, n)) + [0])
     # s: i ↔ n-1-i (反射), 单点 + transposition
@@ -87,6 +92,7 @@ def _dihedral_group(n: int) -> Any:
 
 def _symmetric_group(n: int) -> Any:
     from sympy.combinatorics import Permutation, PermutationGroup
+
     if n <= 1:
         return PermutationGroup([Permutation([])])
     # S_n = <(0 1), (0 1 2 ... n-1)>
@@ -97,6 +103,7 @@ def _symmetric_group(n: int) -> Any:
 
 def _alternating_group(n: int) -> Any:
     from sympy.combinatorics import Permutation, PermutationGroup
+
     if n <= 2:
         return PermutationGroup([Permutation([])])
     # A_n = <(0 1 2), (0 1 2 ... n) if n odd, (1 2 ... n) if n even>
@@ -125,6 +132,15 @@ def _analyze_group(group: Any) -> dict[str, Any]:
         "generators": [str(g) for g in group.generators],
         "identity": str(group.identity),
     }
+    _analyze_center(group, n, out)
+    _analyze_conjugacy(group, n, out)
+    _analyze_sylow(group, n, out)
+    out["cayley_graph"] = _cayley_graph_summary(n, len(group.generators))
+    return out
+
+
+def _analyze_center(group: Any, n: int, out: dict[str, Any]) -> None:
+    """中心阶 (大群跳过)."""
     if n <= 1000:
         try:
             out["center_order"] = int(group.center().order())
@@ -133,6 +149,10 @@ def _analyze_group(group: Any) -> dict[str, Any]:
     else:
         out["center_order"] = None
         out["center_skipped"] = "|G| > 1000"
+
+
+def _analyze_conjugacy(group: Any, n: int, out: dict[str, Any]) -> None:
+    """共轭类个数 (大群跳过)."""
     if n <= 200:
         try:
             out["n_conjugacy_classes"] = len(group.conjugacy_classes())
@@ -141,9 +161,14 @@ def _analyze_group(group: Any) -> dict[str, Any]:
     else:
         out["n_conjugacy_classes"] = None
         out["cc_skipped"] = "|G| > 200"
+
+
+def _analyze_sylow(group: Any, n: int, out: dict[str, Any]) -> None:
+    """各素数 Sylow 子群的阶 (大群跳过)."""
     if n <= 500:
         try:
             from sympy import factorint
+
             factors = factorint(n)
             sylow_info = {}
             for p in factors:
@@ -158,15 +183,17 @@ def _analyze_group(group: Any) -> dict[str, Any]:
     else:
         out["sylow"] = None
         out["sylow_skipped"] = "|G| > 500"
-    n_gens = len(group.generators)
-    out["cayley_graph"] = {
+
+
+def _cayley_graph_summary(n: int, n_gens: int) -> dict[str, Any]:
+    """Cayley 图节点 / 边 / 稀疏性摘要."""
+    return {
         "n_nodes": n,
         "n_edges_directed": n * n_gens,
         "avg_degree": (2 * n * n_gens) / n if n > 0 else 0,
         "density": (n * n_gens) / (n * (n - 1)) if n > 1 else 0.0,
         "is_sparse": n * n_gens < n * (n - 1) / 2 if n > 1 else True,
     }
-    return out
 
 
 def _verify_subgroup(H: Any, G: Any) -> dict[str, Any]:
@@ -179,13 +206,14 @@ def _verify_subgroup(H: Any, G: Any) -> dict[str, Any]:
     if not h_elems.issubset(g_elems):
         return {"is_subgroup": False, "reason": "H 有元素不在 G 里"}
     if G.order() % H.order() != 0:
-        return {"is_subgroup": False, "reason": f"|H|={H.order()} 不整除 |G|={G.order()}"}
+        return {
+            "is_subgroup": False,
+            "reason": f"|H|={H.order()} 不整除 |G|={G.order()}",
+        }
     return {"is_subgroup": True, "index": int(G.order() // H.order())}
 
 
-def _verify_homomorphism(
-    G: Any, H: Any, gen_images: list[str]
-) -> dict[str, Any]:
+def _verify_homomorphism(G: Any, H: Any, gen_images: list[str]) -> dict[str, Any]:
     """弱同态验证: 生成元阶保持 + 像在 H 里."""
     if len(gen_images) != len(G.generators):
         return {"is_homomorphism": False, "reason": "生成元像数量不对"}
@@ -194,6 +222,7 @@ def _verify_homomorphism(
     except Exception as e:
         return {"is_homomorphism": False, "reason": f"解析失败: {e}"}
     from sympy.combinatorics import Permutation
+
     h_degree = H.degree
     for g, im in zip(G.generators, images):
         # 把 im 升到 H 的 degree (恒等 () size 0 → size H.degree)
@@ -206,7 +235,10 @@ def _verify_homomorphism(
             logger.debug("best-effort op failed", exc_info=True)
             ord_im = 0
         if ord_im and ord_g % ord_im != 0:
-            return {"is_homomorphism": False, "reason": f"阶不保持: |g|={ord_g}, |φ(g)|={ord_im}"}
+            return {
+                "is_homomorphism": False,
+                "reason": f"阶不保持: |g|={ord_g}, |φ(g)|={ord_im}",
+            }
         try:
             if not H.contains(im):
                 return {"is_homomorphism": False, "reason": f"φ(g)={im} 不在 H 里"}
@@ -251,7 +283,28 @@ def _int_to_poly(x: int, p: int, k: int) -> list[int]:
 
 
 def _poly_to_int(coeffs: list[int], p: int) -> int:
-    return sum(c * (p ** i) for i, c in enumerate(coeffs))
+    return sum(c * (p**i) for i, c in enumerate(coeffs))
+
+
+def _find_irreducible(p: int, k: int) -> list[int] | None:
+    from sympy.polys.domains import ZZ
+    from sympy.polys.galoistools import gf_irreducible_p
+
+    # 从 c=1 开始, 跳过 c=0 (会生成 x^k 退化多项式)
+    for c in range(1, p**k):
+        coeffs = []
+        tmp = c
+        for _ in range(k):
+            coeffs.append(tmp % p)
+            tmp //= p
+        poly = coeffs + [1]
+        try:
+            if gf_irreducible_p(poly, p, ZZ):
+                return poly
+        except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
+            continue
+    return None
 
 
 def _finite_field_op(
@@ -267,31 +320,9 @@ def _finite_field_op(
             return {"result": pow(elements[0], p - 2, p)}
         return {"error": f"unknown op: {operation}"}
     from sympy.polys.domains import ZZ
-    from sympy.polys.galoistools import (
-        gf_add,
-        gf_irreducible_p,
-        gf_mul,
-        gf_rem,
-    )
+    from sympy.polys.galoistools import gf_add, gf_mul, gf_rem
 
-    def find_irreducible(p: int, k: int) -> list[int]:
-        # 从 c=1 开始, 跳过 c=0 (会生成 x^k 退化多项式)
-        for c in range(1, p ** k):
-            coeffs = []
-            tmp = c
-            for _ in range(k):
-                coeffs.append(tmp % p)
-                tmp //= p
-            poly = coeffs + [1]
-            try:
-                if gf_irreducible_p(poly, p, ZZ):
-                    return poly
-            except Exception:
-                logger.debug("best-effort op failed", exc_info=True)
-                continue
-        return None
-
-    mod_poly = find_irreducible(p, k)
+    mod_poly = _find_irreducible(p, k)
     if mod_poly is None:
         return {"error": f"找不到 GF({p}^{k}) 的不可约多项式"}
     if operation == "add":
@@ -309,7 +340,7 @@ def _finite_field_op(
         # ponytail: GF(p^k) 求逆用暴力枚举 (元素数少), 不依赖 gf_extgcd (sympy 没导出)
         a = _int_to_poly(elements[0], p, k)
         # 找 b 使 a*b ≡ 1 mod mod_poly
-        for b_int in range(1, p ** k):
+        for b_int in range(1, p**k):
             b = _int_to_poly(b_int, p, k)
             prod = gf_mul(a, b, p, ZZ)
             res = gf_rem(prod, mod_poly, p, ZZ)
@@ -321,9 +352,17 @@ def _finite_field_op(
 
 class DiscreteGroupInput(BaseModel):
     action: Literal[
-        "from_generators", "permutation_group", "cyclic", "dihedral",
-        "symmetric", "alternating", "analyze", "verify_subgroup",
-        "verify_homomorphism", "group_action_orbits", "finite_field",
+        "from_generators",
+        "permutation_group",
+        "cyclic",
+        "dihedral",
+        "symmetric",
+        "alternating",
+        "analyze",
+        "verify_subgroup",
+        "verify_homomorphism",
+        "group_action_orbits",
+        "finite_field",
     ] = Field(...)
     generators: list[str] | None = Field(default=None)
     permutations: list[str] | None = Field(default=None)
@@ -362,86 +401,148 @@ class DiscreteGroupTool(HuginnTool):
     async def validate_input(
         self, args: dict[str, Any], context: ToolContext | None = None
     ) -> ValidationResult:
-        args_obj = args if isinstance(args, DiscreteGroupInput) else DiscreteGroupInput(**args)
-        if args_obj.action in ("cyclic", "dihedral", "symmetric", "alternating") and (not args_obj.n or args_obj.n < 1):
-                return ValidationResult(result=False, message=f"{args_obj.action} 需要 n >= 1")
+        args_obj = (
+            args if isinstance(args, DiscreteGroupInput) else DiscreteGroupInput(**args)
+        )
+        if args_obj.action in ("cyclic", "dihedral", "symmetric", "alternating") and (
+            not args_obj.n or args_obj.n < 1
+        ):
+            return ValidationResult(
+                result=False, message=f"{args_obj.action} 需要 n >= 1"
+            )
         if args_obj.action == "finite_field" and (not args_obj.p or args_obj.p < 2):
-                return ValidationResult(result=False, message="finite_field 需要 p >= 2")
+            return ValidationResult(result=False, message="finite_field 需要 p >= 2")
         return ValidationResult(result=True)
 
-    async def call(
-        self, args: dict[str, Any], context: ToolContext
-    ) -> ToolResult:
-        args_obj = args if isinstance(args, DiscreteGroupInput) else DiscreteGroupInput(**args)
+    async def call(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
+        args_obj = (
+            args if isinstance(args, DiscreteGroupInput) else DiscreteGroupInput(**args)
+        )
         try:
             a = args_obj.action
             if a == "from_generators":
-                if not args_obj.generators:
-                    return ToolResult(data=None, success=False, error="需要 generators")
-                g = _from_generators(args_obj.generators)
-                return ToolResult(data={"handle": _cache_group(g), "order": int(g.order())})
+                return _call_from_generators(args_obj)
             if a == "permutation_group":
-                if not args_obj.permutations:
-                    return ToolResult(data=None, success=False, error="需要 permutations")
-                perms = _parse_perm_list(args_obj.permutations)
-                g = _from_generators([str(p) for p in perms])
-                return ToolResult(data={"handle": _cache_group(g), "order": int(g.order())})
+                return _call_permutation_group(args_obj)
             if a == "cyclic":
-                g = _cyclic_group(args_obj.n or 1)
-                return ToolResult(data={"handle": _cache_group(g), "order": int(g.order())})
+                return _call_construct_group(_cyclic_group, args_obj)
             if a == "dihedral":
-                g = _dihedral_group(args_obj.n or 1)
-                return ToolResult(data={"handle": _cache_group(g), "order": int(g.order())})
+                return _call_construct_group(_dihedral_group, args_obj)
             if a == "symmetric":
-                g = _symmetric_group(args_obj.n or 1)
-                return ToolResult(data={"handle": _cache_group(g), "order": int(g.order())})
+                return _call_construct_group(_symmetric_group, args_obj)
             if a == "alternating":
-                g = _alternating_group(args_obj.n or 1)
-                return ToolResult(data={"handle": _cache_group(g), "order": int(g.order())})
+                return _call_construct_group(_alternating_group, args_obj)
             if a == "analyze":
-                if not args_obj.group_handle:
-                    return ToolResult(data=None, success=False, error="需要 group_handle")
-                g = _get_group(args_obj.group_handle)
-                if g is None:
-                    return ToolResult(data=None, success=False, error="handle 不存在")
-                return ToolResult(data=_analyze_group(g))
+                return _call_analyze(args_obj)
             if a == "verify_subgroup":
-                if not (args_obj.group_handle and args_obj.subgroup_handle):
-                    return ToolResult(data=None, success=False, error="需要 group_handle + subgroup_handle")
-                G = _get_group(args_obj.group_handle)
-                H = _get_group(args_obj.subgroup_handle)
-                if G is None or H is None:
-                    return ToolResult(data=None, success=False, error="handle 不存在")
-                return ToolResult(data=_verify_subgroup(H, G))
+                return _call_verify_subgroup(args_obj)
             if a == "verify_homomorphism":
-                if not (args_obj.group_handle and args_obj.subgroup_handle and args_obj.gen_images):
-                    return ToolResult(data=None, success=False, error="需要 group_handle + subgroup_handle + gen_images")
-                G = _get_group(args_obj.group_handle)
-                H = _get_group(args_obj.subgroup_handle)
-                if G is None or H is None:
-                    return ToolResult(data=None, success=False, error="handle 不存在")
-                return ToolResult(data=_verify_homomorphism(G, H, args_obj.gen_images))
+                return _call_verify_homomorphism(args_obj)
             if a == "group_action_orbits":
-                if not (args_obj.group_handle and args_obj.n_points):
-                    return ToolResult(data=None, success=False, error="需要 group_handle + n_points")
-                g = _get_group(args_obj.group_handle)
-                if g is None:
-                    return ToolResult(data=None, success=False, error="handle 不存在")
-                return ToolResult(data=_group_action_orbits(g, args_obj.n_points))
+                return _call_group_action_orbits(args_obj)
             if a == "finite_field":
-                if not (args_obj.p and args_obj.operation and args_obj.elements):
-                    return ToolResult(data=None, success=False, error="需要 p + operation + elements")
-                return ToolResult(data=_finite_field_op(args_obj.p, args_obj.k, args_obj.operation, args_obj.elements))
+                return _call_finite_field(args_obj)
             return ToolResult(data=None, success=False, error=f"unknown action: {a}")
         except Exception as exc:
             logger.warning("discrete_group failed: %s", exc, exc_info=True)
             return ToolResult(data=None, success=False, error=str(exc))
 
 
+def _group_result(g: Any) -> ToolResult:
+    """缓存群并返回 handle + 阶."""
+    return ToolResult(data={"handle": _cache_group(g), "order": int(g.order())})
+
+
+def _call_from_generators(args_obj: DiscreteGroupInput) -> ToolResult:
+    if not args_obj.generators:
+        return ToolResult(data=None, success=False, error="需要 generators")
+    g = _from_generators(args_obj.generators)
+    return _group_result(g)
+
+
+def _call_permutation_group(args_obj: DiscreteGroupInput) -> ToolResult:
+    if not args_obj.permutations:
+        return ToolResult(data=None, success=False, error="需要 permutations")
+    perms = _parse_perm_list(args_obj.permutations)
+    g = _from_generators([str(p) for p in perms])
+    return _group_result(g)
+
+
+def _call_construct_group(ctor: Any, args_obj: DiscreteGroupInput) -> ToolResult:
+    g = ctor(args_obj.n or 1)
+    return _group_result(g)
+
+
+def _call_analyze(args_obj: DiscreteGroupInput) -> ToolResult:
+    if not args_obj.group_handle:
+        return ToolResult(data=None, success=False, error="需要 group_handle")
+    g = _get_group(args_obj.group_handle)
+    if g is None:
+        return ToolResult(data=None, success=False, error="handle 不存在")
+    return ToolResult(data=_analyze_group(g))
+
+
+def _call_verify_subgroup(args_obj: DiscreteGroupInput) -> ToolResult:
+    if not (args_obj.group_handle and args_obj.subgroup_handle):
+        return ToolResult(
+            data=None, success=False, error="需要 group_handle + subgroup_handle"
+        )
+    G = _get_group(args_obj.group_handle)
+    H = _get_group(args_obj.subgroup_handle)
+    if G is None or H is None:
+        return ToolResult(data=None, success=False, error="handle 不存在")
+    return ToolResult(data=_verify_subgroup(H, G))
+
+
+def _call_verify_homomorphism(args_obj: DiscreteGroupInput) -> ToolResult:
+    if not (args_obj.group_handle and args_obj.subgroup_handle and args_obj.gen_images):
+        return ToolResult(
+            data=None,
+            success=False,
+            error="需要 group_handle + subgroup_handle + gen_images",
+        )
+    G = _get_group(args_obj.group_handle)
+    H = _get_group(args_obj.subgroup_handle)
+    if G is None or H is None:
+        return ToolResult(data=None, success=False, error="handle 不存在")
+    return ToolResult(data=_verify_homomorphism(G, H, args_obj.gen_images))
+
+
+def _call_group_action_orbits(args_obj: DiscreteGroupInput) -> ToolResult:
+    if not (args_obj.group_handle and args_obj.n_points):
+        return ToolResult(
+            data=None, success=False, error="需要 group_handle + n_points"
+        )
+    g = _get_group(args_obj.group_handle)
+    if g is None:
+        return ToolResult(data=None, success=False, error="handle 不存在")
+    return ToolResult(data=_group_action_orbits(g, args_obj.n_points))
+
+
+def _call_finite_field(args_obj: DiscreteGroupInput) -> ToolResult:
+    if not (args_obj.p and args_obj.operation and args_obj.elements):
+        return ToolResult(
+            data=None, success=False, error="需要 p + operation + elements"
+        )
+    return ToolResult(
+        data=_finite_field_op(
+            args_obj.p, args_obj.k, args_obj.operation, args_obj.elements
+        )
+    )
+
+
 def _selfcheck() -> None:
     """12 项 assert 验证有限群 + 有限域核心行为."""
     print("[discrete_group] running self-check...")
 
+    _selfcheck_group_structures()
+    _selfcheck_subgroups_and_fields()
+
+    print("[discrete_group] self-check OK (12/12)")
+
+
+def _selfcheck_group_structures() -> None:
+    """1-6: 群构造 + 结构分析."""
     # 1. C_6 阶 6, Abel
     g = _cyclic_group(6)
     a = _analyze_group(g)
@@ -464,7 +565,9 @@ def _selfcheck() -> None:
     g = _alternating_group(4)
     a = _analyze_group(g)
     assert a["order"] == 12, f"4. A_4 order 12, got {a['order']}"
-    assert a.get("n_conjugacy_classes") == 4, f"4. A_4 4 cc, got {a.get('n_conjugacy_classes')}"
+    assert a.get("n_conjugacy_classes") == 4, (
+        f"4. A_4 4 cc, got {a.get('n_conjugacy_classes')}"
+    )
 
     # 5. from_generators <(1 2 3), (1 2)> = S_3
     g = _from_generators(["(1 2 3)", "(1 2)"])
@@ -476,8 +579,12 @@ def _selfcheck() -> None:
     a = _analyze_group(g)
     assert "sylow" in a, "6. sylow field missing"
 
+
+def _selfcheck_subgroups_and_fields() -> None:
+    """7-12: 子群 / 同态 / 群作用 / 有限域."""
     # 7. C_3 ≤ S_3
     from sympy.combinatorics import Permutation, PermutationGroup
+
     H3 = PermutationGroup([Permutation([(0, 1, 2)])])
     G3 = PermutationGroup([Permutation([1, 0, 2]), Permutation([(0, 1, 2)])])
     r = _verify_subgroup(H3, G3)
@@ -511,8 +618,6 @@ def _selfcheck() -> None:
     r = _finite_field_op(2, 2, "mul", [3, 3])
     assert r.get("mod_poly") is not None, f"12. GF(2^2) mod_poly, got {r}"
     assert "result" in r, f"12. GF(2^2) mul result, got {r}"
-
-    print("[discrete_group] self-check OK (12/12)")
 
 
 if __name__ == "__main__":

@@ -18,11 +18,13 @@ actual 的相对秩排最前** —— 消费端本就吃相对秩, 这里把它�
   - 用 pooled(整 pred 均值)单向量打分, 丢 span 结构 —— 首测对比机制够用; 若有效再上 span 级。
   - 最难负样本 = 全局跨配 argmin, 训练压力强但也易记住单个对的怪癖, 需 held-out 目标级判断。
 """
+
 from __future__ import annotations
 
 import argparse
 import statistics
 from collections import defaultdict
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -30,6 +32,35 @@ import numpy as np
 from huginn.utils.runtime import get_runtime_home
 from scripts.train_jepa_predictor import load_encoder, load_pairs
 from scripts.train_jepa_span_predictor import _spans
+
+
+@dataclass
+class _Acc:
+    """Running accumulators for base vs trained metrics."""
+
+    mrr_base: list = field(default_factory=list)
+    mrr_rank: list = field(default_factory=list)
+    rank1_base: int = 0
+    rank1_rank: int = 0
+    sep_base_pos: list = field(default_factory=list)
+    sep_base_neg: list = field(default_factory=list)
+    sep_rank_pos: list = field(default_factory=list)
+    sep_rank_neg: list = field(default_factory=list)
+    tot: int = 0
+
+
+@dataclass
+class _Run:
+    """Immutable inputs shared across held-out splits."""
+
+    Xn: np.ndarray
+    Y: np.ndarray
+    by_obj: dict
+    objs: list
+    d: int
+    n_ho: int
+    steps: int
+    margin: float
 
 
 def _pool(text: str, enc) -> np.ndarray:
@@ -75,14 +106,16 @@ def _train_rank(X, Y, d, steps=300, lr=1e-3, margin=0.1, seed=0, neg_k=8, alpha=
         margin_term = (margin - (pos - neg)).clip(min=0.0)
         act = margin_term > 0.0
         if it == 0 or (it + 1) % 100 == 0:
-            print(f"      step {it+1}: pos={pos.mean():.3f} neg={neg.mean():.3f} "
-                  f"active={act.mean():.1%}")
+            print(
+                f"      step {it + 1}: pos={pos.mean():.3f} neg={neg.mean():.3f} "
+                f"active={act.mean():.1%}"
+            )
 
-        gnorm = act[:, None] * (Yn[hard_j] - Yn)                 # dloss/du, u=归一P
+        gnorm = act[:, None] * (Yn[hard_j] - Yn)  # dloss/du, u=归一P
         r = np.linalg.norm(P, axis=1, keepdims=True) + 1e-12
         r3 = np.maximum(r, 1e-8) ** 3
-        dP = gnorm / r - P * np.einsum("nd,nd->n", P, gnorm)[:, None] / r3   # dloss/dP
-        dP = alpha * dP                                           # P = X + alpha*g
+        dP = gnorm / r - P * np.einsum("nd,nd->n", P, gnorm)[:, None] / r3  # dloss/dP
+        dP = alpha * dP  # P = X + alpha*g
         gH = dP @ W2.T
         gh = gH * (1.0 - H * H)
         gradW2 = H.T @ dP
@@ -109,7 +142,7 @@ def _rank_metrics(pi, acts, i):
     return rr, 1.0 / rr
 
 
-def main() -> None:
+def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", default=None)
     ap.add_argument("--steps", type=int, default=300)
@@ -118,9 +151,82 @@ def main() -> None:
     ap.add_argument("--holdout-frac", type=float, default=0.25)
     ap.add_argument("--margin", type=float, default=0.1)
     ap.add_argument("--neg-k", type=int, default=8)
-    args = ap.parse_args()
+    return ap
 
-    corpus = Path(args.corpus) if args.corpus else (get_runtime_home() / "corpus" / "jepa_pairs.jsonl")
+
+def _accumulate_sample(acc: _Acc, Xn, acts, te, P_te, idx: int) -> None:
+    acc.tot += 1
+    i = te[idx]
+    pbase = Xn[i]  # 未训基线 (身份)
+    r_b, rr_b = _rank_metrics(pbase, acts, idx)
+    acc.mrr_base.append(rr_b)
+    if r_b == 1:
+        acc.rank1_base += 1
+    # 分离带: 对未训, pos = dist(pbase, 自己的 actual), neg = 最近跨配(在 te 内)
+    a_self = acts[idx]
+    acc.sep_base_pos.append(_dist(pbase, a_self))
+    acc.sep_base_neg.append(
+        min(_dist(pbase, acts[j]) for j in range(len(acts)) if j != idx)
+    )
+    # trained
+    p_i = P_te[idx]
+    r_a, rr_a = _rank_metrics(p_i, acts, idx)
+    acc.mrr_rank.append(rr_a)
+    if r_a == 1:
+        acc.rank1_rank += 1
+    acc.sep_rank_pos.append(_dist(p_i, a_self))
+    acc.sep_rank_neg.append(
+        min(_dist(p_i, acts[j]) for j in range(len(acts)) if j != idx)
+    )
+
+
+def _run_split(rng: np.random.Generator, run: _Run, acc: _Acc) -> None:
+    ho = set(rng.choice(run.objs, size=run.n_ho, replace=False))
+    te = [i for o, ids in run.by_obj.items() if o in ho for i in ids]
+    tr = [i for o, ids in run.by_obj.items() if o not in ho for i in ids]
+    if len(tr) < 5 or not te:
+        return
+    pack = _train_rank(
+        run.Xn[tr],
+        run.Y[tr],
+        run.d,
+        steps=run.steps,
+        margin=run.margin,
+        seed=int(rng.integers(1, 1 << 30)),
+    )
+    P_te = _fwd(pack, run.Xn[te])  # 测试行前向 (len=len(te))
+    acts = run.Y[te]
+    for idx in range(len(te)):
+        _accumulate_sample(acc, run.Xn, acts, te, P_te, idx)
+
+
+def _report(args, acc: _Acc, run: _Run) -> None:
+    print(
+        f"[rank] 目标级留出 {args.holdout_frac:.0%} ({run.n_ho}/{len(run.objs)}), {args.splits} 次, "
+        f"steps={args.steps}, margin={args.margin}"
+    )
+    print(
+        f"[base] MRR={statistics.mean(acc.mrr_base):.3f}  rank-1={100 * acc.rank1_base / acc.tot:.1f}%  "
+        f"分离带 pos={statistics.mean(acc.sep_base_pos):.3f} vs neg={statistics.mean(acc.sep_base_neg):.3f}"
+    )
+    print(
+        f"[rank] MRR={statistics.mean(acc.mrr_rank):.3f}  rank-1={100 * acc.rank1_rank / acc.tot:.1f}%  "
+        f"分离带 pos={statistics.mean(acc.sep_rank_pos):.3f} vs neg={statistics.mean(acc.sep_rank_neg):.3f}"
+    )
+    print(
+        f"[rank-base] dMRR={statistics.mean(acc.mrr_rank) - statistics.mean(acc.mrr_base):+.3f}  "
+        f"drank1={100 * (acc.rank1_rank - acc.rank1_base) / acc.tot:+.1f}pp"
+    )
+
+
+def main() -> None:
+    args = _build_parser().parse_args()
+
+    corpus = (
+        Path(args.corpus)
+        if args.corpus
+        else (get_runtime_home() / "corpus" / "jepa_pairs.jsonl")
+    )
     pairs = load_pairs(corpus)
     enc = load_encoder()
     d = int(enc.get_embedding_dimension())
@@ -135,52 +241,13 @@ def main() -> None:
         by_obj[p.get("objective", f"o{i}")].append(i)
 
     rng = np.random.default_rng(args.seed)
-    mrr_base, mrr_rank = [], []
-    rank1_base = rank1_rank = 0
-    sep_base_pos, sep_base_neg = [], []
-    sep_rank_pos, sep_rank_neg = [], []
+    acc = _Acc()
     n_ho = max(1, int(round(len(objs) * args.holdout_frac)))
-    tot = 0
+    run = _Run(Xn, Y, by_obj, objs, d, n_ho, args.steps, args.margin)
     for _ in range(args.splits):
-        ho = set(rng.choice(objs, size=n_ho, replace=False))
-        te = [i for o, ids in by_obj.items() if o in ho for i in ids]
-        tr = [i for o, ids in by_obj.items() if o not in ho for i in ids]
-        if len(tr) < 5 or not te:
-            continue
-        pack = _train_rank(Xn[tr], Y[tr], d, steps=args.steps, margin=args.margin,
-                           seed=int(rng.integers(1, 1 << 30)))
-        P_te = _fwd(pack, Xn[te])          # 测试行前向 (len=len(te))
-        acts = Y[te]
-        for idx, i in enumerate(te):
-            tot += 1
-            pbase = Xn[i]                     # 未训基线 (身份)
-            r_b, rr_b = _rank_metrics(pbase, acts, idx)
-            mrr_base.append(rr_b)
-            if r_b == 1:
-                rank1_base += 1
-            # 分离带: 对未训, pos = dist(pbase, 自己的 actual), neg = 最近跨配(在 te 内)
-            _a_self = acts[idx]
-            sep_base_pos.append(_dist(pbase, _a_self))
-            negb = min(_dist(pbase, acts[j]) for j in range(len(acts)) if j != idx)
-            sep_base_neg.append(negb)
-            # trained
-            p_i = P_te[idx]
-            r_a, rr_a = _rank_metrics(p_i, acts, idx)
-            mrr_rank.append(rr_a)
-            if r_a == 1:
-                rank1_rank += 1
-            sep_rank_pos.append(_dist(p_i, _a_self))
-            negr = min(_dist(p_i, acts[j]) for j in range(len(acts)) if j != idx)
-            sep_rank_neg.append(negr)
+        _run_split(rng, run, acc)
 
-    print(f"[rank] 目标级留出 {args.holdout_frac:.0%} ({n_ho}/{len(objs)}), {args.splits} 次, "
-          f"steps={args.steps}, margin={args.margin}")
-    print(f"[base] MRR={statistics.mean(mrr_base):.3f}  rank-1={100*rank1_base/tot:.1f}%  "
-          f"分离带 pos={statistics.mean(sep_base_pos):.3f} vs neg={statistics.mean(sep_base_neg):.3f}")
-    print(f"[rank] MRR={statistics.mean(mrr_rank):.3f}  rank-1={100*rank1_rank/tot:.1f}%  "
-          f"分离带 pos={statistics.mean(sep_rank_pos):.3f} vs neg={statistics.mean(sep_rank_neg):.3f}")
-    print(f"[rank-base] dMRR={statistics.mean(mrr_rank)-statistics.mean(mrr_base):+.3f}  "
-          f"drank1={100*(rank1_rank-rank1_base)/tot:+.1f}pp")
+    _report(args, acc, run)
 
 
 if __name__ == "__main__":

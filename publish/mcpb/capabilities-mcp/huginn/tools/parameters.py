@@ -140,8 +140,7 @@ class ParameterRegistry:
         return sorted({p.category for p in cls._params.values()})
 
 
-# Register built-in parameters
-def _register_defaults() -> None:
+def _register_hpc_defaults() -> None:
     ParameterRegistry.register(
         Parameter(
             name="max_walltime_hours",
@@ -174,6 +173,9 @@ def _register_defaults() -> None:
             category="hpc",
         )
     )
+
+
+def _register_execution_defaults() -> None:
     ParameterRegistry.register(
         Parameter(
             name="auto_validate_physics",
@@ -214,6 +216,9 @@ def _register_defaults() -> None:
             category="execution",
         )
     )
+
+
+def _register_llm_defaults() -> None:
     ParameterRegistry.register(
         Parameter(
             name="llm_temperature",
@@ -236,6 +241,13 @@ def _register_defaults() -> None:
             category="llm",
         )
     )
+
+
+# Register built-in parameters
+def _register_defaults() -> None:
+    _register_hpc_defaults()
+    _register_execution_defaults()
+    _register_llm_defaults()
 
 
 _register_defaults()

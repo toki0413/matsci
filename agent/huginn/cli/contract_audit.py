@@ -267,7 +267,9 @@ def _attr_dotted(node: ast.AST) -> str | None:
 
 
 @functools.cache
-def _file_imports(path: Path) -> tuple[
+def _file_imports(
+    path: Path,
+) -> tuple[
     tuple[tuple[int, str, tuple[tuple[str, str | None], ...]], ...],
     tuple[tuple[str, str | None], ...],
 ]:
@@ -284,7 +286,11 @@ def _file_imports(path: Path) -> tuple[
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             froms.append(
-                (node.level, node.module or "", tuple((a.name, a.asname) for a in node.names))
+                (
+                    node.level,
+                    node.module or "",
+                    tuple((a.name, a.asname) for a in node.names),
+                )
             )
         elif isinstance(node, ast.Import):
             plains.extend((a.name, a.asname) for a in node.names)
@@ -321,6 +327,42 @@ def _module_bindings(path: Path, target: str, rel: str) -> tuple[set[str], set[s
     return direct, aliases
 
 
+def _surface_file_hits(
+    root: Path, py: Path, rel: str, target: str, base: str, name_set: set[str]
+) -> tuple[str, str, set[str]]:
+    """单文件内对 target 模块公开名的引用; 返回 (bucket, 相对路径, 命中名).
+
+    bucket 为空串表示该文件读不出来, 调用方跳过.
+    """
+    text = _source(py)
+    tree = _parse(py)
+    if text is None or tree is None:
+        return "", "", set()
+    frel = py.relative_to(root).as_posix()
+    bucket = "internal" if frel == rel else ("test" if _is_test(frel) else "prod")
+    direct, aliases = _module_bindings(py, target, frel)
+    # 动态按文件路径加载本模块的兜底信号: 文件名 + spec_from_file_location 同时出现.
+    dyn = base in text and "spec_from_file_location" in text
+    hits: set[str] = {n for n in name_set if n in direct}
+    if aliases or dyn:
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Attribute) and node.attr in name_set):
+                continue
+            if dyn:
+                hits.add(node.attr)
+                continue
+            dotted = _attr_dotted(node)
+            if dotted and any(dotted == f"{al}.{node.attr}" for al in aliases):
+                hits.add(node.attr)
+    if bucket == "internal":
+        # 定义文件内: 裸引用即本模块自身的调用点 (无歧义).
+        counter = _ident_counter(tree)
+        for n in name_set:
+            if counter.get(n, 0):
+                hits.add(n)
+    return bucket, frel, hits
+
+
 def _scan_surface(
     rel: str, names: list[str], root: Path
 ) -> dict[str, dict[str, list[str]]]:
@@ -343,35 +385,12 @@ def _scan_surface(
         n: {"prod": [], "test": [], "internal": []} for n in names
     }
     name_set = set(names)
+    # 走 `_source` / `_parse` 缓存: 本函数被奖励面每个词条 + 授权面每个口径
+    # 各调一次 (全仓重扫 ~20 遍), 裸 read+parse 是快照 57s 里的主项.
     for py in _iter_py(root):
-        # 走 `_source` / `_parse` 缓存: 本函数被奖励面每个词条 + 授权面每个口径
-        # 各调一次 (全仓重扫 ~20 遍), 裸 read+parse 是快照 57s 里的主项.
-        text = _source(py)
-        tree = _parse(py)
-        if text is None or tree is None:
+        bucket, frel, hits = _surface_file_hits(root, py, rel, target, base, name_set)
+        if not bucket:
             continue
-        frel = py.relative_to(root).as_posix()
-        bucket = "internal" if frel == rel else ("test" if _is_test(frel) else "prod")
-        direct, aliases = _module_bindings(py, target, frel)
-        # 动态按文件路径加载本模块的兜底信号: 文件名 + spec_from_file_location 同时出现.
-        dyn = base in text and "spec_from_file_location" in text
-        hits: set[str] = {n for n in name_set if n in direct}
-        if aliases or dyn:
-            for node in ast.walk(tree):
-                if not (isinstance(node, ast.Attribute) and node.attr in name_set):
-                    continue
-                if dyn:
-                    hits.add(node.attr)
-                    continue
-                dotted = _attr_dotted(node)
-                if dotted and any(dotted == f"{al}.{node.attr}" for al in aliases):
-                    hits.add(node.attr)
-        if bucket == "internal":
-            # 定义文件内: 裸引用即本模块自身的调用点 (无歧义).
-            counter = _ident_counter(tree)
-            for n in name_set:
-                if counter.get(n, 0):
-                    hits.add(n)
         for n in hits:
             out[n][bucket].append(frel)
     return out
@@ -393,14 +412,8 @@ def _status(name: str, refs: dict[str, list[str]]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def build_reward_contract(root: Path | None = None) -> dict:
-    """构建奖励面 MECE 审计."""
-    root = root or _REPO
-    names = _declared_all(root / _REWARD_MODULE)
-    refs = _scan_surface(_REWARD_MODULE, names, root)
-
-    # 跨模块同名 (其它模块有同名顶层定义) → MECE mutually exclusive 候选.
-    # 先算, 因为同名会污染归属, 需在备注里点破.
+def _reward_dupes(names: list[str], root: Path) -> list[dict]:
+    """跨模块同名 (其它模块有同名顶层定义) → MECE mutually exclusive 候选."""
     dupes: list[dict] = []
     for name in names:
         others: list[str] = []
@@ -412,8 +425,11 @@ def build_reward_contract(root: Path | None = None) -> dict:
                 others.append(rel)
         if others:
             dupes.append({"name": name, "modules": sorted(set(others))})
-    dupe_names = {d["name"] for d in dupes}
+    return dupes
 
+
+def _reward_terms(names: list[str], refs: dict, dupe_names: set[str]) -> list[dict]:
+    """逐词条打包 status / 引用计数 / 备注."""
     terms: list[dict] = []
     for name in names:
         st = _status(name, refs)
@@ -435,13 +451,16 @@ def build_reward_contract(root: Path | None = None) -> dict:
                 "note": note,
             }
         )
+    return terms
 
-    # 惩罚轴重叠: 轴内 ≥2 项 → overlap.
+
+def _penalty_axis_rows(names: list[str]) -> list[dict]:
+    """惩罚轴重叠: 轴内 ≥2 项 → overlap."""
     axis_members: dict[str, list[dict]] = defaultdict(list)
     for name, (axis, signal) in _PENALTY_AXES.items():
         if name in names:
             axis_members[axis].append({"name": name, "signal": signal})
-    penalty_axes = [
+    return [
         {
             "axis": ax,
             "terms": [m["name"] for m in ms],
@@ -451,7 +470,20 @@ def build_reward_contract(root: Path | None = None) -> dict:
         for ax, ms in sorted(axis_members.items())
     ]
 
-    return {"terms": terms, "penalty_axes": penalty_axes, "cross_module_dupes": dupes}
+
+def build_reward_contract(root: Path | None = None) -> dict:
+    """构建奖励面 MECE 审计."""
+    root = root or _REPO
+    names = _declared_all(root / _REWARD_MODULE)
+    refs = _scan_surface(_REWARD_MODULE, names, root)
+    # 跨模块同名先算, 因为同名会污染归属, 需在备注里点破.
+    dupes = _reward_dupes(names, root)
+    terms = _reward_terms(names, refs, {d["name"] for d in dupes})
+    return {
+        "terms": terms,
+        "penalty_axes": _penalty_axis_rows(names),
+        "cross_module_dupes": dupes,
+    }
 
 
 _REWARD_STATUS_DOC = {
@@ -495,7 +527,7 @@ def render_reward_markdown(contract: dict) -> str:
         lines.append("|---|---|")
         for d in contract["cross_module_dupes"]:
             lines.append(
-                f"| `{d['name']}` | {', '.join('`'+m+'`' for m in d['modules'])} |"
+                f"| `{d['name']}` | {', '.join('`' + m + '`' for m in d['modules'])} |"
             )
     else:
         lines.append("— 无跨模块同名定义。")
@@ -596,7 +628,7 @@ def render_scope_markdown(contract: dict) -> str:
 # 工作流面: 执行 mode 分发 vs planner 提示面
 # ---------------------------------------------------------------------------
 
-_EXEC_SPEC_REL = "huginn/harness/phase_spec.py"    # dispatch_table (登记面)
+_EXEC_SPEC_REL = "huginn/harness/phase_spec.py"  # dispatch_table (登记面)
 _ENGINE_ACT_REL = "huginn/autoloop/engine_act.py"  # hardcode elif (执行面)
 _PLAN_CHECK_REL = "huginn/autoloop/plan_check.py"  # planner 提示 (教给 LLM 的面)
 
@@ -610,10 +642,10 @@ _PLAN_MODE_LIST_RE = re.compile(r"MODE:\s*<([a-z_|]+)>")
 # 自测里的 override fixture 是"示例配置"不是生产契约 (phase_spec `_selfcheck` 注册的
 # `custom_mode` 覆盖项即此类, 会让 dispatch_table 审计误报), 扫描前一律剥掉.
 _SELFTEST_RE = re.compile(
-    r'^(?:'
+    r"^(?:"
     r'if\s+__name__\s*==\s*["\']__main__["\']\s*:'
-    r'|def\s+_?self_?check\w*\s*\('
-    r')',
+    r"|def\s+_?self_?check\w*\s*\("
+    r")",
     re.M,
 )
 
@@ -672,13 +704,19 @@ def render_workflow_markdown(contract: dict) -> str:
     lines.append("| 面 | 集合 |")
     lines.append("|---|---|")
     lines.append(
-        "| dispatch_table | " + (", ".join(f"`{m}`" for m in contract["dispatch"]) or "—") + " |"
+        "| dispatch_table | "
+        + (", ".join(f"`{m}`" for m in contract["dispatch"]) or "—")
+        + " |"
     )
     lines.append(
-        "| engine_act 分支 | " + (", ".join(f"`{m}`" for m in contract["branches"]) or "—") + " |"
+        "| engine_act 分支 | "
+        + (", ".join(f"`{m}`" for m in contract["branches"]) or "—")
+        + " |"
     )
     for i, s in enumerate(contract["taught"], 1):
-        lines.append(f"| planner 提示 #{i} | " + (", ".join(f"`{m}`" for m in s) or "—") + " |")
+        lines.append(
+            f"| planner 提示 #{i} | " + (", ".join(f"`{m}`" for m in s) or "—") + " |"
+        )
     lines.append("")
     lines.append(
         "- dispatch_table == 硬编码分支: "
@@ -701,17 +739,22 @@ def render_workflow_markdown(contract: dict) -> str:
 # ---------------------------------------------------------------------------
 
 # (人类可读名, 仓根相对路径, 提取模式词的块正则)
+# A3: 三处词表已收敛到 huginn/agent_modes.py (session/set_mode 等处只导入引用).
 _MODE_SITE_RES: tuple[tuple[str, str, str], ...] = (
-    ("session 恢复白名单", "huginn/agent/session.py", r"mode in \(([^)]*)\)"),
     (
-        "critique._VALID_MODES",
-        "huginn/metacog/critique.py",
-        r"_VALID_MODES\s*=\s*frozenset\(\{([^}]*)\}\)",
+        "agent_modes.SETTABLE_MODES",
+        "huginn/agent_modes.py",
+        r"SETTABLE_MODES[^=]*=\s*\(([^)]*)\)",
     ),
     (
-        "core._LONG_HORIZON_MODES",
-        "huginn/agent/core.py",
-        r"_LONG_HORIZON_MODES\s*=\s*\(([^)]*)\)",
+        "agent_modes.CRITIQUE_MODES",
+        "huginn/agent_modes.py",
+        r"CRITIQUE_MODES[^=]*=\s*frozenset\(\{([^}]*)\}\)",
+    ),
+    (
+        "agent_modes.LONG_HORIZON_MODES",
+        "huginn/agent_modes.py",
+        r"LONG_HORIZON_MODES[^=]*=\s*\(([^)]*)\)",
     ),
 )
 _TASKMODE_COMMENT_RE = re.compile(r'mode:\s*str\s*=\s*"[a-z_]+"\s*#\s*([a-z_ /]+)')
@@ -774,8 +817,9 @@ def render_mode_markdown(contract: dict) -> str:
     lines.append("## 模式面: agent 顶层模式词表一致性")
     lines.append("")
     lines.append(
-        "来源: prompt 段 (`_MODE_INSTRUCTIONS`) / session 恢复白名单 / "
-        "`critique._VALID_MODES` / `core._LONG_HORIZON_MODES` / `set_mode()` 实参. "
+        "来源: prompt 段 (`_MODE_INSTRUCTIONS`) / `huginn/agent_modes.py` 的 "
+        "`SETTABLE_MODES` / `CRITIQUE_MODES` / `LONG_HORIZON_MODES` / "
+        "`set_mode()` 实参. "
         "任何一处都不是全集即 MECE 违例 (mutex: 词表互不一致; exhaustive: 缺口)."
     )
     lines.append("")
@@ -795,9 +839,7 @@ def render_mode_markdown(contract: dict) -> str:
         "- 被 `set_mode()` 却无 prompt 段 (无提示词的模式): "
         + (", ".join(f"`{m}`" for m in contract["runtime_only"]) or "— 无")
     )
-    lines.append(
-        "- 各词表互相一致: " + ("✅" if contract["consistent"] else "⚠️ 否")
-    )
+    lines.append("- 各词表互相一致: " + ("✅" if contract["consistent"] else "⚠️ 否"))
     lines.append("")
     return "\n".join(lines)
 
@@ -832,27 +874,104 @@ _VOCAB_STOP_NAMES = frozenset({"__slots__", "__all__", "__match_args__"})
 # 为"自然语言表"而非闭集枚举, 退出撞名/分歧统计.
 _VOCAB_STOP_WORDS = frozenset(
     {
-        "and", "for", "from", "if", "any", "a", "to", "of", "in", "on", "the",
-        "is", "it", "or", "not", "no", "yes", "all", "more", "less", "as", "at",
-        "by", "do", "be", "an", "we", "you", "i", "this", "that", "with", "but",
-        "so", "then", "when", "what", "how", "why", "which", "who", "there",
-        "here", "out", "up",
+        "and",
+        "for",
+        "from",
+        "if",
+        "any",
+        "a",
+        "to",
+        "of",
+        "in",
+        "on",
+        "the",
+        "is",
+        "it",
+        "or",
+        "not",
+        "no",
+        "yes",
+        "all",
+        "more",
+        "less",
+        "as",
+        "at",
+        "by",
+        "do",
+        "be",
+        "an",
+        "we",
+        "you",
+        "i",
+        "this",
+        "that",
+        "with",
+        "but",
+        "so",
+        "then",
+        "when",
+        "what",
+        "how",
+        "why",
+        "which",
+        "who",
+        "there",
+        "here",
+        "out",
+        "up",
     }
 )
 # **命名空间登记表**: 登记为允许跨命名空间共用的词 (通用生命周期/状态词).
 # 这些词在多个状态枚举里合法复用, 不算"同名不同物"; 未登记的词才报撞名候选.
 _VOCAB_SHARED_TOKENS = frozenset(
     {
-        "none", "error", "success", "failed", "pending", "running", "completed",
-        "status", "approved", "rejected", "denied", "confirmed", "verified",
-        "refuted", "superseded", "blocked", "in_progress", "ok", "unknown",
-        "ready", "done", "active", "inactive", "enabled", "disabled", "warn",
-        "warning", "info", "critical", "high", "low", "medium", "max",
-        "minimum", "maximum", "default", "other", "mixed", "balanced",
+        "none",
+        "error",
+        "success",
+        "failed",
+        "pending",
+        "running",
+        "completed",
+        "status",
+        "approved",
+        "rejected",
+        "denied",
+        "confirmed",
+        "verified",
+        "refuted",
+        "superseded",
+        "blocked",
+        "in_progress",
+        "ok",
+        "unknown",
+        "ready",
+        "done",
+        "active",
+        "inactive",
+        "enabled",
+        "disabled",
+        "warn",
+        "warning",
+        "info",
+        "critical",
+        "high",
+        "low",
+        "medium",
+        "max",
+        "minimum",
+        "maximum",
+        "default",
+        "other",
+        "mixed",
+        "balanced",
     }
 )
 _VOCAB_MAX_CLOSED = 12  # 闭集规模上限: 超过多为词表/包清单, 退化为噪声
 _VOCAB_CLUSTER_THR = 0.5  # Jaccard 阈值: 两站点值域重叠过半即同簇
+
+# 单一词表源模块: 模块内多个常量是有意嵌套的子集 (全集/可设置/长程/...),
+# 簇内分歧不按"词表漂移"报. 只登记确实一处声明、其余派生/导入的模块.
+_VOCAB_SINGLE_SOURCE_MODULES = frozenset({"huginn/agent_modes.py"})
 
 
 def _vocab_is_token(s: object) -> bool:
@@ -903,7 +1022,11 @@ def _vocab_enum_values(cls: ast.ClassDef) -> list[str] | None:
 
 def _vocab_assign_target(node: ast.AST) -> tuple[ast.Name | None, ast.AST | None]:
     """取 `X = v` / `X: T = v` 的 (目标名, 右值). 注解式赋值同样要收."""
-    if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+    if (
+        isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+    ):
         return node.targets[0], node.value
     if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
         return node.target, node.value
@@ -920,10 +1043,16 @@ def _vocab_values(value: ast.AST) -> tuple[list[str], str] | None:
     ):
         vals = _vocab_str_consts(value.args[0])
         return (vals, value.func.id) if vals else None
-    if isinstance(value, ast.Subscript) and ast.unparse(value.value).endswith("Literal"):
+    if isinstance(value, ast.Subscript) and ast.unparse(value.value).endswith(
+        "Literal"
+    ):
         sl = value.slice
         elts = sl.elts if isinstance(sl, ast.Tuple) else [sl]
-        vals = [e.value for e in elts if isinstance(e, ast.Constant) and _vocab_is_token(e.value)]
+        vals = [
+            e.value
+            for e in elts
+            if isinstance(e, ast.Constant) and _vocab_is_token(e.value)
+        ]
         if vals and len(vals) == len(elts):
             return vals, "Literal"
     vals = _vocab_str_consts(value)
@@ -932,7 +1061,11 @@ def _vocab_values(value: ast.AST) -> tuple[list[str], str] | None:
 
 def _vocab_mapping(name: str, value: ast.AST) -> dict[str, str] | None:
     """`X_TO_Y = {..}` 字面量映射表 → {键源码, 值源码}. 推导式派生表不在此列."""
-    if not _VOCAB_MAP_RE.match(name) or not isinstance(value, ast.Dict) or not value.keys:
+    if (
+        not _VOCAB_MAP_RE.match(name)
+        or not isinstance(value, ast.Dict)
+        or not value.keys
+    ):
         return None
     out: dict[str, str] = {}
     for k, v in zip(value.keys, value.values):
@@ -941,6 +1074,90 @@ def _vocab_mapping(name: str, value: ast.AST) -> dict[str, str] | None:
         except Exception:  # noqa: BLE001 - 无法源码化的键值对跳过整表
             return None
     return out or None
+
+
+def _vocab_class_site(rel: str, node: ast.ClassDef, sites: list[dict]) -> None:
+    vals = _vocab_enum_values(node)
+    if vals and len(vals) >= 3:
+        sites.append(
+            {
+                "rel": rel,
+                "name": f"class {node.name}",
+                "kind": "Enum",
+                "line": node.lineno,
+                "values": vals,
+            }
+        )
+
+
+def _vocab_call_sites(rel: str, node: ast.Call, sites: list[dict]) -> None:
+    for kw in node.keywords:
+        if not (kw.arg and _VOCAB_KWARG_RE.search(kw.arg)):
+            continue
+        vals = _vocab_str_consts(kw.value)
+        if vals and len(vals) >= 3:
+            sites.append(
+                {
+                    "rel": rel,
+                    "name": kw.arg,
+                    "kind": "kwarg",
+                    "line": node.lineno,
+                    "values": vals,
+                }
+            )
+
+
+def _vocab_assign_sites(
+    rel: str, node: ast.AST, sites: list[dict], mappings: list[dict]
+) -> None:
+    target, value = _vocab_assign_target(node)
+    if target is None or value is None:
+        return
+    m = _vocab_mapping(target.id, value)
+    if m:
+        mappings.append(
+            {"rel": rel, "name": target.id, "line": node.lineno, "entries": m}
+        )
+    cand = _vocab_values(value)
+    if cand and len(cand[0]) >= 3:
+        vals, kind = cand
+        sites.append(
+            {
+                "rel": rel,
+                "name": target.id,
+                "kind": kind,
+                "line": node.lineno,
+                "values": vals,
+            }
+        )
+
+
+def _vocab_collect(
+    rel: str, tree: ast.AST, sites: list[dict], mappings: list[dict]
+) -> None:
+    """逐 AST 节点分流: ClassDef / Call / 赋值目标."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            _vocab_class_site(rel, node, sites)
+        elif isinstance(node, ast.Call):
+            _vocab_call_sites(rel, node, sites)
+        else:
+            _vocab_assign_sites(rel, node, sites, mappings)
+
+
+def _vocab_dedupe(sites: list[dict]) -> list[dict]:
+    """按 (rel, name, line) 去重, 再补 ``declared`` 标记."""
+    seen: set[tuple[str, str, int]] = set()
+    uniq: list[dict] = []
+    for s in sites:
+        key = (s["rel"], s["name"], s["line"])
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(s)
+    for s in uniq:
+        s["declared"] = _vocab_declared(s["name"], s["kind"])
+    return uniq
 
 
 def scan_vocabularies(root: Path) -> tuple[list[dict], list[dict]]:
@@ -954,42 +1171,8 @@ def scan_vocabularies(root: Path) -> tuple[list[dict], list[dict]]:
         tree = _parse(py)
         if tree is None:
             continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                vals = _vocab_enum_values(node)
-                if vals and len(vals) >= 3:
-                    sites.append(
-                        {"rel": rel, "name": f"class {node.name}", "kind": "Enum", "line": node.lineno, "values": vals}
-                    )
-                continue
-            if isinstance(node, ast.Call):
-                for kw in node.keywords:
-                    if kw.arg and _VOCAB_KWARG_RE.search(kw.arg):
-                        vals = _vocab_str_consts(kw.value)
-                        if vals and len(vals) >= 3:
-                            sites.append({"rel": rel, "name": kw.arg, "kind": "kwarg", "line": node.lineno, "values": vals})
-                continue
-            target, value = _vocab_assign_target(node)
-            if target is None or value is None:
-                continue
-            m = _vocab_mapping(target.id, value)
-            if m:
-                mappings.append({"rel": rel, "name": target.id, "line": node.lineno, "entries": m})
-            cand = _vocab_values(value)
-            if cand and len(cand[0]) >= 3:
-                vals, kind = cand
-                sites.append({"rel": rel, "name": target.id, "kind": kind, "line": node.lineno, "values": vals})
-
-    seen: set[tuple[str, str, int]] = set()
-    uniq: list[dict] = []
-    for s in sites:
-        key = (s["rel"], s["name"], s["line"])
-        if key not in seen:
-            seen.add(key)
-            uniq.append(s)
-    for s in uniq:
-        s["declared"] = _vocab_declared(s["name"], s["kind"])
-    return uniq, mappings
+        _vocab_collect(rel, tree, sites, mappings)
+    return _vocab_dedupe(sites), mappings
 
 
 def _assigned_names(root: Path) -> set[str]:
@@ -1012,7 +1195,9 @@ def _vocab_jaccard(a: set[str], b: set[str]) -> float:
     return len(a & b) / len(union) if union else 0.0
 
 
-def cluster_vocabularies(sites: list[dict], thr: float = _VOCAB_CLUSTER_THR) -> list[list[int]]:
+def cluster_vocabularies(
+    sites: list[dict], thr: float = _VOCAB_CLUSTER_THR
+) -> list[list[int]]:
     """按值域 Jaccard 重叠 union-find 聚类: 重叠过半即视为同一"命名空间"."""
     n = len(sites)
     parent = list(range(n))
@@ -1036,13 +1221,8 @@ def cluster_vocabularies(sites: list[dict], thr: float = _VOCAB_CLUSTER_THR) -> 
     return list(comps.values())
 
 
-def build_vocabulary_contract(root: Path | None = None) -> dict:
-    """词汇面雷达: 枚举→聚类→三类结构性违例 + 映射单射性."""
-    root = root or _REPO
-    sites, mappings = scan_vocabularies(root)
-    clusters = cluster_vocabularies(sites)
-
-    # 闭集簇: 全成员都是声明枚举 + 规模不超上限 + 不含自然语言虚词.
+def _vocab_closed(sites: list[dict], clusters: list[list[int]]) -> list[list[int]]:
+    """闭集簇: 全成员都是声明枚举 + 规模不超上限 + 不含自然语言虚词."""
     closed: list[list[int]] = []
     for comp in clusters:
         toks = {v for i in comp for v in sites[i]["values"]}
@@ -1053,10 +1233,15 @@ def build_vocabulary_contract(root: Path | None = None) -> dict:
         if toks & _VOCAB_STOP_WORDS:
             continue
         closed.append(comp)
+    return closed
 
-    # 1. 同名跨模块定义 (一个概念两份定义).
-    # 只收**声明过的**词表: 函数内同名局部元组 (如 `required = ("location", ...)`)
-    # 与模块级 frozenset 撞名不是"一个概念两份定义", 收进来是噪声.
+
+def _vocab_dup_defs(sites: list[dict]) -> list[dict]:
+    """同名跨模块定义 (一个概念两份定义).
+
+    只收**声明过的**词表: 函数内同名局部元组 (如 `required = ("location", ...)`)
+    与模块级 frozenset 撞名不是"一个概念两份定义", 收进来是噪声.
+    """
     by_name: dict[str, list[int]] = defaultdict(list)
     for i, s in enumerate(sites):
         by_name[s["name"]].append(i)
@@ -1074,13 +1259,20 @@ def build_vocabulary_contract(root: Path | None = None) -> dict:
                 "name": name,
                 "same_values": len(set(sets)) == 1,
                 "sites": [
-                    {"rel": sites[i]["rel"], "line": sites[i]["line"], "size": len(set(sites[i]["values"]))}
+                    {
+                        "rel": sites[i]["rel"],
+                        "line": sites[i]["line"],
+                        "size": len(set(sites[i]["values"])),
+                    }
                     for i in idxs
                 ],
             }
         )
+    return dup_defs
 
-    # 2. 未登记撞名 (同一词横跨 >=2 个闭集簇).
+
+def _vocab_collisions(sites: list[dict], closed: list[list[int]]) -> list[dict]:
+    """未登记撞名 (同一词横跨 >=2 个闭集簇)."""
     tok2cluster: dict[str, set[int]] = defaultdict(set)
     for ci, comp in enumerate(closed):
         for i in comp:
@@ -1091,14 +1283,24 @@ def build_vocabulary_contract(root: Path | None = None) -> dict:
         if len(cis) < 2 or tok in _VOCAB_SHARED_TOKENS:
             continue
         spans = sorted(
-            {f"{sites[closed[c][0]]['rel']}::{sites[closed[c][0]]['name']}" for c in cis}
+            {
+                f"{sites[closed[c][0]]['rel']}::{sites[closed[c][0]]['name']}"
+                for c in cis
+            }
         )
         collisions.append({"token": tok, "spans": spans})
+    return collisions
 
-    # 3. 簇内分歧 (同簇成员值域不等: 子集/超集漂移).
+
+def _vocab_divergence(sites: list[dict], closed: list[list[int]]) -> list[dict]:
+    """簇内分歧 (同簇成员值域不等: 子集/超集漂移)."""
     divergence: list[dict] = []
     for comp in closed:
         if len(comp) < 2:
+            continue
+        # 单一词表源模块内的常量是有意嵌套的子集 (全集/可设置/长程/critique),
+        # 同模块内值域不等不算漂移 (A3 把六处 mode 词表收敛到该模块).
+        if all(sites[i]["rel"] in _VOCAB_SINGLE_SOURCE_MODULES for i in comp):
             continue
         sets = {frozenset(sites[i]["values"]) for i in comp}
         if len(sets) == 1:
@@ -1126,47 +1328,114 @@ def build_vocabulary_contract(root: Path | None = None) -> dict:
                 "members": members,
             }
         )
+    return divergence
 
-    # 4. 映射表: 单射性 + 是否声明了反向表 (非单射 + 有反向表 ⇒ 往返丢信息).
+
+def _vocab_map_report(m: dict, assigned: set[str]) -> dict:
+    """单张映射表的单射性 + 反向表是否声明."""
+    vals = list(m["entries"].values())
+    # 只处理标准 `<A>_TO_<B>` 两段名; `A_TO_B_TO_C` 之类的多段名不猜反向表名,
+    # 避免 split 解包 ValueError 直接崩掉整个词汇面.
+    parts = m["name"].split("_TO_")
+    a, b = (parts[0], parts[1]) if len(parts) == 2 else (None, None)
+    reverse = f"{b}_TO_{a}" if a is not None else m["name"]
+    coll: dict[str, list[str]] = defaultdict(list)
+    for k, v in m["entries"].items():
+        coll[v].append(k)
+    return {
+        "name": m["name"],
+        "rel": m["rel"],
+        "entries": len(m["entries"]),
+        "injective": len(set(vals)) == len(vals),
+        "collisions": {v: ks for v, ks in sorted(coll.items()) if len(ks) > 1},
+        "reverse_name": reverse,
+        "reverse_present": reverse in assigned,
+    }
+
+
+def build_vocabulary_contract(root: Path | None = None) -> dict:
+    """词汇面雷达: 枚举→聚类→三类结构性违例 + 映射单射性."""
+    root = root or _REPO
+    sites, mappings = scan_vocabularies(root)
+    clusters = cluster_vocabularies(sites)
+    closed = _vocab_closed(sites, clusters)
+    # 映射表: 单射性 + 是否声明了反向表 (非单射 + 有反向表 ⇒ 往返丢信息).
     assigned = _assigned_names(root)
-    map_reports: list[dict] = []
-    for m in mappings:
-        vals = list(m["entries"].values())
-        # 只处理标准 `<A>_TO_<B>` 两段名; `A_TO_B_TO_C` 之类的多段名不猜反向表名,
-        # 避免 split 解包 ValueError 直接崩掉整个词汇面.
-        parts = m["name"].split("_TO_")
-        a, b = (parts[0], parts[1]) if len(parts) == 2 else (None, None)
-        reverse = f"{b}_TO_{a}" if a is not None else m["name"]
-        coll: dict[str, list[str]] = defaultdict(list)
-        for k, v in m["entries"].items():
-            coll[v].append(k)
-        map_reports.append(
-            {
-                "name": m["name"],
-                "rel": m["rel"],
-                "entries": len(m["entries"]),
-                "injective": len(set(vals)) == len(vals),
-                "collisions": {v: ks for v, ks in sorted(coll.items()) if len(ks) > 1},
-                "reverse_name": reverse,
-                "reverse_present": reverse in assigned,
-            }
-        )
-
     return {
         "site_count": len(sites),
         "cluster_count": len(clusters),
         "closed_cluster_count": len(closed),
-        "duplicate_defs": dup_defs,
-        "collisions": collisions,
-        "divergence": divergence,
-        "mappings": map_reports,
+        "duplicate_defs": _vocab_dup_defs(sites),
+        "collisions": _vocab_collisions(sites, closed),
+        "divergence": _vocab_divergence(sites, closed),
+        "mappings": [_vocab_map_report(m, assigned) for m in mappings],
     }
 
 
+def _rv_dup_defs(rows: list[dict]) -> list[str]:
+    """同名跨模块定义表."""
+    out = ["### 同名跨模块定义 (mutually exclusive)", ""]
+    if not rows:
+        return out + ["— 无。", ""]
+    out.append("| 名称 | 值域一致 | 定义点 (规模) |")
+    out.append("|---|---|---|")
+    for d in rows:
+        flag = "✅ 同" if d["same_values"] else "⚠️ 异"
+        sites = ", ".join(f"`{s['rel']}:{s['line']}`({s['size']})" for s in d["sites"])
+        out.append(f"| `{d['name']}` | {flag} | {sites} |")
+    return out + [""]
+
+
+def _rv_collisions(rows: list[dict]) -> list[str]:
+    """未登记撞名表."""
+    out = ["### 未登记撞名 (同一词横跨两个命名空间)", ""]
+    if not rows:
+        return out + ["— 无。", ""]
+    out.append("| 词 | 出现于 (命名空间代表站点) |")
+    out.append("|---|---|")
+    for c in rows:
+        out.append(
+            f"| `{c['token']}` | {', '.join('`' + s + '`' for s in c['spans'])} |"
+        )
+    return out + [""]
+
+
+def _rv_divergence(rows: list[dict]) -> list[str]:
+    """簇内分歧列表."""
+    out = ["### 簇内分歧 (同簇成员值域不等)", ""]
+    if not rows:
+        return out + ["— 无。", ""]
+    for d in rows:
+        out.append(f"- 簇 {d['cluster']} (并集 {len(d['union'])} 词):")
+        for m in d["members"]:
+            tail = ""
+            if m["missing"]:
+                tail += f" 缺 {', '.join('`' + x + '`' for x in m['missing'])}"
+            if m["extra"]:
+                tail += f" 多 {', '.join('`' + x + '`' for x in m['extra'])}"
+            out.append(f"  - `{m['rel']}:{m['line']}` {m['name']}{tail}")
+    return out + [""]
+
+
+def _rv_mappings(rows: list[dict]) -> list[str]:
+    """映射表单射性表."""
+    out = ["### 映射表 (非单射 + 有反向表 ⇒ 往返丢信息)", ""]
+    if not rows:
+        return out + ["— 无。", ""]
+    out.append("| 映射表 | 条目 | 单射 | 反向表 | 共像 |")
+    out.append("|---|---|---|---|---|")
+    for m in rows:
+        coll = "; ".join(f"`{v}`←{ks}" for v, ks in m["collisions"].items()) or "—"
+        rev = f"`{m['reverse_name']}`" + ("" if m["reverse_present"] else " (无)")
+        out.append(
+            f"| `{m['name']}` | {m['entries']} | {'是' if m['injective'] else '⚠️ 否'} "
+            f"| {rev} | {coll} |"
+        )
+    return out + [""]
+
+
 def render_vocabulary_markdown(contract: dict) -> str:
-    lines: list[str] = []
-    lines.append("## 词汇面: 值域词表雷达 (系统枚举 + 自动聚类)")
-    lines.append("")
+    lines: list[str] = ["## 词汇面: 值域词表雷达 (系统枚举 + 自动聚类)", ""]
     lines.append(
         f"系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) "
         f"共 {contract['site_count']} 站点, 按值域 Jaccard 重叠自动聚成 "
@@ -1174,58 +1443,10 @@ def render_vocabulary_markdown(contract: dict) -> str:
         "三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射."
     )
     lines.append("")
-    lines.append("### 同名跨模块定义 (mutually exclusive)")
-    lines.append("")
-    if contract["duplicate_defs"]:
-        lines.append("| 名称 | 值域一致 | 定义点 (规模) |")
-        lines.append("|---|---|---|")
-        for d in contract["duplicate_defs"]:
-            flag = "✅ 同" if d["same_values"] else "⚠️ 异"
-            sites = ", ".join(f"`{s['rel']}:{s['line']}`({s['size']})" for s in d["sites"])
-            lines.append(f"| `{d['name']}` | {flag} | {sites} |")
-    else:
-        lines.append("— 无。")
-    lines.append("")
-    lines.append("### 未登记撞名 (同一词横跨两个命名空间)")
-    lines.append("")
-    if contract["collisions"]:
-        lines.append("| 词 | 出现于 (命名空间代表站点) |")
-        lines.append("|---|---|")
-        for c in contract["collisions"]:
-            lines.append(f"| `{c['token']}` | {', '.join('`'+s+'`' for s in c['spans'])} |")
-    else:
-        lines.append("— 无。")
-    lines.append("")
-    lines.append("### 簇内分歧 (同簇成员值域不等)")
-    lines.append("")
-    if contract["divergence"]:
-        for d in contract["divergence"]:
-            lines.append(f"- 簇 {d['cluster']} (并集 {len(d['union'])} 词):")
-            for m in d["members"]:
-                tail = ""
-                if m["missing"]:
-                    tail += f" 缺 {', '.join('`'+x+'`' for x in m['missing'])}"
-                if m["extra"]:
-                    tail += f" 多 {', '.join('`'+x+'`' for x in m['extra'])}"
-                lines.append(f"  - `{m['rel']}:{m['line']}` {m['name']}{tail}")
-    else:
-        lines.append("— 无。")
-    lines.append("")
-    lines.append("### 映射表 (非单射 + 有反向表 ⇒ 往返丢信息)")
-    lines.append("")
-    if contract["mappings"]:
-        lines.append("| 映射表 | 条目 | 单射 | 反向表 | 共像 |")
-        lines.append("|---|---|---|---|---|")
-        for m in contract["mappings"]:
-            coll = "; ".join(f"`{v}`←{ks}" for v, ks in m["collisions"].items()) or "—"
-            rev = f"`{m['reverse_name']}`" + ("" if m["reverse_present"] else " (无)")
-            lines.append(
-                f"| `{m['name']}` | {m['entries']} | {'是' if m['injective'] else '⚠️ 否'} "
-                f"| {rev} | {coll} |"
-            )
-    else:
-        lines.append("— 无。")
-    lines.append("")
+    lines += _rv_dup_defs(contract["duplicate_defs"])
+    lines += _rv_collisions(contract["collisions"])
+    lines += _rv_divergence(contract["divergence"])
+    lines += _rv_mappings(contract["mappings"])
     return "\n".join(lines)
 
 
@@ -1411,6 +1632,46 @@ def _resolve_relative(rel: str, level: int, mod: str) -> str:
     return ".".join(parts + ([mod] if mod else []))
 
 
+def _tool_internal_refs(
+    tree: ast.AST, rel: str, by_rel: dict[str, set[str]], def_line: dict
+) -> set[str]:
+    """定义文件内被引用 (非定义行) 的白名单名."""
+    internal: set[str] = set()
+    for nm in by_rel.get(rel, ()):
+        ln = def_line[(rel, nm)]
+        # 引用可以是裸名 (`A_TOOLS`) 也可以是属性 (`self._ALWAYS_ON_TOOLS`) ——
+        # 只看 ast.Name 会把类属性风格的白名单误判成零引用死表.
+        refs = [
+            n
+            for n in ast.walk(tree)
+            if (isinstance(n, ast.Name) and n.id == nm)
+            or (isinstance(n, ast.Attribute) and n.attr == nm)
+        ]
+        if any(n.lineno != ln for n in refs):
+            internal.add(nm)
+    return internal
+
+
+def _tool_consumed(tree: ast.AST, rel: str) -> set[tuple[str, str]]:
+    """单文件内 (模块点分名, 符号名) 形式的消费点集合."""
+    consumed: set[tuple[str, str]] = set()
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            mod = _resolve_relative(rel, node.level, node.module or "")
+            for a in node.names:
+                aliases[a.asname or a.name] = f"{mod}.{a.name}"
+                consumed.add((mod, a.name))
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                aliases[a.asname or a.name.split(".")[-1]] = a.name
+        elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            mod = aliases.get(node.value.id)
+            if mod:
+                consumed.add((mod, node.attr))
+    return consumed
+
+
 def _tool_consumers(
     root: Path, sites: list[dict]
 ) -> tuple[dict[tuple[str, str], int], set[tuple[str, str]]]:
@@ -1435,35 +1696,12 @@ def _tool_consumers(
         tree = _parse(py)
         if tree is None:
             continue
-        for nm in by_rel.get(rel, ()):
-            ln = def_line[(rel, nm)]
-            # 引用可以是裸名 (`A_TOOLS`) 也可以是属性 (`self._ALWAYS_ON_TOOLS`) ——
-            # 只看 ast.Name 会把类属性风格的白名单误判成零引用死表.
-            refs = [
-                n
-                for n in ast.walk(tree)
-                if (isinstance(n, ast.Name) and n.id == nm)
-                or (isinstance(n, ast.Attribute) and n.attr == nm)
-            ]
-            if any(n.lineno != ln for n in refs):
-                internal.add((rel, nm))
+        internal.update(
+            (rel, nm) for nm in _tool_internal_refs(tree, rel, by_rel, def_line)
+        )
         if _is_test(rel):
             continue
-        consumed: set[tuple[str, str]] = set()
-        aliases: dict[str, str] = {}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                mod = _resolve_relative(rel, node.level, node.module or "")
-                for a in node.names:
-                    aliases[a.asname or a.name] = f"{mod}.{a.name}"
-                    consumed.add((mod, a.name))
-            elif isinstance(node, ast.Import):
-                for a in node.names:
-                    aliases[a.asname or a.name.split(".")[-1]] = a.name
-            elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
-                mod = aliases.get(node.value.id)
-                if mod:
-                    consumed.add((mod, node.attr))
+        consumed = _tool_consumed(tree, rel)
         for s in sites:
             if s["rel"] != rel and (_dotted(s["rel"]), s["name"]) in consumed:
                 counts[(s["rel"], s["name"])] += 1
@@ -1475,6 +1713,43 @@ def _tool_alias(entry: str, registered: set[str]) -> bool:
     return f"{entry}_tool" in registered or (
         entry.endswith("_tool") and entry[:-5] in registered
     )
+
+
+def _tool_allowlist_row(
+    s: dict, registered: set[str], consumers: dict, internal: set[tuple[str, str]]
+) -> tuple[dict, set[str]]:
+    """单张白名单的死项/别名/命名空间判定; 返回 (行, 命中的注册名)."""
+    vals = s["values"]
+    matched = [v for v in vals if v in registered]
+    raw_dead = [v for v in vals if v not in registered]
+    # 与注册名零重叠且无任何裸名↔`_tool` 别名对应 ⇒ 整表是外部命名空间
+    # (MCP 外部工具名等), "无同名注册工具"是预期而非缺陷, 故不发死项/别名判定.
+    # 只按"零重叠"判会把纯别名表 (如 `{"vasp","lammps"}` 全写成裸名) 误当外部,
+    # 连真死项一起吞掉 —— 故要求"连别名对应都没有"才算外部.
+    aliases = [v for v in raw_dead if _tool_alias(v, registered)]
+    external = not matched and not aliases
+    # 工具名从不含空格; 表里出现空格条目 (如 `"quantum espresso"`) ⇒ 这是
+    # prompt 关键词表 (匹配用户输入文本), 不是工具名白名单, 不做死项判定.
+    prose = any(" " in v for v in vals)
+    no_judge = external or prose
+    if no_judge:
+        aliases = []
+    n = consumers.get((s["rel"], s["name"]), 0)
+    row = {
+        "name": s["name"],
+        "rel": s["rel"],
+        "line": s["line"],
+        "size": len(vals),
+        "matched": len(matched),
+        "namespace": "keywords" if prose else ("external" if external else "registry"),
+        "aliases": aliases,
+        "phantoms": [] if no_judge else [v for v in raw_dead if v not in aliases],
+        "consumers": n,
+        "status": "wired"
+        if n
+        else ("internal-only" if (s["rel"], s["name"]) in internal else "dead"),
+    }
+    return row, set(matched)
 
 
 def build_tool_contract(root: Path | None = None) -> dict:
@@ -1504,57 +1779,69 @@ def build_tool_contract(root: Path | None = None) -> dict:
     allowlists: list[dict] = []
     covered: set[str] = set()
     for s in sites:
-        vals = s["values"]
-        matched = [v for v in vals if v in registered]
-        raw_dead = [v for v in vals if v not in registered]
-        # 与注册名零重叠且无任何裸名↔`_tool` 别名对应 ⇒ 整表是外部命名空间
-        # (MCP 外部工具名等), "无同名注册工具"是预期而非缺陷, 故不发死项/别名判定.
-        # 只按"零重叠"判会把纯别名表 (如 `{"vasp","lammps"}` 全写成裸名) 误当外部,
-        # 连真死项一起吞掉 —— 故要求"连别名对应都没有"才算外部.
-        aliases = [v for v in raw_dead if _tool_alias(v, registered)]
-        external = not matched and not aliases
-        # 工具名从不含空格; 表里出现空格条目 (如 `"quantum espresso"`) ⇒ 这是
-        # prompt 关键词表 (匹配用户输入文本), 不是工具名白名单, 不做死项判定.
-        prose = any(" " in v for v in vals)
-        no_judge = external or prose
-        if no_judge:
-            aliases = []
-        covered.update(matched)
-        n = consumers.get((s["rel"], s["name"]), 0)
-        allowlists.append(
-            {
-                "name": s["name"],
-                "rel": s["rel"],
-                "line": s["line"],
-                "size": len(vals),
-                "matched": len(matched),
-                "namespace": "keywords"
-                if prose
-                else ("external" if external else "registry"),
-                "aliases": aliases,
-                "phantoms": [] if no_judge else [v for v in raw_dead if v not in aliases],
-                "consumers": n,
-                "status": "wired"
-                if n
-                else ("internal-only" if (s["rel"], s["name"]) in internal else "dead"),
-            }
-        )
+        row, hit = _tool_allowlist_row(s, registered, consumers, internal)
+        covered |= hit
+        allowlists.append(row)
 
     return {
         "registry_size": len(registered),
         "spec_count": len(specs),
         "unresolved_specs": unresolved,
         "duplicate_names": dup_names,
-        "unregistered_classes": sorted(cls for cls in classes if cls not in spec_classes),
+        "unregistered_classes": sorted(
+            cls for cls in classes if cls not in spec_classes
+        ),
         "allowlists": allowlists,
         "covered_registry_names": len(covered),
     }
 
 
+def _rt_names(rows: list[dict], ns: str) -> str:
+    """某命名空间下全部白名单名的行内清单."""
+    return ", ".join(f"`{a['name']}`" for a in rows if a["namespace"] == ns) or "— 无"
+
+
+def _rt_dead_table(rows: list[dict]) -> list[str]:
+    """死项表 (白名单条目无同名注册工具 ⇒ 永不命中)."""
+    out = ["### 死项 (白名单条目无同名注册工具 ⇒ 永不命中)", ""]
+    dead = [a for a in rows if a["phantoms"]]
+    if not dead:
+        return out + ["— 无。", ""]
+    out.append("| 允许表 | 死项 |")
+    out.append("|---|---|")
+    for a in dead:
+        out.append(
+            f"| `{a['name']}` @ `{a['rel']}` "
+            f"| {', '.join('`' + p + '`' for p in a['phantoms'])} |"
+        )
+    return out + [""]
+
+
+def _rt_registry_gaps(contract: dict) -> list[str]:
+    """注册声明缺口段."""
+    out = ["### 注册声明缺口", ""]
+    if contract["unresolved_specs"]:
+        out.append("| 注册清单 | 模块 | 类 (静态解析不到) |")
+        out.append("|---|---|---|")
+        for s in contract["unresolved_specs"]:
+            out.append(f"| {s['list']} | `{s['module']}` | `{s['class']}` |")
+    else:
+        out.append("- 注册清单引用的类均静态可解析。")
+    for d in contract["duplicate_names"]:
+        out.append(
+            f"- ⚠️ 同名工具名由多类声明: `{d['name']}` ← "
+            + ", ".join(f"`{c}`" for c in d["classes"])
+        )
+    if contract["unregistered_classes"]:
+        out.append(
+            "- 声明了 `name` 却不在注册清单 (宣称未注册): "
+            + ", ".join(f"`{c}`" for c in contract["unregistered_classes"])
+        )
+    return out + [""]
+
+
 def render_tool_markdown(contract: dict) -> str:
-    lines: list[str] = []
-    lines.append("## 工具面: 注册声明面 vs 允许面")
-    lines.append("")
+    lines: list[str] = ["## 工具面: 注册声明面 vs 允许面", ""]
     lines.append(
         f"注册声明面: `tools/__init__.py` 注册清单 {contract['spec_count']} 条 → 全仓 "
         f"HuginnTool 子类声明的工具名 {contract['registry_size']} 个. 允许面: 全仓工具名"
@@ -1564,7 +1851,9 @@ def render_tool_markdown(contract: dict) -> str:
         "**关键词表** (匹配用户 prompt 文本, 不是工具名)."
     )
     lines.append("")
-    lines.append("| 允许表 | 位置 | 条目 | 命中注册名 | 命名空间 | 状态 | 外部消费 | 死项 | 别名 |")
+    lines.append(
+        "| 允许表 | 位置 | 条目 | 命中注册名 | 命名空间 | 状态 | 外部消费 | 死项 | 别名 |"
+    )
     lines.append("|---|---|---|---|---|---|---|---|---|")
     for a in contract["allowlists"]:
         lines.append(
@@ -1579,60 +1868,15 @@ def render_tool_markdown(contract: dict) -> str:
     )
     lines.append(
         "- 外部命名空间 (整表与注册名零重叠, 不判死项): "
-        + (
-            ", ".join(
-                f"`{a['name']}`" for a in contract["allowlists"] if a["namespace"] == "external"
-            )
-            or "— 无"
-        )
+        + _rt_names(contract["allowlists"], "external")
     )
     lines.append(
         "- 关键词表 (含空格条目, 匹配 prompt 文本, 不判死项): "
-        + (
-            ", ".join(
-                f"`{a['name']}`" for a in contract["allowlists"] if a["namespace"] == "keywords"
-            )
-            or "— 无"
-        )
+        + _rt_names(contract["allowlists"], "keywords")
     )
     lines.append("")
-
-    lines.append("### 死项 (白名单条目无同名注册工具 ⇒ 永不命中)")
-    lines.append("")
-    dead = [a for a in contract["allowlists"] if a["phantoms"]]
-    if dead:
-        lines.append("| 允许表 | 死项 |")
-        lines.append("|---|---|")
-        for a in dead:
-            lines.append(
-                f"| `{a['name']}` @ `{a['rel']}` "
-                f"| {', '.join('`'+p+'`' for p in a['phantoms'])} |"
-            )
-    else:
-        lines.append("— 无。")
-    lines.append("")
-
-    lines.append("### 注册声明缺口")
-    lines.append("")
-    if contract["unresolved_specs"]:
-        lines.append("| 注册清单 | 模块 | 类 (静态解析不到) |")
-        lines.append("|---|---|---|")
-        for s in contract["unresolved_specs"]:
-            lines.append(f"| {s['list']} | `{s['module']}` | `{s['class']}` |")
-    else:
-        lines.append("- 注册清单引用的类均静态可解析。")
-    if contract["duplicate_names"]:
-        for d in contract["duplicate_names"]:
-            lines.append(
-                f"- ⚠️ 同名工具名由多类声明: `{d['name']}` ← "
-                + ", ".join(f"`{c}`" for c in d["classes"])
-            )
-    if contract["unregistered_classes"]:
-        lines.append(
-            "- 声明了 `name` 却不在注册清单 (宣称未注册): "
-            + ", ".join(f"`{c}`" for c in contract["unregistered_classes"])
-        )
-    lines.append("")
+    lines += _rt_dead_table(contract["allowlists"])
+    lines += _rt_registry_gaps(contract)
     return "\n".join(lines)
 
 
@@ -1737,11 +1981,74 @@ def _resolve_hook_event(
     return None
 
 
+def _hook_bindings(
+    tree: ast.AST, rel: str, decl: dict[str, str]
+) -> tuple[dict[str, str], set[str]]:
+    """模块内事件常量本地名; 以及绑到 huginn.hooks 的模块别名.
+
+    定义文件自身 (`hooks/__init__.py`) 里常量是本地定义而非 import, 故预置自身常量
+    表 —— 否则 `trigger(POST_TOOL_USE_FAILURE, …)` 这类自触发漏计.
+    """
+    direct: dict[str, str] = (
+        {name: name for name in decl} if rel == _HOOKS_MODULE else {}
+    )
+    mod_aliases: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            mod = _resolve_relative(rel, node.level, node.module or "")
+            for a in node.names:
+                if mod == "huginn.hooks":
+                    direct[a.asname or a.name] = a.name
+                elif f"{mod}.{a.name}" == "huginn.hooks":
+                    mod_aliases.add(a.asname or a.name)
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name == "huginn.hooks":
+                    mod_aliases.add(a.asname or "hooks")
+    return direct, mod_aliases
+
+
+def _hook_call_event(
+    node: ast.Call, decl: dict[str, str], direct: dict[str, str], mod_aliases: set[str]
+) -> tuple[str | None, str | None]:
+    """单个 Call 的 (事件值, kind); 非钩子调用返回 (None, None)."""
+    fn = node.func
+    method = (
+        fn.attr
+        if isinstance(fn, ast.Attribute)
+        else (fn.id if isinstance(fn, ast.Name) else None)
+    )
+    if method is None:
+        return None, None
+    if method in _HOOK_METHOD_EVENTS:
+        return decl.get(_HOOK_METHOD_EVENTS[method]), "trigger"
+    if method in _HOOK_REGISTER_METHODS:
+        val = (
+            _resolve_hook_event(node.args[0], direct, mod_aliases, decl)
+            if node.args
+            else None
+        )
+        return val, "register"
+    if method in _HOOK_TRIGGER_METHODS:
+        val = (
+            _resolve_hook_event(node.args[0], direct, mod_aliases, decl)
+            if node.args
+            else None
+        )
+        return val, "trigger"
+    return None, None
+
+
 def _hook_wiring(root: Path) -> dict[str, dict[str, list[str]]]:
     """扫触发/注册点, 按事件值归集 prod/test 位置."""
     decl = _hook_declarations(root)["consts"]
     out: dict[str, dict[str, list[str]]] = {
-        v: {"prod_trigger": [], "prod_register": [], "test_trigger": [], "test_register": []}
+        v: {
+            "prod_trigger": [],
+            "prod_register": [],
+            "test_trigger": [],
+            "test_register": [],
+        }
         for v in decl.values()
     }
     for py in _iter_py(root):
@@ -1749,49 +2056,12 @@ def _hook_wiring(root: Path) -> dict[str, dict[str, list[str]]]:
         tree = _parse(py)
         if tree is None:
             continue
-        # 模块内解析: 事件常量本地名 → 常量名; 以及绑到 huginn.hooks 的模块别名.
-        # 定义文件自身 (`hooks/__init__.py`) 里常量是本地定义而非 import, 故预置
-        # 自身常量表 —— 否则 `trigger(POST_TOOL_USE_FAILURE, …)` 这类自触发漏计.
-        direct: dict[str, str] = (
-            {name: name for name in decl} if rel == _HOOKS_MODULE else {}
-        )
-        mod_aliases: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                mod = _resolve_relative(rel, node.level, node.module or "")
-                for a in node.names:
-                    if mod == "huginn.hooks":
-                        direct[a.asname or a.name] = a.name
-                    elif f"{mod}.{a.name}" == "huginn.hooks":
-                        mod_aliases.add(a.asname or a.name)
-            elif isinstance(node, ast.Import):
-                for a in node.names:
-                    if a.name == "huginn.hooks":
-                        mod_aliases.add(a.asname or "hooks")
-
+        direct, mod_aliases = _hook_bindings(tree, rel, decl)
         bucket = "test" if _is_test(rel) else "prod"
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
-            fn = node.func
-            method = (
-                fn.attr
-                if isinstance(fn, ast.Attribute)
-                else (fn.id if isinstance(fn, ast.Name) else None)
-            )
-            if method is None:
-                continue
-            if method in _HOOK_METHOD_EVENTS:
-                val = decl.get(_HOOK_METHOD_EVENTS[method])
-                kind = "trigger"
-            elif method in _HOOK_REGISTER_METHODS:
-                val = _resolve_hook_event(node.args[0], direct, mod_aliases, decl) if node.args else None
-                kind = "register"
-            elif method in _HOOK_TRIGGER_METHODS:
-                val = _resolve_hook_event(node.args[0], direct, mod_aliases, decl) if node.args else None
-                kind = "trigger"
-            else:
-                continue
+            val, kind = _hook_call_event(node, decl, direct, mod_aliases)
             if val is None or val not in out:
                 continue
             out[val][f"{bucket}_{kind}"].append(f"{rel}:{node.lineno}")
@@ -1824,9 +2094,49 @@ def _hook_literal_wiring(root: Path) -> list[dict]:
             if method not in methods:
                 continue
             a0 = node.args[0]
-            if isinstance(a0, ast.Constant) and isinstance(a0.value, str) and a0.value in values:
-                out.append({"rel": rel, "line": node.lineno, "method": method, "value": a0.value})
+            if (
+                isinstance(a0, ast.Constant)
+                and isinstance(a0.value, str)
+                and a0.value in values
+            ):
+                out.append(
+                    {
+                        "rel": rel,
+                        "line": node.lineno,
+                        "method": method,
+                        "value": a0.value,
+                    }
+                )
     return out
+
+
+def _hook_event_row(const: str, value: str, w: dict) -> dict:
+    """单个事件常量的触发/注册计数 + 状态."""
+    prod_t, prod_r = len(w.get("prod_trigger", [])), len(w.get("prod_register", []))
+    test_t, test_r = len(w.get("test_trigger", [])), len(w.get("test_register", []))
+    if prod_t and prod_r:
+        status = "wired"
+    elif prod_t:
+        status = "trigger-only"
+    elif prod_r:
+        status = "register-only"
+    else:
+        status = "dead"
+    return {
+        "const": const,
+        "value": value,
+        "prod_trigger": prod_t,
+        "prod_register": prod_r,
+        "test_trigger": test_t,
+        "test_register": test_r,
+        "status": status,
+        "note": _HOOK_EVENT_NOTES.get(const)
+        or (
+            "触发点存在但无注册消费者 —— 扩展点候选" if status == "trigger-only" else ""
+        ),
+        "trigger_sites": w.get("prod_trigger", []),
+        "register_sites": w.get("prod_register", []),
+    }
 
 
 def build_hook_contract(root: Path | None = None) -> dict:
@@ -1835,43 +2145,23 @@ def build_hook_contract(root: Path | None = None) -> dict:
     decl = _hook_declarations(root)
     wiring = _hook_wiring(root)
 
-    events: list[dict] = []
-    for const in decl["members"]:
-        value = decl["consts"].get(const, "")
-        w = wiring.get(value, {})
-        prod_t, prod_r = len(w.get("prod_trigger", [])), len(w.get("prod_register", []))
-        test_t, test_r = len(w.get("test_trigger", [])), len(w.get("test_register", []))
-        if prod_t and prod_r:
-            status = "wired"
-        elif prod_t:
-            status = "trigger-only"
-        elif prod_r:
-            status = "register-only"
-        else:
-            status = "dead"
-        events.append(
-            {
-                "const": const,
-                "value": value,
-                "prod_trigger": prod_t,
-                "prod_register": prod_r,
-                "test_trigger": test_t,
-                "test_register": test_r,
-                "status": status,
-                "note": _HOOK_EVENT_NOTES.get(const)
-                or ("触发点存在但无注册消费者 —— 扩展点候选" if status == "trigger-only" else ""),
-                "trigger_sites": w.get("prod_trigger", []),
-                "register_sites": w.get("prod_register", []),
-            }
+    events = [
+        _hook_event_row(
+            const,
+            decl["consts"].get(const, ""),
+            wiring.get(decl["consts"].get(const, ""), {}),
         )
+        for const in decl["members"]
+    ]
 
-    collisions: list[dict] = []
     by_value: dict[str, list[str]] = defaultdict(list)
     for const, value in decl["consts"].items():
         by_value[value].append(const)
-    for value, consts in sorted(by_value.items()):
-        if len(consts) > 1:
-            collisions.append({"value": value, "consts": sorted(consts)})
+    collisions = [
+        {"value": value, "consts": sorted(consts)}
+        for value, consts in sorted(by_value.items())
+        if len(consts) > 1
+    ]
 
     return {
         "module": _HOOKS_MODULE,
@@ -1891,10 +2181,74 @@ _HOOK_STATUS_DOC = {
 }
 
 
+def _rh_events_table(events: list[dict]) -> list[str]:
+    """事件状态总表."""
+    out = [
+        "| 事件常量 | 值 | 生产触发 | 生产注册 | 测试触发 | 测试注册 | 状态 | 备注 |"
+    ]
+    out.append("|---|---|---|---|---|---|---|---|")
+    for e in events:
+        out.append(
+            f"| `{e['const']}` | `{e['value']}` | {e['prod_trigger']} | {e['prod_register']} "
+            f"| {e['test_trigger']} | {e['test_register']} | `{e['status']}` | {e['note']} |"
+        )
+    return out + [""]
+
+
+def _rh_sites_table(events: list[dict]) -> list[str]:
+    """触发点 / 注册点明细表."""
+    out = ["### 触发点 / 注册点明细", ""]
+    out.append("| 事件常量 | 生产触发点 | 生产注册点 |")
+    out.append("|---|---|---|")
+    for e in events:
+        trig = ", ".join(f"`{s}`" for s in e["trigger_sites"]) or "—"
+        reg = ", ".join(f"`{s}`" for s in e["register_sites"]) or "—"
+        out.append(f"| `{e['const']}` | {trig} | {reg} |")
+    return out + [""]
+
+
+def _rh_violations(contract: dict) -> list[str]:
+    """互斥违例段 (撞值 + 字面量绕过常量)."""
+    out = ["### 互斥违例 (mutually exclusive)", ""]
+    if contract["collisions"]:
+        for c in contract["collisions"]:
+            out.append(
+                f"- ⚠️ 事件常量撞值 `{c['value']}`: "
+                + ", ".join(f"`{n}`" for n in c["consts"])
+            )
+    else:
+        out.append("- 事件常量值两两不同 —— 无撞值.")
+    if contract["literal_wiring"]:
+        for w in contract["literal_wiring"]:
+            out.append(
+                f"- ⚠️ 触发/注册用字面量而非常量: `{w['value']}` @ "
+                f"`{w['rel']}:{w['line']}` ({w['method']})"
+            )
+    else:
+        out.append("- 触发/注册均用事件常量, 无绕过常量的字面量.")
+    return out + [""]
+
+
+def _rh_gaps(contract: dict) -> list[str]:
+    """声明缺口段."""
+    out = ["### 声明缺口", ""]
+    if contract["not_in_all_events"]:
+        out.append(
+            "- ⚠️ 常量声明了却不在 `ALL_EVENTS` (register 无法校验): "
+            + ", ".join(f"`{c}`" for c in contract["not_in_all_events"])
+        )
+    if contract["unresolved_members"]:
+        out.append(
+            "- ⚠️ `ALL_EVENTS` 成员无对应常量定义: "
+            + ", ".join(f"`{c}`" for c in contract["unresolved_members"])
+        )
+    if not contract["not_in_all_events"] and not contract["unresolved_members"]:
+        out.append("- `ALL_EVENTS` 与事件常量定义面双向一致.")
+    return out + [""]
+
+
 def render_hook_markdown(contract: dict) -> str:
-    lines: list[str] = []
-    lines.append("## 钩子面: 事件声明面 vs 触发面 vs 注册面")
-    lines.append("")
+    lines: list[str] = ["## 钩子面: 事件声明面 vs 触发面 vs 注册面", ""]
     lines.append(
         f"声明面: `{contract['module']}` 的 {len(contract['events'])} 个事件"
         "(`ALL_EVENTS` 权威清单). 触发面: `trigger()` / `_trigger_hook()` / "
@@ -1903,64 +2257,16 @@ def render_hook_markdown(contract: dict) -> str:
         "(对偶于奖励面「宣称项零调用者」); `dead` = 声明了却零触发零注册."
     )
     lines.append("")
-    lines.append("状态: " + "; ".join(f"`{k}`={v}" for k, v in _HOOK_STATUS_DOC.items()))
-    lines.append("")
-    lines.append("| 事件常量 | 值 | 生产触发 | 生产注册 | 测试触发 | 测试注册 | 状态 | 备注 |")
-    lines.append("|---|---|---|---|---|---|---|---|")
-    for e in contract["events"]:
-        lines.append(
-            f"| `{e['const']}` | `{e['value']}` | {e['prod_trigger']} | {e['prod_register']} "
-            f"| {e['test_trigger']} | {e['test_register']} | `{e['status']}` | {e['note']} |"
-        )
-    lines.append("")
-
-    lines.append("### 触发点 / 注册点明细")
-    lines.append("")
-    lines.append("| 事件常量 | 生产触发点 | 生产注册点 |")
-    lines.append("|---|---|---|")
-    for e in contract["events"]:
-        trig = ", ".join(f"`{s}`" for s in e["trigger_sites"]) or "—"
-        reg = ", ".join(f"`{s}`" for s in e["register_sites"]) or "—"
-        lines.append(f"| `{e['const']}` | {trig} | {reg} |")
-    lines.append("")
-
-    lines.append("### 互斥违例 (mutually exclusive)")
-    lines.append("")
-    if contract["collisions"]:
-        for c in contract["collisions"]:
-            lines.append(
-                f"- ⚠️ 事件常量撞值 `{c['value']}`: "
-                + ", ".join(f"`{n}`" for n in c["consts"])
-            )
-    else:
-        lines.append("- 事件常量值两两不同 —— 无撞值.")
-    if contract["literal_wiring"]:
-        for w in contract["literal_wiring"]:
-            lines.append(
-                f"- ⚠️ 触发/注册用字面量而非常量: `{w['value']}` @ "
-                f"`{w['rel']}:{w['line']}` ({w['method']})"
-            )
-    else:
-        lines.append("- 触发/注册均用事件常量, 无绕过常量的字面量.")
-    lines.append("")
-
-    lines.append("### 声明缺口")
-    lines.append("")
-    if contract["not_in_all_events"]:
-        lines.append(
-            "- ⚠️ 常量声明了却不在 `ALL_EVENTS` (register 无法校验): "
-            + ", ".join(f"`{c}`" for c in contract["not_in_all_events"])
-        )
-    if contract["unresolved_members"]:
-        lines.append(
-            "- ⚠️ `ALL_EVENTS` 成员无对应常量定义: "
-            + ", ".join(f"`{c}`" for c in contract["unresolved_members"])
-        )
-    if not contract["not_in_all_events"] and not contract["unresolved_members"]:
-        lines.append("- `ALL_EVENTS` 与事件常量定义面双向一致.")
-    lines.append("")
     lines.append(
-        "诚实边界: 未知名字面量 (`register(\"vasp\", …)` 这类别的注册表) 无法静态"
+        "状态: " + "; ".join(f"`{k}`={v}" for k, v in _HOOK_STATUS_DOC.items())
+    )
+    lines.append("")
+    lines += _rh_events_table(contract["events"])
+    lines += _rh_sites_table(contract["events"])
+    lines += _rh_violations(contract)
+    lines += _rh_gaps(contract)
+    lines.append(
+        '诚实边界: 未知名字面量 (`register("vasp", …)` 这类别的注册表) 无法静态'
         "区分, 故不计入互斥违例; 但实现层 `trigger` 用 `_callbacks.get(event, [])` "
         "静默吞掉未知名 —— 字面量拼错会变空触发而不报错, 这是触发点须用常量的理由."
     )
@@ -2003,16 +2309,18 @@ _EVENTS_MODULE = "huginn/events/event_types.py"
 # 事件值形如 `group.name` (至少一段点分, 小写蛇形); 排除 `ALL = "*"`.
 _EVENT_VALUE_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")
 # 已知发布入口 (按方法名); 另有"首参字面量 = 已声明值"的启发式兜本地 emit 包装.
-_EVENT_PUBLISH_CALLS = frozenset({
-    "AgentEvent",
-    "_publish",
-    "_publish_internal",
-    "_publish_internal_sync",
-    "publish_generic_sync",
-    "publish_event",
-    "publish_event_sync",
-    "_emit_campaign",
-})
+_EVENT_PUBLISH_CALLS = frozenset(
+    {
+        "AgentEvent",
+        "_publish",
+        "_publish_internal",
+        "_publish_internal_sync",
+        "publish_generic_sync",
+        "publish_event",
+        "publish_event_sync",
+        "_emit_campaign",
+    }
+)
 _EVENT_SUBSCRIBE_CALLS = frozenset({"subscribe"})
 _EVENT_ALL_CONST = "ALL"
 
@@ -2133,7 +2441,10 @@ def _resolve_event_type(
 
 
 def _event_collections(
-    nodes: list[ast.AST], direct: dict[str, str], mod_aliases: set[str], decl: dict[str, str]
+    nodes: list[ast.AST],
+    direct: dict[str, str],
+    mod_aliases: set[str],
+    decl: dict[str, str],
 ) -> dict[str, set[str]]:
     """收集 `X = (<事件值>, …)` (含 `frozenset({…})`) —— 供 for 循环变量反解."""
     colls: dict[str, set[str]] = {}
@@ -2219,6 +2530,37 @@ def _event_type_kwarg(call: ast.Call) -> ast.AST | None:
     return call.args[0] if call.args else None
 
 
+def _event_call_arg(
+    node: ast.Call, declared_values: set[str]
+) -> tuple[str | None, ast.AST | None]:
+    """单个 Call 的 (kind, 事件参数表达式); 非发布/订阅调用返回 (None, None)."""
+    fn = node.func
+    method = (
+        fn.attr
+        if isinstance(fn, ast.Attribute)
+        else (fn.id if isinstance(fn, ast.Name) else None)
+    )
+    if method is None:
+        return None, None
+    if method in _EVENT_SUBSCRIBE_CALLS:
+        if not node.args:
+            return None, None
+        return "subscribe", node.args[0]
+    if method == "AgentEvent":
+        return "publish", _event_type_kwarg(node)
+    if method in _EVENT_PUBLISH_CALLS:
+        return "publish", (node.args[0] if node.args else None)
+    if (
+        node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+        and node.args[0].value in declared_values
+    ):
+        # 启发式: 首参字面量 = 已声明值 ⇒ 本地 emit 包装 (`_emit("snapshot.take", …)`).
+        return "publish", node.args[0]
+    return None, None
+
+
 @functools.cache
 def _event_wiring(root: Path) -> dict:
     """扫发布/订阅点, 按事件值归集 prod/test 位置.
@@ -2245,32 +2587,7 @@ def _event_wiring(root: Path) -> dict:
         for node in nodes:
             if not isinstance(node, ast.Call):
                 continue
-            fn = node.func
-            method = (
-                fn.attr
-                if isinstance(fn, ast.Attribute)
-                else (fn.id if isinstance(fn, ast.Name) else None)
-            )
-            if method is None:
-                continue
-            arg: ast.AST | None = None
-            kind: str | None = None
-            if method in _EVENT_SUBSCRIBE_CALLS:
-                if not node.args:
-                    continue
-                kind, arg = "subscribe", node.args[0]
-            elif method == "AgentEvent":
-                kind, arg = "publish", _event_type_kwarg(node)
-            elif method in _EVENT_PUBLISH_CALLS:
-                kind, arg = "publish", (node.args[0] if node.args else None)
-            elif (
-                node.args
-                and isinstance(node.args[0], ast.Constant)
-                and isinstance(node.args[0].value, str)
-                and node.args[0].value in declared_values
-            ):
-                # 启发式: 首参字面量 = 已声明值 ⇒ 本地 emit 包装 (`_emit("snapshot.take", …)`).
-                kind, arg = "publish", node.args[0]
+            kind, arg = _event_call_arg(node, declared_values)
             if arg is None or kind is None:
                 continue
             values, wild = _event_arg_values(arg, direct, mod_aliases, decl, loop_vars)
@@ -2296,60 +2613,45 @@ def _event_wiring(root: Path) -> dict:
     }
 
 
-def build_event_contract(root: Path | None = None) -> dict:
-    """事件面: 事件类型声明面 ↔ 发布面 ↔ 订阅面是否穷尽一致."""
-    root = root or _REPO
-    decl = _event_declarations(root)
-    scan = _event_wiring(root)
-    wiring = scan["wiring"]
-    declared_values = scan["declared_values"]
-
-    events: list[dict] = []
-    for const in decl["members"]:
-        value = decl["consts"].get(const, "")
-        w = wiring.get(value, {})
-        prod_p = len(w.get("prod_publish", []))
-        prod_s = len(w.get("prod_subscribe", []))
-        test_p = len(w.get("test_publish", []))
-        test_s = len(w.get("test_subscribe", []))
-        if prod_p:
-            status = "published"
-            note = "" if prod_s else "仅发布, 无 `.subscribe` 消费者 (外部 SSE 按字符串匹配)"
-        elif prod_s:
-            status = "subscribed-only"
-            note = "有 `.subscribe` 却零生产发布 —— 订阅永不发生"
-        else:
-            status = "dead"
-            note = "声明了却零生产发布零订阅"
-        events.append(
-            {
-                "const": const,
-                "value": value,
-                "prod_publish": prod_p,
-                "prod_subscribe": prod_s,
-                "test_publish": test_p,
-                "test_subscribe": test_s,
-                "status": status,
-                "note": note,
-                "publish_sites": w.get("prod_publish", []),
-                "subscribe_sites": w.get("prod_subscribe", []),
-            }
+def _event_row(const: str, value: str, w: dict) -> dict:
+    """单个事件类型的发布/订阅计数 + 状态."""
+    prod_p = len(w.get("prod_publish", []))
+    prod_s = len(w.get("prod_subscribe", []))
+    test_p = len(w.get("test_publish", []))
+    test_s = len(w.get("test_subscribe", []))
+    if prod_p:
+        status = "published"
+        note = (
+            "" if prod_s else "仅发布, 无 `.subscribe` 消费者 (外部 SSE 按字符串匹配)"
         )
+    elif prod_s:
+        status = "subscribed-only"
+        note = "有 `.subscribe` 却零生产发布 —— 订阅永不发生"
+    else:
+        status = "dead"
+        note = "声明了却零生产发布零订阅"
+    return {
+        "const": const,
+        "value": value,
+        "prod_publish": prod_p,
+        "prod_subscribe": prod_s,
+        "test_publish": test_p,
+        "test_subscribe": test_s,
+        "status": status,
+        "note": note,
+        "publish_sites": w.get("prod_publish", []),
+        "subscribe_sites": w.get("prod_subscribe", []),
+    }
 
-    collisions: list[dict] = []
-    by_value: dict[str, list[str]] = defaultdict(list)
-    for const, value in decl["consts"].items():
-        by_value[value].append(const)
-    for value, consts in sorted(by_value.items()):
-        if len(consts) > 1:
-            collisions.append({"value": value, "consts": sorted(consts)})
 
-    undeclared: list[dict] = []
+def _undeclared_rows(wiring: dict, declared_values: set[str]) -> list[dict]:
+    """发布了/订阅了却未声明的事件类型."""
+    rows: list[dict] = []
     for value in sorted(v for v in wiring if v not in declared_values):
         w = wiring[value]
         if not (w["prod_publish"] or w["prod_subscribe"]):
             continue
-        undeclared.append(
+        rows.append(
             {
                 "value": value,
                 "prod_publish": len(w["prod_publish"]),
@@ -2360,6 +2662,34 @@ def build_event_contract(root: Path | None = None) -> dict:
                 "subscribe_sites": w["prod_subscribe"],
             }
         )
+    return rows
+
+
+def build_event_contract(root: Path | None = None) -> dict:
+    """事件面: 事件类型声明面 ↔ 发布面 ↔ 订阅面是否穷尽一致."""
+    root = root or _REPO
+    decl = _event_declarations(root)
+    scan = _event_wiring(root)
+    wiring = scan["wiring"]
+    declared_values = scan["declared_values"]
+
+    events = [
+        _event_row(
+            const,
+            decl["consts"].get(const, ""),
+            wiring.get(decl["consts"].get(const, ""), {}),
+        )
+        for const in decl["members"]
+    ]
+
+    by_value: dict[str, list[str]] = defaultdict(list)
+    for const, value in decl["consts"].items():
+        by_value[value].append(const)
+    collisions = [
+        {"value": value, "consts": sorted(consts)}
+        for value, consts in sorted(by_value.items())
+        if len(consts) > 1
+    ]
 
     return {
         "module": _EVENTS_MODULE,
@@ -2367,7 +2697,7 @@ def build_event_contract(root: Path | None = None) -> dict:
         "collisions": collisions,
         "not_in_all_types": decl["not_in_all_types"],
         "unresolved_members": decl["unresolved_members"],
-        "undeclared": undeclared,
+        "undeclared": _undeclared_rows(wiring, declared_values),
         "wildcard_subscribers": scan["wildcard_subscribers"],
     }
 
@@ -2379,10 +2709,56 @@ _EVENT_STATUS_DOC = {
 }
 
 
+def _re_undeclared_table(rows: list[dict]) -> list[str]:
+    """未声明类型段."""
+    out = ["### 未声明类型 (发布/订阅了却无常量)", ""]
+    if not rows:
+        return out + ["- 无 —— 发布/订阅的类型均已登记为常量.", ""]
+    out.append("| 事件值 | 生产发布 | 生产订阅 | 发布点 | 订阅点 |")
+    out.append("|---|---|---|---|---|")
+    for u in rows:
+        pub = ", ".join(f"`{s}`" for s in u["publish_sites"]) or "—"
+        sub = ", ".join(f"`{s}`" for s in u["subscribe_sites"]) or "—"
+        out.append(
+            f"| `{u['value']}` | {u['prod_publish']} | {u['prod_subscribe']} | {pub} | {sub} |"
+        )
+    return out + [""]
+
+
+def _re_violations(contract: dict) -> list[str]:
+    """互斥违例 + 声明缺口段."""
+    out = ["### 互斥违例 + 声明缺口 (mutually exclusive)", ""]
+    if contract["collisions"]:
+        for c in contract["collisions"]:
+            out.append(
+                f"- ⚠️ 事件类型常量撞值 `{c['value']}`: "
+                + ", ".join(f"`{n}`" for n in c["consts"])
+            )
+    else:
+        out.append("- 事件类型常量值两两不同 —— 无撞值.")
+    if contract["not_in_all_types"]:
+        out.append(
+            "- ⚠️ 常量声明了却不在 `ALL_TYPES`: "
+            + ", ".join(f"`{c}`" for c in contract["not_in_all_types"])
+        )
+    if contract["unresolved_members"]:
+        out.append(
+            "- ⚠️ `ALL_TYPES` 成员无对应常量定义: "
+            + ", ".join(f"`{c}`" for c in contract["unresolved_members"])
+        )
+    if not contract["not_in_all_types"] and not contract["unresolved_members"]:
+        out.append("- `ALL_TYPES` 与事件类型常量定义面双向一致.")
+    wildcard = contract["wildcard_subscribers"]
+    if wildcard:
+        out.append(
+            "- `ALL` 通配订阅 (收全量, 覆盖上表所有类型): "
+            + ", ".join(f"`{s}`" for s in wildcard)
+        )
+    return out + [""]
+
+
 def render_event_markdown(contract: dict) -> str:
-    lines: list[str] = []
-    lines.append("## 事件面: 事件类型声明面 vs 发布面 vs 订阅面")
-    lines.append("")
+    lines: list[str] = ["## 事件面: 事件类型声明面 vs 发布面 vs 订阅面", ""]
     lines.append(
         f"声明面: `{contract['module']}` 的 {len(contract['events'])} 个点分事件类型"
         "(`ALL_TYPES` 为自述非穷尽的辅助清单). 发布面: `AgentEvent(type=…)` / 内部 "
@@ -2391,9 +2767,13 @@ def render_event_markdown(contract: dict) -> str:
         "`subscribed-only` = 订阅了却零发布 (订阅永不发生); `dead` = 声明了却零发布零订阅."
     )
     lines.append("")
-    lines.append("状态: " + "; ".join(f"`{k}`={v}" for k, v in _EVENT_STATUS_DOC.items()))
+    lines.append(
+        "状态: " + "; ".join(f"`{k}`={v}" for k, v in _EVENT_STATUS_DOC.items())
+    )
     lines.append("")
-    lines.append("| 事件常量 | 值 | 生产发布 | 生产订阅 | 测试发布 | 测试订阅 | 状态 | 备注 |")
+    lines.append(
+        "| 事件常量 | 值 | 生产发布 | 生产订阅 | 测试发布 | 测试订阅 | 状态 | 备注 |"
+    )
     lines.append("|---|---|---|---|---|---|---|---|")
     for e in contract["events"]:
         lines.append(
@@ -2401,51 +2781,8 @@ def render_event_markdown(contract: dict) -> str:
             f"| {e['test_publish']} | {e['test_subscribe']} | `{e['status']}` | {e['note']} |"
         )
     lines.append("")
-
-    lines.append("### 未声明类型 (发布/订阅了却无常量)")
-    lines.append("")
-    if contract["undeclared"]:
-        lines.append("| 事件值 | 生产发布 | 生产订阅 | 发布点 | 订阅点 |")
-        lines.append("|---|---|---|---|---|")
-        for u in contract["undeclared"]:
-            pub = ", ".join(f"`{s}`" for s in u["publish_sites"]) or "—"
-            sub = ", ".join(f"`{s}`" for s in u["subscribe_sites"]) or "—"
-            lines.append(
-                f"| `{u['value']}` | {u['prod_publish']} | {u['prod_subscribe']} | {pub} | {sub} |"
-            )
-    else:
-        lines.append("- 无 —— 发布/订阅的类型均已登记为常量.")
-    lines.append("")
-
-    lines.append("### 互斥违例 + 声明缺口 (mutually exclusive)")
-    lines.append("")
-    if contract["collisions"]:
-        for c in contract["collisions"]:
-            lines.append(
-                f"- ⚠️ 事件类型常量撞值 `{c['value']}`: "
-                + ", ".join(f"`{n}`" for n in c["consts"])
-            )
-    else:
-        lines.append("- 事件类型常量值两两不同 —— 无撞值.")
-    if contract["not_in_all_types"]:
-        lines.append(
-            "- ⚠️ 常量声明了却不在 `ALL_TYPES`: "
-            + ", ".join(f"`{c}`" for c in contract["not_in_all_types"])
-        )
-    if contract["unresolved_members"]:
-        lines.append(
-            "- ⚠️ `ALL_TYPES` 成员无对应常量定义: "
-            + ", ".join(f"`{c}`" for c in contract["unresolved_members"])
-        )
-    if not contract["not_in_all_types"] and not contract["unresolved_members"]:
-        lines.append("- `ALL_TYPES` 与事件类型常量定义面双向一致.")
-    wildcard = contract["wildcard_subscribers"]
-    if wildcard:
-        lines.append(
-            "- `ALL` 通配订阅 (收全量, 覆盖上表所有类型): "
-            + ", ".join(f"`{s}`" for s in wildcard)
-        )
-    lines.append("")
+    lines += _re_undeclared_table(contract["undeclared"])
+    lines += _re_violations(contract)
     lines.append(
         "诚实边界: `EventBus.publish` **不校验**类型 (与钩子面 `register` 抛错相反), "
         "任意点分字符串都能发, 故「未声明发布」只作候选提示; 订阅走变量/前缀匹配等间接"
@@ -2472,18 +2809,24 @@ _SSE_CHANNELS: dict[str, str] = {
 # 总线生产发布的事件值 (`AgentEvent.to_sse` 写成 `event: <type>`); pet 通道只发
 # 无名帧 (`data:` 无 `event:`), 故无命名帧.
 _SSE_FRAME_MODULE = "huginn/interaction/progress.py"
-_SSE_FRAME_RE = re.compile(r'event:\s*([a-zA-Z_][\w.]*)')
+_SSE_FRAME_RE = re.compile(r"event:\s*([a-zA-Z_][\w.]*)")
 # campaign 通道 payload 事件名的一部分静态可见: `emit_campaign_event(event_type="…")`.
-_SSE_CAMPAIGN_EMIT_RE = re.compile(r'event_type\s*=\s*["\']([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*)["\']')
+_SSE_CAMPAIGN_EMIT_RE = re.compile(
+    r'event_type\s*=\s*["\']([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*)["\']'
+)
 
 # 前端行级模式. 无 TS 解析器, 只做确定性行匹配 (边界见文档"诚实边界").
 _FE_ES_ASSIGN = re.compile(r"(\w+)\s*=\s*new\s+EventSource\(\s*(.+)$")
 _FE_LISTEN = re.compile(r"(\w+)\.addEventListener\(\s*[\"']([^\"']+)[\"']\s*,\s*(\w+)")
 _FE_LISTEN_IDENT = re.compile(r"(\w+)\.addEventListener\(\s*(\w+)\s*,\s*(\w+)")
-_FE_HANDLER = re.compile(r"const\s+(\w+)\s*=\s*\(\s*\w+\s*:\s*MessageEvent\s*\)\s*=>\s*\{")
+_FE_HANDLER = re.compile(
+    r"const\s+(\w+)\s*=\s*\(\s*\w+\s*:\s*MessageEvent\s*\)\s*=>\s*\{"
+)
 _FE_ARRAY = re.compile(r"^\s*\[(.+)\]\s*$")
 _FE_STR = re.compile(r"[\"']([^\"']+)[\"']")
-_FE_PAYLOAD = re.compile(r"(?:case\s+|===?\s*)[\"']([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)[\"']")
+_FE_PAYLOAD = re.compile(
+    r"(?:case\s+|===?\s*)[\"']([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)[\"']"
+)
 
 _SSE_STATUS_DOC = {
     "wired": "该通道确实发此帧名",
@@ -2501,28 +2844,33 @@ def _display(frontend: Path, p: Path) -> str:
         return p.relative_to(frontend).as_posix()
 
 
-def _scan_ts_source(rel: str, lines: list[str]) -> tuple[list[dict], list[dict]]:
-    """行级扫一个 TS/TSX 源文件 → (帧监听点, payload 匹配点).
-
-    归属链: 帧监听 → 所在 `EventSource` 变量的最近一次 `new EventSource(url)`;
-    payload 字面量 → 所在 `(e: MessageEvent) => {}` 处理函数 → 该函数注册处的事件源.
-    """
+def _ts_es_assigns(lines: list[str]) -> list[tuple[int, str, str | None]]:
+    """扫 `new EventSource(url)` 赋值点 → (行序, 变量名, 通道名)."""
     chan_keys = sorted(_SSE_CHANNELS, key=len, reverse=True)
     assigns: list[tuple[int, str, str | None]] = []
     for i, ln in enumerate(lines):
         m = _FE_ES_ASSIGN.search(ln)
-        if m:
-            arg = m.group(2)
-            ch = next((_SSE_CHANNELS[k] for k in chan_keys if k in arg), None)
-            assigns.append((i, m.group(1), ch))
+        if not m:
+            continue
+        arg = m.group(2)
+        ch = next((_SSE_CHANNELS[k] for k in chan_keys if k in arg), None)
+        assigns.append((i, m.group(1), ch))
+    return assigns
 
-    def chan_of(var: str, idx: int) -> str | None:
-        found = None
-        for ai, av, ac in assigns:
-            if av == var and ai <= idx:
-                found = ac
-        return found
 
+def _ts_chan_of(
+    assigns: list[tuple[int, str, str | None]], var: str, idx: int
+) -> str | None:
+    """变量 var 在行 idx 之前最近一次赋值所绑定的通道."""
+    found = None
+    for ai, av, ac in assigns:
+        if av == var and ai <= idx:
+            found = ac
+    return found
+
+
+def _ts_frames(lines, rel: str, chan_of) -> tuple[list[dict], list]:
+    """帧监听点 + `addEventListener` 注册点 (供 payload 归属反查)."""
     frames: list[dict] = []
     regs: list[tuple[int, str, str | None]] = []
     for i, ln in enumerate(lines):
@@ -2541,29 +2889,67 @@ def _scan_ts_source(rel: str, lines: list[str]) -> tuple[list[dict], list[dict]]
             regs.append((i, var, handler))
             continue
         m2 = _FE_LISTEN_IDENT.search(ln)
-        if m2:
-            var, handler = m2.group(1), m2.group(3)
-            # `[ "a.b", "c.d" ].forEach((ev) => es.addEventListener(ev, h))`:
-            # 帧名在上一行的数组字面量里, 通道取 forEach 那一行的事件源.
-            for j in range(i - 1, max(-1, i - 6), -1):
-                am = _FE_ARRAY.match(lines[j])
-                if am:
-                    for s in _FE_STR.findall(am.group(1)):
-                        frames.append(
-                            {
-                                "rel": rel,
-                                "line": j + 1,
-                                "var": var,
-                                "frame": s,
-                                "channel": chan_of(var, i),
-                            }
-                        )
-                    break
-            regs.append((i, var, handler))
+        if not m2:
+            continue
+        var, handler = m2.group(1), m2.group(3)
+        # `[ "a.b", "c.d" ].forEach((ev) => es.addEventListener(ev, h))`:
+        # 帧名在上一行的数组字面量里, 通道取 forEach 那一行的事件源.
+        for j in range(i - 1, max(-1, i - 6), -1):
+            am = _FE_ARRAY.match(lines[j])
+            if not am:
+                continue
+            for s in _FE_STR.findall(am.group(1)):
+                frames.append(
+                    {
+                        "rel": rel,
+                        "line": j + 1,
+                        "var": var,
+                        "frame": s,
+                        "channel": chan_of(var, i),
+                    }
+                )
+            break
+        regs.append((i, var, handler))
+    return frames, regs
 
-    handlers = [
+
+def _ts_handlers(lines: list[str]) -> list[tuple[int, str]]:
+    """`(e: MessageEvent) => {}` 处理函数定义行 → (行序, 函数名)."""
+    return [
         (i, m.group(1)) for i, ln in enumerate(lines) if (m := _FE_HANDLER.search(ln))
     ]
+
+
+def _ts_payloads(lines, rel: str, handler_at, chan_of_handler) -> list[dict]:
+    """payload 字段匹配点, 归到所在处理函数注册处的事件源."""
+    payloads: list[dict] = []
+    for i, ln in enumerate(lines):
+        for m in _FE_PAYLOAD.finditer(ln):
+            h = handler_at(i)
+            payloads.append(
+                {
+                    "rel": rel,
+                    "line": i + 1,
+                    "value": m.group(1),
+                    "channel": chan_of_handler(h) if h else None,
+                }
+            )
+    return payloads
+
+
+def _scan_ts_source(rel: str, lines: list[str]) -> tuple[list[dict], list[dict]]:
+    """行级扫一个 TS/TSX 源文件 → (帧监听点, payload 匹配点).
+
+    归属链: 帧监听 → 所在 `EventSource` 变量的最近一次 `new EventSource(url)`;
+    payload 字面量 → 所在 `(e: MessageEvent) => {}` 处理函数 → 该函数注册处的事件源.
+    """
+    assigns = _ts_es_assigns(lines)
+
+    def chan_of(var: str, idx: int) -> str | None:
+        return _ts_chan_of(assigns, var, idx)
+
+    frames, regs = _ts_frames(lines, rel, chan_of)
+    handlers = _ts_handlers(lines)
 
     def handler_at(idx: int) -> str | None:
         found = None
@@ -2578,18 +2964,7 @@ def _scan_ts_source(rel: str, lines: list[str]) -> tuple[list[dict], list[dict]]
                 return chan_of(rv, ri)
         return None
 
-    payloads: list[dict] = []
-    for i, ln in enumerate(lines):
-        for m in _FE_PAYLOAD.finditer(ln):
-            h = handler_at(i)
-            payloads.append(
-                {
-                    "rel": rel,
-                    "line": i + 1,
-                    "value": m.group(1),
-                    "channel": chan_of_handler(h) if h else None,
-                }
-            )
+    payloads = _ts_payloads(lines, rel, handler_at, chan_of_handler)
     return frames, payloads
 
 
@@ -2631,16 +3006,8 @@ def _campaign_payload_literals(root: Path) -> set[str]:
     return vals
 
 
-def build_sse_contract(root: Path | None = None, frontend: Path | None = None) -> dict:
-    """SSE 消费面: 后端帧名生产面 ↔ 前端 EventSource 监听消费面 (按通道归属)."""
-    root = root or _REPO
-    frontend = frontend if frontend is not None else root.parent / "desktop" / "src"
-    emitters = _sse_frame_emitters(root)
-    all_frames = {f for fs in emitters.values() for f in fs}
-    declared = set(_event_declarations(root)["consts"].values())
-    campaign = _campaign_payload_literals(root)
-    scan = _frontend_listen_sites(frontend)
-
+def _sse_listeners(scan: dict, emitters: dict, all_frames: set[str]) -> list[dict]:
+    """每个前端监听点的通道归属判定 (wired / channel-mismatch / no-source / external)."""
     listeners: list[dict] = []
     for site in scan["frames"]:
         ch, frame = site["channel"], site["frame"]
@@ -2655,18 +3022,26 @@ def build_sse_contract(root: Path | None = None, frontend: Path | None = None) -
         else:
             status, note = "no-source", "后端任何 SSE 通道都不发此帧名"
         listeners.append({**site, "status": status, "note": note})
+    return listeners
 
+
+def _sse_zero_consumer(scan: dict, emitters: dict) -> list[dict]:
+    """生产了但前端零监听的帧名 (含"仅经 payload 间接消费"标记)."""
     consumed = {s["frame"] for s in scan["frames"] if s["channel"] is not None}
     payload_values = {p["value"] for p in scan["payloads"]}
-    zero_consumer: list[dict] = []
+    rows: list[dict] = []
     for ch in _SSE_CHANNELS.values():
         for f in emitters[ch]:
             if f in consumed:
                 continue
-            zero_consumer.append(
-                {"channel": ch, "frame": f, "via_payload": f in payload_values}
-            )
+            rows.append({"channel": ch, "frame": f, "via_payload": f in payload_values})
+    return rows
 
+
+def _sse_payload_sources(
+    scan: dict, emitters: dict, campaign: set, declared: set
+) -> list[dict]:
+    """前端 payload 字段的来源归类 (bus / campaign / declared / unknown)."""
     payloads: list[dict] = []
     for p in scan["payloads"]:
         v = p["value"]
@@ -2679,15 +3054,86 @@ def build_sse_contract(root: Path | None = None, frontend: Path | None = None) -
         else:
             source = "unknown"
         payloads.append({**p, "source": source})
+    return payloads
+
+
+def build_sse_contract(root: Path | None = None, frontend: Path | None = None) -> dict:
+    """SSE 消费面: 后端帧名生产面 ↔ 前端 EventSource 监听消费面 (按通道归属)."""
+    root = root or _REPO
+    frontend = frontend if frontend is not None else root.parent / "desktop" / "src"
+    emitters = _sse_frame_emitters(root)
+    all_frames = {f for fs in emitters.values() for f in fs}
+    declared = set(_event_declarations(root)["consts"].values())
+    campaign = _campaign_payload_literals(root)
+    scan = _frontend_listen_sites(frontend)
+
+    listeners = _sse_listeners(scan, emitters, all_frames)
+    zero_consumer = _sse_zero_consumer(scan, emitters)
+    payloads = _sse_payload_sources(scan, emitters, campaign, declared)
 
     return {
         "frontend": str(frontend),
-        "channels": {k: {"url": k, "frames": emitters[k]} for k in _SSE_CHANNELS.values()},
+        "channels": {
+            k: {"url": k, "frames": emitters[k]} for k in _SSE_CHANNELS.values()
+        },
         "listeners": listeners,
         "zero_consumer": zero_consumer,
         "payloads": payloads,
         "campaign_literals": sorted(campaign),
     }
+
+
+def _rs_channels_table(channels: dict) -> list[str]:
+    """通道 → URL → 生产帧名表."""
+    lines = ["| 通道 | URL 片段 | 生产帧名 |", "|---|---|---|"]
+    for k, v in channels.items():
+        frames = ", ".join(f"`{f}`" for f in v["frames"]) or "— (无名帧)"
+        lines.append(f"| `{k}` | `{v['url']}` | {frames} |")
+    return lines + [""]
+
+
+def _rs_listeners_table(listeners: list[dict]) -> list[str]:
+    """前端帧监听点表 (按状态/位置排序)."""
+    lines = [
+        "### 前端帧监听 (按通道归属)",
+        "",
+        "| 帧名 | 通道 | 状态 | 位置 | 备注 |",
+        "|---|---|---|---|---|",
+    ]
+    for s in sorted(listeners, key=lambda x: (x["status"], x["rel"], x["line"])):
+        ch = f"`{s['channel']}`" if s["channel"] else "—"
+        lines.append(
+            f"| `{s['frame']}` | {ch} | `{s['status']}` | `{s['rel']}:{s['line']}` "
+            f"| {s['note']} |"
+        )
+    return lines + [""]
+
+
+def _rs_zero_consumer(zero: list[dict]) -> list[str]:
+    """生产帧名零前端监听清单."""
+    lines = ["### 生产帧名零前端监听 (候选)", ""]
+    if zero:
+        for z in zero:
+            tail = " (经 payload 字段消费)" if z["via_payload"] else ""
+            lines.append(f"- `{z['channel']}` / `{z['frame']}`{tail}")
+    else:
+        lines.append("- 无 —— 每个生产帧名都有前端监听.")
+    return lines + [""]
+
+
+def _rs_payload_table(payloads: list[dict]) -> list[str]:
+    """前端 payload 字段 → 生产面归类表."""
+    lines = ["### 前端 payload 字段匹配的事件名", ""]
+    if not payloads:
+        return lines + ["- 无", ""]
+    lines.append("| 事件名 | 消费通道 | 生产面 | 位置 |")
+    lines.append("|---|---|---|---|")
+    for p in payloads:
+        ch = f"`{p['channel']}`" if p["channel"] else "—"
+        lines.append(
+            f"| `{p['value']}` | {ch} | `{p['source']}` | `{p['rel']}:{p['line']}` |"
+        )
+    return lines + [""]
 
 
 def render_sse_markdown(contract: dict) -> str:
@@ -2704,59 +3150,20 @@ def render_sse_markdown(contract: dict) -> str:
     lines.append("")
     lines.append("状态: " + "; ".join(f"`{k}`={v}" for k, v in _SSE_STATUS_DOC.items()))
     lines.append("")
-    lines.append("| 通道 | URL 片段 | 生产帧名 |")
-    lines.append("|---|---|---|")
-    for k, v in contract["channels"].items():
-        frames = ", ".join(f"`{f}`" for f in v["frames"]) or "— (无名帧)"
-        lines.append(f"| `{k}` | `{v['url']}` | {frames} |")
-    lines.append("")
-
-    lines.append("### 前端帧监听 (按通道归属)")
-    lines.append("")
-    lines.append("| 帧名 | 通道 | 状态 | 位置 | 备注 |")
-    lines.append("|---|---|---|---|---|")
-    for s in sorted(contract["listeners"], key=lambda x: (x["status"], x["rel"], x["line"])):
-        ch = f"`{s['channel']}`" if s["channel"] else "—"
-        lines.append(
-            f"| `{s['frame']}` | {ch} | `{s['status']}` | `{s['rel']}:{s['line']}` "
-            f"| {s['note']} |"
-        )
-    lines.append("")
-
-    lines.append("### 生产帧名零前端监听 (候选)")
-    lines.append("")
-    zero = contract["zero_consumer"]
-    if zero:
-        for z in zero:
-            tail = " (经 payload 字段消费)" if z["via_payload"] else ""
-            lines.append(f"- `{z['channel']}` / `{z['frame']}`{tail}")
-    else:
-        lines.append("- 无 —— 每个生产帧名都有前端监听.")
-    lines.append("")
-
-    lines.append("### 前端 payload 字段匹配的事件名")
-    lines.append("")
-    if contract["payloads"]:
-        lines.append("| 事件名 | 消费通道 | 生产面 | 位置 |")
-        lines.append("|---|---|---|---|")
-        for p in contract["payloads"]:
-            ch = f"`{p['channel']}`" if p["channel"] else "—"
-            lines.append(
-                f"| `{p['value']}` | {ch} | `{p['source']}` | `{p['rel']}:{p['line']}` |"
-            )
-    else:
-        lines.append("- 无")
-    lines.append("")
+    lines.extend(_rs_channels_table(contract["channels"]))
+    lines.extend(_rs_listeners_table(contract["listeners"]))
+    lines.extend(_rs_zero_consumer(contract["zero_consumer"]))
+    lines.extend(_rs_payload_table(contract["payloads"]))
     lines.append(
         "生产面取值: `bus` = 总线生产发布 (双通道之一); `campaign` = "
-        "`emit_campaign_event(event_type=\"…\")` 静态可见的字面量; `declared` = 已声明常量但未"
-        "观测到生产发布; `unknown` = 静态不可见 (如 `f\"campaign.{name}\"` 动态拼接)."
+        '`emit_campaign_event(event_type="…")` 静态可见的字面量; `declared` = 已声明常量但未'
+        '观测到生产发布; `unknown` = 静态不可见 (如 `f"campaign.{name}"` 动态拼接).'
     )
     lines.append("")
     lines.append(
         "诚实边界: 前端是 TS, 本工具只做**行级**匹配 (`new EventSource` / `addEventListener` / "
         "`case …:` / `=== …`), 不做 TS 语法分析 —— 经变量中转的帧名、`es.onmessage` 的无名帧、"
-        "动态拼接的通道 URL 都解析不到; campaign payload 里 `f\"campaign.{name}\"` 这类动态名"
+        '动态拼接的通道 URL 都解析不到; campaign payload 里 `f"campaign.{name}"` 这类动态名'
         "同样不可穷尽, 故 `unknown` 只提示不判死."
     )
     lines.append("")
@@ -2870,7 +3277,10 @@ def _dict_literal_keys(node: ast.AST | None) -> set[str] | None:
 def _func_return_dict_keys(tree: ast.AST, name: str) -> set[str] | None:
     """同模块函数 `name` 顶层 `return {…}` 的字面键集 (无则 None)."""
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == name:
+        if (
+            isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+            and node.name == name
+        ):
             for stmt in node.body:
                 if isinstance(stmt, ast.Return):
                     return _dict_literal_keys(stmt.value)
@@ -2880,7 +3290,10 @@ def _func_return_dict_keys(tree: ast.AST, name: str) -> set[str] | None:
 def _func_local_dict_keys(tree: ast.AST, func: str, var: str) -> set[str] | None:
     """函数 `func` 里 `var = {…}` 的字面键集 (无则 None)."""
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == func:
+        if (
+            isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+            and node.name == func
+        ):
             for sub in ast.walk(node):
                 if (
                     isinstance(sub, ast.Assign)
@@ -2936,6 +3349,57 @@ def _sse_for_bound_shape(
     return None
 
 
+def _sse_queue_keys(tree, task_keys, campaign_keys) -> set[str] | None:
+    """`self._events.append(<expr>)` 队列写入形状的并集 (None = 解析不到)."""
+    queue_parts: list[set[str]] = []
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "append"
+            and isinstance(node.func.value, ast.Attribute)
+            and node.func.value.attr == "_events"
+            and node.args
+        ):
+            continue
+        a = node.args[0]
+        if (
+            isinstance(a, ast.Call)
+            and isinstance(a.func, ast.Attribute)
+            and a.func.attr == "to_dict"
+            and task_keys
+        ):
+            queue_parts.append(task_keys)
+        elif isinstance(a, ast.Name) and a.id == "evt" and campaign_keys:
+            queue_parts.append(campaign_keys)
+    return set().union(*queue_parts) if queue_parts else None
+
+
+def _sse_frame_shapes(fn, task_keys, queue_keys) -> dict[str, dict]:
+    """单个 `to_event_stream` 函数内各 Yield 帧的 payload 形状."""
+    shapes: dict[str, dict] = {}
+    for sub in ast.walk(fn):
+        if not isinstance(sub, ast.Yield):
+            continue
+        frame, expr = _sse_yield_frame_expr(sub.value)
+        if frame is None:
+            continue
+        ks = _dict_literal_keys(expr)
+        if ks is not None:
+            shapes[frame] = {"keys": ks, "closed": True}
+            continue
+        keys = (
+            _sse_for_bound_shape(fn, expr.id, task_keys, queue_keys)
+            if isinstance(expr, ast.Name)
+            else None
+        )
+        if keys is not None:
+            shapes[frame] = {"keys": keys, "closed": True}
+        else:
+            shapes[frame] = {"keys": set(), "closed": False}
+    return shapes
+
+
 def _sse_progress_shapes(root: Path) -> dict[str, dict]:
     """progress 通道帧名 → payload 形状 {keys, closed} (解析 `_SSE_FRAME_MODULE`).
 
@@ -2948,29 +3412,7 @@ def _sse_progress_shapes(root: Path) -> dict[str, dict]:
         return {}
     task_keys = _func_return_dict_keys(tree, "to_dict")
     campaign_keys = _func_local_dict_keys(tree, "emit_campaign_event", "evt")
-    # 队列写入形状: `self._events.append(<expr>)` —— to_dict() 或 campaign evt.
-    queue_parts: list[set[str]] = []
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "append"
-            and isinstance(node.func.value, ast.Attribute)
-            and node.func.value.attr == "_events"
-            and node.args
-        ):
-            a = node.args[0]
-            if (
-                isinstance(a, ast.Call)
-                and isinstance(a.func, ast.Attribute)
-                and a.func.attr == "to_dict"
-                and task_keys
-            ):
-                queue_parts.append(task_keys)
-            elif isinstance(a, ast.Name) and a.id == "evt" and campaign_keys:
-                queue_parts.append(campaign_keys)
-    queue_keys = set().union(*queue_parts) if queue_parts else None
-
+    queue_keys = _sse_queue_keys(tree, task_keys, campaign_keys)
     shapes: dict[str, dict] = {}
     for node in ast.walk(tree):
         if not (
@@ -2978,25 +3420,7 @@ def _sse_progress_shapes(root: Path) -> dict[str, dict]:
             and node.name == "to_event_stream"
         ):
             continue
-        for sub in ast.walk(node):
-            if not isinstance(sub, ast.Yield):
-                continue
-            frame, expr = _sse_yield_frame_expr(sub.value)
-            if frame is None:
-                continue
-            ks = _dict_literal_keys(expr)
-            if ks is not None:
-                shapes[frame] = {"keys": ks, "closed": True}
-                continue
-            keys = (
-                _sse_for_bound_shape(node, expr.id, task_keys, queue_keys)
-                if isinstance(expr, ast.Name)
-                else None
-            )
-            if keys is not None:
-                shapes[frame] = {"keys": keys, "closed": True}
-            else:
-                shapes[frame] = {"keys": set(), "closed": False}
+        shapes.update(_sse_frame_shapes(node, task_keys, queue_keys))
     return shapes
 
 
@@ -3078,123 +3502,155 @@ def _fe_field_read_rows(
     return rows
 
 
+def _sse_chan_of(
+    assigns: list[tuple[int, str, str | None]], var: str, idx: int
+) -> str | None:
+    """最近一次 ``var = ...`` 赋值所绑定的通道名 (按行号向后找)."""
+    found = None
+    for ai, av, ac in assigns:
+        if av == var and ai <= idx:
+            found = ac
+    return found
+
+
+def _sse_assigns(lines: list[str]) -> list[tuple[int, str, str | None]]:
+    """收集每行 ``t = JSON.parse(e.data)`` 的 (行号, 变量名, 通道)."""
+    chan_keys = sorted(_SSE_CHANNELS, key=len, reverse=True)
+    assigns: list[tuple[int, str, str | None]] = []
+    for i, ln in enumerate(lines):
+        m = _FE_ES_ASSIGN.search(ln)
+        if not m:
+            continue
+        arg = m.group(2)
+        ch = next((_SSE_CHANNELS[k] for k in chan_keys if k in arg), None)
+        assigns.append((i, m.group(1), ch))
+    return assigns
+
+
+def _sse_prev_array_frames(lines: list[str], i: int) -> list[str]:
+    """``["a.b", "c.d"].forEach(...)`` 的帧名在 forEach 上一行的数组字面量里."""
+    for j in range(i - 1, max(-1, i - 6), -1):
+        am = _FE_ARRAY.match(lines[j])
+        if am:
+            return _FE_STR.findall(am.group(1))
+    return []
+
+
+def _sse_registrations(
+    lines: list[str], assigns: list[tuple[int, str, str | None]]
+) -> dict[str, list[tuple[str, str | None]]]:
+    """具名处理函数注册表: handler -> [(帧名, 通道)]."""
+    reg: dict[str, list[tuple[str, str | None]]] = {}
+    for i, ln in enumerate(lines):
+        m = _FE_LISTEN.search(ln)
+        if m:
+            reg.setdefault(m.group(3), []).append(
+                (m.group(2), _sse_chan_of(assigns, m.group(1), i))
+            )
+            continue
+        m2 = _FE_LISTEN_IDENT.search(ln)
+        if not m2:
+            continue
+        var, handler = m2.group(1), m2.group(3)
+        chan = _sse_chan_of(assigns, var, i)
+        for frame in _sse_prev_array_frames(lines, i):
+            reg.setdefault(handler, []).append((frame, chan))
+    return reg
+
+
+def _sse_emit(
+    reads: list[dict],
+    rel: str,
+    body: str,
+    base_line: int,
+    frames: list[str],
+    ch: str | None,
+) -> None:
+    """抽出 handler 体内的顶层字段读取行, 累加到 ``reads``."""
+    pm = _FE_JSON_PARSE.search(body)
+    if pm is None:
+        return
+    reads.extend(
+        _fe_field_read_rows(
+            rel=rel,
+            channel=ch,
+            frames=frames,
+            body=body,
+            base_line=base_line,
+            readable=frozenset({pm.group(1)}),
+        )
+    )
+
+
+def _sse_unique_frames(pairs: list[tuple[str, str | None]]) -> list[str]:
+    frames: list[str] = []
+    for fr, _c in pairs:
+        if fr not in frames:
+            frames.append(fr)
+    return frames
+
+
+def _sse_named_handler_reads(
+    reads: list[dict], rel: str, text: str, reg: dict[str, list[tuple[str, str | None]]]
+) -> None:
+    """具名处理函数体内的字段读取."""
+    for m in _FE_HANDLER.finditer(text):
+        handler = m.group(1)
+        if handler not in reg:
+            continue
+        brace = m.end() - 1
+        end = _ws_ts_brace_end(text, brace)
+        if text[end - 1] != "}":
+            continue
+        _sse_emit(
+            reads,
+            rel,
+            text[brace + 1 : end - 1],
+            text.count("\n", 0, brace + 1) + 1,
+            _sse_unique_frames(reg[handler]),
+            reg[handler][0][1],
+        )
+
+
+def _sse_inline_handler_reads(
+    reads: list[dict],
+    rel: str,
+    text: str,
+    assigns: list[tuple[int, str, str | None]],
+) -> None:
+    """内联处理函数: ``es.addEventListener("帧名", (e: MessageEvent) => { … })``."""
+    for m in _FE_LISTEN_INLINE_HANDLER.finditer(text):
+        var, frame = m.group(1), m.group(2)
+        brace = m.end() - 1
+        end = _ws_ts_brace_end(text, brace)
+        if text[end - 1] != "}":
+            continue
+        _sse_emit(
+            reads,
+            rel,
+            text[brace + 1 : end - 1],
+            text.count("\n", 0, brace + 1) + 1,
+            [frame],
+            _sse_chan_of(assigns, var, text.count("\n", 0, m.start())),
+        )
+
+
 def _sse_payload_reads(frontend: Path) -> list[dict]:
     """扫前端 SSE 处理函数里的 `t.<字段>` 顶层读取 (t = `JSON.parse(e.data)` 结果)."""
     reads: list[dict] = []
-    chan_keys = sorted(_SSE_CHANNELS, key=len, reverse=True)
     for _p, rel, text in _fe_ts_files(frontend):
         lines = text.splitlines()
-
-        assigns: list[tuple[int, str, str | None]] = []
-        for i, ln in enumerate(lines):
-            m = _FE_ES_ASSIGN.search(ln)
-            if m:
-                arg = m.group(2)
-                ch = next((_SSE_CHANNELS[k] for k in chan_keys if k in arg), None)
-                assigns.append((i, m.group(1), ch))
-
-        # 闭包按默认参数绑定当轮局部 (B023: 循环内定义且引用循环变量).
-        def chan_of(
-            var: str, idx: int, _assigns: list[tuple[int, str, str | None]] = assigns
-        ) -> str | None:
-            found = None
-            for ai, av, ac in _assigns:
-                if av == var and ai <= idx:
-                    found = ac
-            return found
-
-        def emit(
-            body: str,
-            base_line: int,
-            frames: list[str],
-            ch: str | None,
-            _rel: str = rel,
-        ) -> None:
-            pm = _FE_JSON_PARSE.search(body)
-            if pm is None:
-                return
-            reads.extend(
-                _fe_field_read_rows(
-                    rel=_rel,
-                    channel=ch,
-                    frames=frames,
-                    body=body,
-                    base_line=base_line,
-                    readable=frozenset({pm.group(1)}),
-                )
-            )
-
-        # 具名处理函数: addEventListener(<帧名>, <handler>) → handler → 帧/通道
-        reg: dict[str, list[tuple[str, str | None]]] = {}
-        for i, ln in enumerate(lines):
-            m = _FE_LISTEN.search(ln)
-            if m:
-                reg.setdefault(m.group(3), []).append((m.group(2), chan_of(m.group(1), i)))
-                continue
-            m2 = _FE_LISTEN_IDENT.search(ln)
-            if m2:
-                var, handler = m2.group(1), m2.group(3)
-                # `[ "a.b", "c.d" ].forEach((ev) => es.addEventListener(ev, h))`:
-                # 帧名在上一行的数组字面量里, 通道取 forEach 那一行的事件源.
-                for j in range(i - 1, max(-1, i - 6), -1):
-                    am = _FE_ARRAY.match(lines[j])
-                    if am:
-                        for s in _FE_STR.findall(am.group(1)):
-                            reg.setdefault(handler, []).append((s, chan_of(var, i)))
-                        break
-
-        for m in _FE_HANDLER.finditer(text):
-            handler = m.group(1)
-            if handler not in reg:
-                continue
-            brace = m.end() - 1
-            end = _ws_ts_brace_end(text, brace)
-            if text[end - 1] != "}":
-                continue
-            frames: list[str] = []
-            for fr, _c in reg[handler]:
-                if fr not in frames:
-                    frames.append(fr)
-            emit(
-                text[brace + 1 : end - 1],
-                text.count("\n", 0, brace + 1) + 1,
-                frames,
-                reg[handler][0][1],
-            )
-
-        # 内联处理函数: es.addEventListener("帧名", (e: MessageEvent) => { … })
-        for m in _FE_LISTEN_INLINE_HANDLER.finditer(text):
-            var, frame = m.group(1), m.group(2)
-            brace = m.end() - 1
-            end = _ws_ts_brace_end(text, brace)
-            if text[end - 1] != "}":
-                continue
-            emit(
-                text[brace + 1 : end - 1],
-                text.count("\n", 0, brace + 1) + 1,
-                [frame],
-                chan_of(var, text.count("\n", 0, m.start())),
-            )
+        assigns = _sse_assigns(lines)
+        reg = _sse_registrations(lines, assigns)
+        _sse_named_handler_reads(reads, rel, text, reg)
+        _sse_inline_handler_reads(reads, rel, text, assigns)
     return reads
 
 
-def _frame_payload_contract(
-    channels: dict[str, dict[str, dict]],
-    reads: list[dict],
-    trio: _TriageTrio,
-    detail_tmpl: str,
-    frontend: Path,
-) -> dict:
-    """帧键控 payload 面共用装配: 前端顶层字段读取 ⊄ 后端帧 payload 顶层键.
-
-    第十五面 (SSE 事件负载) 与第十六面 (WS 事件负载) 判定与留痕逐字同构, 差异只在
-    解析器 (面内各自调用)、违例文案与分诊表, 故共用此装配:
-
-    `channels`: 通道 → 帧 → `{"keys": set, "closed": bool}` (权威面);
-    `reads`: 前端读取点 `{channel, frame, field, rel, line}`;
-    `detail_tmpl`: 违例文案, 以 `frame` / `field` 格式化 (两面逐字不同);
-    `trio`: 面分诊三联 (键构造与 `(channel, frame, field)` 一致).
-    """
+def _fp_check_reads(
+    channels: dict[str, dict[str, dict]], reads: list[dict], detail_tmpl: str
+) -> tuple[list[dict], int, int, int, dict[tuple[str, str], set[str]]]:
+    """逐读取点核字段是否落在后端该帧 payload 的顶层键内."""
     violations: list[dict] = []
     checked = skip_frame = skip_shape = 0
     read_fields: dict[tuple[str, str], set[str]] = defaultdict(set)
@@ -3224,9 +3680,11 @@ def _frame_payload_contract(
                 "line": r["line"],
             }
         )
+    return violations, checked, skip_frame, skip_shape, read_fields
 
-    trio.stamp(violations)
 
+def _fp_zero_read(channels: dict, read_fields: dict) -> list[dict]:
+    """后端闭集帧 payload 里零前端读取的顶层键."""
     zero_read: list[dict] = []
     for ch, frames in channels.items():
         closed_keys: set[str] = set()
@@ -3237,7 +3695,31 @@ def _frame_payload_contract(
             read_keys |= read_fields.get((ch, frame), set())
         for k in sorted(closed_keys - read_keys):
             zero_read.append({"channel": ch, "field": k})
+    return zero_read
 
+
+def _frame_payload_contract(
+    channels: dict[str, dict[str, dict]],
+    reads: list[dict],
+    trio: _TriageTrio,
+    detail_tmpl: str,
+    frontend: Path,
+) -> dict:
+    """帧键控 payload 面共用装配: 前端顶层字段读取 ⊄ 后端帧 payload 顶层键.
+
+    第十五面 (SSE 事件负载) 与第十六面 (WS 事件负载) 判定与留痕逐字同构, 差异只在
+    解析器 (面内各自调用)、违例文案与分诊表, 故共用此装配:
+
+    `channels`: 通道 → 帧 → `{"keys": set, "closed": bool}` (权威面);
+    `reads`: 前端读取点 `{channel, frame, field, rel, line}`;
+    `detail_tmpl`: 违例文案, 以 `frame` / `field` 格式化 (两面逐字不同);
+    `trio`: 面分诊三联 (键构造与 `(channel, frame, field)` 一致).
+    """
+    violations, checked, skip_frame, skip_shape, read_fields = _fp_check_reads(
+        channels, reads, detail_tmpl
+    )
+    trio.stamp(violations)
+    zero_read = _fp_zero_read(channels, read_fields)
     kinds = Counter(v["kind"] for v in violations)
     return {
         "frontend": str(frontend),
@@ -3253,7 +3735,11 @@ def _frame_payload_contract(
             for ch, frames in channels.items()
         },
         "read_count": len(reads),
-        "coverage": {"checked": checked, "skip_frame": skip_frame, "skip_shape": skip_shape},
+        "coverage": {
+            "checked": checked,
+            "skip_frame": skip_frame,
+            "skip_shape": skip_shape,
+        },
         "violations": violations,
         "untriaged": [v for v in violations if v["triage"] == "untriaged"],
         "kind_counts": dict(sorted(kinds.items())),
@@ -3279,7 +3765,10 @@ def build_sse_payload_contract(
         channels["progress"] = progress
     eb_keys = _sse_event_bus_shape(root)
     channels["event_bus"] = {
-        f: {"keys": eb_keys if eb_keys is not None else set(), "closed": eb_keys is not None}
+        f: {
+            "keys": eb_keys if eb_keys is not None else set(),
+            "closed": eb_keys is not None,
+        }
         for f in emitters.get("event_bus", [])
     }
     return _frame_payload_contract(
@@ -3289,6 +3778,71 @@ def build_sse_payload_contract(
         "前端在 `{frame}` 处理函数里读 `t.{field}`",
         frontend,
     )
+
+
+def _rsp_channels_table(contract: dict) -> list[str]:
+    """各通道帧 payload 顶层键 (权威面) 表."""
+    lines = [
+        "### 各通道帧 payload 顶层键 (权威面)",
+        "",
+        "| 通道 | 帧名 | payload 顶层键 | 形状 | 前端读取字段 |",
+        "|---|---|---|---|---|",
+    ]
+    for ch, frames in contract["channels"].items():
+        fr = contract["frame_reads"].get(ch, {})
+        for frame in sorted(frames):
+            info = frames[frame]
+            keys = ", ".join(f"`{k}`" for k in info["keys"]) or "—"
+            shape = "封闭" if info["closed"] else "开放(读不出)"
+            rd = ", ".join(f"`{f}`" for f in fr.get(frame, [])) or "—"
+            lines.append(f"| `{ch}` | `{frame}` | {keys} | {shape} | {rd} |")
+    return lines + [""]
+
+
+def _rsp_violations(violations: list[dict]) -> list[str]:
+    """硬违例清单 (前端读的顶层字段后端从不发)."""
+    lines = ["### 违例 (硬: 前端读的顶层字段后端从不发)", ""]
+    if not violations:
+        return lines + ["- 无 —— 前端读的每个顶层字段, 后端该帧都发.", ""]
+    lines.append(
+        "硬违例 —— 前端读 `t.<字段>` 而后端该帧 payload 无此顶层键 (恒 undefined). "
+        "逐条分诊, 未登记的落「待分诊」(回归测试会失败, 逼人工判定):"
+    )
+    lines.append("")
+    for v in sorted(
+        violations,
+        key=lambda x: (x["channel"], x["frame"], x["field"], x["rel"], x["line"]),
+    ):
+        lines.append(
+            f"- `[{v['kind']}]` `{v['channel']}/{v['frame']}.{v['field']}` "
+            f"@ `{v['rel']}:{v['line']}` — {v['detail']}"
+            + _sse_payload_violation_mark(v["channel"], v["frame"], v["field"])
+        )
+    return lines + [""]
+
+
+def _rsp_zero_read(zero_read: list[dict]) -> list[str]:
+    """payload 顶层键零前端读取清单."""
+    lines = ["### payload 顶层键零前端读取 (候选, 反向不判违例)", ""]
+    if zero_read:
+        for z in zero_read:
+            lines.append(f"- `{z['channel']}` / `{z['field']}`")
+    else:
+        lines.append("- 无.")
+    return lines + [""]
+
+
+def _rsp_coverage(cov: dict) -> list[str]:
+    """静态核对覆盖面表."""
+    return [
+        "### 静态核对覆盖面 (读不出形状即跳过, 不猜)",
+        "",
+        "| 维度 | 已核对 | 跳过 (帧不属该通道) | 跳过 (形状开放) |",
+        "|---|---|---|---|",
+        f"| 前端顶层字段读取 | {cov['checked']} | {cov['skip_frame']} "
+        f"| {cov['skip_shape']} |",
+        "",
+    ]
 
 
 def render_sse_payload_markdown(contract: dict) -> str:
@@ -3321,60 +3875,10 @@ def render_sse_payload_markdown(contract: dict) -> str:
         f"**{len(contract['violations'])}** 条.{counts}"
     )
     lines.append("")
-
-    lines.append("### 各通道帧 payload 顶层键 (权威面)")
-    lines.append("")
-    lines.append("| 通道 | 帧名 | payload 顶层键 | 形状 | 前端读取字段 |")
-    lines.append("|---|---|---|---|---|")
-    for ch, frames in contract["channels"].items():
-        fr = contract["frame_reads"].get(ch, {})
-        for frame in sorted(frames):
-            info = frames[frame]
-            keys = ", ".join(f"`{k}`" for k in info["keys"]) or "—"
-            shape = "封闭" if info["closed"] else "开放(读不出)"
-            rd = ", ".join(f"`{f}`" for f in fr.get(frame, [])) or "—"
-            lines.append(f"| `{ch}` | `{frame}` | {keys} | {shape} | {rd} |")
-    lines.append("")
-
-    lines.append("### 违例 (硬: 前端读的顶层字段后端从不发)")
-    lines.append("")
-    if contract["violations"]:
-        lines.append(
-            "硬违例 —— 前端读 `t.<字段>` 而后端该帧 payload 无此顶层键 (恒 undefined). "
-            "逐条分诊, 未登记的落「待分诊」(回归测试会失败, 逼人工判定):"
-        )
-        lines.append("")
-        for v in sorted(
-            contract["violations"],
-            key=lambda x: (x["channel"], x["frame"], x["field"], x["rel"], x["line"]),
-        ):
-            lines.append(
-                f"- `[{v['kind']}]` `{v['channel']}/{v['frame']}.{v['field']}` "
-                f"@ `{v['rel']}:{v['line']}` — {v['detail']}"
-                + _sse_payload_violation_mark(v["channel"], v["frame"], v["field"])
-            )
-    else:
-        lines.append("- 无 —— 前端读的每个顶层字段, 后端该帧都发.")
-    lines.append("")
-
-    lines.append("### payload 顶层键零前端读取 (候选, 反向不判违例)")
-    lines.append("")
-    if contract["zero_read"]:
-        for z in contract["zero_read"]:
-            lines.append(f"- `{z['channel']}` / `{z['field']}`")
-    else:
-        lines.append("- 无.")
-    lines.append("")
-
-    lines.append("### 静态核对覆盖面 (读不出形状即跳过, 不猜)")
-    lines.append("")
-    lines.append("| 维度 | 已核对 | 跳过 (帧不属该通道) | 跳过 (形状开放) |")
-    lines.append("|---|---|---|---|")
-    cov = contract["coverage"]
-    lines.append(
-        f"| 前端顶层字段读取 | {cov['checked']} | {cov['skip_frame']} | {cov['skip_shape']} |"
-    )
-    lines.append("")
+    lines.extend(_rsp_channels_table(contract))
+    lines.extend(_rsp_violations(contract["violations"]))
+    lines.extend(_rsp_zero_read(contract["zero_read"]))
+    lines.extend(_rsp_coverage(contract["coverage"]))
     lines.append(
         "诚实边界: 只读**字面量**形状 —— 后端 payload 经变量间接构造 (`**` 展开 / 动态拼键) 或"
         "前端 `t` 经中转/解构读取时该处记开放并跳过, 故违例是**下界** (可能漏报); 只核帧 payload "
@@ -3433,13 +3937,11 @@ _WS_TERNARY_RE = re.compile(
 # `switch (mood)` / `result.type === "thread"` / SSE 的 `data.type === "heartbeat"`
 # 都会被误当 WS 帧名. 点号型 (embedding.download.* / team.*) 是 SSE payload, 不进.
 _FE_WS_CASE_RE = re.compile(r'case\s+["\']([a-z][a-z0-9_]*)["\']\s*:')
-_FE_WS_EQ_RE = re.compile(
-    r'\b(\w+)\.type\s*!?={2,3}\s*["\']([a-z][a-z0-9_]*)["\']'
-)
+_FE_WS_EQ_RE = re.compile(r'\b(\w+)\.type\s*!?={2,3}\s*["\']([a-z][a-z0-9_]*)["\']')
 # `switch (<expr>) {` 头; 判别式须恰为 `<wsVar>.type`.
-_FE_SWITCH_TYPE_HEAD_RE = re.compile(r'switch\s*\(([^)]*)\)\s*\{')
+_FE_SWITCH_TYPE_HEAD_RE = re.compile(r"switch\s*\(([^)]*)\)\s*\{")
 # WS 帧变量标注: `(data: WSMessage)`.
-_FE_WS_MSG_VAR_RE = re.compile(r'\b(\w+)\s*:\s*WSMessage\b')
+_FE_WS_MSG_VAR_RE = re.compile(r"\b(\w+)\s*:\s*WSMessage\b")
 # 前端 client→server 生产: payload 式 JSON.stringify 与内联 `.send({…})`.
 _FE_WS_SEND_STR_RE = re.compile(
     r'JSON\.stringify\(\s*\{\s*["\']?type["\']?\s*:\s*["\']([a-z][a-z0-9_]*)["\']', re.S
@@ -3569,7 +4071,8 @@ def _ws_server_frames(root: Path) -> dict[str, dict]:
                     continue
                 f = node.func
                 is_send = (
-                    isinstance(f, ast.Attribute) and f.attr in ("send_json", "send_text")
+                    isinstance(f, ast.Attribute)
+                    and f.attr in ("send_json", "send_text")
                 ) or (isinstance(f, ast.Name) and f.id in _WS_SEND_WRAPPERS)
                 if not is_send:
                     continue
@@ -3631,7 +4134,11 @@ def _ws_file_channel(rel: str, text: str) -> str | None:
     if len(hits) == 1:
         return hits[0]
     if not hits:
-        ref = [ch for ch, hints in _WS_FE_REF_HINTS.items() if any(h in text for h in hints)]
+        ref = [
+            ch
+            for ch, hints in _WS_FE_REF_HINTS.items()
+            if any(h in text for h in hints)
+        ]
         if len(ref) == 1:
             return ref[0]
         if rel.endswith(_WS_TRANSPORT_REL):
@@ -3666,7 +4173,7 @@ def _fe_switch_type_cases(text: str, ws_vars: set[str]) -> list[tuple[str, int]]
     """
     out: list[tuple[str, int]] = []
     for m in _FE_SWITCH_TYPE_HEAD_RE.finditer(text):
-        var = re.fullmatch(r'\s*(\w+)\.type\s*', m.group(1))
+        var = re.fullmatch(r"\s*(\w+)\.type\s*", m.group(1))
         if var is None or var.group(1) not in ws_vars:
             continue
         start = m.end() - 1  # 指向 `{`
@@ -3725,42 +4232,30 @@ def _ws_scan_frontend(frontend: Path) -> dict:
                 if key in seen:
                     continue
                 seen.add(key)
-                sends.append({"rel": rel, "line": line, "channel": ch, "frame": m.group(1)})
+                sends.append(
+                    {"rel": rel, "line": line, "channel": ch, "frame": m.group(1)}
+                )
     return {"consumers": consumers, "sends": sends}
 
 
-def build_ws_contract(root: Path | None = None, frontend: Path | None = None) -> dict:
-    """WS 消费面: 后端 WS 帧名生产面 ↔ 前端 WebSocket 客户端判别面 (按端点通道)."""
-    root = root or _REPO
-    frontend = frontend if frontend is not None else root.parent / "desktop" / "src"
-    produced = _ws_server_frames(root)
-    inbound = _ws_inbound_types(root)
-    decl_path = frontend / _WS_DECL_SUFFIX
-    declared: set[str] = set()
-    if decl_path.is_file():
-        declared = set(_WS_DECL_TYPE_RE.findall(_source(decl_path) or ""))
-    scan = _ws_scan_frontend(frontend)
-
-    channel_out: dict[str, dict] = {}
+def _ws_channels_out(produced: dict, inbound: dict) -> dict[str, dict]:
+    """端点通道 → {url, typed, frames, dynamic_sends, inbound}."""
+    out: dict[str, dict] = {}
     for frag, ch in _WS_CHANNELS.items():
-        channel_out[ch] = {
+        out[ch] = {
             "url": frag,
             "typed": ch in _WS_TYPED_CHANNELS,
             "frames": produced[ch]["frames"],
             "dynamic_sends": produced[ch]["dynamic"],
             "inbound": inbound[ch],
         }
+    return out
 
-    agent_frames = produced["agent"]["frames"]
-    consumed = {c["frame"] for c in scan["consumers"] if c["channel"] == "agent"}
-    server_frames = [
-        {"frame": f, "declared": f in declared, "consumed": f in consumed}
-        for f in agent_frames
-    ]
-    zero_consumer = [f for f in agent_frames if f not in consumed]
-    undeclared = [f for f in agent_frames if f not in declared]
-    declared_only = sorted(declared - set(agent_frames) - consumed)
 
+def _ws_consumers(
+    scan: dict, produced: dict, channel_out: dict, declared: set[str]
+) -> list[dict]:
+    """前端判别点 (server→client) 的通道归属判定."""
     consumers: list[dict] = []
     for c in scan["consumers"]:
         ch = c["channel"]
@@ -3772,11 +4267,18 @@ def build_ws_contract(root: Path | None = None, frontend: Path | None = None) ->
         elif c["frame"] in pool:
             status, note = "wired", ""
         elif ch in _WS_TYPED_CHANNELS and c["frame"] in declared:
-            status, note = "dynamic", "已声明帧, 后端经变量透传转发 (静态生产面不可穷尽)"
+            status, note = (
+                "dynamic",
+                "已声明帧, 后端经变量透传转发 (静态生产面不可穷尽)",
+            )
         else:
             status, note = "no-source", "后端该通道不发此帧名"
         consumers.append({**c, "status": status, "note": note})
+    return consumers
 
+
+def _ws_sends(scan: dict, inbound: dict, root: Path) -> list[dict]:
+    """前端发送点 (client→server) 是否落在后端分发面内."""
     sends: list[dict] = []
     for s in scan["sends"]:
         ch = s["channel"]
@@ -3791,7 +4293,11 @@ def build_ws_contract(root: Path | None = None, frontend: Path | None = None) ->
             else:
                 status, note = "unhandled", "后端该通道分发面无此入站类型 (回 error 帧)"
         sends.append({**s, "status": status, "note": note})
+    return sends
 
+
+def _ws_phantom(inbound: dict, scan: dict) -> list[dict]:
+    """后端能分发但前端从不发送的入站类型."""
     fe_sends: dict[str, set[str]] = defaultdict(set)
     for s in scan["sends"]:
         if s["channel"]:
@@ -3804,6 +4310,35 @@ def build_ws_contract(root: Path | None = None, frontend: Path | None = None) ->
         for k in keys:
             if k not in fe_sends.get(ch, set()):
                 phantom.append({"channel": ch, "frame": k})
+    return phantom
+
+
+def build_ws_contract(root: Path | None = None, frontend: Path | None = None) -> dict:
+    """WS 消费面: 后端 WS 帧名生产面 ↔ 前端 WebSocket 客户端判别面 (按端点通道)."""
+    root = root or _REPO
+    frontend = frontend if frontend is not None else root.parent / "desktop" / "src"
+    produced = _ws_server_frames(root)
+    inbound = _ws_inbound_types(root)
+    decl_path = frontend / _WS_DECL_SUFFIX
+    declared: set[str] = set()
+    if decl_path.is_file():
+        declared = set(_WS_DECL_TYPE_RE.findall(_source(decl_path) or ""))
+    scan = _ws_scan_frontend(frontend)
+
+    channel_out = _ws_channels_out(produced, inbound)
+    agent_frames = produced["agent"]["frames"]
+    consumed = {c["frame"] for c in scan["consumers"] if c["channel"] == "agent"}
+    server_frames = [
+        {"frame": f, "declared": f in declared, "consumed": f in consumed}
+        for f in agent_frames
+    ]
+    zero_consumer = [f for f in agent_frames if f not in consumed]
+    undeclared = [f for f in agent_frames if f not in declared]
+    declared_only = sorted(declared - set(agent_frames) - consumed)
+
+    consumers = _ws_consumers(scan, produced, channel_out, declared)
+    sends = _ws_sends(scan, inbound, root)
+    phantom = _ws_phantom(inbound, scan)
 
     return {
         "frontend": str(frontend),
@@ -3819,97 +4354,95 @@ def build_ws_contract(root: Path | None = None, frontend: Path | None = None) ->
     }
 
 
-def render_ws_markdown(contract: dict) -> str:
-    lines: list[str] = []
-    lines.append("## WS 消费面: 后端 WS 帧名生产面 vs 前端 WebSocket 判别面")
-    lines.append("")
-    lines.append(
-        "SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocket 是**双向**"
-        "的: 后端 `send_json({\"type\": …})` 发帧前端 `switch (data.type)` 收, 前端"
-        "`send({type: …})` 发请求后端分发表收. 本面按**端点通道** `agent`(`/ws/agent`, "
-        "唯一按 `type` 判别的通道) / `terminal` / `viewer3d` / `hpc` 分列: 帧名只在"
-        "**发它的那条 WS 上**才可能命中, 故挂在别处 = 永不触发."
-    )
-    lines.append("")
-    lines.append("状态: " + "; ".join(f"`{k}`={v}" for k, v in _WS_STATUS_DOC.items()))
-    lines.append("")
-    lines.append("| 通道 | URL 片段 | type 判别 | 生产帧名 | 入站类型 |")
-    lines.append("|---|---|---|---|---|")
-    for ch, v in contract["channels"].items():
+def _rwm_channels_table(channels: dict) -> list[str]:
+    """端点通道 → URL / type 判别 / 生产帧名 / 入站类型表."""
+    lines = [
+        "| 通道 | URL 片段 | type 判别 | 生产帧名 | 入站类型 |",
+        "|---|---|---|---|---|",
+    ]
+    for ch, v in channels.items():
         typed = "是" if v["typed"] else "否 (field-probing)"
         frames = ", ".join(f"`{f}`" for f in v["frames"]) or "—"
         inbound = ", ".join(f"`{f}`" for f in v["inbound"]) or "—"
         lines.append(f"| `{ch}` | `{v['url']}` | {typed} | {frames} | {inbound} |")
-    lines.append("")
+    return lines + [""]
 
-    lines.append("### 生产帧名 × 前端判别 (agent 通道)")
-    lines.append("")
-    lines.append("| 帧名 | 已声明 (WSMessage) | 前端有 type 判别 |")
-    lines.append("|---|---|---|")
-    for f in contract["server_frames"]:
+
+def _rwm_server_frames(server_frames: list[dict]) -> list[str]:
+    """agent 通道生产帧名 × 声明/判别表."""
+    lines = [
+        "### 生产帧名 × 前端判别 (agent 通道)",
+        "",
+        "| 帧名 | 已声明 (WSMessage) | 前端有 type 判别 |",
+        "|---|---|---|",
+    ]
+    for f in server_frames:
         lines.append(
             f"| `{f['frame']}` | {'是' if f['declared'] else '否'} "
             f"| {'是' if f['consumed'] else '否'} |"
         )
-    lines.append("")
+    return lines + [""]
 
-    lines.append("### 前端 server→client 判别点")
-    lines.append("")
-    lines.append("| 帧名 | 通道 | 状态 | 位置 | 备注 |")
-    lines.append("|---|---|---|---|---|")
-    for s in sorted(contract["consumers"], key=lambda x: (x["status"], x["rel"], x["line"])):
+
+def _rwm_sites_table(title: str, rows: list[dict], first_col: str) -> list[str]:
+    """前端判别点/发送点通用表 (帧名 | 通道 | 状态 | 位置 | 备注)."""
+    lines = [
+        title,
+        "",
+        f"| {first_col} | 通道 | 状态 | 位置 | 备注 |",
+        "|---|---|---|---|---|",
+    ]
+    for s in sorted(rows, key=lambda x: (x["status"], x["rel"], x["line"])):
         ch = f"`{s['channel']}`" if s["channel"] else "—"
         lines.append(
             f"| `{s['frame']}` | {ch} | `{s['status']}` | `{s['rel']}:{s['line']}` "
             f"| {s['note']} |"
         )
-    lines.append("")
+    return lines + [""]
 
-    lines.append("### 前端 client→server 发送点")
-    lines.append("")
-    lines.append("| 类型 | 通道 | 状态 | 位置 | 备注 |")
-    lines.append("|---|---|---|---|---|")
-    for s in sorted(contract["sends"], key=lambda x: (x["status"], x["rel"], x["line"])):
-        ch = f"`{s['channel']}`" if s["channel"] else "—"
-        lines.append(
-            f"| `{s['frame']}` | {ch} | `{s['status']}` | `{s['rel']}:{s['line']}` "
-            f"| {s['note']} |"
-        )
-    lines.append("")
 
-    lines.append("### 生产帧名零前端判别 (候选)")
-    lines.append("")
-    zero = contract["zero_consumer"]
+def _rwm_zero_consumer(zero: list[str]) -> list[str]:
+    """生产帧名零前端判别清单."""
+    lines = ["### 生产帧名零前端判别 (候选)", ""]
     if zero:
         for f in zero:
-            lines.append(_ws_candidate_line(f"`agent` / `{f}`", "zero-consumer", "agent", f))
+            lines.append(
+                _ws_candidate_line(f"`agent` / `{f}`", "zero-consumer", "agent", f)
+            )
     else:
         lines.append("- 无 —— 每个生产帧名都有前端 type 判别.")
-    lines.append("")
+    return lines + [""]
 
-    lines.append("### 未进 WSMessage 判别联合的生产帧 (候选登记)")
-    lines.append("")
-    und = contract["undeclared"]
+
+def _rwm_undeclared(und: list[str]) -> list[str]:
+    """未进 WSMessage 判别联合的生产帧清单."""
+    lines = ["### 未进 WSMessage 判别联合的生产帧 (候选登记)", ""]
     if und:
         for f in und:
-            lines.append(_ws_candidate_line(f"`agent` / `{f}`", "undeclared", "agent", f))
+            lines.append(
+                _ws_candidate_line(f"`agent` / `{f}`", "undeclared", "agent", f)
+            )
     else:
         lines.append("- 无")
-    lines.append("")
+    return lines + [""]
 
-    lines.append("### 已声明但既非生产帧也非入站请求 (候选)")
-    lines.append("")
-    if contract["declared_only"]:
-        for f in contract["declared_only"]:
+
+def _rwm_declared_only(declared_only: list[str]) -> list[str]:
+    """已声明但既非生产帧也非入站请求的清单."""
+    lines = ["### 已声明但既非生产帧也非入站请求 (候选)", ""]
+    if declared_only:
+        for f in declared_only:
             lines.append(_ws_candidate_line(f"`{f}`", "declared-only", "agent", f))
     else:
         lines.append("- 无")
-    lines.append("")
+    return lines + [""]
 
-    lines.append("### 入站类型无前端发送者 (候选)")
-    lines.append("")
-    if contract["phantom_inbound"]:
-        for z in contract["phantom_inbound"]:
+
+def _rwm_phantom(phantom: list[dict]) -> list[str]:
+    """入站类型无前端发送者清单."""
+    lines = ["### 入站类型无前端发送者 (候选)", ""]
+    if phantom:
+        for z in phantom:
             lines.append(
                 _ws_candidate_line(
                     f"`{z['channel']}` / `{z['frame']}`",
@@ -3920,7 +4453,35 @@ def render_ws_markdown(contract: dict) -> str:
             )
     else:
         lines.append("- 无")
+    return lines + [""]
+
+
+def render_ws_markdown(contract: dict) -> str:
+    lines: list[str] = []
+    lines.append("## WS 消费面: 后端 WS 帧名生产面 vs 前端 WebSocket 判别面")
     lines.append("")
+    lines.append(
+        "SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocket 是**双向**"
+        '的: 后端 `send_json({"type": …})` 发帧前端 `switch (data.type)` 收, 前端'
+        "`send({type: …})` 发请求后端分发表收. 本面按**端点通道** `agent`(`/ws/agent`, "
+        "唯一按 `type` 判别的通道) / `terminal` / `viewer3d` / `hpc` 分列: 帧名只在"
+        "**发它的那条 WS 上**才可能命中, 故挂在别处 = 永不触发."
+    )
+    lines.append("")
+    lines.append("状态: " + "; ".join(f"`{k}`={v}" for k, v in _WS_STATUS_DOC.items()))
+    lines.append("")
+    lines.extend(_rwm_channels_table(contract["channels"]))
+    lines.extend(_rwm_server_frames(contract["server_frames"]))
+    lines.extend(
+        _rwm_sites_table("### 前端 server→client 判别点", contract["consumers"], "帧名")
+    )
+    lines.extend(
+        _rwm_sites_table("### 前端 client→server 发送点", contract["sends"], "类型")
+    )
+    lines.extend(_rwm_zero_consumer(contract["zero_consumer"]))
+    lines.extend(_rwm_undeclared(contract["undeclared"]))
+    lines.extend(_rwm_declared_only(contract["declared_only"]))
+    lines.extend(_rwm_phantom(contract["phantom_inbound"]))
     lines.append(
         "诚实边界: 前端 TS 与后端 `send_json(变量)` 都只做**静态**扫描 —— 经变量透传的"
         "入站类型 (如 `_ws_send(dict(state))` 转发的 agent 循环类型化事件 `mode_banner` / "
@@ -4137,7 +4698,11 @@ def _http_registry(root: Path) -> dict:
     imports: dict[str, tuple[str, str]] = {}
     for node in ast.walk(tree):
         mod = getattr(node, "module", None)
-        if isinstance(node, ast.ImportFrom) and mod and mod.startswith("huginn.routes."):
+        if (
+            isinstance(node, ast.ImportFrom)
+            and mod
+            and mod.startswith("huginn.routes.")
+        ):
             stem = mod.rsplit(".", 1)[-1]
             for a in node.names:
                 imports[a.asname or a.name] = (stem, a.name)
@@ -4156,6 +4721,41 @@ def _http_registry(root: Path) -> dict:
         "mounted": sorted(f"{m}.{n}" for m, n in pairs),
         "mounted_pairs": pairs,
         "dangling": sorted(a for a in aliases if a not in imports),
+    }
+
+
+def _http_call_at(text: str, m, rel: str) -> dict | None:
+    """单个 `api.<verb>(<str>)` 匹配 → 调用记录 (不是一个完整调用则 None)."""
+    verb = m.group(1)
+    j = m.end()
+    if j < len(text) and text[j] == "<":
+        j = _http_skip_generics(text, j)
+    while j < len(text) and text[j] in " \t\n":
+        j += 1
+    if j >= len(text) or text[j] != "(":
+        return None
+    k = j + 1
+    while k < len(text) and text[k] in " \t\n":
+        k += 1
+    if k >= len(text) or text[k] not in "\"'`":
+        return None
+    quote = text[k]
+    end = _skip_ts_string(text, k)
+    closed = end > k + 1 and text[end - 1] == quote
+    raw = text[k + 1 : end - 1 if closed else end]
+    args = text[j : _http_call_args_end(text, j) + 1]
+    override = _HTTP_METHOD_OVERRIDE_RE.search(args)
+    method = (
+        override.group(1).upper()
+        if override
+        else _HTTP_VERB_METHOD.get(verb, verb.upper())
+    )
+    return {
+        "rel": rel,
+        "line": text.count("\n", 0, m.start()) + 1,
+        "verb": verb,
+        "method": method,
+        "path": _HTTP_SEARCH_PATH if verb == "search" else raw,
     }
 
 
@@ -4179,39 +4779,9 @@ def _http_scan_frontend(frontend: Path) -> list[dict]:
         if text is None:
             continue
         for m in _HTTP_CALL_RE.finditer(text):
-            verb = m.group(1)
-            j = m.end()
-            if j < len(text) and text[j] == "<":
-                j = _http_skip_generics(text, j)
-            while j < len(text) and text[j] in " \t\n":
-                j += 1
-            if j >= len(text) or text[j] != "(":
-                continue
-            k = j + 1
-            while k < len(text) and text[k] in " \t\n":
-                k += 1
-            if k >= len(text) or text[k] not in "\"'`":
-                continue
-            quote = text[k]
-            end = _skip_ts_string(text, k)
-            closed = end > k + 1 and text[end - 1] == quote
-            raw = text[k + 1 : end - 1 if closed else end]
-            args = text[j : _http_call_args_end(text, j) + 1]
-            override = _HTTP_METHOD_OVERRIDE_RE.search(args)
-            method = (
-                override.group(1).upper()
-                if override
-                else _HTTP_VERB_METHOD.get(verb, verb.upper())
-            )
-            calls.append(
-                {
-                    "rel": rel,
-                    "line": text.count("\n", 0, m.start()) + 1,
-                    "verb": verb,
-                    "method": method,
-                    "path": _HTTP_SEARCH_PATH if verb == "search" else raw,
-                }
-            )
+            call = _http_call_at(text, m, rel)
+            if call is not None:
+                calls.append(call)
     return calls
 
 
@@ -4289,22 +4859,9 @@ def _http_pick_endpoint(
     return None if tie else best
 
 
-def build_http_contract(root: Path | None = None, frontend: Path | None = None) -> dict:
-    """HTTP API 消费面: 后端路由注册面 ↔ 前端 `api.*` 调用面.
-
-    只把「前端 → 后端」方向当硬契约 (前端调了后端没注册的路径/方法 = 404/405);
-    反向「后端注册但桌面零调用」结构性存在 (HTTP API 面向外部客户端/CLI/测试),
-    只按模块聚合列出候选.
-    """
-    root = root or _REPO
-    frontend = frontend if frontend is not None else root.parent / "desktop" / "src"
-    all_routes = _http_backend_routes(root)
-    http_routes = [r for r in all_routes if "WEBSOCKET" not in r["methods"]]
-    registry = _http_registry(root)
-    scan = _http_scan_frontend(frontend)
-
-    mounted_pairs = set(registry["mounted_pairs"])
-    endpoints: list[dict] = [
+def _http_endpoints(http_routes: list[dict], mounted_pairs: set) -> list[dict]:
+    """后端 HTTP 路由 → 端点记录 (含挂载状态 / 段序列 / 调用标记)."""
+    return [
         {
             "methods": r["methods"],
             "path": r["path"],
@@ -4319,46 +4876,49 @@ def build_http_contract(root: Path | None = None, frontend: Path | None = None) 
         }
         for r in http_routes
     ]
-    live = [ep for ep in endpoints if ep["mounted"]]
 
-    calls: list[dict] = []
-    for c in scan:
-        segs = _http_fe_segments(c["path"])
-        if segs is None:
-            calls.append(
-                {
-                    **c,
-                    "status": "external",
-                    "note": "绝对 URL, 不计入",
-                    "backend_methods": [],
-                }
-            )
+
+def _http_match_call(c: dict, live: list[dict]) -> dict:
+    """单次前端调用 → 匹配后端实存端点后的记录 (命中则标记 `ep["called"]`)."""
+    segs = _http_fe_segments(c["path"])
+    if segs is None:
+        return {
+            **c,
+            "status": "external",
+            "note": "绝对 URL, 不计入",
+            "backend_methods": [],
+        }
+    backend_methods: set[str] = set()
+    for ep in live:
+        if not _http_path_match(segs, ep["segments"]):
             continue
-        backend_methods: set[str] = set()
-        for ep in live:
-            if not _http_path_match(segs, ep["segments"]):
-                continue
-            backend_methods |= set(ep["methods"])
-            if c["method"] in ep["methods"]:
-                ep["called"] = True
-        if not backend_methods:
-            status, note = "no-source", "后端无此路径 (404 死链)"
-        elif c["method"] in backend_methods:
-            status, note = "wired", ""
-        else:
-            status = "method-mismatch"
-            note = f"后端仅注册 {'/'.join(sorted(backend_methods))} (405)"
-        calls.append(
-            {**c, "status": status, "note": note, "backend_methods": sorted(backend_methods)}
-        )
+        backend_methods |= set(ep["methods"])
+        if c["method"] in ep["methods"]:
+            ep["called"] = True
+    if not backend_methods:
+        status, note = "no-source", "后端无此路径 (404 死链)"
+    elif c["method"] in backend_methods:
+        status, note = "wired", ""
+    else:
+        status = "method-mismatch"
+        note = f"后端仅注册 {'/'.join(sorted(backend_methods))} (405)"
+    return {
+        **c,
+        "status": status,
+        "note": note,
+        "backend_methods": sorted(backend_methods),
+    }
 
+
+def _http_zero_modules(live: list[dict]) -> list[dict]:
+    """按模块聚合, 列出零前端调用的模块."""
     by_module: dict[str, dict] = defaultdict(lambda: {"total": 0, "called": 0})
     for ep in live:
         slot = by_module[ep["rel"]]
         slot["total"] += 1
         if ep["called"]:
             slot["called"] += 1
-    zero_modules = sorted(
+    return sorted(
         (
             {"rel": rel, **counts}
             for rel, counts in by_module.items()
@@ -4367,11 +4927,14 @@ def build_http_contract(root: Path | None = None, frontend: Path | None = None) 
         key=lambda x: x["rel"],
     )
 
+
+def _http_duplicates(live: list[dict]) -> list[dict]:
+    """同一 (method, path) 被多模块注册 (路由遮蔽)."""
     dup: dict[tuple[str, str], set[str]] = defaultdict(set)
     for ep in live:
         for m in ep["methods"]:
             dup[(m, ep["path"])].add(ep["rel"])
-    duplicates = sorted(
+    return sorted(
         (
             {"method": k[0], "path": k[1], "modules": sorted(v)}
             for k, v in dup.items()
@@ -4380,10 +4943,35 @@ def build_http_contract(root: Path | None = None, frontend: Path | None = None) 
         key=lambda d: (d["path"], d["method"]),
     )
 
+
+def _http_unmounted(all_routes: list[dict], registry: dict) -> list[str]:
+    """已定义但未挂进 `ALL_ROUTERS` 的 (模块, router) 对."""
     defined_pairs = {(Path(r["rel"]).stem, r["router"]) for r in all_routes}
-    unmounted = sorted(
+    return sorted(
         f"{mod}.{var}" for mod, var in defined_pairs - set(registry["mounted_pairs"])
     )
+
+
+def build_http_contract(root: Path | None = None, frontend: Path | None = None) -> dict:
+    """HTTP API 消费面: 后端路由注册面 ↔ 前端 `api.*` 调用面.
+
+    只把「前端 → 后端」方向当硬契约 (前端调了后端没注册的路径/方法 = 404/405);
+    反向「后端注册但桌面零调用」结构性存在 (HTTP API 面向外部客户端/CLI/测试),
+    只按模块聚合列出候选.
+    """
+    root = root or _REPO
+    frontend = frontend if frontend is not None else root.parent / "desktop" / "src"
+    all_routes = _http_backend_routes(root)
+    http_routes = [r for r in all_routes if "WEBSOCKET" not in r["methods"]]
+    registry = _http_registry(root)
+    scan = _http_scan_frontend(frontend)
+
+    endpoints = _http_endpoints(http_routes, set(registry["mounted_pairs"]))
+    live = [ep for ep in endpoints if ep["mounted"]]
+    calls = [_http_match_call(c, live) for c in scan]
+    zero_modules = _http_zero_modules(live)
+    duplicates = _http_duplicates(live)
+    unmounted = _http_unmounted(all_routes, registry)
 
     # 硬违例 (前端调用挂不上后端注册面) 逐条分诊: 未登记的即"待人工确认".
     hard = [c for c in calls if c["status"] in ("no-source", "method-mismatch")]
@@ -4411,13 +4999,95 @@ def build_http_contract(root: Path | None = None, frontend: Path | None = None) 
     }
 
 
+def _rhm_calls_table(calls: list[dict]) -> list[str]:
+    """前端调用点表 (按状态/位置排序)."""
+    lines = [
+        "### 前端调用点 (按状态)",
+        "",
+        "| 方法 | 路径 | 状态 | 位置 | 备注 |",
+        "|---|---|---|---|---|",
+    ]
+    for c in sorted(calls, key=lambda x: (x["status"], x["rel"], x["line"])):
+        lines.append(
+            f"| `{c['method']}` | `{c['path']}` | `{c['status']}` "
+            f"| `{c['rel']}:{c['line']}` | {c['note']} |"
+        )
+    return lines + [""]
+
+
+def _rhm_hard(hard: list[dict]) -> list[str]:
+    """404 死链 / 405 方法不符清单."""
+    lines = ["### 前端调用无源 (404 死链) / 方法不符 (405)", ""]
+    if not hard:
+        return lines + ["- 无 —— 每个前端调用都命中后端已注册的方法+路径.", ""]
+    lines.append(
+        "硬违例 —— 前端调用挂不上后端注册面. 逐条分诊: 未登记的落「待分诊」"
+        "(回归测试会失败, 逼人工判定):"
+    )
+    lines.append("")
+    for c in hard:
+        lines.append(
+            f"- `{c['method']} {c['path']}` @ `{c['rel']}:{c['line']}` — {c['note']}"
+            + _http_violation_mark(c["method"], c["path"])
+        )
+    return lines + [""]
+
+
+def _rhm_duplicates(duplicates: list[dict]) -> list[str]:
+    """路由遮蔽清单 (同一 method+path 被多已挂载模块注册)."""
+    lines = ["### 同一 method+path 被多个**已挂载**模块注册 (路由遮蔽)", ""]
+    if duplicates:
+        for d in duplicates:
+            mods = ", ".join(f"`{m}`" for m in d["modules"])
+            lines.append(f"- `{d['method']} {d['path']}` ← {mods}")
+    else:
+        lines.append("- 无 —— 每个 method+path 唯一注册.")
+    return lines + [""]
+
+
+def _rhm_registration(reg: dict) -> list[str]:
+    """路由挂载面 (ALL_ROUTERS ↔ 各模块 APIRouter) 清单."""
+    lines = [
+        "### 路由挂载面 (ALL_ROUTERS ↔ 各模块 APIRouter)",
+        "",
+        f"- 已挂载: {len(reg['mounted'])} 个 router 变量",
+    ]
+    if reg["unmounted"]:
+        for name in reg["unmounted"]:
+            lines.append(
+                f"- ⚠ 定义了 APIRouter 却未挂载 (整模块端点永不生效): `{name}`"
+            )
+    else:
+        lines.append("- 未挂载: 无 —— 每个定义路由的模块都被 `ALL_ROUTERS` 挂上.")
+    for name in reg["dangling"]:
+        lines.append(f"- ⚠ `ALL_ROUTERS` 引用了未 import 的别名: `{name}`")
+    return lines + [""]
+
+
+def _rhm_zero_modules(zm: list[dict]) -> list[str]:
+    """桌面零调用的路由模块 (候选)."""
+    lines = ["### 桌面零调用的路由模块 (候选, 只算已挂载模块)", ""]
+    if not zm:
+        return lines + ["- 无 —— 每个路由模块都至少有一个端点被桌面调用.", ""]
+    lines.append(
+        f"以下 {len(zm)} 个模块的端点**全部**无桌面调用 —— HTTP API 面向外部客户端 / "
+        "CLI / 测试, 零调用是**结构性常态**, 非缺陷; 列此仅供「哪些面桌面根本没接」参考:"
+    )
+    lines.append("")
+    lines.append("| 模块 | 端点数 |")
+    lines.append("|---|---|")
+    for m in zm:
+        lines.append(f"| `{m['rel']}` | {m['total']} |")
+    return lines + [""]
+
+
 def render_http_markdown(contract: dict) -> str:
     lines: list[str] = []
     lines.append("## HTTP API 消费面: 后端路由注册面 vs 前端 api.* 调用面")
     lines.append("")
     lines.append(
         "前八面核 agent 内部契约, SSE/WS 消费面核流式推送, 本面补齐**请求-响应**第三块"
-        "传输拼图: 后端 `huginn/routes/*.py` 的 `@router.<method>(\"<path>\")` 是**注册"
+        '传输拼图: 后端 `huginn/routes/*.py` 的 `@router.<method>("<path>")` 是**注册'
         "生产面**, 前端 `desktop/src` 的 `api.get/post/put/patch/del/getBlob/upload*/"
         "search(...)` 是**调用消费面**. 桌面只是 HTTP API 的**一个**消费者 (外部客户端 / "
         "CLI / 测试也调), 故**只把「前端 → 后端」方向当硬契约**: 前端调了后端没注册的"
@@ -4425,7 +5095,9 @@ def render_http_markdown(contract: dict) -> str:
         "的模块), 未挂载模块的端点另在挂载面报, 不重复计."
     )
     lines.append("")
-    lines.append("状态: " + "; ".join(f"`{k}`={v}" for k, v in _HTTP_STATUS_DOC.items()))
+    lines.append(
+        "状态: " + "; ".join(f"`{k}`={v}" for k, v in _HTTP_STATUS_DOC.items())
+    )
     lines.append("")
     lines.append(
         f"端点: 后端注册 **{contract['endpoint_count']}** 个 (实存 "
@@ -4434,75 +5106,11 @@ def render_http_markdown(contract: dict) -> str:
         f"个; 前端调用点 **{len(contract['calls'])}** 处."
     )
     lines.append("")
-
-    lines.append("### 前端调用点 (按状态)")
-    lines.append("")
-    lines.append("| 方法 | 路径 | 状态 | 位置 | 备注 |")
-    lines.append("|---|---|---|---|---|")
-    for c in sorted(contract["calls"], key=lambda x: (x["status"], x["rel"], x["line"])):
-        lines.append(
-            f"| `{c['method']}` | `{c['path']}` | `{c['status']}` "
-            f"| `{c['rel']}:{c['line']}` | {c['note']} |"
-        )
-    lines.append("")
-
-    lines.append("### 前端调用无源 (404 死链) / 方法不符 (405)")
-    lines.append("")
-    hard = contract["dead_links"] + contract["method_mismatches"]
-    if hard:
-        lines.append(
-            "硬违例 —— 前端调用挂不上后端注册面. 逐条分诊: 未登记的落「待分诊」"
-            "(回归测试会失败, 逼人工判定):"
-        )
-        lines.append("")
-        for c in hard:
-            lines.append(
-                f"- `{c['method']} {c['path']}` @ `{c['rel']}:{c['line']}` — {c['note']}"
-                + _http_violation_mark(c["method"], c["path"])
-            )
-    else:
-        lines.append("- 无 —— 每个前端调用都命中后端已注册的方法+路径.")
-    lines.append("")
-
-    lines.append("### 同一 method+path 被多个**已挂载**模块注册 (路由遮蔽)")
-    lines.append("")
-    if contract["duplicates"]:
-        for d in contract["duplicates"]:
-            mods = ", ".join(f"`{m}`" for m in d["modules"])
-            lines.append(f"- `{d['method']} {d['path']}` ← {mods}")
-    else:
-        lines.append("- 无 —— 每个 method+path 唯一注册.")
-    lines.append("")
-
-    reg = contract["registration"]
-    lines.append("### 路由挂载面 (ALL_ROUTERS ↔ 各模块 APIRouter)")
-    lines.append("")
-    lines.append(f"- 已挂载: {len(reg['mounted'])} 个 router 变量")
-    if reg["unmounted"]:
-        for name in reg["unmounted"]:
-            lines.append(f"- ⚠ 定义了 APIRouter 却未挂载 (整模块端点永不生效): `{name}`")
-    else:
-        lines.append("- 未挂载: 无 —— 每个定义路由的模块都被 `ALL_ROUTERS` 挂上.")
-    for name in reg["dangling"]:
-        lines.append(f"- ⚠ `ALL_ROUTERS` 引用了未 import 的别名: `{name}`")
-    lines.append("")
-
-    lines.append("### 桌面零调用的路由模块 (候选, 只算已挂载模块)")
-    lines.append("")
-    zm = contract["zero_modules"]
-    if zm:
-        lines.append(
-            f"以下 {len(zm)} 个模块的端点**全部**无桌面调用 —— HTTP API 面向外部客户端 / "
-            "CLI / 测试, 零调用是**结构性常态**, 非缺陷; 列此仅供「哪些面桌面根本没接」参考:"
-        )
-        lines.append("")
-        lines.append("| 模块 | 端点数 |")
-        lines.append("|---|---|")
-        for m in zm:
-            lines.append(f"| `{m['rel']}` | {m['total']} |")
-    else:
-        lines.append("- 无 —— 每个路由模块都至少有一个端点被桌面调用.")
-    lines.append("")
+    lines.extend(_rhm_calls_table(contract["calls"]))
+    lines.extend(_rhm_hard(contract["dead_links"] + contract["method_mismatches"]))
+    lines.extend(_rhm_duplicates(contract["duplicates"]))
+    lines.extend(_rhm_registration(contract["registration"]))
+    lines.extend(_rhm_zero_modules(contract["zero_modules"]))
     lines.append(
         "诚实边界: 前端只扫 `lib/api.ts` 的 `api.*` 包装 (裸 `fetch(...)` 与 EventSource "
         "在别面); 路径里的 `${…}` 只保留静态前缀, 动态拼接的段不可穷尽; "
@@ -4664,7 +5272,9 @@ def _payload_classify(param: dict, models: dict[str, set[str]]) -> str:
     return "query"
 
 
-def _payload_handler_params(node: ast.FunctionDef | ast.AsyncFunctionDef, path: str) -> list[dict]:
+def _payload_handler_params(
+    node: ast.FunctionDef | ast.AsyncFunctionDef, path: str
+) -> list[dict]:
     """处理函数签名 → 参数表 (路径参数带 `is_path`, FastAPI 注入类型留给分类)."""
     path_names = {seg[1:-1] for seg in re.findall(r"\{[^}]+\}", path)}
     params: list[dict] = []
@@ -4818,6 +5428,93 @@ def _payload_query_names(raw: str) -> tuple[set[str], bool]:
     return {n for n in names if n}, unknown
 
 
+def _payload_verb_shapes(verb: str, args: list[str]) -> tuple:
+    """按 verb 解析实参形状.
+
+    返回 `(query_override, body_keys, body_unknown, has_body, fields,
+    fields_unknown, opt_i)`: `query_override` 非 None 时覆盖路径 query 解析结果
+    (仅 `search` 使用), `opt_i` 是可选参数实参下标 (None 表示不读).
+    """
+    body_keys: set[str] = set()
+    body_unknown = False
+    has_body = False
+    fields: set[str] = set()
+    fields_unknown = True
+    query_override: set[str] | None = None
+    if verb in ("post", "put", "patch"):
+        if len(args) >= 2 and args[1].strip():
+            has_body = True
+            body_keys, body_unknown = _payload_obj_keys(args[1])
+        opt_i = 2
+    elif verb in ("get", "del", "getBlob"):
+        opt_i = 1
+    elif verb == "search":
+        query_override = {"query", "limit", "sources"}
+        opt_i = None
+    elif verb in _PAYLOAD_MULTIPART_VERBS:
+        opt_i = 1
+        if verb == "uploadStream":
+            fields, fields_unknown = {"file"}, False
+        elif verb == "uploadWithProgress" and len(args) >= 4:
+            fields, fields_unknown = _payload_obj_keys(args[3])
+            fields |= {"file"}  # 三个上传包装都固定 append("file", file)
+    else:
+        opt_i = 1
+    return (
+        query_override,
+        body_keys,
+        body_unknown,
+        has_body,
+        fields,
+        fields_unknown,
+        opt_i,
+    )
+
+
+def _payload_call_at(text: str, m, rel: str) -> dict | None:
+    """单个 `api.<verb>(…)` 匹配 → 带负载形状的调用记录 (非完整调用则 None)."""
+    verb = m.group(1)
+    j = m.end()
+    if j < len(text) and text[j] == "<":
+        j = _http_skip_generics(text, j)
+    while j < len(text) and text[j] in " \t\n":
+        j += 1
+    if j >= len(text) or text[j] != "(":
+        return None
+    args = _payload_split_args(text[j + 1 : _http_call_args_end(text, j)])
+    raw = args[0].strip() if args else ""
+    if raw and raw[0] in "\"'`":
+        raw = raw[1:-1]
+    query, query_unknown = _payload_query_names(raw)
+    q_override, body_keys, body_unknown, has_body, fields, fields_unknown, opt_i = (
+        _payload_verb_shapes(verb, args)
+    )
+    if q_override is not None:
+        query = q_override
+    if opt_i is not None and len(args) > opt_i:
+        pk, pu = _payload_opt_params(args[opt_i])
+        query |= pk
+        query_unknown = query_unknown or pu
+    method = _HTTP_VERB_METHOD.get(verb, verb.upper())
+    override = _HTTP_METHOD_OVERRIDE_RE.search("".join(args))
+    if override:
+        method = override.group(1).upper()
+    return {
+        "rel": rel,
+        "line": text.count("\n", 0, m.start()) + 1,
+        "verb": verb,
+        "method": method,
+        "path": raw,
+        "query": sorted(query),
+        "query_unknown": query_unknown,
+        "body_keys": sorted(body_keys),
+        "body_unknown": body_unknown,
+        "has_body": has_body,
+        "fields": sorted(fields),
+        "fields_unknown": fields_unknown,
+    }
+
+
 def _payload_scan_frontend(frontend: Path) -> list[dict]:
     """扫前端 `api.*` 调用点 → 每个调用的负载形状 (query 名 / body 键 / multipart 字段).
 
@@ -4837,67 +5534,9 @@ def _payload_scan_frontend(frontend: Path) -> list[dict]:
         if text is None:
             continue
         for m in _HTTP_CALL_RE.finditer(text):
-            verb = m.group(1)
-            j = m.end()
-            if j < len(text) and text[j] == "<":
-                j = _http_skip_generics(text, j)
-            while j < len(text) and text[j] in " \t\n":
-                j += 1
-            if j >= len(text) or text[j] != "(":
-                continue
-            args = _payload_split_args(text[j + 1 : _http_call_args_end(text, j)])
-            raw = args[0].strip() if args else ""
-            if raw and raw[0] in "\"'`":
-                raw = raw[1:-1]
-            query, query_unknown = _payload_query_names(raw)
-            body_keys: set[str] = set()
-            body_unknown = False
-            has_body = False
-            fields: set[str] = set()
-            fields_unknown = True
-            if verb in ("post", "put", "patch"):
-                if len(args) >= 2 and args[1].strip():
-                    has_body = True
-                    body_keys, body_unknown = _payload_obj_keys(args[1])
-                opt_i = 2
-            elif verb in ("get", "del", "getBlob"):
-                opt_i = 1
-            elif verb == "search":
-                query = {"query", "limit", "sources"}
-                opt_i = None
-            elif verb in _PAYLOAD_MULTIPART_VERBS:
-                opt_i = 1
-                if verb == "uploadStream":
-                    fields, fields_unknown = {"file"}, False
-                elif verb == "uploadWithProgress" and len(args) >= 4:
-                    fields, fields_unknown = _payload_obj_keys(args[3])
-                    fields |= {"file"}  # 三个上传包装都固定 append("file", file)
-            else:
-                opt_i = 1
-            if opt_i is not None and len(args) > opt_i:
-                pk, pu = _payload_opt_params(args[opt_i])
-                query |= pk
-                query_unknown = query_unknown or pu
-            method = _HTTP_VERB_METHOD.get(verb, verb.upper())
-            override = _HTTP_METHOD_OVERRIDE_RE.search("".join(args))
-            if override:
-                method = override.group(1).upper()
-            calls.append(
-                {
-                    "rel": rel,
-                    "line": text.count("\n", 0, m.start()) + 1,
-                    "verb": verb,
-                    "method": method,
-                    "path": raw,
-                    "query": sorted(query),
-                    "query_unknown": query_unknown,
-                    "body_keys": sorted(body_keys),
-                    "body_unknown": body_unknown,
-                    "has_body": has_body,
-                    "fields": sorted(fields),
-                    "fields_unknown": fields_unknown,
-                }
-            )
+            call = _payload_call_at(text, m, rel)
+            if call is not None:
+                calls.append(call)
     return calls
 
 
@@ -4921,26 +5560,138 @@ def _payload_live_endpoints(root: Path) -> list[dict]:
     return out
 
 
+def _pl_viol(
+    out: list[dict], c: dict, end_path: str, kind: str, detail: str, model: str = ""
+) -> None:
+    """负载违例追加 (统一字段)."""
+    out.append(
+        {
+            "kind": kind,
+            "method": c["method"],
+            "path": c["path"],
+            "endpoint": end_path,
+            "rel": c["rel"],
+            "line": c["line"],
+            "model": model,
+            "detail": detail,
+        }
+    )
+
+
+def _pl_query(
+    c: dict, end_path: str, req_query: list[str], out: list[dict], stats: dict
+) -> None:
+    """(1) 必填 query 参数未传."""
+    if not req_query:
+        return
+    if c["query_unknown"]:
+        stats["query_skipped"] += 1
+        return
+    stats["query_checked"] += 1
+    miss = [n for n in req_query if n not in set(c["query"])]
+    if miss:
+        _pl_viol(
+            out, c, end_path, "missing-query", f"后端必填 query 未传: {', '.join(miss)}"
+        )
+
+
+def _pl_shape(
+    c: dict,
+    end_path: str,
+    multipart: bool,
+    form_names: set[str],
+    json_body: bool,
+    body_model,
+    body_dict,
+    out: list[dict],
+) -> None:
+    """(2) 请求载体形状不符 (JSON ↔ multipart)."""
+    if multipart and not form_names:
+        _pl_viol(
+            out,
+            c,
+            end_path,
+            "shape-mismatch",
+            "前端走 multipart 上传, 后端无 Form/File 参数",
+        )
+    if json_body and c["has_body"] and form_names and not body_model and not body_dict:
+        _pl_viol(
+            out, c, end_path, "shape-mismatch", "前端发 JSON body, 后端只收 Form/File"
+        )
+
+
+def _pl_body(
+    c: dict, end_path: str, body_model, body_dict, json_body: bool, out: list[dict]
+) -> None:
+    """(3) 必填请求体整体缺失."""
+    body_param = body_model or body_dict
+    if (
+        body_param is not None
+        and json_body
+        and _payload_is_required(body_param["default"])
+        and not c["has_body"]
+    ):
+        _pl_viol(
+            out,
+            c,
+            end_path,
+            "missing-body",
+            f"后端必填请求体 `{body_param['name']}` 未发",
+            model=_payload_base_ann(body_model["ann"]) if body_model else "",
+        )
+
+
+def _pl_model_fields(
+    c: dict, end_path: str, body_model, models: dict, out: list[dict], stats: dict
+) -> None:
+    """(4) 模型必填字段未含."""
+    if body_model is None or not c["has_body"]:
+        return
+    if c["body_unknown"]:
+        stats["body_skipped"] += 1
+        return
+    stats["body_checked"] += 1
+    mname = _payload_base_ann(body_model["ann"])
+    miss = sorted(n for n in models.get(mname, set()) if n not in set(c["body_keys"]))
+    if miss:
+        _pl_viol(
+            out,
+            c,
+            end_path,
+            "missing-body-field",
+            f"模型 `{mname}` 必填字段未含: {', '.join(miss)}",
+            model=mname,
+        )
+
+
+def _pl_form(
+    c: dict,
+    end_path: str,
+    multipart: bool,
+    req_form: list[str],
+    out: list[dict],
+    stats: dict,
+) -> None:
+    """(5) multipart 必填 Form/File 字段未含."""
+    if not (multipart and req_form and not c["fields_unknown"]):
+        return
+    stats["form_checked"] += 1
+    miss = [n for n in req_form if n not in set(c["fields"])]
+    if miss:
+        _pl_viol(
+            out,
+            c,
+            end_path,
+            "missing-form-field",
+            f"未含必填表单/文件字段: {', '.join(miss)}",
+        )
+
+
 def _payload_violations_for(
     c: dict, end_path: str, params: list[dict], models: dict[str, set[str]], stats: dict
 ) -> list[dict]:
     """一次命中端点的调用 → 负载硬违例列表 (仅「前端漏发后端必填」方向)."""
     out: list[dict] = []
-
-    def viol(kind: str, detail: str, model: str = "") -> None:
-        out.append(
-            {
-                "kind": kind,
-                "method": c["method"],
-                "path": c["path"],
-                "endpoint": end_path,
-                "rel": c["rel"],
-                "line": c["line"],
-                "model": model,
-                "detail": detail,
-            }
-        )
-
     kinds = [(p["name"], _payload_classify(p, models), p) for p in params]
     req_query = [
         n for n, k, p in kinds if k == "query" and _payload_is_required(p["default"])
@@ -4956,59 +5707,44 @@ def _payload_violations_for(
     multipart = c["verb"] in _PAYLOAD_MULTIPART_VERBS
     json_body = c["method"] in ("POST", "PUT", "PATCH") and not multipart
 
-    # (1) 必填 query 参数未传
-    if req_query:
-        if c["query_unknown"]:
-            stats["query_skipped"] += 1
-        else:
-            stats["query_checked"] += 1
-            miss = [n for n in req_query if n not in set(c["query"])]
-            if miss:
-                viol("missing-query", f"后端必填 query 未传: {', '.join(miss)}")
-    # (2) 请求载体形状不符 (JSON ↔ multipart)
-    if multipart and not form_names:
-        viol("shape-mismatch", "前端走 multipart 上传, 后端无 Form/File 参数")
-    if json_body and c["has_body"] and form_names and not body_model and not body_dict:
-        viol("shape-mismatch", "前端发 JSON body, 后端只收 Form/File")
-    # (3) 必填请求体整体缺失
-    body_param = body_model or body_dict
-    if (
-        body_param is not None
-        and json_body
-        and _payload_is_required(body_param["default"])
-        and not c["has_body"]
-    ):
-        viol(
-            "missing-body",
-            f"后端必填请求体 `{body_param['name']}` 未发",
-            model=_payload_base_ann(body_model["ann"]) if body_model else "",
-        )
-    # (4) 模型必填字段未含
-    if body_model is not None and c["has_body"]:
-        if c["body_unknown"]:
-            stats["body_skipped"] += 1
-        else:
-            stats["body_checked"] += 1
-            mname = _payload_base_ann(body_model["ann"])
-            miss = sorted(
-                n for n in models.get(mname, set()) if n not in set(c["body_keys"])
-            )
-            if miss:
-                viol(
-                    "missing-body-field",
-                    f"模型 `{mname}` 必填字段未含: {', '.join(miss)}",
-                    model=mname,
-                )
-    # (5) multipart 必填 Form/File 字段未含
-    if multipart and req_form and not c["fields_unknown"]:
-        stats["form_checked"] += 1
-        miss = [n for n in req_form if n not in set(c["fields"])]
-        if miss:
-            viol("missing-form-field", f"未含必填表单/文件字段: {', '.join(miss)}")
+    _pl_query(c, end_path, req_query, out, stats)
+    _pl_shape(c, end_path, multipart, form_names, json_body, body_model, body_dict, out)
+    _pl_body(c, end_path, body_model, body_dict, json_body, out)
+    _pl_model_fields(c, end_path, body_model, models, out, stats)
+    _pl_form(c, end_path, multipart, req_form, out, stats)
     return out
 
 
-def build_payload_contract(root: Path | None = None, frontend: Path | None = None) -> dict:
+def _payload_collect(
+    calls: list[dict],
+    live: list[dict],
+    handlers: dict,
+    models: dict,
+    stats: dict,
+) -> list[dict]:
+    """逐调用命中实存端点 → 负载违例 (未命中路径的调用跳过)."""
+    violations: list[dict] = []
+    for c in calls:
+        segs = _http_fe_segments(c["path"])
+        if segs is None:
+            continue
+        eps = [
+            ep
+            for ep in live
+            if c["method"] in ep["methods"] and _http_path_match(segs, ep["segments"])
+        ]
+        if not eps:
+            continue
+        ep = eps[0]
+        stats["wired"] += 1
+        params = handlers.get((c["method"], ep["path"]), [])
+        violations.extend(_payload_violations_for(c, ep["path"], params, models, stats))
+    return violations
+
+
+def build_payload_contract(
+    root: Path | None = None, frontend: Path | None = None
+) -> dict:
     """请求负载面: 前端调用实参形状 ↔ 后端签名必填项.
 
     HTTP 面核路径/方法挂不挂得上; 本面在**已命中的端点**上核负载: 后端必填的 query
@@ -5030,23 +5766,7 @@ def build_payload_contract(root: Path | None = None, frontend: Path | None = Non
         "body_skipped": 0,
         "form_checked": 0,
     }
-    violations: list[dict] = []
-    for c in calls:
-        segs = _http_fe_segments(c["path"])
-        if segs is None:
-            continue
-        eps = [
-            ep
-            for ep in live
-            if c["method"] in ep["methods"] and _http_path_match(segs, ep["segments"])
-        ]
-        if not eps:
-            continue
-        ep = eps[0]
-        stats["wired"] += 1
-        params = handlers.get((c["method"], ep["path"]), [])
-        violations.extend(_payload_violations_for(c, ep["path"], params, models, stats))
-
+    violations = _payload_collect(calls, live, handlers, models, stats)
     _PAYLOAD_TRIAGE.stamp(violations)
 
     kinds = Counter(v["kind"] for v in violations)
@@ -5068,7 +5788,8 @@ def build_payload_contract(root: Path | None = None, frontend: Path | None = Non
     }
 
 
-def render_payload_markdown(contract: dict) -> str:
+def _rpm_intro() -> list[str]:
+    """面头 + 违例类型词表 (静态文案)."""
     lines: list[str] = []
     lines.append("## 请求负载面: 前端调用实参形状 vs 后端签名必填项")
     lines.append("")
@@ -5084,7 +5805,12 @@ def render_payload_markdown(contract: dict) -> str:
         "违例类型: " + "; ".join(f"`{k}`={v}" for k, v in _PAYLOAD_KIND_DOC.items())
     )
     lines.append("")
-    cov = contract["coverage"]
+    return lines
+
+
+def _rpm_summary(contract: dict, cov: dict) -> list[str]:
+    """覆盖统计 + 违例总数."""
+    lines: list[str] = []
     lines.append(
         f"覆盖: 命中端点的调用 **{contract['wired_call_count']}** 处 (共 "
         f"{contract['call_count']} 个 `api.*` 调用点); 后端模型 **{contract['model_count']}** "
@@ -5098,17 +5824,20 @@ def render_payload_markdown(contract: dict) -> str:
     )
     lines.append(f"违例: **{len(contract['violations'])}** 条.{counts}")
     lines.append("")
+    return lines
 
-    lines.append("### 违例 (前端漏发后端必填)")
-    lines.append("")
-    if contract["violations"]:
+
+def _rpm_violations(violations: list[dict]) -> list[str]:
+    """违例清单 (含分诊标记)."""
+    lines: list[str] = ["### 违例 (前端漏发后端必填)", ""]
+    if violations:
         lines.append(
             "硬违例 —— 后端必填项前端没发, 请求必 422. 逐条分诊: 未登记的落「待分诊」"
             "(回归测试会失败, 逼人工判定):"
         )
         lines.append("")
         for v in sorted(
-            contract["violations"],
+            violations,
             key=lambda x: (x["kind"], x["method"], x["path"], x["rel"], x["line"]),
         ):
             lines.append(
@@ -5119,23 +5848,47 @@ def render_payload_markdown(contract: dict) -> str:
     else:
         lines.append("- 无 —— 每个命中端点的调用, 静态可辨的负载都满足后端必填项.")
     lines.append("")
+    return lines
 
-    lines.append("### 静态核对覆盖面 (读不出形状即跳过, 不猜)")
-    lines.append("")
-    lines.append("| 维度 | 已核对 | 跳过 (变量/模板/未知形状) |")
-    lines.append("|---|---|---|")
-    lines.append(f"| 必填 query 参数 | {cov['query_checked']} | {cov['query_skipped']} |")
+
+def _rpm_coverage_table(cov: dict) -> list[str]:
+    """静态核对覆盖面表 (读不出形状即跳过)."""
+    lines: list[str] = [
+        "### 静态核对覆盖面 (读不出形状即跳过, 不猜)",
+        "",
+        "| 维度 | 已核对 | 跳过 (变量/模板/未知形状) |",
+        "|---|---|---|",
+    ]
+    lines.append(
+        f"| 必填 query 参数 | {cov['query_checked']} | {cov['query_skipped']} |"
+    )
     lines.append(f"| 必填模型字段 | {cov['body_checked']} | {cov['body_skipped']} |")
     lines.append(f"| multipart 必填字段 | {cov['form_checked']} | — |")
     lines.append("")
-    lines.append(
+    return lines
+
+
+def _rpm_boundaries() -> list[str]:
+    """诚实边界 (静态可辨范围的声明)."""
+    return [
         "诚实边界: 只读**字面量**形状 —— body 传变量、`params` 传变量、路径 query 整段"
         "动态时该维度记 unknown 并跳过, 故违例是**下界** (可能漏报); 后端 `dict` 请求体"
         "无字段约束只核「发没发」; 模型必填性按 Pydantic 默认值 / `Field(...)` 静态判定, "
         "`model_config` 与 `Field` 的 `validate_*` 细粒度约束不核; 反向 (前端多发字段、"
-        "后端可选字段缺失) 不是违例."
-    )
-    lines.append("")
+        "后端可选字段缺失) 不是违例.",
+        "",
+    ]
+
+
+def render_payload_markdown(contract: dict) -> str:
+    """渲染请求负载面 markdown."""
+    cov = contract["coverage"]
+    lines: list[str] = []
+    lines.extend(_rpm_intro())
+    lines.extend(_rpm_summary(contract, cov))
+    lines.extend(_rpm_violations(contract["violations"]))
+    lines.extend(_rpm_coverage_table(cov))
+    lines.extend(_rpm_boundaries())
     return "\n".join(lines)
 
 
@@ -5185,6 +5938,23 @@ _resp_triage = _RESP_TRIAGE.triage
 _resp_violation_mark = _RESP_TRIAGE.mark
 
 
+def _resp_depth_delta(inner: str, i: int, c: str) -> int | None:
+    """单字符的深度增量; `None` 报成员分隔符 (是否切分由调用方按 depth 判定)."""
+    if c in "([{":
+        return 1
+    if c in ")]}":
+        return -1
+    if c == "<":
+        if inner[i - 1 : i] != "=" and inner[i + 1 : i + 2] != "=":
+            return 1
+        return 0
+    if c == ">":
+        return -1 if inner[i - 1 : i] != "=" else 0
+    if c in ",;":
+        return None
+    return 0
+
+
 def _resp_split_members(inner: str) -> list[str]:
     """按顶层 `,` / `;` 切分 TS 类型成员 (跳过字符串字面量, 尊重括号/泛型嵌套).
 
@@ -5202,22 +5972,37 @@ def _resp_split_members(inner: str) -> list[str]:
         if c in "\"'`":
             i = _skip_ts_string(inner, i)
             continue
-        if c in "([{":
-            depth += 1
-        elif c in ")]}":
-            depth -= 1
-        elif c == "<" and inner[i - 1 : i] != "=" and inner[i + 1 : i + 2] != "=":
-            depth += 1
-        elif c == ">" and inner[i - 1 : i] != "=":
-            depth -= 1
-        elif c in ",;" and depth == 0:
-            out.append(inner[start:i])
-            start = i + 1
+        delta = _resp_depth_delta(inner, i, c)
+        if delta is None:
+            if depth == 0:
+                out.append(inner[start:i])
+                start = i + 1
+        else:
+            depth += delta
         i += 1
     tail = inner[start:]
     if tail.strip():
         out.append(tail)
     return out
+
+
+def _resp_subscript_on(target: ast.AST, name: str) -> bool:
+    """`name[...]` 形态的赋值目标."""
+    return (
+        isinstance(target, ast.Subscript)
+        and isinstance(target.value, ast.Name)
+        and target.value.id == name
+    )
+
+
+def _resp_attr_call_on(n: ast.AST, name: str) -> bool:
+    """`name.method(...)` 形态的调用 (读不出的原地改写)."""
+    return (
+        isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and isinstance(n.func.value, ast.Name)
+        and n.func.value.id == name
+    )
 
 
 def _resp_type_keys(expr: str) -> tuple[set[str], bool]:
@@ -5310,7 +6095,8 @@ def _resp_local_models(tree: ast.Module) -> dict[str, ast.ClassDef]:
         for node in ast.walk(tree)
         if isinstance(node, ast.ClassDef)
         and any(
-            _payload_base_ann(ast.unparse(b)) in _PAYLOAD_MODEL_BASES for b in node.bases
+            _payload_base_ann(ast.unparse(b)) in _PAYLOAD_MODEL_BASES
+            for b in node.bases
         )
     }
 
@@ -5392,7 +6178,9 @@ class _RespShapeResolver:
         self._memo: dict[str, tuple[set[str], bool, bool]] = {}
         self._busy: set[str] = set()
 
-    def handler(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[set[str], bool]:
+    def handler(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef
+    ) -> tuple[set[str], bool]:
         """端点函数 → (响应顶层键集, 是否封闭)."""
         for dec in node.decorator_list:
             rm = _resp_response_model(dec, self._models)
@@ -5410,21 +6198,24 @@ class _RespShapeResolver:
             open_ = open_ or o or mn  # 非守卫的 null 可能 ⇒ 开放 (字段可能缺失)
         return keys, (seen and not open_)
 
-    def _return(
-        self, ret: ast.Return, scope: ast.AST
-    ) -> tuple[set[str], bool, bool]:
+    def _return(self, ret: ast.Return, scope: ast.AST) -> tuple[set[str], bool, bool]:
         """单个 return → (键集, 是否开放, 是否可能为 null)."""
-        if (
-            isinstance(ret.value, ast.Name)
-            and _resp_return_guarded(scope, ret, ret.value.id)
+        if isinstance(ret.value, ast.Name) and _resp_return_guarded(
+            scope, ret, ret.value.id
         ):
             keys, open_, _none = self._var(ret.value.id, scope)
             return keys, open_, False
         return self._value(ret.value, scope)
 
-    def _value(self, expr: ast.expr | None, scope: ast.AST) -> tuple[set[str], bool, bool]:
+    def _value(
+        self, expr: ast.expr | None, scope: ast.AST
+    ) -> tuple[set[str], bool, bool]:
         if expr is None or (isinstance(expr, ast.Constant) and expr.value is None):
-            return set(), False, True  # 裸 return / `return None` (响应 null) ⇒ 字段可能缺失
+            return (
+                set(),
+                False,
+                True,
+            )  # 裸 return / `return None` (响应 null) ⇒ 字段可能缺失
         if isinstance(expr, ast.Dict):
             keys: set[str] = set()
             open_ = False
@@ -5452,66 +6243,55 @@ class _RespShapeResolver:
         return set(), True, False
 
     def _var(self, name: str, scope: ast.AST) -> tuple[set[str], bool, bool]:
-        keys: set[str] = set()
-        open_ = False
-        may_none = False
-        found = False
+        acc: dict = {"keys": set(), "open": False, "may_none": False, "found": False}
         for n in _resp_own_walk(scope):
-            if isinstance(n, ast.Assign):
-                for t in n.targets:
-                    if isinstance(t, ast.Name) and t.id == name:
-                        found = True
-                        k, o, mn = self._value(n.value, scope)
-                        keys |= k
-                        open_ = open_ or o
-                        may_none = may_none or mn
-                    elif (
-                        isinstance(t, ast.Subscript)
-                        and isinstance(t.value, ast.Name)
-                        and t.value.id == name
-                    ):
-                        if (
-                            isinstance(t.slice, ast.Constant)
-                            and isinstance(t.slice.value, str)
-                        ):
-                            keys.add(t.slice.value)
-                        else:
-                            open_ = True
-                        found = True
-            elif (
-                isinstance(n, ast.AnnAssign)
-                and isinstance(n.target, ast.Name)
-                and n.target.id == name
-            ):
-                found = True
-                k, o, mn = self._value(n.value, scope)
-                keys |= k
-                open_ = open_ or o
-                may_none = may_none or mn
-            elif isinstance(n, ast.AugAssign) and (
-                isinstance(n.target, ast.Subscript)
-                and isinstance(n.target.value, ast.Name)
-                and n.target.value.id == name
-            ):
-                found = True
-                if isinstance(n.target.slice, ast.Constant) and isinstance(
-                    n.target.slice.value, str
-                ):
-                    keys.add(n.target.slice.value)
-                else:
-                    open_ = True
-            elif (
-                isinstance(n, ast.Call)
-                and isinstance(n.func, ast.Attribute)
-                and isinstance(n.func.value, ast.Name)
-                and n.func.value.id == name
-            ):
-                # `name.update(...)` 等读不出的改写 ⇒ 开放
-                found = True
-                open_ = True
-        if not found:
+            self._var_node(n, name, scope, acc)
+        if not acc["found"]:
             return set(), True, False
-        return keys, (open_ or not keys), may_none
+        keys = acc["keys"]
+        return keys, (acc["open"] or not keys), acc["may_none"]
+
+    def _var_node(self, n: ast.AST, name: str, scope: ast.AST, acc: dict) -> None:
+        """单个赋值节点归并进 acc (`keys` / `open` / `may_none` / `found`)."""
+        if isinstance(n, ast.Assign):
+            self._var_assign(n.targets, n.value, name, scope, acc)
+        elif isinstance(n, ast.AnnAssign):
+            if isinstance(n.target, ast.Name) and n.target.id == name:
+                acc["found"] = True
+                self._var_merge(n.value, scope, acc)
+        elif isinstance(n, ast.AugAssign):
+            if _resp_subscript_on(n.target, name):
+                acc["found"] = True
+                self._var_subscript(n.target.slice, acc)
+        elif _resp_attr_call_on(n, name):
+            # `name.update(...)` 等读不出的改写 ⇒ 开放
+            acc["found"] = True
+            acc["open"] = True
+
+    def _var_assign(self, targets, value, name: str, scope: ast.AST, acc: dict) -> None:
+        """`a = v` / `a = b = v` / `a[k] = v` 逐个目标归并."""
+        for t in targets:
+            if isinstance(t, ast.Name) and t.id == name:
+                acc["found"] = True
+                self._var_merge(value, scope, acc)
+            elif _resp_subscript_on(t, name):
+                acc["found"] = True
+                self._var_subscript(t.slice, acc)
+
+    def _var_merge(self, value, scope: ast.AST, acc: dict) -> None:
+        """把一次赋值的值形状并入 acc."""
+        k, o, mn = self._value(value, scope)
+        acc["keys"] |= k
+        acc["open"] = acc["open"] or o
+        acc["may_none"] = acc["may_none"] or mn
+
+    @staticmethod
+    def _var_subscript(sl: ast.AST, acc: dict) -> None:
+        """`x['k'] = …` 的字面量键归并; 非字面量下标 ⇒ 开放."""
+        if isinstance(sl, ast.Constant) and isinstance(sl.value, str):
+            acc["keys"].add(sl.value)
+        else:
+            acc["open"] = True
 
     def _func(self, name: str) -> tuple[set[str], bool, bool]:
         if name in self._busy:  # 环 ⇒ 保守开放
@@ -5580,6 +6360,40 @@ def _resp_backend_shapes(root: Path) -> dict[tuple[str, str], dict]:
     return out
 
 
+def _resp_call_at(
+    text: str, m: re.Match[str], rel: str, types: dict[str, tuple[set[str], bool]]
+) -> dict | None:
+    """单次 `api.*` 命中 → 调用点 dict; 读不出调用形状即 `None`."""
+    verb = m.group(1)
+    j = m.end()
+    generic = ""
+    if j < len(text) and text[j] == "<":
+        k = _http_skip_generics(text, j)
+        generic = text[j + 1 : k - 1].strip()
+        j = k
+    while j < len(text) and text[j] in " \t\n":
+        j += 1
+    if j >= len(text) or text[j] != "(":
+        return None
+    args = _payload_split_args(text[j + 1 : _http_call_args_end(text, j)])
+    raw = args[0].strip() if args else ""
+    if raw and raw[0] in "\"'`":
+        raw = raw[1:-1]
+    declared, declared_open = _resp_declared(generic, types)
+    method = _HTTP_VERB_METHOD.get(verb, verb.upper())
+    override = _HTTP_METHOD_OVERRIDE_RE.search("".join(args))
+    if override:
+        method = override.group(1).upper()
+    return {
+        "rel": rel,
+        "line": text.count("\n", 0, m.start()) + 1,
+        "method": method,
+        "path": raw,
+        "declared": sorted(declared),
+        "declared_open": declared_open,
+    }
+
+
 def _resp_scan_frontend(
     frontend: Path, types: dict[str, tuple[set[str], bool]]
 ) -> list[dict]:
@@ -5602,36 +6416,9 @@ def _resp_scan_frontend(
         if text is None:
             continue
         for m in _HTTP_CALL_RE.finditer(text):
-            verb = m.group(1)
-            j = m.end()
-            generic = ""
-            if j < len(text) and text[j] == "<":
-                k = _http_skip_generics(text, j)
-                generic = text[j + 1 : k - 1].strip()
-                j = k
-            while j < len(text) and text[j] in " \t\n":
-                j += 1
-            if j >= len(text) or text[j] != "(":
-                continue
-            args = _payload_split_args(text[j + 1 : _http_call_args_end(text, j)])
-            raw = args[0].strip() if args else ""
-            if raw and raw[0] in "\"'`":
-                raw = raw[1:-1]
-            declared, declared_open = _resp_declared(generic, types)
-            method = _HTTP_VERB_METHOD.get(verb, verb.upper())
-            override = _HTTP_METHOD_OVERRIDE_RE.search("".join(args))
-            if override:
-                method = override.group(1).upper()
-            calls.append(
-                {
-                    "rel": rel,
-                    "line": text.count("\n", 0, m.start()) + 1,
-                    "method": method,
-                    "path": raw,
-                    "declared": sorted(declared),
-                    "declared_open": declared_open,
-                }
-            )
+            call = _resp_call_at(text, m, rel, types)
+            if call is not None:
+                calls.append(call)
     return calls
 
 
@@ -5645,6 +6432,81 @@ def _resp_declared(
     if open_ and not keys and generic in types:
         return types[generic]
     return keys, open_
+
+
+def _resp_ambiguous(segs: list[str], method: str, live: list[dict]) -> bool:
+    """命中多个端点却选不出 (强位置并列) ⇒ 路径歧义."""
+    return any(
+        method in e["methods"] and _http_path_match(segs, e["segments"]) for e in live
+    )
+
+
+def _resp_violation(c: dict, ep: dict, shape: dict, missing: list[str]) -> dict:
+    """一条「前端声明要读, 后端不返回」违例."""
+    return {
+        "kind": "missing-field",
+        "method": c["method"],
+        "path": c["path"],
+        "endpoint": ep["path"],
+        "rel": c["rel"],
+        "line": c["line"],
+        "declared": c["declared"],
+        "produced": sorted(shape["keys"]),
+        "missing": missing,
+    }
+
+
+def _resp_collect(
+    calls: list[dict], live: list[dict], shapes: dict, stats: dict
+) -> list[dict]:
+    """逐调用点核对声明字段是否落在后端 return 形状内."""
+    violations: list[dict] = []
+    for c in calls:
+        segs = _http_fe_segments(c["path"])
+        if segs is None:
+            continue
+        ep = _http_pick_endpoint(segs, c["method"], live)
+        if ep is None:
+            if _resp_ambiguous(segs, c["method"], live):
+                stats["skip_ambiguous"] += 1
+            continue
+        shape = shapes.get((c["method"], ep["path"]))
+        if shape is None:
+            continue
+        stats["wired"] += 1
+        if not shape["closed"]:
+            stats["skip_shape"] += 1
+            continue
+        if c["declared_open"]:
+            stats["skip_decl"] += 1
+            continue
+        stats["checked"] += 1
+        missing = sorted(set(c["declared"]) - shape["keys"])
+        if missing:
+            violations.append(_resp_violation(c, ep, shape, missing))
+    return violations
+
+
+def _resp_result(
+    frontend: Path, calls: list[dict], types: dict, violations: list[dict], stats: dict
+) -> dict:
+    """契约 payload (计数 + 覆盖面 + 违例)."""
+    kinds = Counter(v["kind"] for v in violations)
+    return {
+        "frontend": str(frontend),
+        "call_count": len(calls),
+        "wired_call_count": stats["wired"],
+        "type_count": len(types),
+        "violations": violations,
+        "untriaged": [v for v in violations if v["triage"] == "untriaged"],
+        "kind_counts": dict(sorted(kinds.items())),
+        "coverage": {
+            "checked": stats["checked"],
+            "skip_shape": stats["skip_shape"],
+            "skip_decl": stats["skip_decl"],
+            "skip_ambiguous": stats["skip_ambiguous"],
+        },
+    }
 
 
 def build_response_contract(
@@ -5664,68 +6526,20 @@ def build_response_contract(
     types = _resp_frontend_types(frontend)
     calls = _resp_scan_frontend(frontend, types)
 
-    stats = {"wired": 0, "checked": 0, "skip_shape": 0, "skip_decl": 0, "skip_ambiguous": 0}
-    violations: list[dict] = []
-    for c in calls:
-        segs = _http_fe_segments(c["path"])
-        if segs is None:
-            continue
-        ep = _http_pick_endpoint(segs, c["method"], live)
-        if ep is None:
-            if any(
-                c["method"] in e["methods"] and _http_path_match(segs, e["segments"])
-                for e in live
-            ):
-                stats["skip_ambiguous"] += 1
-            continue
-        shape = shapes.get((c["method"], ep["path"]))
-        if shape is None:
-            continue
-        stats["wired"] += 1
-        if not shape["closed"]:
-            stats["skip_shape"] += 1
-            continue
-        if c["declared_open"]:
-            stats["skip_decl"] += 1
-            continue
-        stats["checked"] += 1
-        missing = sorted(set(c["declared"]) - shape["keys"])
-        if missing:
-            violations.append(
-                {
-                    "kind": "missing-field",
-                    "method": c["method"],
-                    "path": c["path"],
-                    "endpoint": ep["path"],
-                    "rel": c["rel"],
-                    "line": c["line"],
-                    "declared": c["declared"],
-                    "produced": sorted(shape["keys"]),
-                    "missing": missing,
-                }
-            )
-
-    _RESP_TRIAGE.stamp(violations)
-
-    kinds = Counter(v["kind"] for v in violations)
-    return {
-        "frontend": str(frontend),
-        "call_count": len(calls),
-        "wired_call_count": stats["wired"],
-        "type_count": len(types),
-        "violations": violations,
-        "untriaged": [v for v in violations if v["triage"] == "untriaged"],
-        "kind_counts": dict(sorted(kinds.items())),
-        "coverage": {
-            "checked": stats["checked"],
-            "skip_shape": stats["skip_shape"],
-            "skip_decl": stats["skip_decl"],
-            "skip_ambiguous": stats["skip_ambiguous"],
-        },
+    stats = {
+        "wired": 0,
+        "checked": 0,
+        "skip_shape": 0,
+        "skip_decl": 0,
+        "skip_ambiguous": 0,
     }
+    violations = _resp_collect(calls, live, shapes, stats)
+    _RESP_TRIAGE.stamp(violations)
+    return _resp_result(frontend, calls, types, violations, stats)
 
 
-def render_response_markdown(contract: dict) -> str:
+def _rrm_intro() -> list[str]:
+    """面头 + 违例类型词表 (静态文案)."""
     lines: list[str] = []
     lines.append("## 响应结构面: 后端 return 形状 vs 前端声明的响应字段")
     lines.append("")
@@ -5741,7 +6555,12 @@ def render_response_markdown(contract: dict) -> str:
         "违例类型: " + "; ".join(f"`{k}`={v}" for k, v in _RESP_KIND_DOC.items())
     )
     lines.append("")
-    cov = contract["coverage"]
+    return lines
+
+
+def _rrm_summary(contract: dict, cov: dict) -> list[str]:
+    """覆盖统计 + 违例总数."""
+    lines: list[str] = []
     lines.append(
         f"覆盖: 命中端点的调用 **{contract['wired_call_count']}** 处 (共 "
         f"{contract['call_count']} 个 `api.*` 调用点); 前端类型 **{contract['type_count']}** "
@@ -5754,17 +6573,20 @@ def render_response_markdown(contract: dict) -> str:
     )
     lines.append(f"违例: **{len(contract['violations'])}** 条.{counts}")
     lines.append("")
+    return lines
 
-    lines.append("### 违例 (前端声明要读, 后端从不返回)")
-    lines.append("")
-    if contract["violations"]:
+
+def _rrm_violations(violations: list[dict]) -> list[str]:
+    """违例清单 (含分诊标记)."""
+    lines: list[str] = ["### 违例 (前端声明要读, 后端从不返回)", ""]
+    if violations:
         lines.append(
             "硬违例 —— 前端声明/读取的字段后端 return 里没有, 运行时恒 undefined。逐条"
             "分诊: 未登记的落「待分诊」(回归测试会失败, 逼人工判定):"
         )
         lines.append("")
         for v in sorted(
-            contract["violations"],
+            violations,
             key=lambda x: (x["method"], x["path"], x["rel"], x["line"]),
         ):
             lines.append(
@@ -5776,23 +6598,44 @@ def render_response_markdown(contract: dict) -> str:
     else:
         lines.append("- 无 —— 每个命中端点声明要读的字段, 后端 return 里都有.")
     lines.append("")
+    return lines
 
-    lines.append("### 静态核对覆盖面 (读不出形状即跳过, 不猜)")
-    lines.append("")
-    lines.append("| 维度 | 已核对 | 跳过 (形状开放/读不出) |")
-    lines.append("|---|---|---|")
-    lines.append(f"| 后端响应形状封闭 | {cov['checked']} | {cov['skip_shape']} |")
-    lines.append(f"| 前端声明可解析 | {cov['checked']} | {cov['skip_decl']} |")
-    lines.append(f"| 路径唯一命中 | — | {cov['skip_ambiguous']} (歧义跳过) |")
-    lines.append("")
-    lines.append(
+
+def _rrm_coverage_table(cov: dict) -> list[str]:
+    """静态核对覆盖面表."""
+    return [
+        "### 静态核对覆盖面 (读不出形状即跳过, 不猜)",
+        "",
+        "| 维度 | 已核对 | 跳过 (形状开放/读不出) |",
+        "|---|---|---|",
+        f"| 后端响应形状封闭 | {cov['checked']} | {cov['skip_shape']} |",
+        f"| 前端声明可解析 | {cov['checked']} | {cov['skip_decl']} |",
+        f"| 路径唯一命中 | — | {cov['skip_ambiguous']} (歧义跳过) |",
+        "",
+    ]
+
+
+def _rrm_boundaries() -> list[str]:
+    """诚实边界 (静态可辨范围的声明)."""
+    return [
         "诚实边界: 只读**字面量**形状 —— 后端 `return` 传变量 / `**` 展开 / `Response`"
         "对象 / 引不到的 `response_model` 即记开放并跳过, 故违例是**下界** (可能漏报); "
         "前端泛型为 `<any>` / 数组 / `Record` 交叉 / 无泛型时该维度跳过; 类型解析只认同仓"
         "`interface`/`type` 字面量对象, `extends` / `&` 拼接一律记开放; 路径动态段同时命中"
-        "多个端点且强位置并列时跳过 (不猜端点); 反向 (后端返回前端没读的字段) 不是违例."
-    )
-    lines.append("")
+        "多个端点且强位置并列时跳过 (不猜端点); 反向 (后端返回前端没读的字段) 不是违例.",
+        "",
+    ]
+
+
+def render_response_markdown(contract: dict) -> str:
+    """渲染响应结构面 markdown."""
+    cov = contract["coverage"]
+    lines: list[str] = []
+    lines.extend(_rrm_intro())
+    lines.extend(_rrm_summary(contract, cov))
+    lines.extend(_rrm_violations(contract["violations"]))
+    lines.extend(_rrm_coverage_table(cov))
+    lines.extend(_rrm_boundaries())
     return "\n".join(lines)
 
 
@@ -5882,13 +6725,8 @@ def _ws_handler_registry(root: Path) -> dict[str, str]:
     return {}
 
 
-def _ws_payload_handlers(root: Path) -> dict[str, dict]:
-    """入站 type → handler 读取的 `msg.<字段>` 面 (含定义位置, 供核对).
-
-    handler 定义按名在全仓解析 (排除 tests/); 取 `msg` 形参上的属性读取。嵌套闭包
-    里的 `msg.<X>` 也算 handler 的消费 (确属该入站路径), 故用 `ast.walk` 下潜。
-    """
-    reg = _ws_handler_registry(root)
+def _ws_def_index(root: Path) -> dict[str, tuple[ast.AST, str]]:
+    """全仓函数名 → (定义节点, 相对路径); 排除 tests/, 同名取首见."""
     defs: dict[str, tuple[ast.FunctionDef | ast.AsyncFunctionDef, str]] = {}
     for py in _iter_py(root):
         if "/tests/" in py.as_posix():
@@ -5903,6 +6741,36 @@ def _ws_payload_handlers(root: Path) -> dict[str, dict]:
                 and node.name not in defs
             ):
                 defs[node.name] = (node, rel)
+    return defs
+
+
+def _ws_msg_param(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
+    """handler 的 `msg` 形参名 (无显式 `msg` 时取第二个位置参数)."""
+    params = [a.arg for a in node.args.args]
+    return "msg" if "msg" in params else (params[1] if len(params) > 1 else "msg")
+
+
+def _ws_msg_fields(node: ast.AST, msgp: str) -> dict[str, int]:
+    """handler 内读到的 `msg.<字段>` → 首次行号."""
+    fields: dict[str, int] = {}
+    for n in ast.walk(node):
+        if (
+            isinstance(n, ast.Attribute)
+            and isinstance(n.value, ast.Name)
+            and n.value.id == msgp
+        ):
+            fields.setdefault(n.attr, n.lineno)
+    return fields
+
+
+def _ws_payload_handlers(root: Path) -> dict[str, dict]:
+    """入站 type → handler 读取的 `msg.<字段>` 面 (含定义位置, 供核对).
+
+    handler 定义按名在全仓解析 (排除 tests/); 取 `msg` 形参上的属性读取。嵌套闭包
+    里的 `msg.<X>` 也算 handler 的消费 (确属该入站路径), 故用 `ast.walk` 下潜。
+    """
+    reg = _ws_handler_registry(root)
+    defs = _ws_def_index(root)
     out: dict[str, dict] = {}
     for mtype, hname in reg.items():
         hit = defs.get(hname)
@@ -5916,19 +6784,9 @@ def _ws_payload_handlers(root: Path) -> dict[str, dict]:
             }
             continue
         node, rel = hit
-        params = [a.arg for a in node.args.args]
-        msgp = "msg" if "msg" in params else (params[1] if len(params) > 1 else "msg")
-        fields: dict[str, int] = {}
-        for n in ast.walk(node):
-            if (
-                isinstance(n, ast.Attribute)
-                and isinstance(n.value, ast.Name)
-                and n.value.id == msgp
-            ):
-                fields.setdefault(n.attr, n.lineno)
         out[mtype] = {
             "handler": hname,
-            "fields": fields,
+            "fields": _ws_msg_fields(node, _ws_msg_param(node)),
             "resolved": True,
             "rel": rel,
             "line": node.lineno,
@@ -5981,7 +6839,7 @@ def _ws_top_split(inner: str) -> list[str]:
 
 _WS_OBJ_KEY_RE = re.compile(r'^["\']?([A-Za-z_$][\w$]*)["\']?\s*:')
 _WS_OBJ_TYPE_RE = re.compile(r'^["\']?type["\']?\s*:\s*["\']([a-z][a-z0-9_]*)["\']')
-_WS_OBJ_SHORTHAND_RE = re.compile(r'^([A-Za-z_$][\w$]*)$')
+_WS_OBJ_SHORTHAND_RE = re.compile(r"^([A-Za-z_$][\w$]*)$")
 
 
 def _ws_obj_fields(inner: str) -> tuple[set[str], str | None, bool]:
@@ -6060,24 +6918,11 @@ def _ws_payload_scan_sends(frontend: Path) -> list[dict]:
     return sends
 
 
-def build_ws_payload_contract(
-    root: Path | None = None, frontend: Path | None = None
-) -> dict:
-    """WS 请求负载面: `WSMessage` 声明字段 ↔ 后端 handler 读取面 ↔ 前端发送面.
-
-    硬方向两向: handler 读未声明字段 (AttributeError) / 前端发未声明字段 (静默丢弃).
-    只核 agent 通道 (受 `WSMessage` 约束); 前端 type 非字面量或读不出键即跳过该处。
-    """
-    root = root or _REPO
-    frontend = frontend if frontend is not None else root.parent / "desktop" / "src"
-    model_fields = _ws_payload_model_fields(root)
-    handlers = _ws_payload_handlers(root)
-    inbound = set(_ws_inbound_types(root).get("agent", []))
-    sends = _ws_payload_scan_sends(frontend)
-    declared = model_fields | _WS_PAYLOAD_ALIASES
-
+def _wsp_handler_violations(
+    handlers: dict, declared: set[str]
+) -> tuple[list[dict], int]:
+    """方向 1: handler 读 `msg.<X>` 而模型未声明 X (返回违例 + 已解析 handler 数)."""
     violations: list[dict] = []
-    # 方向 1: handler 读 `msg.<X>` 而模型未声明 X.
     resolved = 0
     for mtype in sorted(handlers):
         h = handlers[mtype]
@@ -6097,22 +6942,24 @@ def build_ws_payload_contract(
                     "line": h["fields"][f],
                 }
             )
+    return violations, resolved
 
-    # 方向 2: 前端发已知入站 type 时带模型未声明字段.
-    agent_sends = [s for s in sends if s["channel"] == "agent"]
-    sends_static = 0
-    sends_unknown = 0
-    sends_unattributed = 0
-    sent_fields: set[str] = set()
+
+def _wsp_send_violations(
+    agent_sends: list[dict], inbound: set[str], declared: set[str]
+) -> tuple[list[dict], dict]:
+    """方向 2: 前端发已知入站 type 时带模型未声明字段 (+ 发送面计数)."""
+    violations: list[dict] = []
+    stats: dict = {"static": 0, "unknown": 0, "unattributed": 0, "sent_fields": set()}
     for s in agent_sends:
         if s["type"] not in inbound:
-            sends_unattributed += 1
+            stats["unattributed"] += 1
             continue
-        sent_fields |= set(s["keys"])
+        stats["sent_fields"] |= set(s["keys"])
         if s["unknown"]:
-            sends_unknown += 1
+            stats["unknown"] += 1
         else:
-            sends_static += 1
+            stats["static"] += 1
         for f in s["keys"]:
             if f in declared or f in _WS_PAYLOAD_ENVELOPE:
                 continue
@@ -6126,17 +6973,25 @@ def build_ws_payload_contract(
                     "line": s["line"],
                 }
             )
+    return violations, stats
 
-    _WS_PAYLOAD_TRIAGE.stamp(violations)
 
+def _wsp_result(
+    frontend: Path,
+    model_fields: set[str],
+    handlers: dict,
+    resolved: int,
+    sends: list[dict],
+    agent_sends: list[dict],
+    stats: dict,
+    violations: list[dict],
+) -> dict:
+    """契约 payload (字段面 + 发送面计数 + 死字段)."""
     read_fields = {f for h in handlers.values() if h["resolved"] for f in h["fields"]}
     dead_fields = sorted(
         f
         for f in model_fields - _WS_PAYLOAD_ENVELOPE
-        if f not in read_fields and f not in sent_fields
-    )
-    unresolved = sorted(
-        m for m, h in handlers.items() if not h["resolved"]
+        if f not in read_fields and f not in stats["sent_fields"]
     )
     kinds = Counter(v["kind"] for v in violations)
     return {
@@ -6144,13 +6999,15 @@ def build_ws_payload_contract(
         "model_fields": sorted(model_fields),
         "handler_count": len(handlers),
         "handlers_resolved": resolved,
-        "handlers_unresolved": unresolved,
+        "handlers_unresolved": sorted(
+            m for m, h in handlers.items() if not h["resolved"]
+        ),
         "handler_fields": {m: sorted(h["fields"]) for m, h in handlers.items()},
         "send_count": len(sends),
         "agent_send_count": len(agent_sends),
-        "sends_static": sends_static,
-        "sends_unknown": sends_unknown,
-        "sends_unattributed": sends_unattributed,
+        "sends_static": stats["static"],
+        "sends_unknown": stats["unknown"],
+        "sends_unattributed": stats["unattributed"],
         "violations": violations,
         "untriaged": [v for v in violations if v["triage"] == "untriaged"],
         "kind_counts": dict(sorted(kinds.items())),
@@ -6158,9 +7015,45 @@ def build_ws_payload_contract(
     }
 
 
-def render_ws_payload_markdown(contract: dict) -> str:
+def build_ws_payload_contract(
+    root: Path | None = None, frontend: Path | None = None
+) -> dict:
+    """WS 请求负载面: `WSMessage` 声明字段 ↔ 后端 handler 读取面 ↔ 前端发送面.
+
+    硬方向两向: handler 读未声明字段 (AttributeError) / 前端发未声明字段 (静默丢弃).
+    只核 agent 通道 (受 `WSMessage` 约束); 前端 type 非字面量或读不出键即跳过该处。
+    """
+    root = root or _REPO
+    frontend = frontend if frontend is not None else root.parent / "desktop" / "src"
+    model_fields = _ws_payload_model_fields(root)
+    handlers = _ws_payload_handlers(root)
+    inbound = set(_ws_inbound_types(root).get("agent", []))
+    sends = _ws_payload_scan_sends(frontend)
+    declared = model_fields | _WS_PAYLOAD_ALIASES
+
+    violations, resolved = _wsp_handler_violations(handlers, declared)
+    agent_sends = [s for s in sends if s["channel"] == "agent"]
+    send_violations, send_stats = _wsp_send_violations(agent_sends, inbound, declared)
+    violations.extend(send_violations)
+    _WS_PAYLOAD_TRIAGE.stamp(violations)
+    return _wsp_result(
+        frontend,
+        model_fields,
+        handlers,
+        resolved,
+        sends,
+        agent_sends,
+        send_stats,
+        violations,
+    )
+
+
+def _rwp_intro() -> list[str]:
+    """面头 + 两向硬契约说明 + 违例类型词表."""
     lines: list[str] = []
-    lines.append("## WS 请求负载面: WSMessage 声明字段 vs 后端 handler 读取面 vs 前端发送面")
+    lines.append(
+        "## WS 请求负载面: WSMessage 声明字段 vs 后端 handler 读取面 vs 前端发送面"
+    )
     lines.append("")
     lines.append(
         "WS 消费面只核「入站 `type` 认不认」（认了但字段发错照样坏）; 本面再往里一层, "
@@ -6177,12 +7070,20 @@ def render_ws_payload_markdown(contract: dict) -> str:
         "违例类型: " + "; ".join(f"`{k}`={v}" for k, v in _WS_PAYLOAD_KIND_DOC.items())
     )
     lines.append("")
-    mf = contract["model_fields"]
+    return lines
+
+
+def _rwp_summary(contract: dict) -> list[str]:
+    """权威面覆盖统计 + 违例总数."""
+    lines: list[str] = []
     lines.append(
-        f"权威面: `{_WS_PAYLOAD_MODEL}` 声明 **{len(mf)}** 字段; agent 入站 type "
-        f"**{contract['handler_count']}** 个 (解析到 handler 定义 {contract['handlers_resolved']} 个); "
-        f"前端 agent 发送点 **{contract['agent_send_count']}** 处 (type 已知 {contract['sends_static'] + contract['sends_unknown']}, "
-        f"其中含展开/读不出 {contract['sends_unknown']}; type 非字面量/不在分发面 {contract['sends_unattributed']})."
+        f"权威面: `{_WS_PAYLOAD_MODEL}` 声明 **{len(contract['model_fields'])}** 字段; "
+        f"agent 入站 type **{contract['handler_count']}** 个 (解析到 handler 定义 "
+        f"{contract['handlers_resolved']} 个); 前端 agent 发送点 "
+        f"**{contract['agent_send_count']}** 处 (type 已知 "
+        f"{contract['sends_static'] + contract['sends_unknown']}, 其中含展开/读不出 "
+        f"{contract['sends_unknown']}; type 非字面量/不在分发面 "
+        f"{contract['sends_unattributed']})."
     )
     counts = (
         "  " + ", ".join(f"`{k}`×{n}" for k, n in contract["kind_counts"].items())
@@ -6191,62 +7092,79 @@ def render_ws_payload_markdown(contract: dict) -> str:
     )
     lines.append(f"违例: **{len(contract['violations'])}** 条.{counts}")
     lines.append("")
+    return lines
 
-    lines.append("### 违例 (硬: 后端读未声明字段 / 前端发未声明字段)")
-    lines.append("")
-    if contract["violations"]:
+
+def _rwp_violations(violations: list[dict]) -> list[str]:
+    """违例清单 (含分诊标记)."""
+    lines: list[str] = ["### 违例 (硬: 后端读未声明字段 / 前端发未声明字段)", ""]
+    if violations:
         lines.append(
             "硬违例 —— handler 读模型未声明字段必 `AttributeError`; 前端发模型未声明字段"
             "必被静默丢弃. 逐条分诊: 未登记的落「待分诊」(回归测试会失败, 逼人工判定):"
         )
         lines.append("")
         for v in sorted(
-            contract["violations"],
+            violations,
             key=lambda x: (x["kind"], x["type"], x["field"], x["rel"], x["line"]),
         ):
             lines.append(
                 f"- `[{v['kind']}]` `{v['type']}.{v['field']}` @ `{v['rel']}:{v['line']}` "
-                f"— {v['detail']}" + _ws_payload_violation_mark(v["kind"], v["type"], v["field"])
+                f"— {v['detail']}"
+                + _ws_payload_violation_mark(v["kind"], v["type"], v["field"])
             )
     else:
-        lines.append("- 无 —— handler 读的字段都在 `WSMessage` 里, 前端发的字段也都认得.")
+        lines.append(
+            "- 无 —— handler 读的字段都在 `WSMessage` 里, 前端发的字段也都认得."
+        )
     lines.append("")
+    return lines
 
-    lines.append("### 声明却无人接 (WSMessage 字段零 handler 读取且零前端发送)")
-    lines.append("")
-    if contract["dead_fields"]:
-        for f in contract["dead_fields"]:
-            lines.append(f"- `{f}`")
-    else:
+
+def _rwp_dead(dead_fields: list[str]) -> list[str]:
+    """声明却零读取零发送的模型字段."""
+    lines: list[str] = [
+        "### 声明却无人接 (WSMessage 字段零 handler 读取且零前端发送)",
+        "",
+    ]
+    lines.extend(f"- `{f}`" for f in dead_fields)
+    if not dead_fields:
         lines.append("- 无.")
     lines.append("")
+    return lines
 
-    lines.append("### 各入站 type 的 handler 读取字段")
-    lines.append("")
-    lines.append("| 入站 type | handler | 读取字段 | 解析 |")
-    lines.append("|---|---|---|---|")
-    hf = contract["handler_fields"]
-    for mtype in sorted(hf):
-        fields = hf[mtype]
-        ok = "✅" if fields or mtype not in contract["handlers_unresolved"] else "⚠"
+
+def _rwp_handler_table(handler_fields: dict, unresolved: list[str]) -> list[str]:
+    """各入站 type 的 handler 读取字段表."""
+    lines: list[str] = [
+        "### 各入站 type 的 handler 读取字段",
+        "",
+        "| 入站 type | handler | 读取字段 | 解析 |",
+        "|---|---|---|---|",
+    ]
+    for mtype in sorted(handler_fields):
+        fields = handler_fields[mtype]
+        ok = "✅" if fields or mtype not in unresolved else "⚠"
         lines.append(
             f"| `{mtype}` | {', '.join(f'`{f}`' for f in fields) or '(无)'} | "
             f"{len(fields)} | {ok} |"
         )
     lines.append("")
+    return lines
 
-    lines.append("### 静态核对覆盖面 (读不出形状即跳过, 不猜)")
-    lines.append("")
-    lines.append("| 维度 | 已核对 | 跳过 (读不出) |")
-    lines.append("|---|---|---|")
-    lines.append(
+
+def _rwp_coverage(contract: dict) -> list[str]:
+    """静态核对覆盖面表 + 诚实边界."""
+    lines: list[str] = [
+        "### 静态核对覆盖面 (读不出形状即跳过, 不猜)",
+        "",
+        "| 维度 | 已核对 | 跳过 (读不出) |",
+        "|---|---|---|",
         f"| 后端 handler 定义解析 | {contract['handlers_resolved']} | "
-        f"{len(contract['handlers_unresolved'])} |"
-    )
-    lines.append(
-        f"| 前端发送对象字段 | {contract['sends_static']} | {contract['sends_unknown']} |"
-    )
-    lines.append("")
+        f"{len(contract['handlers_unresolved'])} |",
+        f"| 前端发送对象字段 | {contract['sends_static']} | {contract['sends_unknown']} |",
+        "",
+    ]
     lines.append(
         "诚实边界: 只读**字面量**形状 —— handler 经 `getattr(msg, …)` / 变量间接读取, 或"
         "前端发送对象含 `...` 展开 / `type` 非字面量时该处记 unknown 并跳过, 故违例是"
@@ -6255,6 +7173,20 @@ def render_ws_payload_markdown(contract: dict) -> str:
         "未声明; 反向 (模型声明了但 handler 未读 / 前端未发) 不是违例."
     )
     lines.append("")
+    return lines
+
+
+def render_ws_payload_markdown(contract: dict) -> str:
+    """渲染 WS 请求负载面 markdown."""
+    lines: list[str] = []
+    lines.extend(_rwp_intro())
+    lines.extend(_rwp_summary(contract))
+    lines.extend(_rwp_violations(contract["violations"]))
+    lines.extend(_rwp_dead(contract["dead_fields"]))
+    lines.extend(
+        _rwp_handler_table(contract["handler_fields"], contract["handlers_unresolved"])
+    )
+    lines.extend(_rwp_coverage(contract))
     return "\n".join(lines)
 
 
@@ -6424,7 +7356,9 @@ def _ws_ev_payload_reads(frontend: Path) -> list[dict]:
         for am in _FE_TS_VAR_ALIAS_RE.finditer(text):
             if am.group(2) in ws_vars:
                 readable.add(am.group(1))
-        segments = _fe_ws_case_segments(text, ws_vars) + _fe_ws_if_segments(text, ws_vars)
+        segments = _fe_ws_case_segments(text, ws_vars) + _fe_ws_if_segments(
+            text, ws_vars
+        )
         for frame, body, base_line in segments:
             reads.extend(
                 _fe_field_read_rows(
@@ -6461,7 +7395,8 @@ def build_ws_ev_payload_contract(
     )
 
 
-def render_ws_ev_payload_markdown(contract: dict) -> str:
+def _rwe_intro() -> list[str]:
+    """面头 + 硬契约说明 + 违例类型词表."""
     lines: list[str] = []
     lines.append(
         "## WS 事件负载面: 后端 server→client 帧 payload 顶层键 vs 前端 type 分支字段读取"
@@ -6469,7 +7404,7 @@ def render_ws_ev_payload_markdown(contract: dict) -> str:
     lines.append("")
     lines.append(
         "WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段」; 本面再核**出站帧 "
-        "payload 的顶层键**。权威面是后端 WS 路由模块里 `{\"type\": \"…\", …}` 字典字面量的"
+        'payload 的顶层键**。权威面是后端 WS 路由模块里 `{"type": "…", …}` 字典字面量的'
         "其余顶层键 (同帧名多字面量取并集)。硬方向: **前端在某帧的 type 分支里读 "
         "`data.<字段>` 而后端该帧 payload 从不发此顶层键** ⇒ 恒 `undefined` (静默坏)。反向"
         "(后端发了前端没读) 不是违例, 只列候选。只核**顶层**键: 嵌套 "
@@ -6477,9 +7412,16 @@ def render_ws_ev_payload_markdown(contract: dict) -> str:
     )
     lines.append("")
     lines.append(
-        "违例类型: " + "; ".join(f"`{k}`={v}" for k, v in _WS_EV_PAYLOAD_KIND_DOC.items())
+        "违例类型: "
+        + "; ".join(f"`{k}`={v}" for k, v in _WS_EV_PAYLOAD_KIND_DOC.items())
     )
     lines.append("")
+    return lines
+
+
+def _rwe_summary(contract: dict) -> list[str]:
+    """读取点数 + 违例总数."""
+    lines: list[str] = []
     counts = (
         "  " + ", ".join(f"`{k}`×{n}" for k, n in contract["kind_counts"].items())
         if contract["kind_counts"]
@@ -6490,13 +7432,19 @@ def render_ws_ev_payload_markdown(contract: dict) -> str:
         f"**{len(contract['violations'])}** 条.{counts}"
     )
     lines.append("")
+    return lines
 
-    lines.append("### 各帧 payload 顶层键 (权威面)")
-    lines.append("")
-    lines.append("| 通道 | 帧名 | payload 顶层键 | 形状 | 前端读取字段 |")
-    lines.append("|---|---|---|---|---|")
-    for ch, frames in contract["channels"].items():
-        fr = contract["frame_reads"].get(ch, {})
+
+def _rwe_channels_table(channels: dict, frame_reads: dict) -> list[str]:
+    """各帧 payload 顶层键 (权威面) 表."""
+    lines: list[str] = [
+        "### 各帧 payload 顶层键 (权威面)",
+        "",
+        "| 通道 | 帧名 | payload 顶层键 | 形状 | 前端读取字段 |",
+        "|---|---|---|---|---|",
+    ]
+    for ch, frames in channels.items():
+        fr = frame_reads.get(ch, {})
         for frame in sorted(frames):
             info = frames[frame]
             keys = ", ".join(f"`{k}`" for k in info["keys"]) or "—"
@@ -6504,17 +7452,20 @@ def render_ws_ev_payload_markdown(contract: dict) -> str:
             rd = ", ".join(f"`{f}`" for f in fr.get(frame, [])) or "—"
             lines.append(f"| `{ch}` | `{frame}` | {keys} | {shape} | {rd} |")
     lines.append("")
+    return lines
 
-    lines.append("### 违例 (硬: 前端读的顶层字段后端从不发)")
-    lines.append("")
-    if contract["violations"]:
+
+def _rwe_violations(violations: list[dict]) -> list[str]:
+    """违例清单 (含分诊标记)."""
+    lines: list[str] = ["### 违例 (硬: 前端读的顶层字段后端从不发)", ""]
+    if violations:
         lines.append(
             "硬违例 —— 前端读 `data.<字段>` 而后端该帧 payload 无此顶层键 (恒 undefined). "
             "逐条分诊, 未登记的落「待分诊」(回归测试会失败, 逼人工判定):"
         )
         lines.append("")
         for v in sorted(
-            contract["violations"],
+            violations,
             key=lambda x: (x["channel"], x["frame"], x["field"], x["rel"], x["line"]),
         ):
             lines.append(
@@ -6525,25 +7476,29 @@ def render_ws_ev_payload_markdown(contract: dict) -> str:
     else:
         lines.append("- 无 —— 前端读的每个顶层字段, 后端该帧都发.")
     lines.append("")
+    return lines
 
-    lines.append("### payload 顶层键零前端读取 (候选, 反向不判违例)")
-    lines.append("")
-    if contract["zero_read"]:
-        for z in contract["zero_read"]:
-            lines.append(f"- `{z['channel']}` / `{z['field']}`")
-    else:
+
+def _rwe_zero_read(zero_read: list[dict]) -> list[str]:
+    """payload 顶层键零前端读取 (候选, 反向不判违例)."""
+    lines: list[str] = ["### payload 顶层键零前端读取 (候选, 反向不判违例)", ""]
+    lines.extend(f"- `{z['channel']}` / `{z['field']}`" for z in zero_read)
+    if not zero_read:
         lines.append("- 无.")
     lines.append("")
+    return lines
 
-    lines.append("### 静态核对覆盖面 (读不出形状即跳过, 不猜)")
-    lines.append("")
-    lines.append("| 维度 | 已核对 | 跳过 (帧不属该通道) | 跳过 (形状开放) |")
-    lines.append("|---|---|---|---|")
-    cov = contract["coverage"]
-    lines.append(
-        f"| 前端顶层字段读取 | {cov['checked']} | {cov['skip_frame']} | {cov['skip_shape']} |"
-    )
-    lines.append("")
+
+def _rwe_coverage(cov: dict) -> list[str]:
+    """静态核对覆盖面表 + 诚实边界."""
+    lines: list[str] = [
+        "### 静态核对覆盖面 (读不出形状即跳过, 不猜)",
+        "",
+        "| 维度 | 已核对 | 跳过 (帧不属该通道) | 跳过 (形状开放) |",
+        "|---|---|---|---|",
+        f"| 前端顶层字段读取 | {cov['checked']} | {cov['skip_frame']} | {cov['skip_shape']} |",
+        "",
+    ]
     lines.append(
         "诚实边界: 只读**字面量**形状 —— 后端帧经变量透传转发 (`_ws_send(dict(state))`) 或"
         "字面量含 `**` 展开 / 动态拼键时该帧记开放并跳过, 故违例是**下界** (可能漏报); 只核"
@@ -6554,6 +7509,18 @@ def render_ws_ev_payload_markdown(contract: dict) -> str:
         "(后端发前端没读) 不是违例."
     )
     lines.append("")
+    return lines
+
+
+def render_ws_ev_payload_markdown(contract: dict) -> str:
+    """渲染 WS 事件负载面 markdown."""
+    lines: list[str] = []
+    lines.extend(_rwe_intro())
+    lines.extend(_rwe_summary(contract))
+    lines.extend(_rwe_channels_table(contract["channels"], contract["frame_reads"]))
+    lines.extend(_rwe_violations(contract["violations"]))
+    lines.extend(_rwe_zero_read(contract["zero_read"]))
+    lines.extend(_rwe_coverage(contract["coverage"]))
     return "\n".join(lines)
 
 
@@ -6691,7 +7658,9 @@ def _http_field_models(root: Path) -> tuple[dict[str, set[str]], set[str]]:
     return models, extra_allow
 
 
-def _http_field_body_reads(node: ast.FunctionDef | ast.AsyncFunctionDef, param: str) -> tuple[set[str], set[str]]:
+def _http_field_body_reads(
+    node: ast.FunctionDef | ast.AsyncFunctionDef, param: str
+) -> tuple[set[str], set[str]]:
     """handler 自身子树里对 body 变量的读取: (属性读取集, 字面下标读取集).
 
     只收 `body.<f>` 与 `body["f"]` 两种直读; `body.get("f")` 归 `.get` (下标面不含,
@@ -6755,7 +7724,9 @@ def _http_field_endpoints(root: Path, models: dict[str, set[str]]) -> list[dict]
                             "path": path,
                             "param": p["name"],
                             "kind": kind,
-                            "model": _payload_base_ann(p["ann"]) if kind == "body-model" else "",
+                            "model": _payload_base_ann(p["ann"])
+                            if kind == "body-model"
+                            else "",
                             "attrs": sorted(attrs),
                             "keys": sorted(keys),
                         }
@@ -6801,6 +7772,260 @@ def _http_field_sends(frontend: Path, live: list[dict]) -> dict[tuple[str, str],
     return out
 
 
+def _match_send_record(e: dict, sends: dict) -> tuple:
+    """按方法顺序找前端实际调用该端点的 record, 返回 ``(key, record, method)``."""
+    for m in e["methods"]:
+        key = (m, e["path"])
+        if key in sends:
+            return key, sends[key], m
+    return None, None, (e["methods"][0] if e["methods"] else "")
+
+
+def _new_field_row(e: dict, method: str) -> dict:
+    """建一行端点巡检记录 (字段面初始为空)."""
+    return {
+        "rel": e["rel"],
+        "line": e["line"],
+        "method": method,
+        "endpoint": e["path"],
+        "kind": e["kind"],
+        "model": e["model"],
+        "declared": [],
+        "read": [],
+        "sent": [],
+        "shape": "封闭",
+    }
+
+
+def _field_violation(
+    kind: str,
+    e: dict,
+    method: str,
+    field: str,
+    rel: str,
+    line: int,
+    detail: str,
+    model: str = "",
+) -> dict:
+    """构造一条字段面违例记录."""
+    return {
+        "kind": kind,
+        "method": method,
+        "endpoint": e["path"],
+        "field": field,
+        "model": model,
+        "rel": rel,
+        "line": line,
+        "detail": detail,
+    }
+
+
+def _fb_handler_violations(
+    e: dict, attrs: set, declared: set, method: str, cov: dict, violations: list
+) -> None:
+    """(1) handler 读模型未声明字段 (读面与 extra 配置无关, 照核)."""
+    cov["handler_checked"] += 1
+    for f in sorted(attrs - declared):
+        violations.append(
+            _field_violation(
+                "handler-undeclared",
+                e,
+                method,
+                f,
+                e["rel"],
+                e["line"],
+                f"handler 读 `{e['param']}.{f}` 而模型 `{e['model']}` 未声明",
+                model=e["model"],
+            )
+        )
+
+
+def _fb_sent_violations(
+    e: dict,
+    rec: dict,
+    declared: set,
+    open_model: bool,
+    method: str,
+    cov: dict,
+    violations: list,
+) -> None:
+    """(2) 前端发模型未声明键 (开放模型只记跳过)."""
+    if open_model:
+        cov["fe_skipped"] += len(rec["sites"])
+        return
+    for site in rec["sites"]:
+        if site["unknown"]:
+            cov["fe_skipped"] += 1
+            continue
+        cov["fe_checked"] += 1
+        for f in sorted(set(site["keys"]) - declared):
+            violations.append(
+                _field_violation(
+                    "fe-undeclared",
+                    e,
+                    method,
+                    f,
+                    site["rel"],
+                    site["line"],
+                    f"前端发 body 键 `{f}` 而模型 `{e['model']}` 未声明 (静默丢弃)",
+                    model=e["model"],
+                )
+            )
+
+
+def _fb_candidate(e: dict, method: str, f: str) -> dict:
+    """反向候选条目 (不判违例)."""
+    return {
+        "method": method,
+        "endpoint": e["path"],
+        "field": f,
+        "model": e["model"],
+        "rel": e["rel"],
+        "line": e["line"],
+    }
+
+
+def _fb_candidates(
+    e: dict,
+    attrs: set,
+    declared: set,
+    rec: dict,
+    method: str,
+    cand_read_unsent: list,
+    cand_unread_unsent: list,
+) -> None:
+    """读未发 / 未读未发 两类反向候选."""
+    sent = rec["keys"]
+    for f in sorted((attrs & declared) - sent):
+        cand_read_unsent.append(_fb_candidate(e, method, f))
+    for f in sorted(declared - attrs - sent):
+        cand_unread_unsent.append(_fb_candidate(e, method, f))
+
+
+def _audit_body_model(
+    e: dict,
+    attrs: set,
+    row: dict,
+    rec: dict | None,
+    method: str,
+    *,
+    models: dict,
+    extra_allow: dict,
+    cov: dict,
+    violations: list,
+    cand_read_unsent: list,
+    cand_unread_unsent: list,
+) -> None:
+    """核 body-model 端点: 声明字段 / handler 读取 / 前端发送 三面一致."""
+    declared = models.get(e["model"])
+    if declared is None:
+        cov["handler_skipped"] += 1
+        row["shape"] = "开放(模型解析不到)"
+        return
+    open_model = e["model"] in extra_allow
+    row["declared"] = sorted(declared)
+    row["read"] = sorted(attrs & declared)
+    if open_model:
+        row["shape"] = "开放(extra=allow)"
+    _fb_handler_violations(e, attrs, declared, method, cov, violations)
+    if rec is None:
+        return
+    row["sent"] = sorted(rec["keys"])
+    _fb_sent_violations(e, rec, declared, open_model, method, cov, violations)
+    if open_model or rec["unknown"]:
+        return
+    _fb_candidates(
+        e, attrs, declared, rec, method, cand_read_unsent, cand_unread_unsent
+    )
+
+
+def _audit_body_dict(
+    e: dict, row: dict, rec: dict | None, method: str, cov: dict, violations: list
+) -> None:
+    """核 body-dict 端点: handler 下标读键 vs 前端发送键."""
+    row["read"] = sorted(e["keys"])
+    if rec is None or rec["unknown"]:
+        cov["dict_skipped"] += 1
+        row["shape"] = "开放(无前端调用)" if rec is None else "开放(调用含展开)"
+        return
+    cov["dict_checked"] += 1
+    sent = rec["keys"]
+    row["sent"] = sorted(sent)
+    for k in sorted(set(e["keys"]) - sent):
+        violations.append(
+            _field_violation(
+                "dict-key-unsent",
+                e,
+                method,
+                k,
+                e["rel"],
+                e["line"],
+                f'handler 下标读 `{e["param"]}["{k}"]` 而该端点前端调用从不发此键',
+            )
+        )
+
+
+def _hfc_rows(
+    endpoints: list[dict],
+    sends: list[dict],
+    models: dict,
+    extra_allow: dict,
+    cov: dict,
+    violations: list,
+    cand_read_unsent: list,
+    cand_unread_unsent: list,
+) -> list[dict]:
+    """逐端点核三面一致 → 行表."""
+    rows: list[dict] = []
+    for e in endpoints:
+        _key, rec, method = _match_send_record(e, sends)
+        attrs = set(e["attrs"]) - _HTTP_FIELD_PYDANTIC_ATTRS
+        row = _new_field_row(e, method)
+        if e["kind"] == "body-model":
+            _audit_body_model(
+                e,
+                attrs,
+                row,
+                rec,
+                method,
+                models=models,
+                extra_allow=extra_allow,
+                cov=cov,
+                violations=violations,
+                cand_read_unsent=cand_read_unsent,
+                cand_unread_unsent=cand_unread_unsent,
+            )
+        else:  # body-dict: 无声明面, 只核「下标读键 vs 前端发送键」
+            _audit_body_dict(e, row, rec, method, cov, violations)
+        rows.append(row)
+    return rows
+
+
+def _hfc_result(
+    frontend: Path,
+    endpoints: list[dict],
+    models: dict,
+    rows: list[dict],
+    violations: list[dict],
+    cov: dict,
+    cands: dict,
+) -> dict:
+    """契约 payload (行表 + 违例 + 覆盖 + 反向候选)."""
+    kinds = Counter(v["kind"] for v in violations)
+    return {
+        "frontend": str(frontend),
+        "endpoint_count": len(endpoints),
+        "model_count": len(models),
+        "rows": rows,
+        "violations": violations,
+        "untriaged": [v for v in violations if v["triage"] == "untriaged"],
+        "kind_counts": dict(sorted(kinds.items())),
+        "coverage": cov,
+        "candidates_read_unsent": cands["read_unsent"],
+        "candidates_unread_unsent": cands["unread_unsent"],
+    }
+
+
 def build_http_field_contract(
     root: Path | None = None, frontend: Path | None = None
 ) -> dict:
@@ -6822,8 +8047,7 @@ def build_http_field_contract(
     sends = _http_field_sends(frontend, live)
 
     violations: list[dict] = []
-    cand_read_unsent: list[dict] = []
-    cand_unread_unsent: list[dict] = []
+    cands: dict = {"read_unsent": [], "unread_unsent": []}
     cov = {
         "handler_checked": 0,
         "handler_skipped": 0,
@@ -6832,148 +8056,22 @@ def build_http_field_contract(
         "dict_checked": 0,
         "dict_skipped": 0,
     }
-    rows: list[dict] = []
-
-    for e in endpoints:
-        key = None
-        for m in e["methods"]:
-            if (m, e["path"]) in sends:
-                key = (m, e["path"])
-                break
-        rec = sends.get(key) if key is not None else None
-        method = key[0] if key is not None else (e["methods"][0] if e["methods"] else "")
-        attrs = set(e["attrs"]) - _HTTP_FIELD_PYDANTIC_ATTRS
-        row = {
-            "rel": e["rel"],
-            "line": e["line"],
-            "method": method,
-            "endpoint": e["path"],
-            "kind": e["kind"],
-            "model": e["model"],
-            "declared": [],
-            "read": [],
-            "sent": [],
-            "shape": "封闭",
-        }
-        if e["kind"] == "body-model":
-            declared = models.get(e["model"])
-            if declared is None:
-                cov["handler_skipped"] += 1
-                row["shape"] = "开放(模型解析不到)"
-            else:
-                open_model = e["model"] in extra_allow
-                row["declared"] = sorted(declared)
-                row["read"] = sorted(attrs & declared)
-                if open_model:
-                    row["shape"] = "开放(extra=allow)"
-                # (1) handler 读模型未声明字段 (读面与 extra 配置无关, 照核).
-                cov["handler_checked"] += 1
-                for f in sorted(attrs - declared):
-                    violations.append(
-                        {
-                            "kind": "handler-undeclared",
-                            "method": method,
-                            "endpoint": e["path"],
-                            "field": f,
-                            "model": e["model"],
-                            "rel": e["rel"],
-                            "line": e["line"],
-                            "detail": f"handler 读 `{e['param']}.{f}` 而模型 "
-                            f"`{e['model']}` 未声明",
-                        }
-                    )
-                # (2) 前端发模型未声明键 + 反向候选.
-                if rec is not None:
-                    row["sent"] = sorted(rec["keys"])
-                    if open_model:
-                        cov["fe_skipped"] += len(rec["sites"])
-                    else:
-                        for site in rec["sites"]:
-                            if site["unknown"]:
-                                cov["fe_skipped"] += 1
-                                continue
-                            cov["fe_checked"] += 1
-                            for f in sorted(set(site["keys"]) - declared):
-                                violations.append(
-                                    {
-                                        "kind": "fe-undeclared",
-                                        "method": method,
-                                        "endpoint": e["path"],
-                                        "field": f,
-                                        "model": e["model"],
-                                        "rel": site["rel"],
-                                        "line": site["line"],
-                                        "detail": f"前端发 body 键 `{f}` 而模型 "
-                                        f"`{e['model']}` 未声明 (静默丢弃)",
-                                    }
-                                )
-                    if not open_model and not rec["unknown"]:
-                        sent = rec["keys"]
-                        for f in sorted((attrs & declared) - sent):
-                            cand_read_unsent.append(
-                                {
-                                    "method": method,
-                                    "endpoint": e["path"],
-                                    "field": f,
-                                    "model": e["model"],
-                                    "rel": e["rel"],
-                                    "line": e["line"],
-                                }
-                            )
-                        for f in sorted(declared - attrs - sent):
-                            cand_unread_unsent.append(
-                                {
-                                    "method": method,
-                                    "endpoint": e["path"],
-                                    "field": f,
-                                    "model": e["model"],
-                                    "rel": e["rel"],
-                                    "line": e["line"],
-                                }
-                            )
-        else:  # body-dict: 无声明面, 只核「下标读键 vs 前端发送键」
-            row["read"] = sorted(e["keys"])
-            if rec is None or rec["unknown"]:
-                cov["dict_skipped"] += 1
-                row["shape"] = "开放(无前端调用)" if rec is None else "开放(调用含展开)"
-            else:
-                cov["dict_checked"] += 1
-                sent = rec["keys"]
-                row["sent"] = sorted(sent)
-                for k in sorted(set(e["keys"]) - sent):
-                    violations.append(
-                        {
-                            "kind": "dict-key-unsent",
-                            "method": method,
-                            "endpoint": e["path"],
-                            "field": k,
-                            "model": "",
-                            "rel": e["rel"],
-                            "line": e["line"],
-                            "detail": f'handler 下标读 `{e["param"]}["{k}"]` 而该端点'
-                            "前端调用从不发此键",
-                        }
-                    )
-        rows.append(row)
-
+    rows = _hfc_rows(
+        endpoints,
+        sends,
+        models,
+        extra_allow,
+        cov,
+        violations,
+        cands["read_unsent"],
+        cands["unread_unsent"],
+    )
     _HTTP_FIELD_TRIAGE.stamp(violations)
-
-    kinds = Counter(v["kind"] for v in violations)
-    return {
-        "frontend": str(frontend),
-        "endpoint_count": len(endpoints),
-        "model_count": len(models),
-        "rows": rows,
-        "violations": violations,
-        "untriaged": [v for v in violations if v["triage"] == "untriaged"],
-        "kind_counts": dict(sorted(kinds.items())),
-        "coverage": cov,
-        "candidates_read_unsent": cand_read_unsent,
-        "candidates_unread_unsent": cand_unread_unsent,
-    }
+    return _hfc_result(frontend, endpoints, models, rows, violations, cov, cands)
 
 
-def render_http_field_markdown(contract: dict) -> str:
+def _rhf_intro() -> list[str]:
+    """面头 + 三面说明 + 违例类型词表."""
     lines: list[str] = []
     lines.append(
         "## HTTP 请求字段面: 请求体字段 声明(模型) / 读取(handler) / 发送(前端) 三面一致"
@@ -6981,7 +8079,7 @@ def render_http_field_markdown(contract: dict) -> str:
     lines.append("")
     lines.append(
         "请求负载面只核「前端漏发后端必填」(422); 本面再往里一层核**字段级声明一致性**: "
-        "请求体 Pydantic 模型的声明字段 = 权威面, handler 内 `body.<字段>` / `body[\"字段\"]` "
+        '请求体 Pydantic 模型的声明字段 = 权威面, handler 内 `body.<字段>` / `body["字段"]` '
         "读取 = 读取面, 前端 `api.*` 调用实参的 body 键 = 发送面。硬方向: handler 读模型"
         "未声明字段 (AttributeError) / 前端发模型未声明键 (Pydantic 静默丢弃) / body-dict "
         "端点 handler 下标读键而前端调用从不发 (KeyError)。反向不判违例, 只列候选。"
@@ -6991,6 +8089,12 @@ def render_http_field_markdown(contract: dict) -> str:
         "违例类型: " + "; ".join(f"`{k}`={v}" for k, v in _HTTP_FIELD_KIND_DOC.items())
     )
     lines.append("")
+    return lines
+
+
+def _rhf_summary(contract: dict) -> list[str]:
+    """端点总数 + 违例总数."""
+    lines: list[str] = []
     counts = (
         "  " + ", ".join(f"`{k}`×{n}" for k, n in contract["kind_counts"].items())
         if contract["kind_counts"]
@@ -7001,13 +8105,18 @@ def render_http_field_markdown(contract: dict) -> str:
         f"**{len(contract['violations'])}** 条.{counts}"
     )
     lines.append("")
+    return lines
 
-    model_rows = [r for r in contract["rows"] if r["kind"] == "body-model"]
-    lines.append("### body-model 端点: 声明字段 vs handler 读取 vs 前端发送")
-    lines.append("")
-    lines.append("| 端点 | 方法 | 模型 | 声明字段 | handler 读取 | 前端发送键 | 形状 |")
-    lines.append("|---|---|---|---|---|---|---|")
-    for r in sorted(model_rows, key=lambda x: (x["endpoint"], x["method"])):
+
+def _rhf_model_table(rows: list[dict]) -> list[str]:
+    """body-model 端点三面表."""
+    lines: list[str] = [
+        "### body-model 端点: 声明字段 vs handler 读取 vs 前端发送",
+        "",
+        "| 端点 | 方法 | 模型 | 声明字段 | handler 读取 | 前端发送键 | 形状 |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for r in sorted(rows, key=lambda x: (x["endpoint"], x["method"])):
         decl = ", ".join(f"`{f}`" for f in r["declared"]) or "—"
         read = ", ".join(f"`{f}`" for f in r["read"]) or "—"
         sent = ", ".join(f"`{f}`" for f in r["sent"]) or "—"
@@ -7016,33 +8125,52 @@ def render_http_field_markdown(contract: dict) -> str:
             f"{read} | {sent} | {r['shape']} |"
         )
     lines.append("")
+    return lines
 
-    dict_rows = [r for r in contract["rows"] if r["kind"] == "body-dict"]
-    lines.append("### body-dict 端点: handler 下标读键 vs 前端发送键 (仅列可核对的)")
-    lines.append("")
-    if dict_rows:
-        lines.append("| 端点 | 方法 | handler 下标读键 | 前端发送键 | 形状 |")
-        lines.append("|---|---|---|---|---|")
-        for r in sorted(dict_rows, key=lambda x: (x["endpoint"], x["method"])):
-            read = ", ".join(f"`{f}`" for f in r["read"]) or "—"
-            sent = ", ".join(f"`{f}`" for f in r["sent"]) or "—"
-            lines.append(
-                f"| `{r['endpoint']}` | `{r['method']}` | {read} | {sent} | {r['shape']} |"
-            )
-    else:
-        lines.append("- 无.")
-    lines.append("")
 
-    lines.append("### 违例 (硬)")
+def _rhf_dict_table(rows: list[dict]) -> list[str]:
+    """body-dict 端点读键 vs 发送键表."""
+    lines: list[str] = [
+        "### body-dict 端点: handler 下标读键 vs 前端发送键 (仅列可核对的)",
+        "",
+    ]
+    if not rows:
+        lines.extend(["- 无.", ""])
+        return lines
+    lines.extend(
+        [
+            "| 端点 | 方法 | handler 下标读键 | 前端发送键 | 形状 |",
+            "|---|---|---|---|---|",
+        ]
+    )
+    for r in sorted(rows, key=lambda x: (x["endpoint"], x["method"])):
+        read = ", ".join(f"`{f}`" for f in r["read"]) or "—"
+        sent = ", ".join(f"`{f}`" for f in r["sent"]) or "—"
+        lines.append(
+            f"| `{r['endpoint']}` | `{r['method']}` | {read} | {sent} | {r['shape']} |"
+        )
     lines.append("")
-    if contract["violations"]:
+    return lines
+
+
+def _rhf_violations(violations: list[dict]) -> list[str]:
+    """违例清单 (含分诊标记)."""
+    lines: list[str] = ["### 违例 (硬)", ""]
+    if violations:
         lines.append(
             "硬违例 —— 逐条分诊, 未登记的落「待分诊」(回归测试会失败, 逼人工判定):"
         )
         lines.append("")
         for v in sorted(
-            contract["violations"],
-            key=lambda x: (x["kind"], x["method"], x["endpoint"], x["field"], x["rel"], x["line"]),
+            violations,
+            key=lambda x: (
+                x["kind"],
+                x["method"],
+                x["endpoint"],
+                x["field"],
+                x["rel"],
+                x["line"],
+            ),
         ):
             lines.append(
                 f"- `[{v['kind']}]` `{v['method']} {v['endpoint']}` → `{v['field']}` "
@@ -7054,46 +8182,36 @@ def render_http_field_markdown(contract: dict) -> str:
     else:
         lines.append("- 无 —— 请求体字段的声明/读取/发送三面一致.")
     lines.append("")
+    return lines
 
-    lines.append("### 候选: handler 读了而前端调用从不发 (反向不判违例)")
-    lines.append("")
-    if contract["candidates_read_unsent"]:
-        for c in sorted(
-            contract["candidates_read_unsent"],
-            key=lambda x: (x["method"], x["endpoint"], x["field"]),
-        ):
-            lines.append(
-                f"- `{c['method']} {c['endpoint']}` → 读 `{c['field']}` (模型 `{c['model']}`) "
-                f"@ `{c['rel']}:{c['line']}`"
-            )
-    else:
-        lines.append("- 无.")
-    lines.append("")
 
-    lines.append("### 候选: 模型声明却既无 handler 读取也零前端发送 (宣称无人接)")
+def _rhf_candidates(title: str, rows: list[dict], verb: str) -> list[str]:
+    """反向候选清单 (含空态)."""
+    lines: list[str] = [title, ""]
+    if not rows:
+        lines.extend(["- 无.", ""])
+        return lines
+    for c in sorted(rows, key=lambda x: (x["method"], x["endpoint"], x["field"])):
+        lines.append(
+            f"- `{c['method']} {c['endpoint']}` → {verb}`{c['field']}` "
+            f"(模型 `{c['model']}`) @ `{c['rel']}:{c['line']}`"
+        )
     lines.append("")
-    if contract["candidates_unread_unsent"]:
-        for c in sorted(
-            contract["candidates_unread_unsent"],
-            key=lambda x: (x["method"], x["endpoint"], x["field"]),
-        ):
-            lines.append(
-                f"- `{c['method']} {c['endpoint']}` → `{c['field']}` (模型 `{c['model']}`) "
-                f"@ `{c['rel']}:{c['line']}`"
-            )
-    else:
-        lines.append("- 无.")
-    lines.append("")
+    return lines
 
-    lines.append("### 静态核对覆盖面 (读不出形状即跳过, 不猜)")
-    lines.append("")
-    lines.append("| 维度 | 已核对 | 跳过 |")
-    lines.append("|---|---|---|")
-    cov = contract["coverage"]
-    lines.append(f"| body-model handler 读取 | {cov['handler_checked']} | {cov['handler_skipped']} |")
-    lines.append(f"| body-model 前端发送 | {cov['fe_checked']} | {cov['fe_skipped']} |")
-    lines.append(f"| body-dict 下标读键 | {cov['dict_checked']} | {cov['dict_skipped']} |")
-    lines.append("")
+
+def _rhf_coverage(cov: dict) -> list[str]:
+    """静态核对覆盖面表 + 诚实边界."""
+    lines: list[str] = [
+        "### 静态核对覆盖面 (读不出形状即跳过, 不猜)",
+        "",
+        "| 维度 | 已核对 | 跳过 |",
+        "|---|---|---|",
+        f"| body-model handler 读取 | {cov['handler_checked']} | {cov['handler_skipped']} |",
+        f"| body-model 前端发送 | {cov['fe_checked']} | {cov['fe_skipped']} |",
+        f"| body-dict 下标读键 | {cov['dict_checked']} | {cov['dict_skipped']} |",
+        "",
+    ]
     lines.append(
         "诚实边界: 请求体类型静态解析不到 (跨模块 / 别名) 的端点跳过 (下界, 可能漏报); "
         "`extra=allow` 的模型发送面开放、跳过; body-dict 端点须有 ≥1 个**唯一命中**且 body "
@@ -7103,6 +8221,33 @@ def render_http_field_markdown(contract: dict) -> str:
         "(handler 读了前端从不发 / 模型声明无人接管) 不是违例, 只列候选."
     )
     lines.append("")
+    return lines
+
+
+def render_http_field_markdown(contract: dict) -> str:
+    """渲染 HTTP 请求字段面 markdown."""
+    lines: list[str] = []
+    lines.extend(_rhf_intro())
+    lines.extend(_rhf_summary(contract))
+    rows = contract["rows"]
+    lines.extend(_rhf_model_table([r for r in rows if r["kind"] == "body-model"]))
+    lines.extend(_rhf_dict_table([r for r in rows if r["kind"] == "body-dict"]))
+    lines.extend(_rhf_violations(contract["violations"]))
+    lines.extend(
+        _rhf_candidates(
+            "### 候选: handler 读了而前端调用从不发 (反向不判违例)",
+            contract["candidates_read_unsent"],
+            "读 ",
+        )
+    )
+    lines.extend(
+        _rhf_candidates(
+            "### 候选: 模型声明却既无 handler 读取也零前端发送 (宣称无人接)",
+            contract["candidates_unread_unsent"],
+            "",
+        )
+    )
+    lines.extend(_rhf_coverage(contract["coverage"]))
     return "\n".join(lines)
 
 
@@ -7178,12 +8323,11 @@ def _rollup_mark(v: dict) -> str:
     return f" — {'⛔' if tri == 'defect' else '✅'} {v.get('triage_reason', '')}"
 
 
-def render_field_rollup_markdown(snap: dict) -> str:
-    """字段级面汇总: 六面违例按角色关系 R1–R4 归并, 缺漏再下钻到各面章节."""
+def _rfm_group(snap: dict) -> tuple[dict, dict, dict, set]:
+    """六面违例按角色关系归并 → (计数, 待分诊数, 明细, 适用单元)."""
     counts: dict[tuple[str, str], int] = defaultdict(int)
     untri: dict[tuple[str, str], int] = defaultdict(int)
     by_rel: dict[str, list[tuple[str, dict]]] = defaultdict(list)
-    order = {k: i for i, (k, _l) in enumerate(_ROLLUP_FACES)}
     for face, _label in _ROLLUP_FACES:
         for v in snap[face]["violations"]:
             rel = _ROLLUP_KIND_REL.get((face, v["kind"]), "R0")
@@ -7194,10 +8338,12 @@ def render_field_rollup_markdown(snap: dict) -> str:
     applicable = {(rel, face) for (face, _k), rel in _ROLLUP_KIND_REL.items()}
     # R0 是兜底桶 (每个面都可能有未归类 kind), 不存在"不适用"单元.
     applicable |= {("R0", face) for face, _label in _ROLLUP_FACES}
+    return counts, untri, by_rel, applicable
 
-    lines: list[str] = []
-    lines.append("## 字段级面汇总: 按角色关系分组 (一次确认)")
-    lines.append("")
+
+def _rfm_intro() -> list[str]:
+    """汇总头 + 不变量说明 + 关系图例."""
+    lines: list[str] = ["## 字段级面汇总: 按角色关系分组 (一次确认)", ""]
     lines.append(
         "请求负载面 / 响应结构面 / WS 请求负载面 / SSE 事件负载面 / WS 事件负载面 / HTTP "
         "请求字段面是**同一个不变量**「边界两侧字段集包含」的不同传输切片. 下表按**角色"
@@ -7207,44 +8353,70 @@ def render_field_rollup_markdown(snap: dict) -> str:
     lines.append("")
     lines.append("关系图例:")
     lines.append("")
-    for rel in _ROLLUP_REL_ORDER:
-        lines.append(f"- **{rel}** {_ROLLUP_REL_DOC[rel]}")
+    lines.extend(f"- **{rel}** {_ROLLUP_REL_DOC[rel]}" for rel in _ROLLUP_REL_ORDER)
     lines.append("")
+    return lines
+
+
+def _rfm_cell(rel: str, face: str, counts: dict, untri: dict, applicable: set) -> str:
+    """矩阵单元: 不适用记 `·`, 否则计数 (+待分诊提示)."""
+    if (rel, face) not in applicable:
+        return "·"
+    n = counts.get((rel, face), 0)
+    u = untri.get((rel, face), 0)
+    return f"{n}" + (f" (⚠{u})" if u else "")
+
+
+def _rfm_matrix(counts: dict, untri: dict, applicable: set) -> list[str]:
+    """角色关系 × 面 的矩阵表."""
+    lines: list[str] = []
     header = " | ".join(lbl for _k, lbl in _ROLLUP_FACES)
     lines.append(f"| 关系 | {header} | 合计 |")
     lines.append("|---" * (len(_ROLLUP_FACES) + 2) + "|")
     for rel in _ROLLUP_REL_ORDER:
-        cells: list[str] = []
-        total = 0
-        for face, _label in _ROLLUP_FACES:
-            n = counts.get((rel, face), 0)
-            total += n
-            if (rel, face) not in applicable:
-                cells.append("·")
-                continue
-            u = untri.get((rel, face), 0)
-            cells.append(f"{n}" + (f" (⚠{u})" if u else ""))
+        cells = [
+            _rfm_cell(rel, face, counts, untri, applicable)
+            for face, _label in _ROLLUP_FACES
+        ]
+        total = sum(counts.get((rel, face), 0) for face, _label in _ROLLUP_FACES)
         lines.append(f"| **{rel}** | " + " | ".join(cells) + f" | {total} |")
     lines.append("")
-    lines.append("### 违例地点 (按关系; ⚠ = 待分诊, 回归测试会失败)")
-    lines.append("")
+    return lines
+
+
+def _rfm_site_line(face: str, v: dict) -> str:
+    """一条违例地点 (含分诊标记)."""
+    return (
+        f"- `[{v['kind']}]` `{_ROLLUP_FACE_LABEL[face]}` "
+        f"`{_rollup_site(face, v)}` @ `{v['rel']}:{v['line']}` — "
+        f"{_rollup_note(face, v)}{_rollup_mark(v)}"
+    )
+
+
+def _rfm_sites(by_rel: dict, order: dict) -> list[str]:
+    """按关系分组的违例地点清单."""
+    lines: list[str] = ["### 违例地点 (按关系; ⚠ = 待分诊, 回归测试会失败)", ""]
     for rel in _ROLLUP_REL_ORDER:
         items = sorted(
             by_rel.get(rel, []), key=lambda fv: (order[fv[0]], fv[1].get("line", 0))
         )
-        lines.append(f"#### {rel} {_ROLLUP_REL_DOC[rel]}")
-        lines.append("")
+        lines.extend([f"#### {rel} {_ROLLUP_REL_DOC[rel]}", ""])
         if not items:
-            lines.append("- 无.")
-            lines.append("")
+            lines.extend(["- 无.", ""])
             continue
-        for face, v in items:
-            lines.append(
-                f"- `[{v['kind']}]` `{_ROLLUP_FACE_LABEL[face]}` "
-                f"`{_rollup_site(face, v)}` @ `{v['rel']}:{v['line']}` — "
-                f"{_rollup_note(face, v)}{_rollup_mark(v)}"
-            )
+        lines.extend(_rfm_site_line(face, v) for face, v in items)
         lines.append("")
+    return lines
+
+
+def render_field_rollup_markdown(snap: dict) -> str:
+    """字段级面汇总: 六面违例按角色关系 R1–R4 归并, 缺漏再下钻到各面章节."""
+    counts, untri, by_rel, applicable = _rfm_group(snap)
+    order = {k: i for i, (k, _label) in enumerate(_ROLLUP_FACES)}
+    lines: list[str] = []
+    lines.extend(_rfm_intro())
+    lines.extend(_rfm_matrix(counts, untri, applicable))
+    lines.extend(_rfm_sites(by_rel, order))
     return "\n".join(lines)
 
 
@@ -7289,56 +8461,85 @@ def _load_findings_baseline(path: Path) -> set[str]:
     return {ln.strip() for ln in text.splitlines() if ln.strip()}
 
 
-def find_issues(snap: dict) -> list[str]:
-    """汇总 MECE 违例 (供 --check). 只报客观事实, 语义判定留人工."""
-    issues: list[str] = []
-    rw = snap["reward"]
+def _ca_reward_issues(rw: dict) -> list[str]:
+    """奖励面: 零调用者 / 同轴惩罚 / 跨模块同名."""
+    out: list[str] = []
     for t in rw["terms"]:
         if t["status"] == "dead":
-            issues.append(f"奖励项零调用者: {t['name']}")
+            out.append(f"奖励项零调用者: {t['name']}")
     for ax in rw["penalty_axes"]:
         if ax["overlap"]:
-            issues.append(f"同轴惩罚候选 ({ax['axis']}): {', '.join(ax['terms'])}")
+            out.append(f"同轴惩罚候选 ({ax['axis']}): {', '.join(ax['terms'])}")
     for d in rw["cross_module_dupes"]:
-        issues.append(f"跨模块同名: {d['name']} @ {', '.join(d['modules'])}")
-    for s in snap["scope"]["sources"]:
+        out.append(f"跨模块同名: {d['name']} @ {', '.join(d['modules'])}")
+    return out
+
+
+def _ca_scope_issues(sc: dict) -> list[str]:
+    """授权面: 零消费点."""
+    out: list[str] = []
+    for s in sc["sources"]:
         if s["status"] == "dead":
-            issues.append(f"授权口径零消费点: {s['name']}")
-    wf = snap["workflow"]
+            out.append(f"授权口径零消费点: {s['name']}")
+    return out
+
+
+def _ca_workflow_issues(wf: dict) -> list[str]:
+    """工作流面: 分支不一致 / 提示不一致 / mode 未暴露."""
+    out: list[str] = []
     if not wf["branch_matches_dispatch"]:
-        issues.append("工作流: dispatch_table 与 engine_act 硬编码分支不一致")
+        out.append("工作流: dispatch_table 与 engine_act 硬编码分支不一致")
     if wf["prompt_inconsistent"]:
-        issues.append("工作流: planner 多处 MODE 提示互相不一致")
+        out.append("工作流: planner 多处 MODE 提示互相不一致")
     for m in wf["missing_from_prompt"]:
-        issues.append(f"工作流 mode 未在 planner 提示暴露: {m}")
-    md = snap["modes"]
+        out.append(f"工作流 mode 未在 planner 提示暴露: {m}")
+    return out
+
+
+def _ca_mode_issues(md: dict) -> list[str]:
+    """模式面: prompt 段与 set_mode 生产者缺口."""
+    out: list[str] = []
     for m in md["prompt_only"]:
-        issues.append(f"模式有 prompt 段却无 set_mode 生产者: {m}")
+        out.append(f"模式有 prompt 段却无 set_mode 生产者: {m}")
     for m in md["runtime_only"]:
-        issues.append(f"模式被 set_mode 却无 prompt 段: {m}")
+        out.append(f"模式被 set_mode 却无 prompt 段: {m}")
     if not md["consistent"]:
-        issues.append("模式: 各来源词表互相不一致")
-    vc = snap["vocabulary"]
+        out.append("模式: 各来源词表互相不一致")
+    return out
+
+
+def _ca_vocabulary_issues(vc: dict) -> list[str]:
+    """词汇面: 同名定义值域不一致 / 词表漂移 / 映射往返丢信息."""
+    out: list[str] = []
     # 簇内已按"词表漂移"报过的名字不再按"同名定义"重复报一次.
     drift_names = {m["name"] for d in vc["divergence"] for m in d["members"]}
     for d in vc["duplicate_defs"]:
         if d["same_values"] or d["name"] in drift_names:
             continue
         sites = ", ".join(f"{s['rel']}:{s['line']}" for s in d["sites"])
-        issues.append(f"词汇: 同名跨模块定义值域不一致: {d['name']} @ {sites}")
+        out.append(f"词汇: 同名跨模块定义值域不一致: {d['name']} @ {sites}")
     for d in vc["divergence"]:
         members = ", ".join(f"{m['rel']}::{m['name']}" for m in d["members"])
-        issues.append(f"词汇: 词表漂移 (簇 {d['cluster']}, 并集 {len(d['union'])} 词): {members}")
+        out.append(
+            f"词汇: 词表漂移 (簇 {d['cluster']}, 并集 {len(d['union'])} 词): {members}"
+        )
     for m in vc["mappings"]:
         if m["injective"] or not m["reverse_present"]:
             continue
         coll = ", ".join(f"{v}←{ks}" for v, ks in m["collisions"].items())
-        issues.append(f"词汇: 映射往返丢信息: {m['name']} 共像 [{coll}] 且有反向表 {m['reverse_name']}")
-    tl = snap["tools"]
+        out.append(
+            f"词汇: 映射往返丢信息: {m['name']} 共像 [{coll}] 且有反向表 {m['reverse_name']}"
+        )
+    return out
+
+
+def _ca_tool_issues(tl: dict) -> list[str]:
+    """工具面: 解析不到的类 / 同名多类声明 / 允许表死项."""
+    out: list[str] = []
     for s in tl["unresolved_specs"]:
-        issues.append(f"工具: 注册清单引用的类静态解析不到: {s['class']} @ {s['module']}")
+        out.append(f"工具: 注册清单引用的类静态解析不到: {s['class']} @ {s['module']}")
     for d in tl["duplicate_names"]:
-        issues.append(
+        out.append(
             f"工具: 同名工具名由多类声明: {d['name']} ← {', '.join(d['classes'])}"
         )
     for a in tl["allowlists"]:
@@ -7347,82 +8548,105 @@ def find_issues(snap: dict) -> list[str]:
         preview = ", ".join(a["phantoms"][:6])
         if len(a["phantoms"]) > 6:
             preview += " …"
-        issues.append(
+        out.append(
             f"工具: 允许表死项 (无同名注册工具, 永不命中): {a['name']} @ {a['rel']} → {preview}"
         )
-    hk = snap["hooks"]
-    _hook_issue = {
+    return out
+
+
+def _ca_hook_issues(hk: dict) -> list[str]:
+    """钩子面: 触发/注册缺口 / 常量撞值 / 登记缺口 / 字面量接线."""
+    out: list[str] = []
+    prefix_of = {
         "trigger-only": "钩子: 事件有生产触发点但零生产注册 (触发无人接): ",
         "register-only": "钩子: 事件有注册但零生产触发: ",
         "dead": "钩子: 事件声明零触发零注册: ",
     }
     for e in hk["events"]:
-        prefix = _hook_issue.get(e["status"])
+        prefix = prefix_of.get(e["status"])
         if prefix:
-            issues.append(prefix + e["const"])
+            out.append(prefix + e["const"])
     for c in hk["collisions"]:
-        issues.append(
-            f"钩子: 事件常量撞值 {c['value']}: {', '.join(c['consts'])}"
-        )
+        out.append(f"钩子: 事件常量撞值 {c['value']}: {', '.join(c['consts'])}")
     for name in hk["not_in_all_events"]:
-        issues.append(f"钩子: 事件常量未登记进 ALL_EVENTS: {name}")
+        out.append(f"钩子: 事件常量未登记进 ALL_EVENTS: {name}")
     for name in hk["unresolved_members"]:
-        issues.append(f"钩子: ALL_EVENTS 成员无常量定义: {name}")
+        out.append(f"钩子: ALL_EVENTS 成员无常量定义: {name}")
     for w in hk["literal_wiring"]:
-        issues.append(
+        out.append(
             f"钩子: 触发/注册用字面量而非常量: {w['value']} @ {w['rel']}:{w['line']}"
         )
-    ev = snap["events"]
-    _event_issue = {
+    return out
+
+
+def _ca_event_issues(ev: dict) -> list[str]:
+    """事件面: 订阅/发布缺口 / 常量撞值 / 登记缺口 / 未声明类型."""
+    out: list[str] = []
+    prefix_of = {
         "subscribed-only": "事件: 类型有 .subscribe 却零生产发布 (订阅永不发生): ",
         "dead": "事件: 类型声明零生产发布零订阅: ",
     }
     for e in ev["events"]:
-        prefix = _event_issue.get(e["status"])
+        prefix = prefix_of.get(e["status"])
         if prefix:
-            issues.append(prefix + e["const"])
+            out.append(prefix + e["const"])
     for c in ev["collisions"]:
-        issues.append(f"事件: 类型常量撞值 {c['value']}: {', '.join(c['consts'])}")
+        out.append(f"事件: 类型常量撞值 {c['value']}: {', '.join(c['consts'])}")
     for name in ev["not_in_all_types"]:
-        issues.append(f"事件: 类型常量未登记进 ALL_TYPES: {name}")
+        out.append(f"事件: 类型常量未登记进 ALL_TYPES: {name}")
     for name in ev["unresolved_members"]:
-        issues.append(f"事件: ALL_TYPES 成员无常量定义: {name}")
+        out.append(f"事件: ALL_TYPES 成员无常量定义: {name}")
     for u in ev["undeclared"]:
         used = []
         if u["prod_publish"]:
             used.append("发布")
         if u["prod_subscribe"]:
             used.append("订阅")
-        issues.append(
+        out.append(
             f"事件: {'+'.join(used)}了未声明类型 (设计允许非穷尽, 候选登记): {u['value']}"
         )
-    sse = snap["sse"]
+    return out
+
+
+def _ca_sse_issues(sse: dict) -> list[str]:
+    """SSE 消费面: 监听挂错通道 / 后端无此帧名."""
+    out: list[str] = []
     for s in sse["listeners"]:
         if s["status"] == "channel-mismatch":
-            issues.append(
+            out.append(
                 f"SSE: 监听挂错通道 (该 EventSource 不发此帧名, 永不触发): {s['frame']} "
                 f"@ {s['rel']}:{s['line']} — {s['note']}"
             )
         elif s["status"] == "no-source":
-            issues.append(
+            out.append(
                 f"SSE: 监听的后端无此帧名 (三通道都不发): {s['frame']} "
                 f"@ {s['rel']}:{s['line']}"
             )
-    ws = snap["ws"]
+    return out
+
+
+def _ca_ws_issues(ws: dict) -> list[str]:
+    """WS 消费面: 前端判别无源 / 入站类型不可分发."""
+    out: list[str] = []
     for s in ws["consumers"]:
         if s["status"] == "no-source":
-            issues.append(
+            out.append(
                 f"WS: 前端 type 判别的后端不发此帧名 (该通道 case 永不命中): {s['frame']} "
                 f"@ {s['rel']}:{s['line']} — 通道 {s['channel']}"
             )
     for s in ws["sends"]:
         if s["status"] == "unhandled":
-            issues.append(
+            out.append(
                 f"WS: 前端发送的入站类型后端分发面不认 (回 error 帧): {s['frame']} "
                 f"@ {s['rel']}:{s['line']} — 通道 {s['channel']}"
             )
-    http = snap["http"]
-    _http_issue = {
+    return out
+
+
+def _ca_http_issues(http: dict) -> list[str]:
+    """HTTP API 消费面: 死链/405 / 未挂路由器 / 路由遮蔽."""
+    out: list[str] = []
+    prefix_of = {
         "no-source": "HTTP: 前端调用的路径后端未注册 (404 死链): ",
         "method-mismatch": "HTTP: 前端调用的方法与后端注册不符 (405): ",
     }
@@ -7431,42 +8655,63 @@ def find_issues(snap: dict) -> list[str]:
             mark = " 待分诊"
         else:
             mark = " " + _HTTP_TRIAGE_DOC[c["triage"]]
-        issues.append(
-            f"{_http_issue[c['status']]}{c['method']} {c['path']} @ "
+        out.append(
+            f"{prefix_of[c['status']]}{c['method']} {c['path']} @ "
             f"{c['rel']}:{c['line']} — {c['note']};{mark}"
         )
     for name in http["registration"]["unmounted"]:
-        issues.append(f"HTTP: 定义了 APIRouter 却未挂进 ALL_ROUTERS (端点永不生效): {name}")
+        out.append(
+            f"HTTP: 定义了 APIRouter 却未挂进 ALL_ROUTERS (端点永不生效): {name}"
+        )
     for name in http["registration"]["dangling"]:
-        issues.append(f"HTTP: ALL_ROUTERS 引用了未 import 的别名: {name}")
+        out.append(f"HTTP: ALL_ROUTERS 引用了未 import 的别名: {name}")
     for d in http["duplicates"]:
-        issues.append(
+        out.append(
             f"HTTP: 同一 {d['method']} {d['path']} 被多模块注册 (路由遮蔽): "
             f"{', '.join(d['modules'])}"
         )
-    payload = snap["payload"]
+    return out
+
+
+def _ca_payload_issues(payload: dict) -> list[str]:
+    """请求负载面: 前端漏发后端必填."""
+    out: list[str] = []
     for v in payload["violations"]:
-        mark = " 待分诊" if v["triage"] == "untriaged" else " " + _PAYLOAD_TRIAGE_DOC[v["triage"]]
-        issues.append(
+        mark = (
+            " 待分诊"
+            if v["triage"] == "untriaged"
+            else " " + _PAYLOAD_TRIAGE_DOC[v["triage"]]
+        )
+        out.append(
             f"负载: 前端漏发后端必填 ({_PAYLOAD_KIND_DOC[v['kind']]}): "
             f"{v['method']} {v['path']} → 后端 {v['endpoint']} @ "
             f"{v['rel']}:{v['line']} — {v['detail']};{mark}"
         )
-    resp = snap["response"]
+    return out
+
+
+def _ca_response_issues(resp: dict) -> list[str]:
+    """响应结构面: 前端要读的字段后端从不返回."""
+    out: list[str] = []
     for v in resp["violations"]:
         mark = (
             " 待分诊"
             if v["triage"] == "untriaged"
             else " " + _RESP_TRIAGE_DOC[v["triage"]]
         )
-        issues.append(
+        out.append(
             f"响应: 前端声明要读的响应字段后端从不返回 "
             f"({_RESP_KIND_DOC[v['kind']]}): {v['method']} {v['path']} → 后端 "
             f"{v['endpoint']} @ {v['rel']}:{v['line']} — 缺 "
             f"{', '.join(v['missing'])};{mark}"
         )
-    wsp = snap["ws_payload"]
-    _wsp_issue = {
+    return out
+
+
+def _ca_ws_payload_issues(wsp: dict) -> list[str]:
+    """WS 请求负载面: 未声明字段 / 无人接字段."""
+    out: list[str] = []
+    prefix_of = {
         "handler-undeclared": (
             "WS 负载: 后端 handler 读 `msg.<字段>` 而 WSMessage 未声明 "
             "(AttributeError 死帧): "
@@ -7481,54 +8726,93 @@ def find_issues(snap: dict) -> list[str]:
             if v["triage"] == "untriaged"
             else " " + _WS_PAYLOAD_TRIAGE_DOC[v["triage"]]
         )
-        issues.append(
-            f"{_wsp_issue[v['kind']]}{v['type']}.{v['field']} @ "
+        out.append(
+            f"{prefix_of[v['kind']]}{v['type']}.{v['field']} @ "
             f"{v['rel']}:{v['line']} — {v['detail']};{mark}"
         )
     for f in wsp["dead_fields"]:
-        issues.append(
+        out.append(
             f"WS 负载: WSMessage 声明字段既无 handler 读取也零前端发送 (宣称却无人接): {f}"
         )
-    sp = snap["sse_payload"]
+    return out
+
+
+def _ca_sse_payload_issues(sp: dict) -> list[str]:
+    """SSE 事件负载面: 前端读的 payload 顶层字段后端从不发."""
+    out: list[str] = []
     for v in sp["violations"]:
         mark = (
             " 待分诊"
             if v["triage"] == "untriaged"
             else " " + _SSE_PAYLOAD_TRIAGE_DOC[v["triage"]]
         )
-        issues.append(
+        out.append(
             f"SSE 负载: 前端读的帧 payload 顶层字段后端从不发 "
             f"({_SSE_PAYLOAD_KIND_DOC[v['kind']]}): {v['channel']}/{v['frame']} → "
             f"`t.{v['field']}` @ {v['rel']}:{v['line']};{mark}"
         )
-    wep = snap["ws_ev_payload"]
+    return out
+
+
+def _ca_ws_ev_payload_issues(wep: dict) -> list[str]:
+    """WS 事件负载面: 前端读的 payload 顶层字段后端从不发."""
+    out: list[str] = []
     for v in wep["violations"]:
         mark = (
             " 待分诊"
             if v["triage"] == "untriaged"
             else " " + _WS_EV_PAYLOAD_TRIAGE_DOC[v["triage"]]
         )
-        issues.append(
+        out.append(
             f"WS 事件负载: 前端读的帧 payload 顶层字段后端从不发 "
             f"({_WS_EV_PAYLOAD_KIND_DOC[v['kind']]}): {v['channel']}/{v['frame']} → "
             f"`data.{v['field']}` @ {v['rel']}:{v['line']};{mark}"
         )
-    hf = snap["http_field"]
+    return out
+
+
+def _ca_http_field_issues(hf: dict) -> list[str]:
+    """HTTP 请求字段面: 前端传的字段与后端读取不符."""
+    out: list[str] = []
     for v in hf["violations"]:
         mark = (
             " 待分诊"
             if v["triage"] == "untriaged"
             else " " + _HTTP_FIELD_TRIAGE_DOC[v["triage"]]
         )
-        issues.append(
+        out.append(
             f"HTTP 请求字段: {_HTTP_FIELD_KIND_DOC[v['kind']]}: "
             f"{v['method']} {v['endpoint']} → `{v['field']}` @ "
             f"{v['rel']}:{v['line']} — {v['detail']};{mark}"
         )
+    return out
+
+
+def find_issues(snap: dict) -> list[str]:
+    """汇总 MECE 违例 (供 --check). 只报客观事实, 语义判定留人工."""
+    issues: list[str] = []
+    issues.extend(_ca_reward_issues(snap["reward"]))
+    issues.extend(_ca_scope_issues(snap["scope"]))
+    issues.extend(_ca_workflow_issues(snap["workflow"]))
+    issues.extend(_ca_mode_issues(snap["modes"]))
+    issues.extend(_ca_vocabulary_issues(snap["vocabulary"]))
+    issues.extend(_ca_tool_issues(snap["tools"]))
+    issues.extend(_ca_hook_issues(snap["hooks"]))
+    issues.extend(_ca_event_issues(snap["events"]))
+    issues.extend(_ca_sse_issues(snap["sse"]))
+    issues.extend(_ca_ws_issues(snap["ws"]))
+    issues.extend(_ca_http_issues(snap["http"]))
+    issues.extend(_ca_payload_issues(snap["payload"]))
+    issues.extend(_ca_response_issues(snap["response"]))
+    issues.extend(_ca_ws_payload_issues(snap["ws_payload"]))
+    issues.extend(_ca_sse_payload_issues(snap["sse_payload"]))
+    issues.extend(_ca_ws_ev_payload_issues(snap["ws_ev_payload"]))
+    issues.extend(_ca_http_field_issues(snap["http_field"]))
     return issues
 
 
-def render_mece_markdown(snap: dict) -> str:
+def _rmm_header() -> list[str]:
+    """文档标题 + 审计口径说明."""
     lines: list[str] = []
     lines.append(
         "# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面 + 响应结构面 + WS 请求负载面 + SSE 事件负载面 + WS 事件负载面 + HTTP 请求字段面)"
@@ -7558,55 +8842,84 @@ def render_mece_markdown(snap: dict) -> str:
         "缺漏再下钻到各面章节."
     )
     lines.append("")
-    lines.append(render_reward_markdown(snap["reward"]))
-    lines.append(render_scope_markdown(snap["scope"]))
-    lines.append(render_workflow_markdown(snap["workflow"]))
-    lines.append(render_mode_markdown(snap["modes"]))
-    lines.append(render_vocabulary_markdown(snap["vocabulary"]))
-    lines.append(render_tool_markdown(snap["tools"]))
-    lines.append(render_hook_markdown(snap["hooks"]))
-    lines.append(render_event_markdown(snap["events"]))
-    lines.append(render_sse_markdown(snap["sse"]))
-    lines.append(render_ws_markdown(snap["ws"]))
-    lines.append(render_http_markdown(snap["http"]))
-    lines.append(render_field_rollup_markdown(snap))
-    lines.append(render_payload_markdown(snap["payload"]))
-    lines.append(render_response_markdown(snap["response"]))
-    lines.append(render_ws_payload_markdown(snap["ws_payload"]))
-    lines.append(render_sse_payload_markdown(snap["sse_payload"]))
-    lines.append(render_ws_ev_payload_markdown(snap["ws_ev_payload"]))
-    lines.append(render_http_field_markdown(snap["http_field"]))
+    return lines
+
+
+def _rmm_faces(snap: dict) -> list[str]:
+    """十七面逐章渲染 (顺序即阅读顺序)."""
+    return [
+        render_reward_markdown(snap["reward"]),
+        render_scope_markdown(snap["scope"]),
+        render_workflow_markdown(snap["workflow"]),
+        render_mode_markdown(snap["modes"]),
+        render_vocabulary_markdown(snap["vocabulary"]),
+        render_tool_markdown(snap["tools"]),
+        render_hook_markdown(snap["hooks"]),
+        render_event_markdown(snap["events"]),
+        render_sse_markdown(snap["sse"]),
+        render_ws_markdown(snap["ws"]),
+        render_http_markdown(snap["http"]),
+        render_field_rollup_markdown(snap),
+        render_payload_markdown(snap["payload"]),
+        render_response_markdown(snap["response"]),
+        render_ws_payload_markdown(snap["ws_payload"]),
+        render_sse_payload_markdown(snap["sse_payload"]),
+        render_ws_ev_payload_markdown(snap["ws_ev_payload"]),
+        render_http_field_markdown(snap["http_field"]),
+    ]
+
+
+def _rmm_issues(snap: dict) -> list[str]:
+    """发现汇总 (门禁读的结论行)."""
+    lines: list[str] = ["## 发现汇总", ""]
     issues = find_issues(snap)
-    lines.append("## 发现汇总")
-    lines.append("")
     if issues:
-        for i in issues:
-            lines.append(f"- {i}")
+        lines.extend(f"- {i}" for i in issues)
     else:
         lines.append("- 无")
     lines.append("")
+    return lines
+
+
+def render_mece_markdown(snap: dict) -> str:
+    lines: list[str] = []
+    lines.append(
+        "<!-- generated: python -m huginn.cli.contract_audit --out docs/mece-audit.md -->"
+    )
+    lines.append("")
+    lines.extend(_rmm_header())
+    lines.extend(_rmm_faces(snap))
+    lines.extend(_rmm_issues(snap))
     return "\n".join(lines)
 
 
-def main(argv: list[str] | None = None) -> int:
+# CLI 的「只看某一面」开关: (flag, help). 顺序即 argparse 注册顺序.
+_SURFACE_FLAGS: list[tuple[str, str]] = [
+    ("--reward", "只看奖励面"),
+    ("--scope", "只看授权面"),
+    ("--workflow", "只看工作流面"),
+    ("--modes", "只看模式面"),
+    ("--vocab", "只看词汇面"),
+    ("--tools", "只看工具面"),
+    ("--hooks", "只看钩子面"),
+    ("--events", "只看事件面"),
+    ("--sse", "只看 SSE 消费面"),
+    ("--ws", "只看 WS 消费面"),
+    ("--http", "只看 HTTP API 消费面"),
+    ("--payload", "只看请求负载面"),
+    ("--response", "只看响应结构面"),
+    ("--ws-payload", "只看 WS 请求负载面"),
+    ("--sse-payload", "只看 SSE 事件负载面"),
+    ("--ws-ev-payload", "只看 WS 事件负载面"),
+    ("--http-field", "只看 HTTP 请求字段面"),
+]
+
+
+def _main_parser() -> argparse.ArgumentParser:
+    """CLI 参数表."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--reward", action="store_true", help="只看奖励面")
-    parser.add_argument("--scope", action="store_true", help="只看授权面")
-    parser.add_argument("--workflow", action="store_true", help="只看工作流面")
-    parser.add_argument("--modes", action="store_true", help="只看模式面")
-    parser.add_argument("--vocab", action="store_true", help="只看词汇面")
-    parser.add_argument("--tools", action="store_true", help="只看工具面")
-    parser.add_argument("--hooks", action="store_true", help="只看钩子面")
-    parser.add_argument("--events", action="store_true", help="只看事件面")
-    parser.add_argument("--sse", action="store_true", help="只看 SSE 消费面")
-    parser.add_argument("--ws", action="store_true", help="只看 WS 消费面")
-    parser.add_argument("--http", action="store_true", help="只看 HTTP API 消费面")
-    parser.add_argument("--payload", action="store_true", help="只看请求负载面")
-    parser.add_argument("--response", action="store_true", help="只看响应结构面")
-    parser.add_argument("--ws-payload", action="store_true", help="只看 WS 请求负载面")
-    parser.add_argument("--sse-payload", action="store_true", help="只看 SSE 事件负载面")
-    parser.add_argument("--ws-ev-payload", action="store_true", help="只看 WS 事件负载面")
-    parser.add_argument("--http-field", action="store_true", help="只看 HTTP 请求字段面")
+    for flag, help_text in _SURFACE_FLAGS:
+        parser.add_argument(flag, action="store_true", help=help_text)
     parser.add_argument("--json", action="store_true", help="输出 JSON 快照")
     parser.add_argument("--check", action="store_true", help="有 MECE 发现时 exit 1")
     parser.add_argument(
@@ -7621,14 +8934,21 @@ def main(argv: list[str] | None = None) -> int:
         help="把当前发现写入 --baseline (缺省 tests/golden/mece_findings_baseline.txt)",
     )
     parser.add_argument("--out", type=str, default="", help="写 markdown 到文件")
-    args = parser.parse_args(argv)
+    return parser
 
-    surfaces = {
+
+def _main_surfaces(args) -> dict:
+    """面名 → (开关, 构建函数, 渲染函数)."""
+    return {
         "reward": (args.reward, build_reward_contract, render_reward_markdown),
         "scope": (args.scope, build_scope_contract, render_scope_markdown),
         "workflow": (args.workflow, build_workflow_contract, render_workflow_markdown),
         "modes": (args.modes, build_mode_contract, render_mode_markdown),
-        "vocabulary": (args.vocab, build_vocabulary_contract, render_vocabulary_markdown),
+        "vocabulary": (
+            args.vocab,
+            build_vocabulary_contract,
+            render_vocabulary_markdown,
+        ),
         "tools": (args.tools, build_tool_contract, render_tool_markdown),
         "hooks": (args.hooks, build_hook_contract, render_hook_markdown),
         "events": (args.events, build_event_contract, render_event_markdown),
@@ -7658,28 +8978,31 @@ def main(argv: list[str] | None = None) -> int:
             render_http_field_markdown,
         ),
     }
+
+
+def _main_render(surfaces: dict) -> tuple[dict, str]:
+    """单选一面走单面构建; 多选/未选走全量快照."""
     selected = [k for k, (on, _b, _r) in surfaces.items() if on]
     if len(selected) == 1:
         _on, builder, renderer = surfaces[selected[0]]
         data_obj = builder()
-        md = renderer(data_obj)
-    else:
-        snap = build_mece_snapshot()
-        data_obj = snap
-        md = render_mece_markdown(snap)
+        return data_obj, renderer(data_obj)
+    snap = build_mece_snapshot()
+    return snap, render_mece_markdown(snap)
 
-    if args.update_baseline or args.check:
-        snap = data_obj if "reward" in data_obj else build_mece_snapshot()
-        issues = find_issues(snap)
 
-    if args.update_baseline:
-        path = Path(args.baseline) if args.baseline else _MECE_FINDINGS_BASELINE
-        path.parent.mkdir(parents=True, exist_ok=True)
-        text = "\n".join(sorted(issues))
-        path.write_text(text + "\n" if text else "", encoding="utf-8")
-        print(f"wrote mece findings baseline ({len(issues)} 项) -> {path}")
-        return 0
+def _main_update_baseline(args, issues: list[str]) -> int:
+    """把当前发现写成基线文件."""
+    path = Path(args.baseline) if args.baseline else _MECE_FINDINGS_BASELINE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = "\n".join(sorted(issues))
+    path.write_text(text + "\n" if text else "", encoding="utf-8")
+    print(f"wrote mece findings baseline ({len(issues)} 项) -> {path}")
+    return 0
 
+
+def _main_emit(args, data_obj: dict, md: str) -> None:
+    """按 --json / --out / stdout 输出."""
     if args.json:
         json.dump(data_obj, sys.stdout, ensure_ascii=False, indent=2)
         print()
@@ -7691,36 +9014,62 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(md)
 
+
+def _main_report_stale(stale: list[str]) -> None:
+    """陈旧基线条目提示 (不改退出码)."""
+    if not stale:
+        return
+    # 棘轮只拦新增, 旧项被**静默忽略**是设计 (修好旧项无需改基线). 但陈旧条目
+    # 会让"已修缺陷被重新引入"不再报警 (串已在基线里) —— 故只在 stderr 提示
+    # 陈旧条数, 提示重跑 --update-baseline, 不改退出码.
+    print(
+        f"\nMECE 漂移提示: 基线含 {len(stale)} 项已不存在的陈旧条目, "
+        f"建议重跑 --update-baseline 以恢复棘轮灵敏度:",
+        file=sys.stderr,
+    )
+    for i in stale:
+        print(f"  ~ {i}", file=sys.stderr)
+
+
+def _main_check(args, issues: list[str]) -> int:
+    """门禁: 有 --baseline 走棘轮 (只拦新增), 否则绝对门 (有发现即失败)."""
+    if not args.baseline:
+        if not issues:
+            return 0
+        print(f"\nMECE 审计发现 {len(issues)} 项:", file=sys.stderr)
+        for i in issues:
+            print(f"  - {i}", file=sys.stderr)
+        return 1
+    base = _load_findings_baseline(Path(args.baseline))
+    new = [i for i in issues if i not in base]
+    _main_report_stale(sorted(base - set(issues)))
+    if not new:
+        return 0
+    print(
+        f"\nMECE 审计新增发现 {len(new)} 项 (基线 {len(base)} 项):",
+        file=sys.stderr,
+    )
+    for i in new:
+        print(f"  - {i}", file=sys.stderr)
+    return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _main_parser().parse_args(argv)
+    surfaces = _main_surfaces(args)
+    data_obj, md = _main_render(surfaces)
+
+    if args.update_baseline or args.check:
+        snap = data_obj if "reward" in data_obj else build_mece_snapshot()
+        issues = find_issues(snap)
+
+    if args.update_baseline:
+        return _main_update_baseline(args, issues)
+
+    _main_emit(args, data_obj, md)
+
     if args.check:
-        # 有 --baseline: 棘轮门 (只拦基线外的新发现); 无: 绝对门 (有发现即失败).
-        if args.baseline:
-            base = _load_findings_baseline(Path(args.baseline))
-            new = [i for i in issues if i not in base]
-            stale = sorted(base - set(issues))
-            # 棘轮只拦新增, 旧项被**静默忽略**是设计 (修好旧项无需改基线). 但陈旧条目
-            # 会让"已修缺陷被重新引入"不再报警 (串已在基线里) —— 故只在 stderr 提示
-            # 陈旧条数, 提示重跑 --update-baseline, 不改退出码.
-            if stale:
-                print(
-                    f"\nMECE 漂移提示: 基线含 {len(stale)} 项已不存在的陈旧条目, "
-                    f"建议重跑 --update-baseline 以恢复棘轮灵敏度:",
-                    file=sys.stderr,
-                )
-                for i in stale:
-                    print(f"  ~ {i}", file=sys.stderr)
-            if new:
-                print(
-                    f"\nMECE 审计新增发现 {len(new)} 项 (基线 {len(base)} 项):",
-                    file=sys.stderr,
-                )
-                for i in new:
-                    print(f"  - {i}", file=sys.stderr)
-                return 1
-        elif issues:
-            print(f"\nMECE 审计发现 {len(issues)} 项:", file=sys.stderr)
-            for i in issues:
-                print(f"  - {i}", file=sys.stderr)
-            return 1
+        return _main_check(args, issues)
     return 0
 
 

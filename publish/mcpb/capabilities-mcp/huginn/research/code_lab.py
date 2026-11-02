@@ -20,6 +20,7 @@ open/globals/locals) + safe_import 白名单 (numpy/scipy/sympy/math/json/...)
 整组回收, 连代码 spawn 的孙进程(torch DataLoader worker 等)一并带走; 重活全在一次性
 子进程里, 宿主进程内存不随实验膨胀. 子进程内部另有超时子线程兜底, 防死循环.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -44,8 +45,8 @@ from huginn.utils.process import (
     untrack_live_child,
 )
 
-SAFE_MEM_CAP = 512 * 1024 * 1024      # 512MB 峰值 (tracemalloc 监控)
-SAFE_TIMEOUT_S = 30.0                 # run()/probe 单次调用超时
+SAFE_MEM_CAP = 512 * 1024 * 1024  # 512MB 峰值 (tracemalloc 监控)
+SAFE_TIMEOUT_S = 30.0  # run()/probe 单次调用超时
 
 # 平台默认(命题无关)的 run(cfg) 骨架: 只固定输入/输出契约, 不含任何领域原语、
 # 约束族或判据。领域脚手架属于**任务资产**, 经 Scaffold/load_scaffold 装配 ——
@@ -87,10 +88,10 @@ class Scaffold:
 def load_scaffold(source: Any) -> Scaffold | None:
     """把外部任务脚手架装配成 Scaffold. ``source`` 支持:
 
-      - None / "" / Scaffold: 原样返回 (无脚手架 → 平台走命题无关默认);
-      - "...py" 文件路径 或 "pkg.mod" 模块名: 加载模块, 读约定字段
-        ``NAME`` / ``TEMPLATE`` / ``HINTS`` / ``PRIMITIVE_NAMES``, 并调用
-        ``primitives()`` 取要注入沙箱的原语表.
+    - None / "" / Scaffold: 原样返回 (无脚手架 → 平台走命题无关默认);
+    - "...py" 文件路径 或 "pkg.mod" 模块名: 加载模块, 读约定字段
+      ``NAME`` / ``TEMPLATE`` / ``HINTS`` / ``PRIMITIVE_NAMES``, 并调用
+      ``primitives()`` 取要注入沙箱的原语表.
     """
     if source is None or source == "":
         return None
@@ -101,7 +102,8 @@ def load_scaffold(source: Any) -> Scaffold | None:
         p = Path(str(source))
         if p.suffix == ".py":
             spec = importlib.util.spec_from_file_location(
-                "huginn_codelab_scaffold_" + p.stem, p)
+                "huginn_codelab_scaffold_" + p.stem, p
+            )
             if spec is None or spec.loader is None:
                 raise ImportError(f"无法加载脚手架文件: {p}")
             mod = importlib.util.module_from_spec(spec)
@@ -121,10 +123,15 @@ def load_scaffold(source: Any) -> Scaffold | None:
     )
 
 
-def build_author_prompt(goal: str, *, scaffold: Scaffold | None = None,
-                        guard_block: str = "",
-                        repair_hint: str = "", prev_code: str = "",
-                        focus: str = "") -> str:
+def build_author_prompt(
+    goal: str,
+    *,
+    scaffold: Scaffold | None = None,
+    guard_block: str = "",
+    repair_hint: str = "",
+    prev_code: str = "",
+    focus: str = "",
+) -> str:
     """构造"让书生在 Code Lab 亲手写一轮实验"的作者提示 (命题无关).
 
     单一出处: autoloop 的 execute 内建动作与 examples 自主循环都调本函数, 通用
@@ -136,11 +143,19 @@ def build_author_prompt(goal: str, *, scaffold: Scaffold | None = None,
     的研究目标, 若只喂 goal, 提示每轮逐字节相同 → 同一问题反复问、执行输出恒同、
     零新证据 (run47 实测 prompt_len 恒 5379). 带上 focus 后提示随迭代演进.
     """
-    template = (scaffold.template if scaffold and scaffold.template
-                else DEFAULT_TEMPLATE)
-    builtin_ref = ("、".join(scaffold.primitive_names)
-                   if scaffold and scaffold.primitive_names
-                   else "沙箱内置的数值工具")
+    template = scaffold.template if scaffold and scaffold.template else DEFAULT_TEMPLATE
+    builtin_ref = (
+        "、".join(scaffold.primitive_names)
+        if scaffold and scaffold.primitive_names
+        else "沙箱内置的数值工具"
+    )
+    _repair_block = _build_repair_block(repair_hint, prev_code, builtin_ref)
+    return _assemble_author_prompt(
+        goal, scaffold, guard_block, focus, template, _repair_block
+    )
+
+
+def _build_repair_block(repair_hint: str, prev_code: str, builtin_ref: str) -> str:
     # 超时是跟"代码写错"完全不同的一类失败: 报错里没有语法/形状线索, 只有"执行超时".
     # 若仍套用 NameError/形状 那套对症提示, 书生会继续产出同样重的扫描 → 反复超时
     # (run59/60 实测: 三组都被 900s 超时饿死, 无一产生执行证据). 故单独给一条
@@ -163,7 +178,8 @@ def build_author_prompt(goal: str, *, scaffold: Scaffold | None = None,
                 "上一轮该代码在沙箱真实执行报错如下, 请据此改正后重写:\n"
                 "报错里已给出**出错行号**, 先看那一行再改, 不要凭空重写:\n"
                 "对症改(极常见): (a) NameError/未定义名 → 只调用沙箱**内置**的 "
-                + builtin_ref + ", 不要自己重写已有工具; "
+                + builtin_ref
+                + ", 不要自己重写已有工具; "
                 "(b) 形状不匹配(matmul/广播/concatenate) → 数组一律 .reshape(-1, 1) 对齐二维; "
                 "(c) Generator 没有 randn → 用 rng.standard_normal(n); "
                 "(d) assert/raise 中断执行 → 删掉断言直接 return 真实数值; "
@@ -177,6 +193,17 @@ def build_author_prompt(goal: str, *, scaffold: Scaffold | None = None,
                 "你上一版失败的代码(请在其基础上做**最小改动**修正它, 保留其余已正确的部分, "
                 "不要凭空重写):\n" + prev_code[:2500] + "\n"
             )
+    return _repair_block
+
+
+def _assemble_author_prompt(
+    goal: str,
+    scaffold: Scaffold | None,
+    guard_block: str,
+    focus: str,
+    template: str,
+    repair_block: str,
+) -> str:
     return (
         "你是实验代码作者。请写一段 Python 实验脚本推进下面的研究目标。\n"
         "硬约束: 禁止 IO/网络/读写文件; 不要 try/except、不要 class; "
@@ -187,13 +214,19 @@ def build_author_prompt(goal: str, *, scaffold: Scaffold | None = None,
         "严禁把 cfg 整体解包成多个变量。\n"
         + (scaffold.hints if scaffold and scaffold.hints else "")
         + (("参考冷启动守卫(软提示):\n" + guard_block + "\n") if guard_block else "")
-        + _repair_block
+        + repair_block
         + "**必须直接采用下面这份模板作为完整脚本骨架**: "
-        + template +
-        "\n只输出 <code>...</code> 内的**完整可用代码**(即模板 + 你的改动), 不要任何多余文字。\n\n研究目标:\n"
+        + template
+        + "\n只输出 <code>...</code> 内的**完整可用代码**(即模板 + 你的改动), 不要任何多余文字。\n\n研究目标:\n"
         + goal[:4000]
-        + (("\n\n本轮聚焦(只推进下面这一条的具体实验, 不要重复整个研究目标):\n"
-            + focus[:1200]) if focus else "")
+        + (
+            (
+                "\n\n本轮聚焦(只推进下面这一条的具体实验, 不要重复整个研究目标):\n"
+                + focus[:1200]
+            )
+            if focus
+            else ""
+        )
     )
 
 
@@ -208,16 +241,18 @@ def extract_code(text: str) -> str:
     blocks: list[str] = []
     for m in re.finditer(r"<code>(.*?)</code>", text, re.DOTALL | re.IGNORECASE):
         blocks.append(m.group(1).strip())
-    for m in re.finditer(r"```(?:python)?\s*\n(.*?)```", text, re.DOTALL | re.IGNORECASE):
+    for m in re.finditer(
+        r"```(?:python)?\s*\n(.*?)```", text, re.DOTALL | re.IGNORECASE
+    ):
         blocks.append(m.group(1).strip())
-    i = text.find("def run(")                      # 裸函数体兜底
+    i = text.find("def run(")  # 裸函数体兜底
     if i >= 0:
         raw = text[i:].strip()
-        fence = raw.find("```")                    # 截断尾部栅栏/后附叙述, 只留代码
+        fence = raw.find("```")  # 截断尾部栅栏/后附叙述, 只留代码
         if fence >= 0:
             raw = raw[:fence].rstrip()
-        blocks.insert(0, raw)                      # 放最前: 倒序扫描时最后才兜底, 干净块优先
-    for b in reversed(blocks):                     # 后→前, 避开思考流里的模板引用
+        blocks.insert(0, raw)  # 放最前: 倒序扫描时最后才兜底, 干净块优先
+    for b in reversed(blocks):  # 后→前, 避开思考流里的模板引用
         if "def run(" in b and "return" in b and "```" not in b:
             return b
     return blocks[0] if blocks else ""
@@ -226,6 +261,7 @@ def extract_code(text: str) -> str:
 def _to_py(v: Any) -> Any:
     """把 numpy 标量/数组递归转成 JSON 可序列化的 Python 类型."""
     import numpy as np
+
     if isinstance(v, np.generic):
         return v.item()
     if isinstance(v, np.ndarray):
@@ -255,6 +291,7 @@ def strip_abort_statements(code: str) -> str:
     if not code or "assert" not in code:
         return code
     import ast
+
     try:
         tree = ast.parse(code)
     except SyntaxError:
@@ -274,8 +311,9 @@ def strip_abort_statements(code: str) -> str:
         return code
 
 
-def strip_primitive_redefinitions(code: str,
-                                  primitive_names: tuple[str, ...] = ()) -> str:
+def strip_primitive_redefinitions(
+    code: str, primitive_names: tuple[str, ...] = ()
+) -> str:
     """剥掉书生对沙箱注入原语(脚手架 PRIMITIVE_NAMES)的顶层重定义.
 
     书生若顶层重定义同名函数会**覆盖**注入的正确实现 (反复出现: 它想自己拿参数
@@ -287,12 +325,14 @@ def strip_primitive_redefinitions(code: str,
     if not code or not primitive_names or not any(n in code for n in primitive_names):
         return code
     import ast
+
     try:
         tree = ast.parse(code)
     except SyntaxError:
         return code
     kept = [
-        n for n in tree.body
+        n
+        for n in tree.body
         if not (
             isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
             and n.name in primitive_names
@@ -364,16 +404,19 @@ def _prepare_code(code: str, scaffold: Scaffold | None) -> str:
     单一出处: ``_load_namespace`` 执行它、``_sandbox_run_inproc`` 报错定位也用它 ——
     两处必须看到同一份源码, 否则 traceback 行号会与原始代码错位 (AST 往返会挪行).
     """
-    code = strip_abort_statements(code)   # 强制"不 assert 中断"契约 (命题无关)
+    code = strip_abort_statements(code)  # 强制"不 assert 中断"契约 (命题无关)
     if scaffold and scaffold.primitive_names:
         # 剥除对脚手架原语的顶层重定义(用注入版), 避免书生重写引入 bug.
         code = strip_primitive_redefinitions(code, scaffold.primitive_names)
     return code
 
 
-def _load_namespace(code: str, mem_cap: int = SAFE_MEM_CAP,
-                    imports_whitelist_extra: tuple[str, ...] = (),
-                    scaffold: Scaffold | None = None) -> dict:
+def _load_namespace(
+    code: str,
+    mem_cap: int = SAFE_MEM_CAP,
+    imports_whitelist_extra: tuple[str, ...] = (),
+    scaffold: Scaffold | None = None,
+) -> dict:
     """在安全沙箱里执行代码, 返回定义出的命名空间 (run/probe_*).
 
     ``imports_whitelist_extra``: 域级 import 白名单增量(冷启动守卫的
@@ -390,6 +433,7 @@ def _load_namespace(code: str, mem_cap: int = SAFE_MEM_CAP,
         make_safe_builtins,
         safe_import,
     )
+
     code = _prepare_code(code, scaffold)
     # 只注入平台基座(np) — 领域原语全部来自 scaffold, 内核不内置任何命题专用工具.
     ns: dict = {
@@ -409,6 +453,7 @@ def _load_namespace(code: str, mem_cap: int = SAFE_MEM_CAP,
                 if name.split(".")[0] in extras:
                     return _bi.__import__(name, globals_, locals_, fromlist, level)
                 raise
+
         ns["__builtins__"] = dict(ns["__builtins__"])
         ns["__builtins__"]["__import__"] = _domain_import
     exec_with_mem_cap(code, ns, mem_cap)
@@ -427,6 +472,7 @@ def _coerce_author_result(res: Any) -> tuple[Any, str | None]:
     仍不接受的硬伤(非 dict / 值不可 JSON 序列化 / 纯字符串控制台输出)照旧拒绝。
     """
     import numpy as np
+
     if not isinstance(res, dict):
         return res, None  # 交给原 schema 校验报"必须返回 dict"
     # 已是标准结构 → 走原校验.
@@ -446,7 +492,7 @@ def _coerce_author_result(res: Any) -> tuple[Any, str | None]:
         return res, None  # 无任何数值标量键 → 非预期的控制台输出, 交原校验拒绝
     return {
         "success": True,
-        "objectives": scalar_obj,          # 全真实标量, 未合成
+        "objectives": scalar_obj,  # 全真实标量, 未合成
         "summary": {"author_raw": res, **raw_sum},
     }, None
 
@@ -460,6 +506,7 @@ def _check_run_schema(res: Any) -> str | None:
     注: sandbox_run 会先经 _coerce_author_result 把"裸数值 dict"补包装再调本校验.
     """
     import numpy as np
+
     if not isinstance(res, dict):
         return "run(cfg) 必须返回 dict"
     if not isinstance(res.get("summary"), dict):
@@ -499,12 +546,16 @@ def _alias_cfg(cfg: dict, extra_aliases: dict | None = None) -> dict:
     return out
 
 
-def _sandbox_run_inproc(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
-                        timeout: float = SAFE_TIMEOUT_S,
-                        imports_whitelist_extra: tuple[str, ...] = (),
-                        cfg_aliases: dict | None = None,
-                        scaffold: Scaffold | None = None,
-                        ) -> tuple[dict | None, str | None]:
+def _sandbox_run_inproc(
+    code: str,
+    cfg: dict,
+    *,
+    mem_cap: int = SAFE_MEM_CAP,
+    timeout: float = SAFE_TIMEOUT_S,
+    imports_whitelist_extra: tuple[str, ...] = (),
+    cfg_aliases: dict | None = None,
+    scaffold: Scaffold | None = None,
+) -> tuple[dict | None, str | None]:
     """当前进程内跑沙箱(原 sandbox_run 主体). 供隔离子进程入口与无 fork 回退复用.
 
     诚实红线不变: 不伪造数值 —— 抛错/超时/schema 不过即 (None, 原因).
@@ -513,9 +564,12 @@ def _sandbox_run_inproc(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
         return None, "空代码"
     cfg = _alias_cfg(cfg, extra_aliases=cfg_aliases)
     try:
-        ns = _load_namespace(code, mem_cap,
-                             imports_whitelist_extra=imports_whitelist_extra,
-                             scaffold=scaffold)
+        ns = _load_namespace(
+            code,
+            mem_cap,
+            imports_whitelist_extra=imports_whitelist_extra,
+            scaffold=scaffold,
+        )
         run_fn = ns.get("run")
         if not callable(run_fn):
             return None, "未找到 def run(cfg) 入口"
@@ -524,7 +578,7 @@ def _sandbox_run_inproc(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
         return None, str(te)
     except Exception as e:  # noqa: BLE001 — 执行异常如实记录(带出错行, 供自修复定位)
         return None, _format_exec_error(e, _prepare_code(code, scaffold))
-    res, _ = _coerce_author_result(res)   # 宽容"裸数值 dict", 不伪造数值
+    res, _ = _coerce_author_result(res)  # 宽容"裸数值 dict", 不伪造数值
     reason = _check_run_schema(res)
     if reason is not None:
         return None, reason
@@ -542,9 +596,7 @@ def _sandbox_run_inproc(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
 
 
 # 子进程入口: 复用同一份 _sandbox_run_inproc, 不另立实现.
-_WORKER_SNIPPET = (
-    "from huginn.research.code_lab import _worker_main; _worker_main()"
-)
+_WORKER_SNIPPET = "from huginn.research.code_lab import _worker_main; _worker_main()"
 
 
 def _worker_main() -> None:
@@ -559,7 +611,8 @@ def _worker_main() -> None:
     try:
         scaffold = load_scaffold(payload.get("scaffold_spec") or "")
         res, reason = _sandbox_run_inproc(
-            payload.get("code") or "", payload.get("cfg") or {},
+            payload.get("code") or "",
+            payload.get("cfg") or {},
             mem_cap=int(payload.get("mem_cap") or SAFE_MEM_CAP),
             timeout=float(payload.get("timeout") or SAFE_TIMEOUT_S),
             imports_whitelist_extra=tuple(payload.get("imports_whitelist_extra") or ()),
@@ -580,10 +633,16 @@ def _worker_main() -> None:
             os.killpg(os.getpid(), signal.SIGKILL)
 
 
-def _run_isolated(code: str, cfg: dict, *, timeout: float, mem_cap: int,
-                  imports_whitelist_extra: tuple[str, ...],
-                  cfg_aliases: dict | None,
-                  scaffold_spec: str) -> tuple[dict | None, str | None]:
+def _run_isolated(
+    code: str,
+    cfg: dict,
+    *,
+    timeout: float,
+    mem_cap: int,
+    imports_whitelist_extra: tuple[str, ...],
+    cfg_aliases: dict | None,
+    scaffold_spec: str,
+) -> tuple[dict | None, str | None]:
     """在独立子进程(自立新组)里跑沙箱, 超时按进程组整组回收.
 
     动机: 线程超时终止不了在跑的代码(Python 无法 kill 线程) —— 失控实验会继续吃
@@ -592,44 +651,95 @@ def _run_isolated(code: str, cfg: dict, *, timeout: float, mem_cap: int,
     ``killpg`` 连孙进程一起回收; 且重活都在一次性子进程里, 宿主内存不随实验膨胀.
     子进程登记进在册表, 宿主退出时 ``kill_tracked_children`` 再兜底一次.
     """
+    env, payload, result_path = _isolated_env_payload(
+        code,
+        cfg,
+        timeout=timeout,
+        mem_cap=mem_cap,
+        imports_whitelist_extra=imports_whitelist_extra,
+        cfg_aliases=cfg_aliases,
+        scaffold_spec=scaffold_spec,
+    )
+    proc, own_group, err = _spawn_isolated_worker(env, result_path)
+    if err is not None:
+        return None, err
+    track_live_child(proc.pid, own_group=own_group)
+    try:
+        timed_out = _communicate_isolated(proc, payload, timeout, own_group)
+    finally:
+        untrack_live_child(proc.pid)
+    return _read_isolated_result(proc, result_path, timeout, timed_out)
+
+
+def _isolated_env_payload(
+    code: str,
+    cfg: dict,
+    *,
+    timeout: float,
+    mem_cap: int,
+    imports_whitelist_extra: tuple[str, ...],
+    cfg_aliases: dict | None,
+    scaffold_spec: str,
+) -> tuple[dict, str, str]:
     import huginn as _huginn
+
     pkg_root = str(Path(_huginn.__file__).resolve().parent.parent)
     env = dict(os.environ)
     env["PYTHONPATH"] = pkg_root + os.pathsep + env.get("PYTHONPATH", "")
     fd, result_path = tempfile.mkstemp(suffix=".json", prefix="codelab_")
     os.close(fd)
-    payload = json.dumps({
-        "code": code, "cfg": cfg, "mem_cap": int(mem_cap),
-        "timeout": float(timeout),
-        "imports_whitelist_extra": list(imports_whitelist_extra or ()),
-        "cfg_aliases": cfg_aliases or None,
-        "scaffold_spec": scaffold_spec or "",
-        "result_path": result_path,
-    }, ensure_ascii=False, default=str)
+    payload = json.dumps(
+        {
+            "code": code,
+            "cfg": cfg,
+            "mem_cap": int(mem_cap),
+            "timeout": float(timeout),
+            "imports_whitelist_extra": list(imports_whitelist_extra or ()),
+            "cfg_aliases": cfg_aliases or None,
+            "scaffold_spec": scaffold_spec or "",
+            "result_path": result_path,
+        },
+        ensure_ascii=False,
+        default=str,
+    )
+    return env, payload, result_path
+
+
+def _spawn_isolated_worker(env: dict, result_path: str):
     kwargs, own_group = new_group_popen_kwargs()
     try:
         proc = subprocess.Popen(
             [sys.executable, "-c", _WORKER_SNIPPET],
-            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
-            errors="replace", env=env, **kwargs,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            **kwargs,
         )
     except Exception as e:  # noqa: BLE001 — 起不来就如实报, 回退由调用方决定
         with contextlib.suppress(OSError):
             os.unlink(result_path)
-        return None, f"隔离执行启动失败: {type(e).__name__}: {e}"
-    track_live_child(proc.pid, own_group=own_group)
-    timed_out = False
+        return None, None, f"隔离执行启动失败: {type(e).__name__}: {e}"
+    return proc, own_group, None
+
+
+def _communicate_isolated(proc, payload: str, timeout: float, own_group: bool) -> bool:
     try:
-        try:
-            proc.communicate(payload, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            kill_process_group(proc.pid, own_group=own_group)
-            with contextlib.suppress(Exception):
-                proc.communicate()
-    finally:
-        untrack_live_child(proc.pid)
+        proc.communicate(payload, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        kill_process_group(proc.pid, own_group=own_group)
+        with contextlib.suppress(Exception):
+            proc.communicate()
+        return True
+    return False
+
+
+def _read_isolated_result(
+    proc, result_path: str, timeout: float, timed_out: bool
+) -> tuple[dict | None, str | None]:
     try:
         if timed_out:
             return None, f"code_lab 执行超时 (> {timeout}s)"
@@ -646,11 +756,16 @@ def _run_isolated(code: str, cfg: dict, *, timeout: float, mem_cap: int,
             os.unlink(result_path)
 
 
-def sandbox_run(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
-                timeout: float = SAFE_TIMEOUT_S,
-                imports_whitelist_extra: tuple[str, ...] = (),
-                cfg_aliases: dict | None = None,
-                scaffold: Scaffold | None = None) -> tuple[dict | None, str | None]:
+def sandbox_run(
+    code: str,
+    cfg: dict,
+    *,
+    mem_cap: int = SAFE_MEM_CAP,
+    timeout: float = SAFE_TIMEOUT_S,
+    imports_whitelist_extra: tuple[str, ...] = (),
+    cfg_aliases: dict | None = None,
+    scaffold: Scaffold | None = None,
+) -> tuple[dict | None, str | None]:
     """执行书生写的实验代码: 返回 (结果 dict 或 None, 错误原因或 None).
 
     ``imports_whitelist_extra``: 冷启动守卫的域级 import 白名单增量, 仅该次调用生效.
@@ -668,14 +783,22 @@ def sandbox_run(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
     scaffold_spec = getattr(scaffold, "source", "") if scaffold is not None else ""
     if scaffold is None or scaffold_spec:
         return _run_isolated(
-            code, cfg, timeout=float(timeout), mem_cap=mem_cap,
+            code,
+            cfg,
+            timeout=float(timeout),
+            mem_cap=mem_cap,
             imports_whitelist_extra=imports_whitelist_extra,
-            cfg_aliases=cfg_aliases, scaffold_spec=scaffold_spec,
+            cfg_aliases=cfg_aliases,
+            scaffold_spec=scaffold_spec,
         )
     return _sandbox_run_inproc(
-        code, cfg, mem_cap=mem_cap, timeout=timeout,
+        code,
+        cfg,
+        mem_cap=mem_cap,
+        timeout=timeout,
         imports_whitelist_extra=imports_whitelist_extra,
-        cfg_aliases=cfg_aliases, scaffold=scaffold,
+        cfg_aliases=cfg_aliases,
+        scaffold=scaffold,
     )
 
 
@@ -695,15 +818,30 @@ def author_probe_specs(code: str, scaffold: Scaffold | None = None) -> list[dict
         if not name.startswith("probe_") or not callable(fn):
             continue
         doc = (fn.__doc__ or name).strip().splitlines()[0][:200]
-        specs.append({
-            "tool": {"function": {
-                "name": name,
-                "description": f"[书生代码实验室] {doc}",
-                "parameters": {"type": "object", "properties": {
-                    "config": {"type": "object"}},
-                    "required": [], "additionalProperties": True}}},
-            "handle": (lambda c, f=fn: json.dumps(
-                _to_py(_call_with_timeout(f, dict(c or {}) if isinstance(c, dict) else c or {})),
-                ensure_ascii=False)),
-        })
+        specs.append(
+            {
+                "tool": {
+                    "function": {
+                        "name": name,
+                        "description": f"[书生代码实验室] {doc}",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"config": {"type": "object"}},
+                            "required": [],
+                            "additionalProperties": True,
+                        },
+                    }
+                },
+                "handle": (
+                    lambda c, f=fn: json.dumps(
+                        _to_py(
+                            _call_with_timeout(
+                                f, dict(c or {}) if isinstance(c, dict) else c or {}
+                            )
+                        ),
+                        ensure_ascii=False,
+                    )
+                ),
+            }
+        )
     return specs

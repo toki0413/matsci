@@ -1,0 +1,2 @@
+{"action": "recall", "actor": "agent", "details": {"approved": true, "tool": "recall"}, "event_type": "tool_call", "input_hash": "dd10ea2b6c584213", "output_hash": "5e17ad15d1829e4a", "prev_hash": "", "timestamp": "2026-10-28T05:28:58Z", "trace_id": ""}
+{"action": "web_search_tool", "actor": "agent", "details": {"approved": true, "tool": "web_search_tool"}, "event_type": "tool_call", "input_hash": "cf4c71b9fa60c592", "output_hash": "0113b5105f679ca3", "prev_hash": "", "timestamp": "2026-10-28T05:28:59Z", "trace_id": ""}

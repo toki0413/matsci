@@ -23,6 +23,7 @@
 诚实边界: 世界模型是**假说**, execute 是**真相检验**。predict 只预告, 不替代执行;
 reconcile 把预测与真值并排审计, 不符则如实标 falsified。
 """
+
 from __future__ import annotations
 
 import math
@@ -32,9 +33,9 @@ from enum import Enum
 from typing import Any
 
 # 基础物理常数 (世界模型的数学参数) —— SI 单位
-SOLAR_LUM = 3.828e26          # L☉ [W]
-STEFAN = 5.670374419e-8        # σ [W/m²/K⁴]
-AU_M = 1.49597870700e11        # [m]
+SOLAR_LUM = 3.828e26  # L☉ [W]
+STEFAN = 5.670374419e-8  # σ [W/m²/K⁴]
+AU_M = 1.49597870700e11  # [m]
 SOLAR_MASS_KG = 1.98892e30
 
 
@@ -53,6 +54,7 @@ class Worldview(str, Enum):  # noqa: UP042 — 刻意 str+Enum: 世界观谱系�
     - LATENT_TRANSITION:     世界=隐空间状态, 学 s_{t+1}=f(s_t,a_t) 的转移。
     - BEHAVIOR_POLICY:       不显式建模世界, 直接从(状态,动作)学策略/价值 (RL 极)。
     """
+
     PHYSICS_CAUSAL = "physics_causal"
     PERCEPTION_PREDICTIVE = "perception_predictive"
     LATENT_TRANSITION = "latent_transition"
@@ -93,8 +95,11 @@ def world_model_card(model: LawModel) -> dict:
         # worldview 可能是枚举或字符串 (外部后端如 pybullet_env 不 import 本模块,
         # 用字符串字面量标世界观). 兼容两者: 枚举取其 .value, 字符串原样保留.
         "worldview": _worldview_value(getattr(model, "worldview", None)),
-        "falsifiable": (hasattr(model, "predict") and hasattr(model, "law")
-                        and hasattr(model, "seed")),
+        "falsifiable": (
+            hasattr(model, "predict")
+            and hasattr(model, "law")
+            and hasattr(model, "seed")
+        ),
         "truth_reference": "real_execution (reconcile 数值对账)",
         "methods": sorted(k for k in ("predict", "law", "seed") if hasattr(model, k)),
     }
@@ -104,11 +109,46 @@ def world_model_card(model: LawModel) -> dict:
         _domain = getattr(model, "domain", "")
         if _domain:
             from huginn.research.coldstart_guards import compile_domain_guards
-            contract = dict(compile_domain_guards(_domain).get("scientific_contract") or {})
+
+            contract = dict(
+                compile_domain_guards(_domain).get("scientific_contract") or {}
+            )
     except Exception:  # noqa: BLE001 — 域未登记/守卫不可用 → 契约留空, 不阻断
         contract = {}
     card["contract"] = contract
     return card
+
+
+_WORLD_MODEL_SPEC: list[tuple[str, str, str, str, str]] = [
+    (
+        "research.law_model",
+        Worldview.PHYSICS_CAUSAL.value,
+        "方程前向模型 + reconcile 数值对账(证伪式可信)",
+        "科研管线(规划/验证)",
+        "huginn.research.law_model",
+    ),
+    (
+        "security.world_state",
+        Worldview.LATENT_TRANSITION.value,
+        "StateEstimator 状态估计 + LearnableForwardModel 从真实运行学 s' 转移",
+        "沙箱主循环(奖励/记忆)",
+        "huginn.security.world_state",
+    ),
+    (
+        "security.world_model",
+        Worldview.PHYSICS_CAUSAL.value,
+        "物理逆生成器 (infer_inverse 前向+逆向)",
+        "可逆撤销控制环",
+        "huginn.security.world_model",
+    ),
+    (
+        "tools.sim.pybullet",
+        Worldview.PHYSICS_CAUSAL.value,
+        "PyBullet 刚体动力学真值 rollout (具身 ground truth), 供 reconcile 对账",
+        "具身/机器人科研仿真(pybullet_tool)",
+        "huginn.tools.sim.pybullet_env",
+    ),
+]
 
 
 def world_model_inventory() -> list[dict]:
@@ -132,39 +172,36 @@ def world_model_inventory() -> list[dict]:
 
     Returns: 每项的 {id, worldview, purpose, consumer, falsifiable, available}
     """
-    spec = [
-        ("research.law_model", Worldview.PHYSICS_CAUSAL.value,
-         "方程前向模型 + reconcile 数值对账(证伪式可信)", "科研管线(规划/验证)", "huginn.research.law_model"),
-        ("security.world_state", Worldview.LATENT_TRANSITION.value,
-         "StateEstimator 状态估计 + LearnableForwardModel 从真实运行学 s' 转移", "沙箱主循环(奖励/记忆)", "huginn.security.world_state"),
-        ("security.world_model", Worldview.PHYSICS_CAUSAL.value,
-         "物理逆生成器 (infer_inverse 前向+逆向)", "可逆撤销控制环", "huginn.security.world_model"),
-        ("tools.sim.pybullet", Worldview.PHYSICS_CAUSAL.value,
-         "PyBullet 刚体动力学真值 rollout (具身 ground truth), 供 reconcile 对账", "具身/机器人科研仿真(pybullet_tool)", "huginn.tools.sim.pybullet_env"),
-    ]
+    spec = _WORLD_MODEL_SPEC
     entries: list[dict] = []
     for eid, worldview, purpose, consumer, modname in spec:
-        available = False
-        try:
-            mod = __import__(modname, fromlist=["*"])
-            # 可选物理后端: 模块可导入 ≠ 后端可用. pybullet_env 内 try-import
-            # pybullet, 失败仅置 _PYBULLET_OK=False 不抛 —— 需显式读该标志.
-            if hasattr(mod, "_PYBULLET_OK"):
-                available = bool(mod._PYBULLET_OK)
-            else:
-                available = True  # 纯 Python 实现: 能导入即可用
-        except Exception:  # noqa: BLE001 — 可选实现不可导入仅记录, 不阻断清册
-            available = False
-        entries.append({
-            "id": eid,
-            "worldview": worldview,
-            "purpose": purpose,
-            "consumer": consumer,
-            "falsifiable": worldview in (Worldview.PHYSICS_CAUSAL.value,
-                                         Worldview.LATENT_TRANSITION.value),
-            "available": available,
-        })
+        entries.append(
+            {
+                "id": eid,
+                "worldview": worldview,
+                "purpose": purpose,
+                "consumer": consumer,
+                "falsifiable": worldview
+                in (Worldview.PHYSICS_CAUSAL.value, Worldview.LATENT_TRANSITION.value),
+                "available": _module_available(modname),
+            }
+        )
     return entries
+
+
+def _module_available(modname: str) -> bool:
+    available = False
+    try:
+        mod = __import__(modname, fromlist=["*"])
+        # 可选物理后端: 模块可导入 ≠ 后端可用. pybullet_env 内 try-import
+        # pybullet, 失败仅置 _PYBULLET_OK=False 不抛 —— 需显式读该标志.
+        if hasattr(mod, "_PYBULLET_OK"):
+            available = bool(mod._PYBULLET_OK)
+        else:
+            available = True  # 纯 Python 实现: 能导入即可用
+    except Exception:  # noqa: BLE001 — 可选实现不可导入仅记录, 不阻断清册
+        available = False
+    return available
 
 
 def kepler_semimajor_au(period_d: float, host_msun: float = 1.0) -> float:
@@ -178,6 +215,7 @@ def kepler_semimajor_au(period_d: float, host_msun: float = 1.0) -> float:
 @dataclass
 class LawState:
     """世界可测状态: 数值特征向量 (如 a_AU / S_Wm2 / T_eq_K)."""
+
     vector: dict[str, float] = field(default_factory=dict)
     domain: str = ""
 
@@ -194,6 +232,7 @@ class LawState:
 @dataclass
 class LawAction:
     """可执行动作: 实验/仿真配置 (参数向量)."""
+
     config: dict[str, float] = field(default_factory=dict)
     label: str = ""
 
@@ -204,9 +243,10 @@ class LawAction:
 @dataclass
 class PlanStep:
     """计划即数学: 一个动作 + 其数学定律 + 定律预告的下继状态."""
+
     action: LawAction
-    law: str = ""                        # 数学语言核心: 该步依据的方程
-    predicted: LawState | None = None    # predict(state, action)
+    law: str = ""  # 数学语言核心: 该步依据的方程
+    predicted: LawState | None = None  # predict(state, action)
 
     def to_dict(self) -> dict:
         return {
@@ -220,7 +260,7 @@ class PlanStep:
 
 
 class LawModel(ABC):
-    """世界的转移模型: predict(state, action) -> next state, law() 给数学方程. """
+    """世界的转移模型: predict(state, action) -> next state, law() 给数学方程."""
 
     domain = ""
     # 多元论治理: 本实现站在"物理-行动-因果"这一极 (见 Worldview). 其它极在能力面
@@ -259,8 +299,10 @@ class FirstPrinciplesLawModel(LawModel):
         self.host_msun = host_msun
 
     def law(self) -> str:
-        return ("T_eq = ((1-α)·S/(4σ))^{1/4};  S = L☉/(4πa²);  "
-                f"a = ({self.host_msun} M☉)^{1/3}(P/yr)^{{2/3}} AU;  α={self.albedo}")
+        return (
+            "T_eq = ((1-α)·S/(4σ))^{1/4};  S = L☉/(4πa²);  "
+            f"a = ({self.host_msun} M☉)^{1 / 3}(P/yr)^{{2/3}} AU;  α={self.albedo}"
+        )
 
     def seed(self, observation: dict[str, Any]) -> LawState:
         p_d = float(observation["orbper_d"])
@@ -270,11 +312,12 @@ class FirstPrinciplesLawModel(LawModel):
     def predict(self, state: LawState, action: LawAction) -> LawState:
         a_au = state.get("a_AU", 1.0) * action.config.get("a_scale", 1.0)
         a_m = a_au * AU_M
-        S = SOLAR_LUM / (4 * math.pi * a_m ** 2)
+        S = SOLAR_LUM / (4 * math.pi * a_m**2)
         T_eq = ((1 - self.albedo) * S / (4 * STEFAN)) ** 0.25
-        return LawState({"a_AU": round(a_au, 4),
-                         "S_Wm2": round(S, 1),
-                         "T_eq_K": round(T_eq, 1)}, domain=self.domain)
+        return LawState(
+            {"a_AU": round(a_au, 4), "S_Wm2": round(S, 1), "T_eq_K": round(T_eq, 1)},
+            domain=self.domain,
+        )
 
 
 class MechanicsLawModel(LawModel):
@@ -301,25 +344,40 @@ class MechanicsLawModel(LawModel):
         return "ω = √(k/m);  T = 2π/ω = 2π·√(m/k)"
 
     def seed(self, observation: dict[str, Any]) -> LawState:
-        return LawState({"mass_kg": float(observation["mass_kg"]),
-                         "stiffness_Nm": float(observation["stiffness_Nm"])},
-                        domain=self.domain)
+        return LawState(
+            {
+                "mass_kg": float(observation["mass_kg"]),
+                "stiffness_Nm": float(observation["stiffness_Nm"]),
+            },
+            domain=self.domain,
+        )
 
     def predict(self, state: LawState, action: LawAction) -> LawState:
         m = state.get("mass_kg", 1.0) * action.config.get("m_scale", 1.0)
         k = state.get("stiffness_Nm", 1.0) * action.config.get("k_scale", 1.0)
-        omega = math.sqrt(k / m)                     # ω = √(k/m)
-        T = 2 * math.pi / omega                      # T = 2π/ω
-        return LawState({"mass_kg": round(m, 4), "stiffness_Nm": round(k, 3),
-                         "omega_rad_s": round(omega, 4), "T_s": round(T, 4)},
-                        domain=self.domain)
+        omega = math.sqrt(k / m)  # ω = √(k/m)
+        T = 2 * math.pi / omega  # T = 2π/ω
+        return LawState(
+            {
+                "mass_kg": round(m, 4),
+                "stiffness_Nm": round(k, 3),
+                "omega_rad_s": round(omega, 4),
+                "T_s": round(T, 4),
+            },
+            domain=self.domain,
+        )
 
 
 # ── 预测 vs 真实 的数学对账 (可证伪性校验) ──────────────────────
 
 
-def reconcile(predicted: LawState, actual: dict, *, tol: float = 0.03,
-              metrics: tuple[str, ...] = ("S_Wm2", "T_eq_K")) -> dict:
+def reconcile(
+    predicted: LawState,
+    actual: dict,
+    *,
+    tol: float = 0.03,
+    metrics: tuple[str, ...] = ("S_Wm2", "T_eq_K"),
+) -> dict:
     """预测 vs 真实执行的数值对账.
 
     每个可测指标算相对误差; 全部 ≤ tol → 定律被当前证据**证实**(borne_out=True),
@@ -338,8 +396,12 @@ def reconcile(predicted: LawState, actual: dict, *, tol: float = 0.03,
         errors[m] = round(err, 4)
         if err > tol:
             mismatch[m] = (y_m, y_e)
-    return {"borne_out": not bool(mismatch), "errors": errors,
-            "mismatch": mismatch, "tol": tol}
+    return {
+        "borne_out": not bool(mismatch),
+        "errors": errors,
+        "mismatch": mismatch,
+        "tol": tol,
+    }
 
 
 # ── 模型基规划 (state-space rollout, 对标模型驱动规划) ─────────────
@@ -353,14 +415,14 @@ class ModelBasedPlanner:
     - 预告只做决策依据, 落地仍由真实执行检验 (Planner 不代替执行).
     """
 
-    def __init__(self, model: LawModel, objective: str = "T_eq_K",
-                 sense: str = "maximize") -> None:
+    def __init__(
+        self, model: LawModel, objective: str = "T_eq_K", sense: str = "maximize"
+    ) -> None:
         self.model = model
         self.objective = objective
         self.sense = sense  # "maximize" | "minimize"
 
-    def rollout(self, state: LawState,
-                actions: list[LawAction]) -> list[PlanStep]:
+    def rollout(self, state: LawState, actions: list[LawAction]) -> list[PlanStep]:
         steps: list[PlanStep] = []
         for a in actions:
             pred = self.model.predict(state, a)
@@ -371,8 +433,10 @@ class ModelBasedPlanner:
         """按预测目标排序, 返回从优到劣的计划(每步都带数学定律与预告)."""
         steps = self.rollout(state, actions)
         sign = 1.0 if self.sense == "maximize" else -1.0
-        steps.sort(key=lambda s: sign * s.predicted.get(self.objective, -math.inf),
-                   reverse=True)
+        steps.sort(
+            key=lambda s: sign * s.predicted.get(self.objective, -math.inf),
+            reverse=True,
+        )
         return steps
 
     def best(self, state: LawState, actions: list[LawAction]) -> PlanStep | None:

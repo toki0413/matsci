@@ -174,25 +174,7 @@ class DeclarativeSkillExecutor(SkillExecutor):
             if param.name not in working_context and param.default is not None:
                 working_context[param.name] = param.default
 
-        # 按 parallel_group 把 steps 切成执行单元: 单 step 或同组并行 batch
-        # ponytail: 不改 SkillStep 结构, 只在执行前做一次分组. 升级: 声明式
-        # 依赖图 + split_by_dependency (当 parallel_group 不够表达时).
-        units: list[tuple[SkillStep, ...]] = []
-        i = 0
-        while i < len(skill.steps):
-            grp = skill.steps[i].parallel_group
-            if grp is None:
-                units.append((skill.steps[i],))
-                i += 1
-                continue
-            # 收集连续的同组 step
-            batch: list[SkillStep] = []
-            while i < len(skill.steps) and skill.steps[i].parallel_group == grp:
-                batch.append(skill.steps[i])
-                i += 1
-            units.append(tuple(batch))
-
-        for unit in units:
+        for unit in self._group_steps(skill.steps):
             # ── Parallel batch: 同组 step 用 asyncio.gather 并行 ────
             if len(unit) > 1:
                 batch_results = await self._run_parallel_batch(
@@ -200,135 +182,19 @@ class DeclarativeSkillExecutor(SkillExecutor):
                 )
                 results["steps"].extend(batch_results)
                 # 任一 abort 失败则终止; 否则继续 (失败 step 的 output 不写入 context)
-                if any(not r["success"] and r.get("on_failure") == "abort" for r in batch_results):
+                if any(
+                    not r["success"] and r.get("on_failure") == "abort"
+                    for r in batch_results
+                ):
                     results["success"] = False
                     break
                 continue
 
-            step = unit[0]
-            # ── Condition guard (if-branch) ───────────────────────────
-            if step.condition is not None:
-                try:
-                    should_run = safe_eval(step.condition, working_context)
-                except Exception as e:
-                    step_result = {
-                        "step": step.name,
-                        "success": False,
-                        "output": None,
-                        "error": f"Condition eval error: {e}",
-                    }
-                    results["steps"].append(step_result)
-                    if step.on_failure == "abort":
-                        results["success"] = False
-                        break
-                    continue
-                if not should_run:
-                    results["steps"].append({
-                        "step": step.name,
-                        "success": True,
-                        "output": None,
-                        "error": None,
-                        "skipped": True,
-                    })
-                    continue
-
-            # ── Loop support (while-loop) ─────────────────────────────
-            max_iter = step.loop_max_iterations if step.loop_until else 1
-            loop_done = False
-            for iteration in range(max_iter):
-                step_result = {
-                    "step": step.name,
-                    "success": False,
-                    "output": None,
-                    "error": None,
-                }
-                if iteration > 0:
-                    step_result["iteration"] = iteration
-
-                # Resolve tool inputs from context + params
-                tool_input = {}
-                for key, mapping in step.input_mapping.items():
-                    tool_input[key] = self._resolve_value(mapping, working_context)
-
-                # Get tool
-                tool = self.tool_registry.get(step.tool)
-                if tool is None:
-                    step_result["error"] = f"Tool '{step.tool}' not found"
-                    if step.on_failure == "abort":
-                        results["success"] = False
-                        results["steps"].append(step_result)
-                        loop_done = True
-                        break
-                    continue
-
-                # Execute
-                try:
-                    # Construct pydantic input
-                    input_model = tool.input_schema
-                    parsed = input_model(**tool_input)
-                    tool_ctx = ToolContext(session_id="skill", workspace=_ws)
-                    payload = parsed.model_dump() if _wants_dict(tool) else parsed
-                    if inspect.iscoroutinefunction(tool.call):
-                        output = await tool.call(payload, tool_ctx)
-                    else:
-                        output = tool.call(payload, tool_ctx)
-                    step_result["success"] = output.success
-                    step_result["output"] = output.data
-                    if output.error:
-                        step_result["error"] = output.error
-
-                    # Store output in working context
-                    working_context[step.output_key] = output.data
-
-                    # Validation
-                    if step.validation and output.success:
-                        try:
-                            valid = safe_eval(step.validation, working_context)
-                            if not valid:
-                                step_result["success"] = False
-                                step_result["error"] = "Validation failed"
-                        except SafeEvalError as e:
-                            step_result["error"] = f"Validation error (safe): {e}"
-                        except Exception as e:
-                            step_result["error"] = f"Validation error: {e}"
-
-                except Exception as e:
-                    step_result["error"] = str(e)
-                    if step.on_failure == "abort":
-                        results["success"] = False
-                        results["steps"].append(step_result)
-                        loop_done = True
-                        break
-
-                # Check loop termination condition
-                if step.loop_until is not None:
-                    try:
-                        loop_satisfied = safe_eval(step.loop_until, working_context)
-                    except Exception:
-                        loop_satisfied = False
-                    if loop_satisfied:
-                        loop_done = True
-                        results["steps"].append(step_result)
-                        break
-                    # Not satisfied — continue looping (unless last iteration)
-                    if iteration < max_iter - 1:
-                        results["steps"].append(step_result)
-                        continue
-                    # Exhausted iterations without satisfying condition
-                    step_result["error"] = (
-                        step_result.get("error") or ""
-                    ) + f" (loop exhausted after {max_iter} iterations)"
-                    step_result["success"] = False
-                else:
-                    loop_done = True
-
-                results["steps"].append(step_result)
-                if not step_result["success"] and step.on_failure == "abort":
-                    results["success"] = False
-                    loop_done = True
-                    break
-
-            if loop_done and not step_result["success"] and step.on_failure == "abort":
+            records, abort_skill = await self._run_single_step(
+                unit[0], working_context, ToolContext, _ws
+            )
+            results["steps"].extend(records)
+            if abort_skill:
                 results["success"] = False
                 break
 
@@ -336,6 +202,110 @@ class DeclarativeSkillExecutor(SkillExecutor):
             k: v for k, v in working_context.items() if not k.startswith("_")
         }
         return results
+
+    @staticmethod
+    def _group_steps(steps: list[SkillStep]) -> list[tuple[SkillStep, ...]]:
+        """按 parallel_group 把 steps 切成执行单元: 单 step 或同组并行 batch.
+
+        ponytail: 不改 SkillStep 结构, 只在执行前做一次分组. 升级: 声明式
+        依赖图 + split_by_dependency (当 parallel_group 不够表达时).
+        """
+        units: list[tuple[SkillStep, ...]] = []
+        i = 0
+        while i < len(steps):
+            grp = steps[i].parallel_group
+            if grp is None:
+                units.append((steps[i],))
+                i += 1
+                continue
+            # 收集连续的同组 step
+            batch: list[SkillStep] = []
+            while i < len(steps) and steps[i].parallel_group == grp:
+                batch.append(steps[i])
+                i += 1
+            units.append(tuple(batch))
+        return units
+
+    async def _run_single_step(
+        self,
+        step: SkillStep,
+        working_context: dict[str, Any],
+        ToolContext: type,
+        _ws: str,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """执行一个单 step 单元 (condition 门控 + while-loop 语义).
+
+        返回 ``(records, abort_skill)``; ``abort_skill`` 表示整条技能应立即终止.
+        """
+        # ── Condition guard (if-branch) ───────────────────────────
+        gate = _condition_gate(step, working_context)
+        if gate is not None:
+            return gate
+
+        max_iter = step.loop_max_iterations if step.loop_until else 1
+        records: list[dict[str, Any]] = []
+        for iteration in range(max_iter):
+            step_result, action = await _execute_iteration(
+                self, step, iteration, max_iter, working_context, ToolContext, _ws
+            )
+            if action == "drop":
+                continue
+            records.append(step_result)
+            if action == "abort":
+                return records, True
+            if action == "done":
+                return records, False
+        return records, False
+
+    async def _invoke_step_tool(
+        self,
+        step: SkillStep,
+        tool: Any,
+        tool_input: dict[str, Any],
+        working_context: dict[str, Any],
+        ToolContext: type,
+        _ws: str,
+    ) -> tuple[bool, Any, str | None]:
+        """调用工具并把输出写回 working_context, 返回 ``(success, data, error)``."""
+        input_model = tool.input_schema
+        parsed = input_model(**tool_input)
+        tool_ctx = ToolContext(session_id="skill", workspace=_ws)
+        payload = parsed.model_dump() if _wants_dict(tool) else parsed
+        if inspect.iscoroutinefunction(tool.call):
+            output = await tool.call(payload, tool_ctx)
+        else:
+            output = tool.call(payload, tool_ctx)
+        # Store output in working context
+        working_context[step.output_key] = output.data
+        return output.success, output.data, (output.error or None)
+
+    @staticmethod
+    def _validate_step(
+        step: SkillStep,
+        output_success: bool,
+        working_context: dict[str, Any],
+        step_result: dict[str, Any],
+    ) -> None:
+        """跑 step.validation (仅当工具调用成功时), 失败改写 step_result."""
+        if not (step.validation and output_success):
+            return
+        try:
+            valid = safe_eval(step.validation, working_context)
+            if not valid:
+                step_result["success"] = False
+                step_result["error"] = "Validation failed"
+        except SafeEvalError as e:
+            step_result["error"] = f"Validation error (safe): {e}"
+        except Exception as e:
+            step_result["error"] = f"Validation error: {e}"
+
+    @staticmethod
+    def _loop_satisfied(step: SkillStep, working_context: dict[str, Any]) -> bool:
+        """求值 loop_until; 求值异常按「未满足」处理 (与原行为一致)."""
+        try:
+            return bool(safe_eval(step.loop_until, working_context))
+        except Exception:
+            return False
 
     async def _run_parallel_batch(
         self,
@@ -354,68 +324,12 @@ class DeclarativeSkillExecutor(SkillExecutor):
         写不同 dict slot, CPython GIL 保护单次 setitem, 安全. 但相同
         output_key 会竞争 — 声明错误的责任在调用方, 不加锁 (YAGNI).
         """
-        async def _run_one(step: SkillStep) -> dict[str, Any]:
-            # 条件检查
-            if step.condition is not None:
-                try:
-                    if not safe_eval(step.condition, working_context):
-                        return {
-                            "step": step.name, "success": True, "output": None,
-                            "error": None, "skipped": True,
-                        }
-                except Exception as e:
-                    return {
-                        "step": step.name, "success": False, "output": None,
-                        "error": f"Condition eval error: {e}",
-                        "on_failure": step.on_failure,
-                    }
-
-            tool_input = {}
-            for key, mapping in step.input_mapping.items():
-                tool_input[key] = self._resolve_value(mapping, working_context)
-
-            tool = self.tool_registry.get(step.tool)
-            if tool is None:
-                return {
-                    "step": step.name, "success": False, "output": None,
-                    "error": f"Tool '{step.tool}' not found",
-                    "on_failure": step.on_failure,
-                }
-
-            step_result: dict[str, Any] = {
-                "step": step.name, "success": False, "output": None, "error": None,
-            }
-            try:
-                input_model = tool.input_schema
-                parsed = input_model(**tool_input)
-                tool_ctx = ToolContext(session_id="skill", workspace=workspace or ".")
-                payload = parsed.model_dump() if _wants_dict(tool) else parsed
-                if inspect.iscoroutinefunction(tool.call):
-                    output = await tool.call(payload, tool_ctx)
-                else:
-                    # 同步工具在 gather 里会阻塞事件循环, 包到 to_thread
-                    output = await asyncio.to_thread(tool.call, payload, tool_ctx)
-                step_result["success"] = output.success
-                step_result["output"] = output.data
-                if output.error:
-                    step_result["error"] = output.error
-                # 成功才写 context (失败不污染, 下游可继续)
-                if output.success:
-                    working_context[step.output_key] = output.data
-                # validation
-                if step.validation and output.success:
-                    try:
-                        if not safe_eval(step.validation, working_context):
-                            step_result["success"] = False
-                            step_result["error"] = "Validation failed"
-                    except Exception as e:
-                        step_result["error"] = f"Validation error: {e}"
-            except Exception as e:
-                step_result["error"] = str(e)
-            step_result["on_failure"] = step.on_failure
-            return step_result
-
-        return await asyncio.gather(*[_run_one(s) for s in steps])
+        return await asyncio.gather(
+            *[
+                _run_parallel_step(self, s, working_context, ToolContext, workspace)
+                for s in steps
+            ]
+        )
 
     @staticmethod
     def _resolve_value(mapping: str, context: dict[str, Any]) -> Any:
@@ -442,3 +356,268 @@ class DeclarativeSkillExecutor(SkillExecutor):
             return ast.literal_eval(mapping)
         except (ValueError, SyntaxError):
             return mapping
+
+
+def _condition_gate(
+    step: SkillStep, working_context: dict[str, Any]
+) -> tuple[list[dict[str, Any]], bool] | None:
+    """求值 step.condition; 返回早退 ``(records, abort_skill)``, None 表示继续."""
+    if step.condition is None:
+        return None
+    try:
+        should_run = safe_eval(step.condition, working_context)
+    except Exception as e:
+        record = {
+            "step": step.name,
+            "success": False,
+            "output": None,
+            "error": f"Condition eval error: {e}",
+        }
+        return [record], step.on_failure == "abort"
+    if not should_run:
+        return [
+            {
+                "step": step.name,
+                "success": True,
+                "output": None,
+                "error": None,
+                "skipped": True,
+            }
+        ], False
+    return None
+
+
+def _resolve_step_tool(
+    executor: DeclarativeSkillExecutor,
+    step: SkillStep,
+    working_context: dict[str, Any],
+) -> tuple[dict[str, Any], Any | None]:
+    """解析输入映射并取工具; 返回 ``(tool_input, tool)``."""
+    tool_input = {}
+    for key, mapping in step.input_mapping.items():
+        tool_input[key] = executor._resolve_value(mapping, working_context)
+    return tool_input, executor.tool_registry.get(step.tool)
+
+
+async def _invoke_and_validate(
+    executor: DeclarativeSkillExecutor,
+    step: SkillStep,
+    tool: Any,
+    tool_input: dict[str, Any],
+    working_context: dict[str, Any],
+    ToolContext: type,
+    _ws: str,
+    step_result: dict[str, Any],
+) -> None:
+    """调用工具并跑校验, 就地写 ``step_result`` (异常由调用方处理)."""
+    ok, data, err = await executor._invoke_step_tool(
+        step, tool, tool_input, working_context, ToolContext, _ws
+    )
+    step_result["success"] = ok
+    step_result["output"] = data
+    if err:
+        step_result["error"] = err
+    executor._validate_step(step, ok, working_context, step_result)
+
+
+async def _invoke_or_mark_abort(
+    executor: DeclarativeSkillExecutor,
+    step: SkillStep,
+    tool: Any,
+    tool_input: dict[str, Any],
+    working_context: dict[str, Any],
+    ToolContext: type,
+    _ws: str,
+    step_result: dict[str, Any],
+) -> bool:
+    """调用工具并写回 step_result; 返回是否因异常立即 abort."""
+    try:
+        await _invoke_and_validate(
+            executor,
+            step,
+            tool,
+            tool_input,
+            working_context,
+            ToolContext,
+            _ws,
+            step_result,
+        )
+    except Exception as e:
+        step_result["error"] = str(e)
+        return step.on_failure == "abort"
+    return False
+
+
+def _loop_action(
+    executor: DeclarativeSkillExecutor,
+    step: SkillStep,
+    iteration: int,
+    max_iter: int,
+    working_context: dict[str, Any],
+    step_result: dict[str, Any],
+) -> str | None:
+    """处理 loop_until 终止判断; 返回 action 或 None (继续正常收尾)."""
+    if step.loop_until is None:
+        return None
+    if executor._loop_satisfied(step, working_context):
+        if step_result["success"] or step.on_failure != "abort":
+            return "done"
+        return "abort"
+    if iteration < max_iter - 1:
+        # Not satisfied — continue looping (unless last iteration)
+        return "continue"
+    # Exhausted iterations without satisfying condition
+    step_result["error"] = (
+        step_result.get("error") or ""
+    ) + f" (loop exhausted after {max_iter} iterations)"
+    step_result["success"] = False
+    return None
+
+
+async def _execute_iteration(
+    executor: DeclarativeSkillExecutor,
+    step: SkillStep,
+    iteration: int,
+    max_iter: int,
+    working_context: dict[str, Any],
+    ToolContext: type,
+    _ws: str,
+) -> tuple[dict[str, Any], str]:
+    """执行一次迭代; 返回 (step_result, action), action 取值 continue/drop/abort/done."""
+    step_result = {
+        "step": step.name,
+        "success": False,
+        "output": None,
+        "error": None,
+    }
+    if iteration > 0:
+        step_result["iteration"] = iteration
+
+    # Resolve tool inputs from context + params
+    tool_input, tool = _resolve_step_tool(executor, step, working_context)
+
+    # Get tool
+    if tool is None:
+        step_result["error"] = f"Tool '{step.tool}' not found"
+        return step_result, "abort" if step.on_failure == "abort" else "drop"
+
+    # Execute
+    if await _invoke_or_mark_abort(
+        executor, step, tool, tool_input, working_context, ToolContext, _ws, step_result
+    ):
+        return step_result, "abort"
+
+    # Check loop termination condition
+    action = _loop_action(
+        executor, step, iteration, max_iter, working_context, step_result
+    )
+    if action is not None:
+        return step_result, action
+    if not step_result["success"] and step.on_failure == "abort":
+        return step_result, "abort"
+    return step_result, "continue"
+
+
+def _parallel_condition_record(
+    step: SkillStep, working_context: dict[str, Any]
+) -> dict[str, Any] | None:
+    """并行组的 condition 门控; 返回跳过/错误记录, None 表示继续."""
+    # 条件检查
+    if step.condition is not None:
+        try:
+            if not safe_eval(step.condition, working_context):
+                return {
+                    "step": step.name,
+                    "success": True,
+                    "output": None,
+                    "error": None,
+                    "skipped": True,
+                }
+        except Exception as e:
+            return {
+                "step": step.name,
+                "success": False,
+                "output": None,
+                "error": f"Condition eval error: {e}",
+                "on_failure": step.on_failure,
+            }
+    return None
+
+
+async def _invoke_parallel_tool(
+    tool: Any,
+    tool_input: dict[str, Any],
+    ToolContext: type,
+    workspace: str | None,
+) -> Any:
+    """并行路径调用工具: 同步工具包到 to_thread 避免阻塞事件循环."""
+    input_model = tool.input_schema
+    parsed = input_model(**tool_input)
+    tool_ctx = ToolContext(session_id="skill", workspace=workspace or ".")
+    payload = parsed.model_dump() if _wants_dict(tool) else parsed
+    if inspect.iscoroutinefunction(tool.call):
+        output = await tool.call(payload, tool_ctx)
+    else:
+        # 同步工具在 gather 里会阻塞事件循环, 包到 to_thread
+        output = await asyncio.to_thread(tool.call, payload, tool_ctx)
+    return output
+
+
+def _validate_parallel_result(
+    step: SkillStep,
+    working_context: dict[str, Any],
+    step_result: dict[str, Any],
+) -> None:
+    """跑并行 step 的 validation, 失败改写 step_result."""
+    try:
+        if not safe_eval(step.validation, working_context):
+            step_result["success"] = False
+            step_result["error"] = "Validation failed"
+    except Exception as e:
+        step_result["error"] = f"Validation error: {e}"
+
+
+async def _run_parallel_step(
+    executor: DeclarativeSkillExecutor,
+    step: SkillStep,
+    working_context: dict[str, Any],
+    ToolContext: type,
+    workspace: str | None,
+) -> dict[str, Any]:
+    """执行并行组里的单个 step, 返回记录 (不抛异常)."""
+    record = _parallel_condition_record(step, working_context)
+    if record is not None:
+        return record
+
+    tool_input, tool = _resolve_step_tool(executor, step, working_context)
+    if tool is None:
+        return {
+            "step": step.name,
+            "success": False,
+            "output": None,
+            "error": f"Tool '{step.tool}' not found",
+            "on_failure": step.on_failure,
+        }
+
+    step_result: dict[str, Any] = {
+        "step": step.name,
+        "success": False,
+        "output": None,
+        "error": None,
+    }
+    try:
+        output = await _invoke_parallel_tool(tool, tool_input, ToolContext, workspace)
+        step_result["success"] = output.success
+        step_result["output"] = output.data
+        if output.error:
+            step_result["error"] = output.error
+        # 成功才写 context (失败不污染, 下游可继续)
+        if output.success:
+            working_context[step.output_key] = output.data
+        # validation
+        if step.validation and output.success:
+            _validate_parallel_result(step, working_context, step_result)
+    except Exception as e:
+        step_result["error"] = str(e)
+    step_result["on_failure"] = step.on_failure
+    return step_result

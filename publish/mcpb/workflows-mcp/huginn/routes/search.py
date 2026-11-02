@@ -82,6 +82,63 @@ def _extract_snippet(text: str, query: str, max_len: int = 150) -> str:
     return text[:max_len] + ("..." if len(text) > max_len else "")
 
 
+def _thread_owned_by(thread: dict[str, Any], user_id: Any) -> bool:
+    """非 dev/shared/None 用户只能看到自己的 thread."""
+    if user_id in ("dev", "shared", None):
+        return True
+    owner = thread.get("user_id")
+    return not owner or owner == user_id
+
+
+async def _thread_message_match(
+    thread_id: str, lower_query: str
+) -> tuple[float, list[str]]:
+    """在 thread 最近消息里找匹配; 返回 (加分, 命中内容列表)."""
+    match_score = 0.0
+    recent_messages: list[str] = []
+    try:
+        agent = await get_agent()
+        graph = agent.build_graph()
+        if graph:
+            config = {"configurable": {"thread_id": thread_id}}
+            snapshot = graph.get_state(config)
+            raw_msgs = snapshot.values.get("messages", []) if snapshot else []
+            for msg in raw_msgs[-10:]:
+                content = getattr(msg, "content", "") or ""
+                if isinstance(content, str) and lower_query in content.lower():
+                    match_score += 0.3
+                    recent_messages.append(content)
+    except Exception:
+        logger.debug("thread message search skipped", exc_info=True)
+    return match_score, recent_messages
+
+
+def _thread_result(
+    thread_id: str,
+    thread: dict[str, Any],
+    label: str,
+    match_score: float,
+    recent_messages: list[str],
+    query: str,
+) -> GlobalSearchResult:
+    """组装一条 thread 搜索结果."""
+    if recent_messages:
+        snippet = _extract_snippet(recent_messages[-1], query)
+    else:
+        snippet = _extract_snippet(label, query)
+    return GlobalSearchResult(
+        type="thread",
+        id=thread_id,
+        title=label or thread_id,
+        snippet=snippet,
+        score=match_score,
+        metadata={
+            "created_at": thread.get("created_at", ""),
+            "last_active": thread.get("last_active", ""),
+        },
+    )
+
+
 async def _search_threads(query: str, request: Request) -> list[GlobalSearchResult]:
     """Search thread labels and recent messages."""
     results: list[GlobalSearchResult] = []
@@ -93,53 +150,26 @@ async def _search_threads(query: str, request: Request) -> list[GlobalSearchResu
     except Exception:
         logger.debug("current user id lookup skipped", exc_info=True)
 
+    lower_query = query.lower()
     with _state_lock:
         for thread_id, thread in _threads.items():
-            if user_id not in ("dev", "shared", None):
-                owner = thread.get("user_id")
-                if owner and owner != user_id:
-                    continue
+            if not _thread_owned_by(thread, user_id):
+                continue
 
             label = thread.get("label", "")
-            lower_query = query.lower()
             match_score = 0.0
-
             if lower_query in label.lower():
                 match_score += 0.8
 
-            recent_messages = []
-            try:
-                agent = await get_agent()
-                graph = agent.build_graph()
-                if graph:
-                    config = {"configurable": {"thread_id": thread_id}}
-                    snapshot = graph.get_state(config)
-                    raw_msgs = snapshot.values.get("messages", []) if snapshot else []
-                    for msg in raw_msgs[-10:]:
-                        content = getattr(msg, "content", "") or ""
-                        if isinstance(content, str) and lower_query in content.lower():
-                            match_score += 0.3
-                            recent_messages.append(content)
-            except Exception:
-                logger.debug("thread message search skipped", exc_info=True)
+            msg_score, recent_messages = await _thread_message_match(
+                thread_id, lower_query
+            )
+            match_score += msg_score
 
             if match_score > 0:
-                if recent_messages:
-                    snippet = _extract_snippet(recent_messages[-1], query)
-                else:
-                    snippet = _extract_snippet(label, query)
-
                 results.append(
-                    GlobalSearchResult(
-                        type="thread",
-                        id=thread_id,
-                        title=label or thread_id,
-                        snippet=snippet,
-                        score=match_score,
-                        metadata={
-                            "created_at": thread.get("created_at", ""),
-                            "last_active": thread.get("last_active", ""),
-                        },
+                    _thread_result(
+                        thread_id, thread, label, match_score, recent_messages, query
                     )
                 )
 

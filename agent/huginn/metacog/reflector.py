@@ -18,10 +18,16 @@ from typing import Any
 # ToolCallHealth 在 step_evaluator.py 里定义, 这里 duck typing 兼容, 不硬 import.
 # ponytail: 不绑死类型, dataclass / dict 都能取值. 升级路径: 真 import 做类型检查.
 
-_VALID_ACTION_TYPES = frozenset({
-    "check_config", "check_params", "check_model",
-    "switch_tool", "switch_model", "adjust_params",
-})
+_VALID_ACTION_TYPES = frozenset(
+    {
+        "check_config",
+        "check_params",
+        "check_model",
+        "switch_tool",
+        "switch_model",
+        "adjust_params",
+    }
+)
 
 
 @dataclass
@@ -38,6 +44,89 @@ def _health_attr(health: Any, name: str, default: Any = None) -> Any:
     if isinstance(health, dict):
         return health.get(name, default)
     return getattr(health, name, default)
+
+
+def _read_health(tool_call_health: Any) -> tuple[float, int, int, int, int]:
+    success_rate = float(_health_attr(tool_call_health, "success_rate", 1.0))
+    total_calls = int(_health_attr(tool_call_health, "total_calls", 0))
+    retry_count = int(_health_attr(tool_call_health, "retry_count", 0))
+    timeout_count = int(_health_attr(tool_call_health, "timeout_count", 0))
+    param_error_count = int(_health_attr(tool_call_health, "param_error_count", 0))
+    return success_rate, total_calls, retry_count, timeout_count, param_error_count
+
+
+def _rule_all_failed(
+    total_calls: int, success_rate: float
+) -> list[ReflectorAction] | None:
+    # 1) 全部异常 → 换工具/换模型. success_rate==0 说明一次都没成, 工具或模型本身有问题
+    if total_calls > 0 and success_rate == 0.0:
+        return [
+            ReflectorAction(
+                action_type="switch_tool",
+                description="所有工具调用均失败, 当前工具可能不适用, 建议换工具",
+                details={"total_calls": total_calls, "success_rate": success_rate},
+            ),
+            ReflectorAction(
+                action_type="switch_model",
+                description="全失败也可能是底层模型问题, 建议换模型/endpoint 再试",
+                details={"total_calls": total_calls},
+            ),
+        ]
+    return None
+
+
+def _rule_low_success(
+    success_rate: float, total_calls: int, param_error_count: int
+) -> list[ReflectorAction] | None:
+    # 2) success_rate < 0.5 → 查配置 + 查参数. 一半都不到, 配置和参数格式都可能有坑
+    if success_rate < 0.5:
+        return [
+            ReflectorAction(
+                action_type="check_config",
+                description="工具调用成功率偏低, 检查 endpoint/认证/超时等配置",
+                details={"success_rate": success_rate, "total_calls": total_calls},
+            ),
+            ReflectorAction(
+                action_type="check_params",
+                description="成功率偏低也可能是参数格式问题, 检查最近调用的参数 schema",
+                details={
+                    "success_rate": success_rate,
+                    "param_error_count": param_error_count,
+                },
+            ),
+        ]
+    return None
+
+
+def _rule_param_errors(
+    param_error_count: int, retry_count: int
+) -> list[ReflectorAction] | None:
+    # 3) 参数错误多于重试 → LLM 生成参数格式不对, 重点查 params
+    if param_error_count > retry_count and param_error_count > 0:
+        return [
+            ReflectorAction(
+                action_type="check_params",
+                description="参数错误次数超过重试次数, 疑似 LLM 生成的参数格式不对",
+                details={
+                    "param_error_count": param_error_count,
+                    "retry_count": retry_count,
+                },
+            ),
+        ]
+    return None
+
+
+def _rule_timeouts(timeout_count: int) -> list[ReflectorAction] | None:
+    # 4) 超时多 → 查配置 (endpoint 可用性 / 超时阈值)
+    if timeout_count > 2:
+        return [
+            ReflectorAction(
+                action_type="check_config",
+                description="超时次数偏多, 检查 endpoint 可用性 / 超时阈值设置",
+                details={"timeout_count": timeout_count},
+            ),
+        ]
+    return None
 
 
 def reflect(
@@ -62,67 +151,26 @@ def reflect(
     if tool_call_health is None:
         return []
 
-    success_rate = float(_health_attr(tool_call_health, "success_rate", 1.0))
-    total_calls = int(_health_attr(tool_call_health, "total_calls", 0))
-    retry_count = int(_health_attr(tool_call_health, "retry_count", 0))
-    timeout_count = int(_health_attr(tool_call_health, "timeout_count", 0))
-    param_error_count = int(_health_attr(tool_call_health, "param_error_count", 0))
+    (
+        success_rate,
+        total_calls,
+        retry_count,
+        timeout_count,
+        param_error_count,
+    ) = _read_health(tool_call_health)
 
-    # 1) 全部异常 → 换工具/换模型. success_rate==0 说明一次都没成, 工具或模型本身有问题
-    if total_calls > 0 and success_rate == 0.0:
-        return [
-            ReflectorAction(
-                action_type="switch_tool",
-                description="所有工具调用均失败, 当前工具可能不适用, 建议换工具",
-                details={"total_calls": total_calls, "success_rate": success_rate},
-            ),
-            ReflectorAction(
-                action_type="switch_model",
-                description="全失败也可能是底层模型问题, 建议换模型/endpoint 再试",
-                details={"total_calls": total_calls},
-            ),
-        ]
-
-    # 2) success_rate < 0.5 → 查配置 + 查参数. 一半都不到, 配置和参数格式都可能有坑
-    if success_rate < 0.5:
-        return [
-            ReflectorAction(
-                action_type="check_config",
-                description="工具调用成功率偏低, 检查 endpoint/认证/超时等配置",
-                details={"success_rate": success_rate, "total_calls": total_calls},
-            ),
-            ReflectorAction(
-                action_type="check_params",
-                description="成功率偏低也可能是参数格式问题, 检查最近调用的参数 schema",
-                details={
-                    "success_rate": success_rate,
-                    "param_error_count": param_error_count,
-                },
-            ),
-        ]
-
-    # 3) 参数错误多于重试 → LLM 生成参数格式不对, 重点查 params
-    if param_error_count > retry_count and param_error_count > 0:
-        return [
-            ReflectorAction(
-                action_type="check_params",
-                description="参数错误次数超过重试次数, 疑似 LLM 生成的参数格式不对",
-                details={
-                    "param_error_count": param_error_count,
-                    "retry_count": retry_count,
-                },
-            ),
-        ]
-
-    # 4) 超时多 → 查配置 (endpoint 可用性 / 超时阈值)
-    if timeout_count > 2:
-        return [
-            ReflectorAction(
-                action_type="check_config",
-                description="超时次数偏多, 检查 endpoint 可用性 / 超时阈值设置",
-                details={"timeout_count": timeout_count},
-            ),
-        ]
+    actions = _rule_all_failed(total_calls, success_rate)
+    if actions is not None:
+        return actions
+    actions = _rule_low_success(success_rate, total_calls, param_error_count)
+    if actions is not None:
+        return actions
+    actions = _rule_param_errors(param_error_count, retry_count)
+    if actions is not None:
+        return actions
+    actions = _rule_timeouts(timeout_count)
+    if actions is not None:
+        return actions
 
     return []
 
@@ -168,11 +216,13 @@ if __name__ == "__main__":
 
     # 3) 参数错误多 (success_rate >= 0.5) → 只返回 check_params
     param_err = _Health(
-        success_rate=0.6, total_calls=10, param_error_count=3, retry_count=1)
+        success_rate=0.6, total_calls=10, param_error_count=3, retry_count=1
+    )
     actions = reflect(param_err)
     assert len(actions) == 1, f"param err → 1 action, got {len(actions)}"
-    assert actions[0].action_type == "check_params", \
+    assert actions[0].action_type == "check_params", (
         f"param err → check_params, got {actions[0].action_type}"
+    )
 
     # 4) 全异常 (success_rate==0) → switch_tool + switch_model
     all_fail = _Health(success_rate=0.0, total_calls=5)
@@ -185,8 +235,9 @@ if __name__ == "__main__":
     timeout_h = _Health(success_rate=0.8, total_calls=10, timeout_count=3)
     actions = reflect(timeout_h)
     assert len(actions) == 1, f"timeout → 1 action, got {len(actions)}"
-    assert actions[0].action_type == "check_config", \
+    assert actions[0].action_type == "check_config", (
         f"timeout → check_config, got {actions[0].action_type}"
+    )
 
     # 6) None / 空 → []
     assert reflect(None) == [], "None → []"
@@ -205,7 +256,11 @@ if __name__ == "__main__":
 
     # 9) ReflectorAction 字段完整性
     a = actions[0]
-    assert hasattr(a, "action_type") and hasattr(a, "description") and hasattr(a, "details")
+    assert (
+        hasattr(a, "action_type")
+        and hasattr(a, "description")
+        and hasattr(a, "details")
+    )
     assert isinstance(a.details, dict)
 
     # 10) last_step_evaluations / audit_log_path 不影响当前规则 (升级路径用)

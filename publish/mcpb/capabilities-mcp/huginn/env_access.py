@@ -1,21 +1,27 @@
-"""HUGINN_* 环境变量的类型化访问器 (配置面唯一受认可的读端).
+"""环境变量的类型化访问器 (配置面唯一受认可的读端).
 
-配置面的**声明**在 :mod:`huginn.env_schema` (``SCHEMA``, 单一权威源); 本模块是
-**读端**: 新代码读 ``HUGINN_*`` 一律经此, 不再裸 ``os.environ.get``. 收益有三:
+配置面的**声明**在 :mod:`huginn.env_schema` (``SCHEMA`` + ``DEPLOY_SCHEMA``,
+单一权威源); 本模块是**读端**: 新代码读环境变量一律经此, 不再裸
+``os.environ.get``. 收益有三:
 
-- **未声明即报错**: 读一个不在 ``SCHEMA`` 里的变量抛 :class:`UndeclaredEnvVarError`,
-  迫使新增配置先登记 (拦截配置面静默膨胀);
-- **默认值单一来源**: 默认值只来自 ``SCHEMA``, 不在每个读点重复 (消除双真值);
-- **类型统一**: int/float/bool/json 解析集中一处, 解析失败 fail-open 回落默认值.
+- **未声明即报错**: 读一个不在 ``SCHEMA`` / ``DEPLOY_SCHEMA`` 里的变量抛
+  :class:`UndeclaredEnvVarError`, 迫使新增配置先登记 (拦截配置面静默膨胀);
+- **默认值单一来源**: 默认值只来自声明表, 不在每个读点重复 (消除双真值);
+- **类型统一**: int/float/bool/json/path 解析集中一处, 解析失败 fail-open
+  回落默认值.
+
+``SCHEMA`` 收 ``HUGINN_*`` 自有配置; ``DEPLOY_SCHEMA`` 收外部工具约定、但不能
+改名的部署变量 (VASP_EXECUTABLE / HPC_HOST / OLLAMA_HOST …). 两者用同一套访问器,
+所以"同一个变量两处解析、默认值各写一遍"在结构上不再可能.
 
 用法::
 
     from huginn.env_access import env_bool, env_int, env_str
 
-    timeout = env_int(name)            # 默认值取自 SCHEMA
+    timeout = env_int(name)            # 默认值取自声明表
     debug = env_bool(name, default=False)   # 显式覆盖默认值
 
-``default`` 省略时用 ``SCHEMA`` 里的权威默认值; 显式传入则覆盖之 (临时用, 不应在
+``default`` 省略时用声明表里的权威默认值; 显式传入则覆盖之 (临时用, 不应在
 多处重复同一默认值 —— 那正是本模块要消灭的).
 """
 
@@ -24,9 +30,10 @@ from __future__ import annotations
 import json as _json
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
-from huginn.env_schema import SCHEMA, EnvSpec
+from huginn.env_schema import DEPLOY_SCHEMA, SCHEMA, EnvSpec
 
 logger = logging.getLogger(__name__)
 
@@ -49,15 +56,19 @@ def spec(name: str) -> EnvSpec:
     try:
         return SCHEMA[name]
     except KeyError:
+        pass
+    try:
+        return DEPLOY_SCHEMA[name]
+    except KeyError:
         raise UndeclaredEnvVarError(
-            f"{name!r} 未在 huginn.env_schema.SCHEMA 登记; "
+            f"{name!r} 未在 huginn.env_schema.SCHEMA / DEPLOY_SCHEMA 登记; "
             f"新增配置请先登记再经 env_access 读取"
         ) from None
 
 
 def is_declared(name: str) -> bool:
-    """变量是否已在 ``SCHEMA`` 登记 (不抛错, 供工具/审计查询)."""
-    return name in SCHEMA
+    """变量是否已在声明表登记 (不抛错, 供工具/审计查询)."""
+    return name in SCHEMA or name in DEPLOY_SCHEMA
 
 
 def env_is_set(name: str) -> bool:
@@ -116,6 +127,12 @@ def env_str(name: str, default: Any = _UNSET) -> str:
     """读字符串; 未设或空 → 默认值 (字符串化)."""
     _s, raw, _set = _read(name, default)
     return "" if raw is None else str(raw)
+
+
+def env_path(name: str, default: Any = _UNSET) -> Path | None:
+    """读路径 (展开 ``~``); 未设或空 → default (若是路径则返回它), 否则 None."""
+    raw = env_str(name, default)
+    return Path(raw).expanduser() if raw else None
 
 
 def env_int(name: str, default: Any = _UNSET) -> int:

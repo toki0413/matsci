@@ -43,6 +43,7 @@ _ZERO = (0.0,) * 7
 # Unit algebraic type
 # ====================================================================
 
+
 @dataclass(frozen=True)
 class Unit:
     """A physical unit represented as an SI-base dimension vector + scale factor.
@@ -85,7 +86,7 @@ class Unit:
 
     def __pow__(self, n: int | float) -> Unit:
         dims = tuple(d * n for d in self.dimensions)
-        return Unit(scale=self.scale ** n, dimensions=dims)
+        return Unit(scale=self.scale**n, dimensions=dims)
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Unit):
@@ -108,9 +109,7 @@ class Unit:
     def dimension_dict(self) -> dict[str, float]:
         """Return dimensions as ``{name: exponent}`` (zero exponents omitted)."""
         return {
-            DIM_NAMES[i]: d
-            for i, d in enumerate(self.dimensions)
-            if abs(d) > 1e-12
+            DIM_NAMES[i]: d for i, d in enumerate(self.dimensions) if abs(d) > 1e-12
         }
 
     @property
@@ -130,6 +129,186 @@ class Unit:
 # ====================================================================
 # Unit registry
 # ====================================================================
+
+
+def _build_si_base_units(u: dict[str, Unit]) -> None:
+    """Initialise SI base units."""
+    # SI base units
+    u["m"] = Unit.base(_L, "m")
+    u["kg"] = Unit.base(_M, "kg")
+    u["s"] = Unit.base(_T, "s")
+    u["K"] = Unit.base(_THETA, "K")
+    u["mol"] = Unit.base(_N, "mol")
+    u["A"] = Unit.base(_I, "A")
+    u["cd"] = Unit.base(_J, "cd")
+
+
+def _build_non_si_base_units(u: dict[str, Unit]) -> None:
+    """Initialise common non-SI base units with scale factors."""
+    # Common non-SI base units with scale factors
+    u["cm"] = Unit(scale=1e-2, dimensions=u["m"].dimensions, name="cm")
+    u["mm"] = Unit(scale=1e-3, dimensions=u["m"].dimensions, name="mm")
+    u["nm"] = Unit(scale=1e-9, dimensions=u["m"].dimensions, name="nm")
+    u["angstrom"] = Unit(scale=1e-10, dimensions=u["m"].dimensions, name="angstrom")
+    u["Å"] = u["angstrom"]
+    u["um"] = Unit(scale=1e-6, dimensions=u["m"].dimensions, name="um")
+    u["μm"] = u["um"]
+
+    u["g"] = Unit(scale=1e-3, dimensions=u["kg"].dimensions, name="g")
+    u["amu"] = Unit(scale=1.66054e-27, dimensions=u["kg"].dimensions, name="amu")
+
+    u["fs"] = Unit(scale=1e-15, dimensions=u["s"].dimensions, name="fs")
+    u["ps"] = Unit(scale=1e-12, dimensions=u["s"].dimensions, name="ps")
+    u["ns"] = Unit(scale=1e-9, dimensions=u["s"].dimensions, name="ns")
+    u["ms"] = Unit(scale=1e-3, dimensions=u["s"].dimensions, name="ms")
+    u["min"] = Unit(scale=60.0, dimensions=u["s"].dimensions, name="min")
+    u["h"] = Unit(scale=3600.0, dimensions=u["s"].dimensions, name="h")
+
+
+def _build_derived_si_units(u: dict[str, Unit]) -> None:
+    """Initialise derived SI units — defined algebraically."""
+    # Derived SI units — defined algebraically
+    u["N"] = u["kg"] * u["m"] / u["s"] ** 2
+    u["N"] = Unit(scale=u["N"].scale, dimensions=u["N"].dimensions, name="N")
+
+    u["Pa"] = u["N"] / u["m"] ** 2
+    u["Pa"] = Unit(scale=u["Pa"].scale, dimensions=u["Pa"].dimensions, name="Pa")
+
+    u["J"] = u["N"] * u["m"]
+    u["J"] = Unit(scale=u["J"].scale, dimensions=u["J"].dimensions, name="J")
+
+    u["W"] = u["J"] / u["s"]
+    u["W"] = Unit(scale=u["W"].scale, dimensions=u["W"].dimensions, name="W")
+
+    u["Hz"] = Unit.dimensionless() / u["s"]
+    u["Hz"] = Unit(scale=u["Hz"].scale, dimensions=u["Hz"].dimensions, name="Hz")
+
+    u["V"] = u["W"] / u["A"]
+    u["V"] = Unit(scale=u["V"].scale, dimensions=u["V"].dimensions, name="V")
+
+    u["C"] = u["A"] * u["s"]
+    u["C"] = Unit(scale=u["C"].scale, dimensions=u["C"].dimensions, name="C")
+
+    u["Ohm"] = u["V"] / u["A"]
+    u["Ohm"] = Unit(scale=u["Ohm"].scale, dimensions=u["Ohm"].dimensions, name="Ohm")
+    u["Ω"] = u["Ohm"]
+
+    u["T"] = u["kg"] / (u["A"] * u["s"] ** 2)
+    u["T"] = Unit(scale=u["T"].scale, dimensions=u["T"].dimensions, name="T")
+
+    u["H"] = u["V"] * u["s"] / u["A"]
+    u["H"] = Unit(scale=u["H"].scale, dimensions=u["H"].dimensions, name="H")
+
+    u["F"] = u["C"] / u["V"]
+    u["F"] = Unit(scale=u["F"].scale, dimensions=u["F"].dimensions, name="F")
+
+
+def _build_non_si_energy_pressure_units(u: dict[str, Unit]) -> None:
+    """Initialise non-SI energy and pressure units."""
+    # Non-SI energy units
+    u["eV"] = Unit(scale=1.60218e-19, dimensions=u["J"].dimensions, name="eV")
+    u["Ha"] = Unit(scale=4.35974e-18, dimensions=u["J"].dimensions, name="Ha")
+    u["Ry"] = Unit(scale=2.17987e-18, dimensions=u["J"].dimensions, name="Ry")
+    u["kcal"] = Unit(scale=4184.0, dimensions=u["J"].dimensions, name="kcal")
+    u["cal"] = Unit(scale=4.184, dimensions=u["J"].dimensions, name="cal")
+    u["BTU"] = Unit(scale=1055.06, dimensions=u["J"].dimensions, name="BTU")
+
+    # Non-SI pressure
+    u["bar"] = Unit(scale=1e5, dimensions=u["Pa"].dimensions, name="bar")
+    u["atm"] = Unit(scale=101325.0, dimensions=u["Pa"].dimensions, name="atm")
+    u["Torr"] = Unit(scale=133.322, dimensions=u["Pa"].dimensions, name="Torr")
+
+
+def _build_compound_units(u: dict[str, Unit]) -> None:
+    """Initialise common compound units."""
+    # Common compound units
+    u["m/s"] = u["m"] / u["s"]
+    u["m/s"] = Unit(scale=u["m/s"].scale, dimensions=u["m/s"].dimensions, name="m/s")
+    u["m/s2"] = u["m"] / u["s"] ** 2
+    u["m/s2"] = Unit(
+        scale=u["m/s2"].scale, dimensions=u["m/s2"].dimensions, name="m/s2"
+    )
+
+    u["kg/m3"] = u["kg"] / u["m"] ** 3
+    u["kg/m3"] = Unit(
+        scale=u["kg/m3"].scale, dimensions=u["kg/m3"].dimensions, name="kg/m3"
+    )
+    u["g/cm3"] = u["g"] / u["cm"] ** 3
+    u["g/cm3"] = Unit(
+        scale=u["g/cm3"].scale, dimensions=u["g/cm3"].dimensions, name="g/cm3"
+    )
+
+    u["J/mol"] = u["J"] / u["mol"]
+    u["J/mol"] = Unit(
+        scale=u["J/mol"].scale, dimensions=u["J/mol"].dimensions, name="J/mol"
+    )
+    u["J/(mol·K)"] = u["J"] / (u["mol"] * u["K"])
+    u["J/(mol·K)"] = Unit(
+        scale=u["J/(mol·K)"].scale,
+        dimensions=u["J/(mol·K)"].dimensions,
+        name="J/(mol·K)",
+    )
+    u["eV/atom"] = u["eV"] / Unit.dimensionless()  # "atom" is dimensionless count
+    u["eV/atom"] = Unit(
+        scale=u["eV/atom"].scale, dimensions=u["eV/atom"].dimensions, name="eV/atom"
+    )
+
+    u["V/m"] = u["V"] / u["m"]
+    u["V/m"] = Unit(scale=u["V/m"].scale, dimensions=u["V/m"].dimensions, name="V/m")
+
+    u["W/(m·K)"] = u["W"] / (u["m"] * u["K"])
+    u["W/(m·K)"] = Unit(
+        scale=u["W/(m·K)"].scale, dimensions=u["W/(m·K)"].dimensions, name="W/(m·K)"
+    )
+
+
+def _apply_si_prefixes(u: dict[str, Unit]) -> None:
+    """Apply SI prefixes to common units."""
+    # Apply SI prefixes to common units
+    si_prefixes = {
+        "T": 1e12,
+        "G": 1e9,
+        "M": 1e6,
+        "k": 1e3,
+        "h": 1e2,
+        "da": 1e1,
+        "d": 1e-1,
+        "c": 1e-2,
+        "m": 1e-3,
+        "μ": 1e-6,
+        "u": 1e-6,
+        "n": 1e-9,
+        "p": 1e-12,
+        "f": 1e-15,
+    }
+    prefixable = [
+        "Pa",
+        "Hz",
+        "V",
+        "W",
+        "J",
+        "N",
+        "Ohm",
+        "F",
+        "H",
+        "T",
+        "m",
+        "g",
+        "s",
+        "eV",
+    ]
+    for base_name in prefixable:
+        base = u.get(base_name)
+        if base is None:
+            continue
+        for pfx, factor in si_prefixes.items():
+            name = f"{pfx}{base_name}"
+            if name in u:
+                continue  # don't overwrite manually defined units
+            u[name] = Unit(
+                scale=base.scale * factor, dimensions=base.dimensions, name=name
+            )
+
 
 class UnitRegistry:
     """Composable unit registry.
@@ -174,7 +353,9 @@ class UnitRegistry:
 
     def register(self, name: str, unit: Unit) -> None:
         """Register a unit (also stores it under *name* for lookup)."""
-        self._units[name] = Unit(scale=unit.scale, dimensions=unit.dimensions, name=name)
+        self._units[name] = Unit(
+            scale=unit.scale, dimensions=unit.dimensions, name=name
+        )
 
     def all_units(self) -> dict[str, Unit]:
         """Return a copy of all registered units."""
@@ -184,129 +365,12 @@ class UnitRegistry:
 
     def _build(self) -> None:
         u = self._units
-
-        # SI base units
-        u["m"] = Unit.base(_L, "m")
-        u["kg"] = Unit.base(_M, "kg")
-        u["s"] = Unit.base(_T, "s")
-        u["K"] = Unit.base(_THETA, "K")
-        u["mol"] = Unit.base(_N, "mol")
-        u["A"] = Unit.base(_I, "A")
-        u["cd"] = Unit.base(_J, "cd")
-
-        # Common non-SI base units with scale factors
-        u["cm"] = Unit(scale=1e-2, dimensions=u["m"].dimensions, name="cm")
-        u["mm"] = Unit(scale=1e-3, dimensions=u["m"].dimensions, name="mm")
-        u["nm"] = Unit(scale=1e-9, dimensions=u["m"].dimensions, name="nm")
-        u["angstrom"] = Unit(scale=1e-10, dimensions=u["m"].dimensions, name="angstrom")
-        u["Å"] = u["angstrom"]
-        u["um"] = Unit(scale=1e-6, dimensions=u["m"].dimensions, name="um")
-        u["μm"] = u["um"]
-
-        u["g"] = Unit(scale=1e-3, dimensions=u["kg"].dimensions, name="g")
-        u["amu"] = Unit(scale=1.66054e-27, dimensions=u["kg"].dimensions, name="amu")
-
-        u["fs"] = Unit(scale=1e-15, dimensions=u["s"].dimensions, name="fs")
-        u["ps"] = Unit(scale=1e-12, dimensions=u["s"].dimensions, name="ps")
-        u["ns"] = Unit(scale=1e-9, dimensions=u["s"].dimensions, name="ns")
-        u["ms"] = Unit(scale=1e-3, dimensions=u["s"].dimensions, name="ms")
-        u["min"] = Unit(scale=60.0, dimensions=u["s"].dimensions, name="min")
-        u["h"] = Unit(scale=3600.0, dimensions=u["s"].dimensions, name="h")
-
-        # Derived SI units — defined algebraically
-        u["N"] = u["kg"] * u["m"] / u["s"] ** 2
-        u["N"] = Unit(scale=u["N"].scale, dimensions=u["N"].dimensions, name="N")
-
-        u["Pa"] = u["N"] / u["m"] ** 2
-        u["Pa"] = Unit(scale=u["Pa"].scale, dimensions=u["Pa"].dimensions, name="Pa")
-
-        u["J"] = u["N"] * u["m"]
-        u["J"] = Unit(scale=u["J"].scale, dimensions=u["J"].dimensions, name="J")
-
-        u["W"] = u["J"] / u["s"]
-        u["W"] = Unit(scale=u["W"].scale, dimensions=u["W"].dimensions, name="W")
-
-        u["Hz"] = Unit.dimensionless() / u["s"]
-        u["Hz"] = Unit(scale=u["Hz"].scale, dimensions=u["Hz"].dimensions, name="Hz")
-
-        u["V"] = u["W"] / u["A"]
-        u["V"] = Unit(scale=u["V"].scale, dimensions=u["V"].dimensions, name="V")
-
-        u["C"] = u["A"] * u["s"]
-        u["C"] = Unit(scale=u["C"].scale, dimensions=u["C"].dimensions, name="C")
-
-        u["Ohm"] = u["V"] / u["A"]
-        u["Ohm"] = Unit(scale=u["Ohm"].scale, dimensions=u["Ohm"].dimensions, name="Ohm")
-        u["Ω"] = u["Ohm"]
-
-        u["T"] = u["kg"] / (u["A"] * u["s"] ** 2)
-        u["T"] = Unit(scale=u["T"].scale, dimensions=u["T"].dimensions, name="T")
-
-        u["H"] = u["V"] * u["s"] / u["A"]
-        u["H"] = Unit(scale=u["H"].scale, dimensions=u["H"].dimensions, name="H")
-
-        u["F"] = u["C"] / u["V"]
-        u["F"] = Unit(scale=u["F"].scale, dimensions=u["F"].dimensions, name="F")
-
-        # Non-SI energy units
-        u["eV"] = Unit(scale=1.60218e-19, dimensions=u["J"].dimensions, name="eV")
-        u["Ha"] = Unit(scale=4.35974e-18, dimensions=u["J"].dimensions, name="Ha")
-        u["Ry"] = Unit(scale=2.17987e-18, dimensions=u["J"].dimensions, name="Ry")
-        u["kcal"] = Unit(scale=4184.0, dimensions=u["J"].dimensions, name="kcal")
-        u["cal"] = Unit(scale=4.184, dimensions=u["J"].dimensions, name="cal")
-        u["BTU"] = Unit(scale=1055.06, dimensions=u["J"].dimensions, name="BTU")
-
-        # Non-SI pressure
-        u["bar"] = Unit(scale=1e5, dimensions=u["Pa"].dimensions, name="bar")
-        u["atm"] = Unit(scale=101325.0, dimensions=u["Pa"].dimensions, name="atm")
-        u["Torr"] = Unit(scale=133.322, dimensions=u["Pa"].dimensions, name="Torr")
-
-        # Common compound units
-        u["m/s"] = u["m"] / u["s"]
-        u["m/s"] = Unit(scale=u["m/s"].scale, dimensions=u["m/s"].dimensions, name="m/s")
-        u["m/s2"] = u["m"] / u["s"] ** 2
-        u["m/s2"] = Unit(scale=u["m/s2"].scale, dimensions=u["m/s2"].dimensions, name="m/s2")
-
-        u["kg/m3"] = u["kg"] / u["m"] ** 3
-        u["kg/m3"] = Unit(scale=u["kg/m3"].scale, dimensions=u["kg/m3"].dimensions, name="kg/m3")
-        u["g/cm3"] = u["g"] / u["cm"] ** 3
-        u["g/cm3"] = Unit(scale=u["g/cm3"].scale, dimensions=u["g/cm3"].dimensions, name="g/cm3")
-
-        u["J/mol"] = u["J"] / u["mol"]
-        u["J/mol"] = Unit(scale=u["J/mol"].scale, dimensions=u["J/mol"].dimensions, name="J/mol")
-        u["J/(mol·K)"] = u["J"] / (u["mol"] * u["K"])
-        u["J/(mol·K)"] = Unit(
-            scale=u["J/(mol·K)"].scale, dimensions=u["J/(mol·K)"].dimensions, name="J/(mol·K)"
-        )
-        u["eV/atom"] = u["eV"] / Unit.dimensionless()  # "atom" is dimensionless count
-        u["eV/atom"] = Unit(
-            scale=u["eV/atom"].scale, dimensions=u["eV/atom"].dimensions, name="eV/atom"
-        )
-
-        u["V/m"] = u["V"] / u["m"]
-        u["V/m"] = Unit(scale=u["V/m"].scale, dimensions=u["V/m"].dimensions, name="V/m")
-
-        u["W/(m·K)"] = u["W"] / (u["m"] * u["K"])
-        u["W/(m·K)"] = Unit(
-            scale=u["W/(m·K)"].scale, dimensions=u["W/(m·K)"].dimensions, name="W/(m·K)"
-        )
-
-        # Apply SI prefixes to common units
-        si_prefixes = {
-            "T": 1e12, "G": 1e9, "M": 1e6, "k": 1e3, "h": 1e2, "da": 1e1,
-            "d": 1e-1, "c": 1e-2, "m": 1e-3, "μ": 1e-6, "u": 1e-6,
-            "n": 1e-9, "p": 1e-12, "f": 1e-15,
-        }
-        prefixable = ["Pa", "Hz", "V", "W", "J", "N", "Ohm", "F", "H", "T", "m", "g", "s", "eV"]
-        for base_name in prefixable:
-            base = u.get(base_name)
-            if base is None:
-                continue
-            for pfx, factor in si_prefixes.items():
-                name = f"{pfx}{base_name}"
-                if name in u:
-                    continue  # don't overwrite manually defined units
-                u[name] = Unit(scale=base.scale * factor, dimensions=base.dimensions, name=name)
+        _build_si_base_units(u)
+        _build_non_si_base_units(u)
+        _build_derived_si_units(u)
+        _build_non_si_energy_pressure_units(u)
+        _build_compound_units(u)
+        _apply_si_prefixes(u)
 
     # -- compound unit parser -----------------------------------------
 
@@ -352,7 +416,7 @@ class UnitRegistry:
                 try:
                     n = float(tokens[pos])
                     pos += 1
-                    return base ** n, pos
+                    return base**n, pos
                 except ValueError:
                     pass
         return base, pos
@@ -401,6 +465,7 @@ registry = UnitRegistry()
 # SymPy dimension inference
 # ====================================================================
 
+
 class _DimInfer:
     """Walk a SymPy expression tree and propagate dimensions."""
 
@@ -421,70 +486,27 @@ class _DimInfer:
 
         # Named symbol
         if isinstance(expr, sp.Symbol):
-            name = str(expr)
-            if name in self._sym:
-                return self._sym[name]
-            return Unit.dimensionless()
+            return _walk_symbol(self, expr)
 
         # Addition / subtraction — all operands must match
         if isinstance(expr, sp.Add):
-            units = [self._walk(arg) for arg in expr.args]
-            ref = units[0]
-            for u in units[1:]:
-                if u != ref and not u.is_dimensionless:
-                    raise ValueError(
-                        f"Dimension mismatch in addition: {ref.dimension_signature} "
-                        f"vs {u.dimension_signature}"
-                    )
-            return ref
+            return _walk_add(self, expr)
 
         # Multiplication
         if isinstance(expr, sp.Mul):
-            result = Unit.dimensionless()
-            for arg in expr.args:
-                result = result * self._walk(arg)
-            return result
+            return _walk_mul(self, expr)
 
         # Power
         if isinstance(expr, sp.Pow):
-            base, exp = expr.args
-            base_unit = self._walk(base)
-            # Exponent should be dimensionless
-            if exp.is_number:
-                return base_unit ** float(exp)
-            return base_unit  # symbolic exponent → keep base dims
+            return _walk_pow(self, expr)
 
         # Derivative
         if isinstance(expr, sp.Derivative):
-            # Derivative(expr, x, n) → dim(expr) / dim(x)^n
-            inner = expr.args[0]
-            inner_unit = self._walk(inner)
-            # Collect derivative variables and counts
-            # Note: SymPy uses sp.Tuple, not Python tuple, so check both
-            var_counts: dict[sp.Symbol, int] = {}
-            for v in expr.args[1:]:
-                if isinstance(v, tuple | sp.Tuple):
-                    sym, count = v[0], int(v[1])
-                elif isinstance(v, sp.Symbol):
-                    sym, count = v, 1
-                else:
-                    continue
-                var_counts[sym] = var_counts.get(sym, 0) + count
-            result = inner_unit
-            for sym, count in var_counts.items():
-                sym_unit = self._walk(sym)
-                result = result / (sym_unit ** count)
-            return result
+            return _walk_derivative(self, expr)
 
         # Applied undefined function: u(x) → look up "u" in symbol_units
         if isinstance(expr, sp.Function | sp.core.function.Application):
-            func_name = type(expr).__name__ if hasattr(type(expr), "__name__") else str(expr.func)
-            if func_name in self._sym:
-                return self._sym[func_name]
-            # Fall back: try to infer from arguments
-            if expr.args:
-                return self._walk(expr.args[0])
-            return Unit.dimensionless()
+            return _walk_function(self, expr)
 
         # Fallback: try args recursively
         if hasattr(expr, "args") and expr.args:
@@ -493,9 +515,85 @@ class _DimInfer:
         return Unit.dimensionless()
 
 
+def _walk_symbol(infer: _DimInfer, expr: sp.Symbol) -> Unit:
+    """Infer the unit of a named symbol."""
+    name = str(expr)
+    if name in infer._sym:
+        return infer._sym[name]
+    return Unit.dimensionless()
+
+
+def _walk_add(infer: _DimInfer, expr: sp.Add) -> Unit:
+    """Infer addition / subtraction — all operands must match."""
+    units = [infer._walk(arg) for arg in expr.args]
+    ref = units[0]
+    for u in units[1:]:
+        if u != ref and not u.is_dimensionless:
+            raise ValueError(
+                f"Dimension mismatch in addition: {ref.dimension_signature} "
+                f"vs {u.dimension_signature}"
+            )
+    return ref
+
+
+def _walk_mul(infer: _DimInfer, expr: sp.Mul) -> Unit:
+    """Infer multiplication."""
+    result = Unit.dimensionless()
+    for arg in expr.args:
+        result = result * infer._walk(arg)
+    return result
+
+
+def _walk_pow(infer: _DimInfer, expr: sp.Pow) -> Unit:
+    """Infer power."""
+    base, exp = expr.args
+    base_unit = infer._walk(base)
+    # Exponent should be dimensionless
+    if exp.is_number:
+        return base_unit ** float(exp)
+    return base_unit  # symbolic exponent → keep base dims
+
+
+def _walk_derivative(infer: _DimInfer, expr: sp.Derivative) -> Unit:
+    """Infer derivative."""
+    # Derivative(expr, x, n) → dim(expr) / dim(x)^n
+    inner = expr.args[0]
+    inner_unit = infer._walk(inner)
+    # Collect derivative variables and counts
+    # Note: SymPy uses sp.Tuple, not Python tuple, so check both
+    var_counts: dict[sp.Symbol, int] = {}
+    for v in expr.args[1:]:
+        if isinstance(v, tuple | sp.Tuple):
+            sym, count = v[0], int(v[1])
+        elif isinstance(v, sp.Symbol):
+            sym, count = v, 1
+        else:
+            continue
+        var_counts[sym] = var_counts.get(sym, 0) + count
+    result = inner_unit
+    for sym, count in var_counts.items():
+        sym_unit = infer._walk(sym)
+        result = result / (sym_unit**count)
+    return result
+
+
+def _walk_function(infer: _DimInfer, expr: sp.Basic) -> Unit:
+    """Infer applied undefined function: u(x) → look up "u" in symbol_units."""
+    func_name = (
+        type(expr).__name__ if hasattr(type(expr), "__name__") else str(expr.func)
+    )
+    if func_name in infer._sym:
+        return infer._sym[func_name]
+    # Fall back: try to infer from arguments
+    if expr.args:
+        return infer._walk(expr.args[0])
+    return Unit.dimensionless()
+
+
 # ====================================================================
 # Legacy dataclasses (preserved for backward compatibility)
 # ====================================================================
+
 
 @dataclass
 class PhysicalQuantity:
@@ -522,6 +620,39 @@ class DimensionalCheckResult:
 # DimensionalValidator (backward-compatible API)
 # ====================================================================
 
+
+def _multiply_side(
+    validator: DimensionalValidator,
+    quantities: list[str],
+    notes: list[str],
+    label: str,
+) -> Unit:
+    """Multiply all quantities on one side, recording parse failures in *notes*."""
+    side_unit = Unit.dimensionless()
+    for q in quantities:
+        try:
+            _, _, dims = validator.parse_quantity(q)
+            q_unit = validator.registry.get(
+                q.split(None, 1)[1] if " " in q.strip() else q.strip()
+            )
+            side_unit = side_unit * q_unit
+        except ValueError as e:
+            notes.append(f"{label}: {e}")
+    return side_unit
+
+
+def _append_dimension_mismatches(
+    lhs_dims: dict[str, float], rhs_dims: dict[str, float], notes: list[str]
+) -> None:
+    """Append one note per dimension whose LHS/RHS exponents differ."""
+    all_dims = set(lhs_dims) | set(rhs_dims)
+    for d in sorted(all_dims):
+        lv = lhs_dims.get(d, 0)
+        rv = rhs_dims.get(d, 0)
+        if abs(lv - rv) > 1e-10:
+            notes.append(f"Dimension mismatch in {d}: LHS={lv}, RHS={rv}")
+
+
 class DimensionalValidator:
     """Validate physical consistency of equations and parameters.
 
@@ -546,9 +677,7 @@ class DimensionalValidator:
 
     # -- parsing ------------------------------------------------------
 
-    def parse_quantity(
-        self, quantity_str: str
-    ) -> tuple[float, str, dict[str, float]]:
+    def parse_quantity(self, quantity_str: str) -> tuple[float, str, dict[str, float]]:
         """Parse a quantity string like ``'210 GPa'`` into (value, unit, dimensions).
 
         Returns:
@@ -579,25 +708,9 @@ class DimensionalValidator:
         Each quantity is a string like ``"210 GPa"`` or ``"1.0 kg/m3"``.
         Multiple quantities on one side are **multiplied** together.
         """
-        lhs_unit = Unit.dimensionless()
-        rhs_unit = Unit.dimensionless()
         notes: list[str] = []
-
-        for q in lhs_quantities:
-            try:
-                _, _, dims = self.parse_quantity(q)
-                q_unit = self.registry.get(q.split(None, 1)[1] if " " in q.strip() else q.strip())
-                lhs_unit = lhs_unit * q_unit
-            except ValueError as e:
-                notes.append(f"LHS: {e}")
-
-        for q in rhs_quantities:
-            try:
-                _, _, dims = self.parse_quantity(q)
-                q_unit = self.registry.get(q.split(None, 1)[1] if " " in q.strip() else q.strip())
-                rhs_unit = rhs_unit * q_unit
-            except ValueError as e:
-                notes.append(f"RHS: {e}")
+        lhs_unit = _multiply_side(self, lhs_quantities, notes, "LHS")
+        rhs_unit = _multiply_side(self, rhs_quantities, notes, "RHS")
 
         lhs_dims = lhs_unit.dimension_dict
         rhs_dims = rhs_unit.dimension_dict
@@ -606,12 +719,7 @@ class DimensionalValidator:
         if consistent:
             notes.append("Dimensional consistency verified ✓")
         else:
-            all_dims = set(lhs_dims) | set(rhs_dims)
-            for d in sorted(all_dims):
-                lv = lhs_dims.get(d, 0)
-                rv = rhs_dims.get(d, 0)
-                if abs(lv - rv) > 1e-10:
-                    notes.append(f"Dimension mismatch in {d}: LHS={lv}, RHS={rv}")
+            _append_dimension_mismatches(lhs_dims, rhs_dims, notes)
 
         result = DimensionalCheckResult(
             consistent=consistent,
@@ -655,7 +763,9 @@ class DimensionalValidator:
         """Check that *expr* has dimensions matching *expected_unit*."""
         inferred = self.infer_dimensions(expr, symbol_units)
         expected = (
-            expected_unit if isinstance(expected_unit, Unit) else self.registry.get(expected_unit)
+            expected_unit
+            if isinstance(expected_unit, Unit)
+            else self.registry.get(expected_unit)
         )
         ok = inferred == expected
         return DimensionalCheckResult(
@@ -664,7 +774,8 @@ class DimensionalValidator:
             lhs_dimensions=inferred.dimension_dict,
             rhs_dimensions=expected.dimension_dict,
             notes=[
-                "Dimensions match ✓" if ok
+                "Dimensions match ✓"
+                if ok
                 else f"Expected {expected.dimension_signature}, got {inferred.dimension_signature}"
             ],
         )
@@ -679,29 +790,41 @@ class DimensionalValidator:
             encut = params["ENCUT"]
             try:
                 self.parse_quantity(f"{encut} eV")
-                results.append(DimensionalCheckResult(
-                    consistent=True, equation=f"ENCUT = {encut} eV",
-                    notes=["ENCUT has energy dimensions ✓"],
-                ))
+                results.append(
+                    DimensionalCheckResult(
+                        consistent=True,
+                        equation=f"ENCUT = {encut} eV",
+                        notes=["ENCUT has energy dimensions ✓"],
+                    )
+                )
             except ValueError:
-                results.append(DimensionalCheckResult(
-                    consistent=False, equation=f"ENCUT = {encut}",
-                    notes=["ENCUT should have energy units (eV)"],
-                ))
+                results.append(
+                    DimensionalCheckResult(
+                        consistent=False,
+                        equation=f"ENCUT = {encut}",
+                        notes=["ENCUT should have energy units (eV)"],
+                    )
+                )
 
         if "SIGMA" in params:
             sigma = params["SIGMA"]
-            results.append(DimensionalCheckResult(
-                consistent=True, equation=f"SIGMA = {sigma} eV",
-                notes=["SIGMA has energy dimensions ✓"],
-            ))
+            results.append(
+                DimensionalCheckResult(
+                    consistent=True,
+                    equation=f"SIGMA = {sigma} eV",
+                    notes=["SIGMA has energy dimensions ✓"],
+                )
+            )
 
         if "POTIM" in params:
             potim = params["POTIM"]
-            results.append(DimensionalCheckResult(
-                consistent=True, equation=f"POTIM = {potim} fs",
-                notes=["POTIM has time dimensions ✓"],
-            ))
+            results.append(
+                DimensionalCheckResult(
+                    consistent=True,
+                    equation=f"POTIM = {potim} fs",
+                    notes=["POTIM has time dimensions ✓"],
+                )
+            )
 
         return results
 
@@ -740,13 +863,15 @@ class DimensionalValidator:
                 if j < len(symbols) and abs(c) > 1e-10:
                     group_vars[symbols[j]] = c
             if group_vars:
-                pi_groups.append({
-                    "pi_id": i + 1,
-                    "expression": " x ".join(
-                        f"{s}^{c:.2f}" for s, c in group_vars.items()
-                    ),
-                    "variables": group_vars,
-                })
+                pi_groups.append(
+                    {
+                        "pi_id": i + 1,
+                        "expression": " x ".join(
+                            f"{s}^{c:.2f}" for s, c in group_vars.items()
+                        ),
+                        "variables": group_vars,
+                    }
+                )
 
         return pi_groups
 
@@ -772,21 +897,27 @@ class DimensionalValidator:
     ) -> list[DimensionalCheckResult]:
         """Validate Navier-Stokes equation terms for dimensional consistency."""
         results = []
-        results.append(self.check_equation(
-            lhs_quantities=[rho, u, u, f"1/{L}"],
-            rhs_quantities=[rho, U, U, f"1/{L}"],
-            equation_name="Inertial term: ρ(u·∇)u",
-        ))
-        results.append(self.check_equation(
-            lhs_quantities=[p, f"1/{L}"],
-            rhs_quantities=[p, f"1/{L}"],
-            equation_name="Pressure gradient: ∇p",
-        ))
-        results.append(self.check_equation(
-            lhs_quantities=[mu, u, f"1/{L}", f"1/{L}"],
-            rhs_quantities=[mu, U, f"1/{L}", f"1/{L}"],
-            equation_name="Viscous term: μ∇²u",
-        ))
+        results.append(
+            self.check_equation(
+                lhs_quantities=[rho, u, u, f"1/{L}"],
+                rhs_quantities=[rho, U, U, f"1/{L}"],
+                equation_name="Inertial term: ρ(u·∇)u",
+            )
+        )
+        results.append(
+            self.check_equation(
+                lhs_quantities=[p, f"1/{L}"],
+                rhs_quantities=[p, f"1/{L}"],
+                equation_name="Pressure gradient: ∇p",
+            )
+        )
+        results.append(
+            self.check_equation(
+                lhs_quantities=[mu, u, f"1/{L}", f"1/{L}"],
+                rhs_quantities=[mu, U, f"1/{L}", f"1/{L}"],
+                equation_name="Viscous term: μ∇²u",
+            )
+        )
         return results
 
     # -- internal (kept for compat) -----------------------------------

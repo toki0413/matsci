@@ -41,10 +41,22 @@ logger = logging.getLogger(__name__)
 # 需要评分的工具: 高成本 / 高 IO / 不可逆的工具
 # 跳过: read / list / glob / grep / 文档查询等轻工具
 _HEAVY_TOOL_PREFIXES: tuple[str, ...] = (
-    "vasp_", "lammps_", "qe_", "quantum_", "gaussian_", "orca_",
-    "cp2k_", "gromacs_", "abacus_", "abinit_",
-    "structure_tool", "validate_tool", "numerical_tool",
-    "hpc_submit", "hpc_run", "remote_exec",
+    "vasp_",
+    "lammps_",
+    "qe_",
+    "quantum_",
+    "gaussian_",
+    "orca_",
+    "cp2k_",
+    "gromacs_",
+    "abacus_",
+    "abinit_",
+    "structure_tool",
+    "validate_tool",
+    "numerical_tool",
+    "hpc_submit",
+    "hpc_run",
+    "remote_exec",
 )
 
 # 评分缓存 (args+result 哈希 → score). 简单 dict, 进程级.
@@ -72,7 +84,9 @@ def _step_signature(tool_name: str, args: Any, result: Any) -> str:
     try:
         payload = json.dumps(
             {"tool": tool_name, "args": args, "result": result},
-            default=str, sort_keys=True, ensure_ascii=False,
+            default=str,
+            sort_keys=True,
+            ensure_ascii=False,
         )
     except Exception:
         return f"{tool_name}:{id(args)}:{id(result)}"
@@ -91,6 +105,7 @@ class StepScore:
     action: 建议动作 ("proceed" / "warn" / "pause" / "redo").
     reasoning: LLM 给的简短理由.
     """
+
     score: float = 1.0
     concerns: list[str] = field(default_factory=list)
     action: str = "proceed"  # proceed / warn / pause / redo
@@ -184,7 +199,9 @@ class StepVerifierHook:
                 ctx.metadata["step_low_score"] = True
                 logger.warning(
                     "PRM step verifier: %s low score %.2f — %s",
-                    ctx.tool_name, score.score, score.reasoning,
+                    ctx.tool_name,
+                    score.score,
+                    score.reasoning,
                 )
         except Exception:
             # 评分失败不能把 agent 搞挂
@@ -224,9 +241,12 @@ class StepVerifierHook:
 
     def _build_prompt(self, ctx, prev_ctx: str) -> str:
         """构造 PRM 评分 prompt. 字段截断避免 prompt 爆炸."""
-        args_str = self._truncate(json.dumps(ctx.args, default=str, ensure_ascii=False), 800)
+        args_str = self._truncate(
+            json.dumps(ctx.args, default=str, ensure_ascii=False), 800
+        )
         result_str = self._truncate(
-            json.dumps(ctx.result, default=str, ensure_ascii=False), 1500)
+            json.dumps(ctx.result, default=str, ensure_ascii=False), 1500
+        )
         return _SCORE_PROMPT_TEMPLATE.format(
             tool_name=ctx.tool_name,
             args=args_str,
@@ -254,7 +274,7 @@ class StepVerifierHook:
         if start == -1 or end <= start:
             return None
         try:
-            data = json.loads(resp[start:end + 1])
+            data = json.loads(resp[start : end + 1])
         except json.JSONDecodeError:
             logger.debug("best-effort op failed", exc_info=True)
             return None
@@ -319,6 +339,7 @@ def make_default_llm_chat_fn() -> Callable[[str], Awaitable[str]] | None:
 
     async def _chat(prompt: str) -> str:
         from langchain_core.messages import HumanMessage
+
         resp = await model.ainvoke([HumanMessage(content=prompt)])
         # langchain 返回的是 AIMessage, .content 是 str
         return getattr(resp, "content", str(resp))
@@ -356,7 +377,9 @@ def should_pause_for_low_score_streak(
 
 
 def aggregate_step_scores(
-    scores: list[float], *, mode: str = "mean_min",
+    scores: list[float],
+    *,
+    mode: str = "mean_min",
 ) -> float | None:
     """把一段轨迹的 step 分数滚成**单一路径 value** (MCTS rollout value).
 
@@ -387,6 +410,7 @@ class _PseudoStepCtx:
     _score_step 只读 tool_name / args / result, 这里给定最小字段集即可复用
     现有 PRM 评分 (prompt + 解析 + 缓存) 逻辑, 不必为 branch 另写一份.
     """
+
     tool_name: str
     args: Any = None
     result: Any = None
@@ -408,6 +432,7 @@ def make_branch_value_fn(
     hook 通常 = StepVerifierHook(make_default_llm_chat_fn()); 无 LLM 时返回的 value
     恒为 None, 树搜索退化为按 token 剪枝, 行为与此前 100% 一致.
     """
+
     async def _value(branch: Any) -> float | None:
         if hook is None or getattr(hook, "_llm", None) is None:
             return None
@@ -451,8 +476,9 @@ if __name__ == "__main__":
     assert sig1 != sig3, "不同 args 应不同签名"
 
     # 3. StepScore.to_dict
-    s = StepScore(score=0.3, concerns=["ENCUT 太低"], action="warn",
-                  reasoning="basis too small")
+    s = StepScore(
+        score=0.3, concerns=["ENCUT 太低"], action="warn", reasoning="basis too small"
+    )
     d = s.to_dict()
     assert d["score"] == 0.3
     assert d["concerns"] == ["ENCUT 太低"]
@@ -467,7 +493,9 @@ if __name__ == "__main__":
     assert "converge" in score.reasoning
 
     # 4b. markdown fence
-    resp_fenced = '```json\n{"score": 0.2, "action": "pause", "reasoning": "wrong"}\n```'
+    resp_fenced = (
+        '```json\n{"score": 0.2, "action": "pause", "reasoning": "wrong"}\n```'
+    )
     score = StepVerifierHook._parse_response(resp_fenced)
     assert score.score == 0.2
     assert score.action == "pause"
@@ -496,8 +524,7 @@ if __name__ == "__main__":
 
     # 5. should_pause_for_low_score_streak
     # 连续 3 步低分 → pause
-    pause, reason = should_pause_for_low_score_streak(
-        [0.3, 0.2, 0.1])
+    pause, reason = should_pause_for_low_score_streak([0.3, 0.2, 0.1])
     assert pause and "3 步" in reason
 
     # 2 步低分但窗口不够 → 不触发
@@ -509,8 +536,7 @@ if __name__ == "__main__":
     assert not pause
 
     # 5 步最近 3 步都低 → 触发
-    pause, reason = should_pause_for_low_score_streak(
-        [0.9, 0.8, 0.2, 0.1, 0.3])
+    pause, reason = should_pause_for_low_score_streak([0.9, 0.8, 0.2, 0.1, 0.3])
     assert pause and "3 步" in reason
 
     # 5b. aggregate_step_scores — rollout value 滚动
@@ -518,8 +544,9 @@ if __name__ == "__main__":
     assert aggregate_step_scores([0.8, 0.6], mode="mean") == 0.7
     assert aggregate_step_scores([0.8, 0.2], mode="min") == 0.2
     # mean_min: 0.5*0.5 + 0.5*0.2 = 0.35
-    assert abs(aggregate_step_scores([0.8, 0.2]) - 0.35) < 1e-9, \
-        aggregate_step_scores([0.8, 0.2])
+    assert abs(aggregate_step_scores([0.8, 0.2]) - 0.35) < 1e-9, aggregate_step_scores(
+        [0.8, 0.2]
+    )
     # 越界钳位
     assert aggregate_step_scores([2.0, -1.0], mode="mean") == 0.5
 
@@ -538,9 +565,9 @@ if __name__ == "__main__":
     # 空假设 → None (不浪费 PRM 调用)
     assert asyncio.run(_vf(_Branch("   "))) is None
     # 无 LLM hook → None (树搜索回退 tokens)
-    assert asyncio.run(
-        make_branch_value_fn(StepVerifierHook(None))(_Branch("h"))
-    ) is None
+    assert (
+        asyncio.run(make_branch_value_fn(StepVerifierHook(None))(_Branch("h"))) is None
+    )
 
     # 6. hook 调用 — 轻工具跳过 (mock ctx)
     class _MockCtx:
@@ -560,7 +587,7 @@ if __name__ == "__main__":
     async def _mock_llm_raise(prompt: str) -> str:
         raise RuntimeError("LLM offline")
 
-    async def _run_hook_test():
+    async def _run_hook_test_light():
         # 轻工具不评分 (用 _mock_llm_bad 是故意的: 即使配了 LLM 也不评)
         hook_bad = StepVerifierHook(llm_chat_fn=_mock_llm_bad)
         ctx = _MockCtx("read_file", args={"path": "a.txt"}, result={"content": "hi"})
@@ -572,6 +599,7 @@ if __name__ == "__main__":
         await hook_bad(ctx)
         assert "step_score" not in ctx.metadata, "失败工具不应评分"
 
+    async def _run_hook_test_heavy_good():
         # 重工具 + LLM 给高分
         hook_good = StepVerifierHook(llm_chat_fn=_mock_llm_good)
         ctx = _MockCtx("vasp_run", args={"encut": 500}, result={"energy": -10.5})
@@ -580,6 +608,7 @@ if __name__ == "__main__":
         assert ctx.metadata["step_score"]["score"] == 0.8
         assert "step_low_score" not in ctx.metadata
 
+    async def _run_hook_test_heavy_bad():
         # 重工具 + LLM 给低分
         ctx = _MockCtx("vasp_run", args={"encut": 200}, result={"energy": -5.0})
         hook_bad = StepVerifierHook(llm_chat_fn=_mock_llm_bad)
@@ -587,6 +616,7 @@ if __name__ == "__main__":
         assert ctx.metadata["step_score"]["score"] == 0.2
         assert ctx.metadata.get("step_low_score") is True
 
+    async def _run_hook_test_unavailable():
         # LLM 不可用时跳过评分
         ctx = _MockCtx("vasp_run")
         hook_nolllm = StepVerifierHook(llm_chat_fn=None)
@@ -600,8 +630,10 @@ if __name__ == "__main__":
         # 异常被吞, 不崩, 不写 metadata
         assert "step_score" not in ctx.metadata
 
+    async def _run_hook_test_cache():
         # 缓存命中: 同输入第二次调, 不再调 LLM
         call_count = [0]
+
         async def _count_llm(prompt: str) -> str:
             call_count[0] += 1
             return '{"score": 0.5}'
@@ -614,6 +646,13 @@ if __name__ == "__main__":
         assert call_count[0] == 1, f"缓存命中应只调 LLM 1次, got {call_count[0]}"
         assert ctx1.metadata["step_score"]["score"] == 0.5
         assert ctx2.metadata["step_score"]["score"] == 0.5
+
+    async def _run_hook_test():
+        await _run_hook_test_light()
+        await _run_hook_test_heavy_good()
+        await _run_hook_test_heavy_bad()
+        await _run_hook_test_unavailable()
+        await _run_hook_test_cache()
 
     asyncio.run(_run_hook_test())
 

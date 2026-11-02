@@ -138,6 +138,97 @@ def borrow_verdict(tool_a: str, tool_b: str) -> TransferVerdict:
 
 
 # ── 内置工具注册 (导入时完成) ──────────────────────────────────
+def _register_thermo_tools(
+    ideal_executor: Callable[..., Any],
+    ideal_world_model: Callable[..., Any],
+    ideal_health: Callable[..., Any],
+    vdw_executor: Callable[..., Any],
+    vdw_world_model: Callable[..., Any],
+    vdw_health: Callable[..., Any],
+) -> None:
+    """注册热力学域两个后端 (理想气 / 范德华)."""
+    # 热力学域 (理想气 / 范德华) + 力学域 (一维振子): 领域无关, 只是各自 ToolSpec.
+    # 理想气 = 范德华 a=b=0 的极端情形 → ⊂. 力学振子与热力学域无声明 → 隔离失效安全.
+    register_tool(
+        ToolSpec(
+            name="ideal_gas",
+            build_executor=ideal_executor,
+            build_world_model=ideal_world_model,
+            health_check=ideal_health,
+            schema={
+                "domain": "thermodynamics",
+                "space": {"state": ["p", "V", "T", "n"], "action": ["heat", "move"]},
+                "observables": ["p", "T"],
+                "forward": "pV=nRT, isochoric heat / isothermal move",
+            },
+            # P2 转用门: 理想气是范德华场的子情形, 可借求解/世界模型骨架, 不借校准参数.
+            structural_relation=_SUBTYPE_IDEAL_VAN_DER_WAALS,
+        )
+    )
+    register_tool(
+        ToolSpec(
+            name="van_der_waals",
+            build_executor=vdw_executor,
+            build_world_model=vdw_world_model,
+            health_check=vdw_health,
+            schema={
+                "domain": "thermodynamics",
+                "space": {"state": ["p", "V", "T", "n"], "action": ["heat", "move"]},
+                "observables": ["p", "T"],
+                "forward": "van der Waals EOS (a, b corrections)",
+            },
+        )
+    )
+
+
+def _register_oscillator_tool(
+    osc_executor: Callable[..., Any],
+    osc_world_model: Callable[..., Any],
+    osc_health: Callable[..., Any],
+) -> None:
+    """注册力学域一维振子后端."""
+    register_tool(
+        ToolSpec(
+            name="oscillator",
+            build_executor=osc_executor,
+            build_world_model=osc_world_model,
+            health_check=osc_health,
+            schema={
+                "domain": "mechanics",
+                "space": {"state": ["x", "v"], "action": ["kick", "displace"]},
+                "observables": ["x"],
+                "forward": "1-D harmonic oscillator",
+            },
+        )
+    )
+
+
+def _register_external_compute_tool() -> None:
+    """注册外部计算工具占位: 真跑子进程 (compute_adapter)."""
+    from huginn.security.compute_adapter import (
+        ShellComputeWorldModel,
+        shell_executor_from_artifact,
+        shell_health_check,
+    )
+
+    # 真实 HPC 工具以同种 ToolSpec 接入.
+    register_tool(
+        ToolSpec(
+            name="external_shell_compute",
+            build_executor=shell_executor_from_artifact,
+            build_world_model=ShellComputeWorldModel,
+            health_check=shell_health_check,
+            schema={
+                "domain": "external_compute",
+                "space": {"state": ["energy"], "action": ["shell_compute"]},
+                "observables": ["energy"],
+                "backend": "subprocess",
+                "forward": "E = n·Cv·T via external process",
+            },
+        )
+    )
+
+
 def _register_builtins() -> None:
     from huginn.security.mechanics_oscillator import (
         OscillatorWorldModel,
@@ -155,74 +246,18 @@ def _register_builtins() -> None:
         vdw_health_check,
     )
 
-    # 热力学域 (理想气 / 范德华) + 力学域 (一维振子): 领域无关, 只是各自 ToolSpec.
-    # 理想气 = 范德华 a=b=0 的极端情形 → ⊂. 力学振子与热力学域无声明 → 隔离失效安全.
-    register_tool(
-        ToolSpec(
-            name="ideal_gas",
-            build_executor=executor_from_artifact,
-            build_world_model=IdealGasWorldModel,
-            health_check=thermo_health_check,
-            schema={
-                "domain": "thermodynamics",
-                "space": {"state": ["p", "V", "T", "n"], "action": ["heat", "move"]},
-                "observables": ["p", "T"],
-                "forward": "pV=nRT, isochoric heat / isothermal move",
-            },
-            # P2 转用门: 理想气是范德华场的子情形, 可借求解/世界模型骨架, 不借校准参数.
-            structural_relation=_SUBTYPE_IDEAL_VAN_DER_WAALS,
-        )
+    _register_thermo_tools(
+        executor_from_artifact,
+        IdealGasWorldModel,
+        thermo_health_check,
+        vdw_executor_from_artifact,
+        VanDerWaalsWorldModel,
+        vdw_health_check,
     )
-    register_tool(
-        ToolSpec(
-            name="van_der_waals",
-            build_executor=vdw_executor_from_artifact,
-            build_world_model=VanDerWaalsWorldModel,
-            health_check=vdw_health_check,
-            schema={
-                "domain": "thermodynamics",
-                "space": {"state": ["p", "V", "T", "n"], "action": ["heat", "move"]},
-                "observables": ["p", "T"],
-                "forward": "van der Waals EOS (a, b corrections)",
-            },
-        )
+    _register_oscillator_tool(
+        osc_executor_from_artifact, OscillatorWorldModel, osc_health_check
     )
-    register_tool(
-        ToolSpec(
-            name="oscillator",
-            build_executor=osc_executor_from_artifact,
-            build_world_model=OscillatorWorldModel,
-            health_check=osc_health_check,
-            schema={
-                "domain": "mechanics",
-                "space": {"state": ["x", "v"], "action": ["kick", "displace"]},
-                "observables": ["x"],
-                "forward": "1-D harmonic oscillator",
-            },
-        )
-    )
-    # 外部计算工具占位: 真跑子进程 (compute_adapter). 真实 HPC 工具以同种 ToolSpec 接入.
-    from huginn.security.compute_adapter import (
-        ShellComputeWorldModel,
-        shell_executor_from_artifact,
-        shell_health_check,
-    )
-
-    register_tool(
-        ToolSpec(
-            name="external_shell_compute",
-            build_executor=shell_executor_from_artifact,
-            build_world_model=ShellComputeWorldModel,
-            health_check=shell_health_check,
-            schema={
-                "domain": "external_compute",
-                "space": {"state": ["energy"], "action": ["shell_compute"]},
-                "observables": ["energy"],
-                "backend": "subprocess",
-                "forward": "E = n·Cv·T via external process",
-            },
-        )
-    )
+    _register_external_compute_tool()
 
 
 _register_builtins()

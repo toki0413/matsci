@@ -42,37 +42,35 @@ logger = logging.getLogger(__name__)
 
 # 被gate拦截的执行类工具. 这些工具会消耗计算资源或产生副作用,
 # 必须先有用户确认的 plan 才能调用.
-GATED_TOOLS: frozenset[str] = frozenset({
-    "vasp_tool",
-    "lammps_tool",
-    "qe_tool",
-    "cp2k_tool",
-    "comsol_tool",
-    "abaqus_tool",
-    "openfoam_tool",
-    "orchestrate",
-    "job_tool",
-    "high_throughput_tool",
-    "ml_potential_tool",
-    "packing_tool",
-})
+GATED_TOOLS: frozenset[str] = frozenset(
+    {
+        "vasp_tool",
+        "lammps_tool",
+        "qe_tool",
+        "cp2k_tool",
+        "comsol_tool",
+        "abaqus_tool",
+        "openfoam_tool",
+        "orchestrate",
+        "job_tool",
+        "high_throughput_tool",
+        "ml_potential_tool",
+        "packing_tool",
+    }
+)
 
 
 class DesignPlanInput(BaseModel):
-    action: Literal["propose", "confirm", "reject", "status", "list_pending"] = (
-        Field(...)
+    action: Literal["propose", "confirm", "reject", "status", "list_pending"] = Field(
+        ...
     )
     # propose 时必填
     goal: str | None = Field(default=None, description="用户意图/任务目标")
     layout: str | None = Field(default=None, description="布局描述")
     style: str | None = Field(default=None, description="风格描述")
     steps: list[str] | None = Field(default=None, description="执行步骤列表")
-    parameters: dict[str, Any] | None = Field(
-        default=None, description="关键参数"
-    )
-    tools: list[str] | None = Field(
-        default=None, description="计划使用的工具列表"
-    )
+    parameters: dict[str, Any] | None = Field(default=None, description="关键参数")
+    tools: list[str] | None = Field(default=None, description="计划使用的工具列表")
     expected_output: str | None = Field(default=None, description="预期产出")
     # confirm/reject 时必填
     plan_id: str | None = Field(default=None, description="计划ID")
@@ -137,7 +135,9 @@ class _PlanStore:
             self._confirmed_by_thread[thread_id or "_global_"] = plan_id
         return True
 
-    def reject(self, plan_id: str, reason: str | None, thread_id: str | None = None) -> bool:
+    def reject(
+        self, plan_id: str, reason: str | None, thread_id: str | None = None
+    ) -> bool:
         with self._lock:
             plan = self._plans.get(plan_id)
             if not plan:
@@ -194,9 +194,7 @@ class DesignPlanTool(HuginnTool):
         self, args: DesignPlanInput, context: ToolContext | None = None
     ) -> ValidationResult:
         if args.action == "propose" and not args.goal:
-            return ValidationResult(
-                result=False, message="propose 需要 goal 字段"
-            )
+            return ValidationResult(result=False, message="propose 需要 goal 字段")
         if args.action in ("confirm", "reject") and not args.plan_id:
             return ValidationResult(
                 result=False,
@@ -220,95 +218,19 @@ class DesignPlanTool(HuginnTool):
 
         try:
             if input_data.action == "propose":
-                plan = {
-                    "goal": input_data.goal or "",
-                    "layout": input_data.layout or "",
-                    "style": input_data.style or "",
-                    "steps": input_data.steps or [],
-                    "parameters": input_data.parameters or {},
-                    "tools": input_data.tools or [],
-                    "expected_output": input_data.expected_output or "",
-                }
-                plan_id = store.propose(plan)
-                return ToolResult(
-                    data={
-                        "plan_id": plan_id,
-                        "status": "pending",
-                        "plan": plan,
-                        "message": (
-                            "计划已提交, 等待用户确认. "
-                            "请用户调用 design_plan_tool action=confirm "
-                            f"plan_id={plan_id} 确认, 或 action=reject 拒绝."
-                        ),
-                    },
-                    success=True,
-                )
+                return DesignPlanTool._propose_result(self, input_data, store)
 
             if input_data.action == "confirm":
-                ok = store.confirm(input_data.plan_id or "", tid)
-                if not ok:
-                    return ToolResult(
-                        data=None,
-                        success=False,
-                        error=f"plan_id={input_data.plan_id} 不存在",
-                    )
-                return ToolResult(
-                    data={
-                        "plan_id": input_data.plan_id,
-                        "status": "confirmed",
-                        "message": "计划已确认, 现在可以调用执行类工具.",
-                    },
-                    success=True,
-                )
+                return DesignPlanTool._confirm_result(self, input_data, store, tid)
 
             if input_data.action == "reject":
-                ok = store.reject(
-                    input_data.plan_id or "", input_data.reject_reason, tid
-                )
-                if not ok:
-                    return ToolResult(
-                        data=None,
-                        success=False,
-                        error=f"plan_id={input_data.plan_id} 不存在",
-                    )
-                return ToolResult(
-                    data={
-                        "plan_id": input_data.plan_id,
-                        "status": "rejected",
-                        "reject_reason": input_data.reject_reason or "",
-                        "message": (
-                            "计划已被拒绝. 请根据 reject_reason 修改后 "
-                            "重新 propose."
-                        ),
-                    },
-                    success=True,
-                )
+                return DesignPlanTool._reject_result(self, input_data, store, tid)
 
             if input_data.action == "status":
-                if input_data.plan_id:
-                    plan = store.get(input_data.plan_id)
-                    if not plan:
-                        return ToolResult(
-                            data=None,
-                            success=False,
-                            error=f"plan_id={input_data.plan_id} 不存在",
-                        )
-                    return ToolResult(data=plan, success=True)
-                # 无 plan_id 返回总体状态
-                return ToolResult(
-                    data={
-                        "total_plans": len(store._plans),
-                        "last_confirmed": store.last_confirmed(tid),
-                        "has_confirmed": store.has_confirmed(tid),
-                        "pending": store.list_pending(),
-                    },
-                    success=True,
-                )
+                return DesignPlanTool._status_result(self, input_data, store, tid)
 
             if input_data.action == "list_pending":
-                return ToolResult(
-                    data={"pending": store.list_pending()}, success=True
-                )
+                return ToolResult(data={"pending": store.list_pending()}, success=True)
 
             return ToolResult(
                 data=None,
@@ -319,3 +241,92 @@ class DesignPlanTool(HuginnTool):
         except Exception as e:
             logger.warning("design_plan_tool failed: %s", e, exc_info=True)
             return ToolResult(data=None, success=False, error=str(e))
+
+    def _propose_result(
+        self, input_data: DesignPlanInput, store: _PlanStore
+    ) -> ToolResult:
+        plan = {
+            "goal": input_data.goal or "",
+            "layout": input_data.layout or "",
+            "style": input_data.style or "",
+            "steps": input_data.steps or [],
+            "parameters": input_data.parameters or {},
+            "tools": input_data.tools or [],
+            "expected_output": input_data.expected_output or "",
+        }
+        plan_id = store.propose(plan)
+        return ToolResult(
+            data={
+                "plan_id": plan_id,
+                "status": "pending",
+                "plan": plan,
+                "message": (
+                    "计划已提交, 等待用户确认. "
+                    "请用户调用 design_plan_tool action=confirm "
+                    f"plan_id={plan_id} 确认, 或 action=reject 拒绝."
+                ),
+            },
+            success=True,
+        )
+
+    def _confirm_result(
+        self, input_data: DesignPlanInput, store: _PlanStore, tid: str | None
+    ) -> ToolResult:
+        ok = store.confirm(input_data.plan_id or "", tid)
+        if not ok:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"plan_id={input_data.plan_id} 不存在",
+            )
+        return ToolResult(
+            data={
+                "plan_id": input_data.plan_id,
+                "status": "confirmed",
+                "message": "计划已确认, 现在可以调用执行类工具.",
+            },
+            success=True,
+        )
+
+    def _reject_result(
+        self, input_data: DesignPlanInput, store: _PlanStore, tid: str | None
+    ) -> ToolResult:
+        ok = store.reject(input_data.plan_id or "", input_data.reject_reason, tid)
+        if not ok:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"plan_id={input_data.plan_id} 不存在",
+            )
+        return ToolResult(
+            data={
+                "plan_id": input_data.plan_id,
+                "status": "rejected",
+                "reject_reason": input_data.reject_reason or "",
+                "message": ("计划已被拒绝. 请根据 reject_reason 修改后 重新 propose."),
+            },
+            success=True,
+        )
+
+    def _status_result(
+        self, input_data: DesignPlanInput, store: _PlanStore, tid: str | None
+    ) -> ToolResult:
+        if input_data.plan_id:
+            plan = store.get(input_data.plan_id)
+            if not plan:
+                return ToolResult(
+                    data=None,
+                    success=False,
+                    error=f"plan_id={input_data.plan_id} 不存在",
+                )
+            return ToolResult(data=plan, success=True)
+        # 无 plan_id 返回总体状态
+        return ToolResult(
+            data={
+                "total_plans": len(store._plans),
+                "last_confirmed": store.last_confirmed(tid),
+                "has_confirmed": store.has_confirmed(tid),
+                "pending": store.list_pending(),
+            },
+            success=True,
+        )

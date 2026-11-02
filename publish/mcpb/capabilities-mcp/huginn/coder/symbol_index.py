@@ -43,6 +43,84 @@ class IndexedFile:
     references: list[Reference] = field(default_factory=list)
 
 
+class _PythonSymbolVisitor(ast.NodeVisitor):
+    """Collect symbols/references from a Python AST, tracking nesting scopes."""
+
+    def __init__(
+        self,
+        path: Path,
+        symbols: list[Symbol],
+        references: list[Reference],
+    ) -> None:
+        self.path = path
+        self.symbols = symbols
+        self.references = references
+        self.stack: list[ast.AST] = []
+
+    def _in_class(self) -> bool:
+        return any(isinstance(n, ast.ClassDef) for n in self.stack)
+
+    def visit(self, node: ast.AST) -> None:
+        self.stack.append(node)
+        super().visit(node)
+        self.stack.pop()
+
+    def _add_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        kind = "method" if self._in_class() else "function"
+        self.symbols.append(
+            Symbol(
+                name=node.name,
+                kind=kind,
+                file=str(self.path),
+                line=node.lineno,
+                col=node.col_offset,
+            )
+        )
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._add_function(node)
+        self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._add_function(node)
+        self.generic_visit(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.symbols.append(
+            Symbol(
+                name=node.name,
+                kind="class",
+                file=str(self.path),
+                line=node.lineno,
+                col=node.col_offset,
+            )
+        )
+        self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Load):
+            self.references.append(
+                Reference(
+                    name=node.id,
+                    file=str(self.path),
+                    line=node.lineno,
+                    col=node.col_offset,
+                )
+            )
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if isinstance(node.ctx, ast.Load):
+            self.references.append(
+                Reference(
+                    name=node.attr,
+                    file=str(self.path),
+                    line=node.lineno,
+                    col=node.col_offset,
+                )
+            )
+        self.generic_visit(node)
+
+
 class SymbolIndex:
     """Index symbols and references across a workspace."""
 
@@ -154,80 +232,7 @@ class SymbolIndex:
         except SyntaxError:
             return IndexedFile(path=path)
 
-        class _StackedSymbolVisitor(ast.NodeVisitor):
-            def __init__(self) -> None:
-                self.stack: list[ast.AST] = []
-
-            def _in_class(self) -> bool:
-                return any(isinstance(n, ast.ClassDef) for n in self.stack)
-
-            def visit(self, node: ast.AST) -> None:
-                self.stack.append(node)
-                super().visit(node)
-                self.stack.pop()
-
-            def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-                kind = "method" if self._in_class() else "function"
-                symbols.append(
-                    Symbol(
-                        name=node.name,
-                        kind=kind,
-                        file=str(path),
-                        line=node.lineno,
-                        col=node.col_offset,
-                    )
-                )
-                self.generic_visit(node)
-
-            def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-                kind = "method" if self._in_class() else "function"
-                symbols.append(
-                    Symbol(
-                        name=node.name,
-                        kind=kind,
-                        file=str(path),
-                        line=node.lineno,
-                        col=node.col_offset,
-                    )
-                )
-                self.generic_visit(node)
-
-            def visit_ClassDef(self, node: ast.ClassDef) -> None:
-                symbols.append(
-                    Symbol(
-                        name=node.name,
-                        kind="class",
-                        file=str(path),
-                        line=node.lineno,
-                        col=node.col_offset,
-                    )
-                )
-                self.generic_visit(node)
-
-            def visit_Name(self, node: ast.Name) -> None:
-                if isinstance(node.ctx, ast.Load):
-                    references.append(
-                        Reference(
-                            name=node.id,
-                            file=str(path),
-                            line=node.lineno,
-                            col=node.col_offset,
-                        )
-                    )
-
-            def visit_Attribute(self, node: ast.Attribute) -> None:
-                if isinstance(node.ctx, ast.Load):
-                    references.append(
-                        Reference(
-                            name=node.attr,
-                            file=str(path),
-                            line=node.lineno,
-                            col=node.col_offset,
-                        )
-                    )
-                self.generic_visit(node)
-
-        _StackedSymbolVisitor().visit(tree)
+        _PythonSymbolVisitor(path, symbols, references).visit(tree)
         return IndexedFile(path=path, symbols=symbols, references=references)
 
     def _index_generic(self, path: Path, source: str) -> IndexedFile:

@@ -18,6 +18,7 @@ MLP。目标不变 (最近真实 span 文本嵌入), actual 侧不经数值通�
     无值 span → 全零 + count=0。多值 span 取均值 + count + sign 均值。
   - 融合: 输入维度 D = d + (2F+2); MLP D -> 64 -> d (输出仍 d, 对齐目标)。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -25,6 +26,7 @@ import math
 import re
 import statistics
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -32,10 +34,26 @@ import numpy as np
 from huginn.utils.runtime import get_runtime_home
 from scripts.train_jepa_predictor import load_encoder, load_pairs
 
-K = 8          # 与 span predictor 一致的定长张量槽数
+K = 8  # 与 span predictor 一致的定长张量槽数
 U_SCALE = 24.0  # log10 量级归一上界 (覆盖 ~1e-12 .. 1e12)
 
 _NUM_RE = re.compile(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?")
+
+
+@dataclass
+class _Data:
+    """Prepared text/numeric span tensors + objective grouping."""
+
+    E: np.ndarray
+    A: np.ndarray
+    M: np.ndarray
+    Xnum: np.ndarray
+    asl: list
+    objs: list
+    by_obj: dict
+    d: int
+    dn: int
+    n_ho: int
 
 
 def _spans(text: str) -> list[str]:
@@ -97,7 +115,7 @@ def _train_mlp(X, T, M, d_in: int, d_out: int, steps=200, lr=1e-3, seed=0) -> di
         gradW2 = H.transpose(0, 2, 1) @ g2
         gradb2 = g2.sum(axis=(0, 1))
         gradH = g2 @ W2.T
-        gradb1_nk = gradH * (1 - H * H)             # (N,K,64)
+        gradb1_nk = gradH * (1 - H * H)  # (N,K,64)
         gradb1 = gradb1_nk.sum(axis=(0, 1))
         gradW1 = np.einsum("nke,nkd->ed", gradb1_nk, X)  # (64,d_in)
         W1 -= lr * gradW1.T
@@ -122,7 +140,7 @@ def _nearest_target(Xi, Ai, Mi, kk):
     return T
 
 
-def main() -> None:
+def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", default=None)
     ap.add_argument("--steps", type=int, default=200)
@@ -130,14 +148,26 @@ def main() -> None:
     ap.add_argument("--splits", type=int, default=12)
     ap.add_argument("--holdout-frac", type=float, default=0.25)
     ap.add_argument("--freqs", type=int, default=16, help="RFF 频率数 F")
-    args = ap.parse_args()
+    return ap
 
-    corpus = Path(args.corpus) if args.corpus else (get_runtime_home() / "corpus" / "jepa_pairs.jsonl")
-    pairs = load_pairs(corpus)
+
+def _mask(pred_span_list: list[list[str]], n: int) -> np.ndarray:
+    return np.stack(
+        [
+            np.concatenate(
+                [
+                    np.ones(min(len(pred_span_list[i]), K), bool),
+                    np.zeros(K - min(len(pred_span_list[i]), K), bool),
+                ]
+            )
+            for i in range(n)
+        ]
+    )
+
+
+def _prepare(enc, pairs: list[dict], d: int, freqs: int, holdout_frac: float) -> _Data:
+    """Encode span text + RFF numeric features; group rows by objective."""
     n = len(pairs)
-    enc = load_encoder()
-    d = int(enc.get_embedding_dimension())
-
     pred_span_list = [_spans(p["prediction"]) for p in pairs]
     act_span_list = [_spans(p["actual"]) for p in pairs]
     asl = [len(a) for a in act_span_list]
@@ -146,75 +176,122 @@ def main() -> None:
     vs = enc.encode(pieces, normalize_embeddings=True)
     emap = {s: np.asarray(v, dtype=np.float32) for s, v in zip(pieces, vs)}
 
-    def _rowv(span: str) -> np.ndarray:
-        return emap[span]
+    E = np.stack([_padded([emap[s] for s in pred_span_list[i]], d) for i in range(n)])
+    A = np.stack([_padded([emap[s] for s in act_span_list[i]], d) for i in range(n)])
+    M = _mask(pred_span_list, n)
 
-    E = np.stack([_padded([_rowv(s) for s in pred_span_list[i]], d) for i in range(n)])
-    A = np.stack([_padded([_rowv(s) for s in act_span_list[i]], d) for i in range(n)])
-    M = np.stack([
-        np.concatenate([np.ones(min(len(pred_span_list[i]), K), bool),
-                        np.zeros(K - min(len(pred_span_list[i]), K), bool)])
-        for i in range(n)
-    ])
-
-    W = _rff_bank(args.freqs, seed=1234)
+    W = _rff_bank(freqs, seed=1234)
     dn = 2 * int(len(W)) + 2
-    Num = np.stack([
-        _padded([_numeric_feat(s, W) for s in pred_span_list[i]], dn)
-        for i in range(n)
-    ])
+    Num = np.stack(
+        [
+            _padded([_numeric_feat(s, W) for s in pred_span_list[i]], dn)
+            for i in range(n)
+        ]
+    )
     Xnum = np.concatenate([E, Num.astype(np.float32)], axis=-1).astype(np.float64)
 
     objs = list({p.get("objective", f"o{i}") for i, p in enumerate(pairs)})
     by_obj = defaultdict(list)
     for i, p in enumerate(pairs):
         by_obj[p.get("objective", f"o{i}")].append(i)
+    n_ho = max(1, int(round(len(objs) * holdout_frac)))
+    return _Data(E, A, M, Xnum, asl, objs, by_obj, d, dn, n_ho)
+
+
+def _surprise(pack, Xin, A, M, asl, te) -> float:
+    pm = []
+    for i in te:
+        fwd = _fwd(pack, Xin[[i]])[0]
+        ds = []
+        kk = min(asl[i], K)
+        for k in range(K):
+            if M[i][k] and kk > 0:
+                ds.append(min(_dist(fwd[k], A[i][j]) for j in range(kk)))
+        if ds:
+            pm.append(float(np.mean(ds)))
+    return float(np.mean(pm)) if pm else 1.0
+
+
+def _run_split(rng: np.random.Generator, data: _Data, args) -> tuple:
+    ho = set(rng.choice(data.objs, size=data.n_ho, replace=False))
+    tr = [i for o, ids in data.by_obj.items() if o not in ho for i in ids]
+    te = [i for o, ids in data.by_obj.items() if o in ho for i in ids]
+    if len(tr) < 5 or not te:
+        return None
+    T = np.array(
+        [_nearest_target(data.E[i], data.A[i], data.M[i], data.asl[i]) for i in tr]
+    )
+
+    pack_t = _train_mlp(
+        data.E[tr],
+        T,
+        data.M[tr],
+        data.d,
+        data.d,
+        steps=args.steps,
+        seed=int(rng.integers(1, 1 << 30)),
+    )
+    pack_n = _train_mlp(
+        data.Xnum[tr],
+        T,
+        data.M[tr],
+        data.d + data.dn,
+        data.d,
+        steps=args.steps,
+        seed=int(rng.integers(1, 1 << 30)),
+    )
+
+    st = _surprise(pack_t, data.E, data.A, data.M, data.asl, te)
+    sn = _surprise(pack_n, data.Xnum, data.A, data.M, data.asl, te)
+    return st, sn, (1 if sn < st - 1e-9 else 0)
+
+
+def _report(args, met_text: list, met_num: list, win_split: int, data: _Data) -> None:
+    nv = len(met_text)
+    print(
+        f"[numeric] 目标级留出 {args.holdout_frac:.0%} ({data.n_ho}/{len(data.objs)}), {args.splits} 次, "
+        f"F={args.freqs}, 数值通道 dim={data.dn}"
+    )
+    print(
+        f"[text]   span surprise: mean={statistics.mean(met_text):.4f} ±{statistics.stdev(met_text) / (nv**0.5):.4f}"
+    )
+    print(
+        f"[num]    span surprise: mean={statistics.mean(met_num):.4f} ±{statistics.stdev(met_num) / (nv**0.5):.4f}"
+    )
+    print(
+        f"[num-text] delta = {statistics.mean(met_num) - statistics.mean(met_text):+.4f}; "
+        f"split 胜纯文本 {win_split}/{nv}"
+    )
+
+
+def main() -> None:
+    args = _build_parser().parse_args()
+
+    corpus = (
+        Path(args.corpus)
+        if args.corpus
+        else (get_runtime_home() / "corpus" / "jepa_pairs.jsonl")
+    )
+    pairs = load_pairs(corpus)
+    enc = load_encoder()
+    d = int(enc.get_embedding_dimension())
+
+    data = _prepare(enc, pairs, d, args.freqs, args.holdout_frac)
 
     rng = np.random.default_rng(args.seed)
     # 两个 variant 共享同分划, 对比公平
     met_text, met_num = [], []
     win_split = 0
-    n_ho = max(1, int(round(len(objs) * args.holdout_frac)))
     for _ in range(args.splits):
-        ho = set(rng.choice(objs, size=n_ho, replace=False))
-        tr = [i for o, ids in by_obj.items() if o not in ho for i in ids]
-        te = [i for o, ids in by_obj.items() if o in ho for i in ids]
-        if len(tr) < 5 or not te:
+        result = _run_split(rng, data, args)
+        if result is None:
             continue
-        T = np.array([_nearest_target(E[i], A[i], M[i], asl[i]) for i in tr])
-
-        pack_t = _train_mlp(E[tr], T, M[tr], d, d, steps=args.steps,
-                            seed=int(rng.integers(1, 1 << 30)))
-        pack_n = _train_mlp(Xnum[tr], T, M[tr], d + dn, d, steps=args.steps,
-                            seed=int(rng.integers(1, 1 << 30)))
-
-        def _surprise(pack, Xin, te=te):
-            pm = []
-            for i in te:
-                fwd = _fwd(pack, Xin[[i]])[0]
-                ds = []
-                kk = min(asl[i], K)
-                for k in range(K):
-                    if M[i][k] and kk > 0:
-                        ds.append(min(_dist(fwd[k], A[i][j]) for j in range(kk)))
-                if ds:
-                    pm.append(float(np.mean(ds)))
-            return float(np.mean(pm)) if pm else 1.0
-
-        st = _surprise(pack_t, E)
-        sn = _surprise(pack_n, Xnum)
+        st, sn, win = result
         met_text.append(st)
         met_num.append(sn)
-        if sn < st - 1e-9:
-            win_split += 1
+        win_split += win
 
-    nv = len(met_text)
-    print(f"[numeric] 目标级留出 {args.holdout_frac:.0%} ({n_ho}/{len(objs)}), {args.splits} 次, "
-          f"F={args.freqs}, 数值通道 dim={dn}")
-    print(f"[text]   span surprise: mean={statistics.mean(met_text):.4f} ±{statistics.stdev(met_text)/(nv**0.5):.4f}")
-    print(f"[num]    span surprise: mean={statistics.mean(met_num):.4f} ±{statistics.stdev(met_num)/(nv**0.5):.4f}")
-    print(f"[num-text] delta = {statistics.mean(met_num) - statistics.mean(met_text):+.4f}; "
-          f"split 胜纯文本 {win_split}/{nv}")
+    _report(args, met_text, met_num, win_split, data)
 
 
 if __name__ == "__main__":

@@ -16,11 +16,12 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from huginn.autoloop.engine import AutoloopEngine
+from huginn.autoloop.engine_act import EngineAct
 from huginn.core_types import ToolResult
 from huginn.provenance import (
     ProvenanceLogger,
@@ -658,7 +659,6 @@ def _stub_phases_keep_execute(engine: AutoloopEngine) -> None:
     engine._hypothesize = AsyncMock(return_value="test hypothesis")  # type: ignore[assignment]
     engine._plan = AsyncMock(return_value={"mode": "coder", "description": "do x"})  # type: ignore[assignment]
     # _execute 不 stub, 它会走真实 dispatch → _execute_coder
-    engine._execute_coder = AsyncMock(return_value={"mode": "coder", "status": "ok"})  # type: ignore[assignment]
     engine._validate = AsyncMock(return_value={"tests_passed": True})  # type: ignore[assignment]
     engine._learn = AsyncMock(return_value=None)  # type: ignore[assignment]
     engine._report = AsyncMock(return_value=str(engine.workspace / "report.md"))  # type: ignore[assignment]
@@ -683,10 +683,24 @@ class TestEngineProvenanceWiring:
     @pytest.mark.skipif(_skip_ci_run_cognitive, reason="run_cognitive hangs on CI asyncio.run")
     def test_run_persists_provenance_with_tool_chain(self, engine: AutoloopEngine):
         _stub_phases_keep_execute(engine)
-        # v10: run_cognitive 1-action-per-iter, max_iter=3 到 execute (hyp→plan→exec)
-        result = asyncio.run(
-            engine.run_cognitive(objective="o", max_iterations=3, progressive_budget=False)
-        )
+        # 分解后 EngineAct 的方法走自己的类, 实例上挂替身遮不住 → 直接 patch 类:
+        # 关掉 code_lab 快路, 并把 coder 结果替换成成功回执.
+        with (
+            patch.object(
+                EngineAct,
+                "_execute_coder",
+                AsyncMock(return_value={"mode": "coder", "status": "ok", "success": True}),
+            ),
+            patch.object(
+                EngineAct, "_is_code_experiment", staticmethod(lambda text: False)
+            ),
+        ):
+            # v10: run_cognitive 1-action-per-iter, max_iter=3 到 execute (hyp→plan→exec)
+            result = asyncio.run(
+                engine.run_cognitive(
+                    objective="o", max_iterations=3, progressive_budget=False
+                )
+            )
 
         # run() 结束得带上 provenance_path, 且文件真落盘了
         assert result.provenance_path is not None

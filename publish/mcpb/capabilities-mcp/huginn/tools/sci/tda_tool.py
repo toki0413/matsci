@@ -19,6 +19,8 @@ from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 
 logger = logging.getLogger(__name__)
 
+# 匈牙利算法代价矩阵里的"不可行"哨兵值 (远大于任何有限瓶颈距离).
+_BD_BIG = 1e18
 
 
 class TDAToolInput(BaseModel):
@@ -92,7 +94,9 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
 
     name = "tda"
     category = "sci"
-    profile = ToolProfile(phases=frozenset({ResearchPhase.PLANNING, ResearchPhase.VALIDATION}))
+    profile = ToolProfile(
+        phases=frozenset({ResearchPhase.PLANNING, ResearchPhase.VALIDATION})
+    )
     description = (
         "Topological data analysis: persistent homology, persistence diagrams, "
         "Betti numbers, and energy landscape topology for materials science."
@@ -118,9 +122,7 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
                 result=False, message="persistence_image requires diagram."
             )
         if args.action == "landscape" and not args.diagram:
-            return ValidationResult(
-                result=False, message="landscape requires diagram."
-            )
+            return ValidationResult(result=False, message="landscape requires diagram.")
         if args.action == "bottleneck_distance" and (
             not args.diagram or not args.diagram2
         ):
@@ -171,96 +173,114 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
 
     # ── persistence diagram ───────────────────────────────────────────
 
-    def _persistence_diagram(self, args: TDAToolInput) -> ToolResult:
+    @staticmethod
+    def _diagram_input(
+        args: TDAToolInput,
+    ) -> tuple[np.ndarray | None, np.ndarray | None, int, str | None]:
+        """Validate point_cloud; return (points, dist_matrix, n, error)."""
         if not args.point_cloud:
-            return ToolResult(
-                data=None, success=False, error="point_cloud is required."
-            )
+            return None, None, 0, "point_cloud is required."
         points = np.asarray(args.point_cloud, dtype=float)
-
         if args.distance_matrix:
             if points.ndim != 2 or points.shape[0] != points.shape[1]:
-                return ToolResult(
-                    data=None,
-                    success=False,
-                    error="distance_matrix=True requires a square point_cloud.",
+                return (
+                    None,
+                    None,
+                    0,
+                    "distance_matrix=True requires a square point_cloud.",
                 )
-            dist = points
+            return points, points, int(points.shape[0]), None
+        if points.ndim != 2:
+            return None, None, 0, "point_cloud must be N x D."
+        return points, None, int(points.shape[0]), None
+
+    def _diagram_ripser(
+        self, args: TDAToolInput, points: np.ndarray
+    ) -> list[dict] | None:
+        """Ripser backend — fastest, dedicated VR engine."""
+        try:
+            from ripser import ripser
+
+            result = ripser(
+                points,
+                maxdim=args.max_dim,
+                distance_matrix=args.distance_matrix,
+            )
+            pairs: list[dict] = []
+            for dim, dgm in enumerate(result["dgms"]):
+                if dim > args.max_dim:
+                    break
+                for row in dgm:
+                    pairs.append(self._pair(dim, row[0], row[1]))
+            return pairs
+        except ImportError:
+            logger.debug("best-effort op failed", exc_info=True)
+        except Exception:
+            # Numerical edge cases (empty input, degenerate distances) —
+            # let the next backend have a go.
+            logger.debug("best-effort op failed", exc_info=True)
+        return None
+
+    def _diagram_gudhi(
+        self, args: TDAToolInput, points: np.ndarray, dist: np.ndarray | None
+    ) -> list[dict] | None:
+        """Gudhi backend — full-featured, slower but reliable."""
+        try:
+            import gudhi
+
             n = int(points.shape[0])
-        else:
-            if points.ndim != 2:
-                return ToolResult(
-                    data=None, success=False, error="point_cloud must be N x D."
+            if args.distance_matrix:
+                max_edge = float(dist.max()) if dist.size else 0.0  # type: ignore[union-attr]
+                rips = gudhi.RipsComplex(
+                    distance_matrix=dist.tolist(),
+                    max_edge_length=max_edge,  # type: ignore[union-attr]
                 )
-            dist = None
-            n = int(points.shape[0])
+            else:
+                from scipy.spatial.distance import pdist
 
-        pairs: list[dict] | None = None
-        backend = "fallback"
-
-        # 1) ripser — fastest, dedicated VR engine
-        if pairs is None:
-            try:
-                from ripser import ripser
-
-                result = ripser(
-                    points,
-                    maxdim=args.max_dim,
-                    distance_matrix=args.distance_matrix,
+                max_edge = float(pdist(points).max()) if n > 1 else 0.0
+                rips = gudhi.RipsComplex(
+                    points=points.tolist(), max_edge_length=max_edge
                 )
-                tmp: list[dict] = []
-                for dim, dgm in enumerate(result["dgms"]):
-                    if dim > args.max_dim:
-                        break
-                    for row in dgm:
-                        tmp.append(self._pair(dim, row[0], row[1]))
-                pairs = tmp
-                backend = "ripser"
-            except ImportError:
-                logger.debug("best-effort op failed", exc_info=True)
-            except Exception:
-                # Numerical edge cases (empty input, degenerate distances) —
-                # let the next backend have a go.
-                logger.debug("best-effort op failed", exc_info=True)
+            st = rips.create_simplex_tree(max_dimension=args.max_dim + 1)
+            return [
+                self._pair(dim, b, d)
+                for dim, (b, d) in st.persistence()
+                if dim <= args.max_dim
+            ]
+        except ImportError:
+            logger.debug("best-effort op failed", exc_info=True)
+        except Exception:
+            logger.debug("persistence diagram failed", exc_info=True)
+        return None
 
-        # 2) gudhi — full-featured, slower but reliable
-        if pairs is None:
-            try:
-                import gudhi
-
-                if args.distance_matrix:
-                    max_edge = float(dist.max()) if dist.size else 0.0
-                    rips = gudhi.RipsComplex(
-                        distance_matrix=dist.tolist(), max_edge_length=max_edge
-                    )
-                else:
-                    from scipy.spatial.distance import pdist
-
-                    max_edge = float(pdist(points).max()) if n > 1 else 0.0
-                    rips = gudhi.RipsComplex(
-                        points=points.tolist(), max_edge_length=max_edge
-                    )
-                st = rips.create_simplex_tree(max_dimension=args.max_dim + 1)
-                persistence = st.persistence()
-                pairs = [
-                    self._pair(dim, b, d)
-                    for dim, (b, d) in persistence
-                    if dim <= args.max_dim
-                ]
-                backend = "gudhi"
-            except ImportError:
-                logger.debug("best-effort op failed", exc_info=True)
-            except Exception:
-                logger.debug("persistence diagram failed", exc_info=True)
-
-        # 3) scipy fallback — exact H0, approximate higher dimensions
-        if pairs is None:
-            pairs = self._persistence_fallback(
-                points if not args.distance_matrix else dist,
+    def _diagram_backend(
+        self, args: TDAToolInput, points: np.ndarray, dist: np.ndarray | None
+    ) -> tuple[list[dict], str]:
+        """Try ripser → gudhi → scipy fallback; return (pairs, backend_name)."""
+        pairs = self._diagram_ripser(args, points)
+        if pairs is not None:
+            return pairs, "ripser"
+        pairs = self._diagram_gudhi(args, points, dist)
+        if pairs is not None:
+            return pairs, "gudhi"
+        fallback_input = points if not args.distance_matrix else dist
+        return (
+            self._persistence_fallback(
+                fallback_input,  # type: ignore[arg-type]
                 args.distance_matrix,
                 args.max_dim,
-            )
-            backend = "fallback"
+            ),
+            "fallback",
+        )
+
+    def _persistence_diagram(self, args: TDAToolInput) -> ToolResult:
+        points, dist, n, error = self._diagram_input(args)
+        if error is not None:
+            return ToolResult(data=None, success=False, error=error)
+
+        # 1) ripser / 2) gudhi / 3) scipy fallback (exact H0, approx higher dims)
+        pairs, backend = self._diagram_backend(args, points, dist)  # type: ignore[arg-type]
 
         betti_numbers = self._betti_from_pairs(pairs, args.max_dim)
 
@@ -298,9 +318,7 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
         pairs = self._h0_persistence(D, n)
 
         if max_dim >= 1 and 2 <= n <= 40:
-            radii = sorted(
-                {float(D[i, j]) for i in range(n) for j in range(i + 1, n)}
-            )
+            radii = sorted({float(D[i, j]) for i in range(n) for j in range(i + 1, n)})
             # Subsample the filtration so the flag complex is rebuilt at most
             # ~30 times — keeps the O(n^3) clique enumeration in check.
             if len(radii) > 30:
@@ -360,9 +378,7 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
             else:
                 older, younger = rj, ri
             parent[younger] = older
-            pairs.append(
-                TDATool._pair(0, comp_birth[younger], d)
-            )
+            pairs.append(TDATool._pair(0, comp_birth[younger], d))
             # The merged component keeps the earlier birth time.
             comp_birth[older] = min(comp_birth[older], comp_birth[younger])
 
@@ -374,11 +390,29 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
 
     # ── persistence image ─────────────────────────────────────────────
 
+    @staticmethod
+    def _pi_grid(pts: list[tuple[float, float]], res: int, sigma: float) -> list[float]:
+        """Gaussian-smoothed persistence surface for one dimension, flattened."""
+        births = np.array([b for b, _ in pts])
+        perts = np.array([p for _, p in pts])
+        b_min, b_max = float(births.min()), float(births.max())
+        p_min, p_max = float(perts.min()), float(perts.max())
+        if b_max == b_min:
+            b_max = b_min + 1.0
+        if p_max == p_min:
+            p_max = p_min + 1.0
+
+        xs = np.linspace(b_min, b_max, res)
+        ys = np.linspace(p_min, p_max, res)
+        XX, YY = np.meshgrid(xs, ys)
+        img = np.zeros((res, res))
+        for b, p in pts:
+            img += np.exp(-((XX - b) ** 2 + (YY - p) ** 2) / (2.0 * sigma * sigma))
+        return img.flatten().tolist()
+
     def _persistence_image(self, args: TDAToolInput) -> ToolResult:
         if not args.diagram:
-            return ToolResult(
-                data=None, success=False, error="diagram is required."
-            )
+            return ToolResult(data=None, success=False, error="diagram is required.")
         diagram = args.diagram
         res = max(2, args.resolution)
         sigma = args.sigma if args.sigma > 0 else 1.0
@@ -393,28 +427,10 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
                 for p in diagram
                 if p["dim"] == dim and p["death"] is not None
             ]
-            if not pts:
+            if pts:
+                image_vectors[dim] = self._pi_grid(pts, res, sigma)
+            else:
                 image_vectors[dim] = [0.0] * (res * res)
-                shapes[dim] = [res, res]
-                continue
-
-            births = np.array([b for b, _ in pts])
-            perts = np.array([p for _, p in pts])
-            b_min, b_max = float(births.min()), float(births.max())
-            p_min, p_max = float(perts.min()), float(perts.max())
-            if b_max == b_min:
-                b_max = b_min + 1.0
-            if p_max == p_min:
-                p_max = p_min + 1.0
-
-            xs = np.linspace(b_min, b_max, res)
-            ys = np.linspace(p_min, p_max, res)
-            XX, YY = np.meshgrid(xs, ys)
-            img = np.zeros((res, res))
-            for b, p in pts:
-                img += np.exp(-((XX - b) ** 2 + (YY - p) ** 2) / (2.0 * sigma * sigma))
-
-            image_vectors[dim] = img.flatten().tolist()
             shapes[dim] = [res, res]
 
         return ToolResult(
@@ -480,6 +496,26 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
         )
 
     @staticmethod
+    def _bd_cost_matrix(
+        d1: list[tuple[float, float]], d2: list[tuple[float, float]]
+    ) -> np.ndarray:
+        """(m+n)x(m+n) assignment cost matrix with diagonal matchings."""
+        m, n = len(d1), len(d2)
+        C = np.full((m + n, m + n), _BD_BIG)
+        for i, (b1, dd1) in enumerate(d1):
+            for j, (b2, dd2) in enumerate(d2):
+                C[i, j] = max(abs(b1 - b2), abs(dd1 - dd2))
+            # Match d1 point to the diagonal (cost = half its persistence).
+            C[i, n + i] = (dd1 - b1) / 2.0
+        for j, (b2, dd2) in enumerate(d2):
+            C[m + j, j] = (dd2 - b2) / 2.0
+        # Diagonal-to-diagonal pairings are free.
+        for j in range(n):
+            for i in range(m):
+                C[m + j, n + i] = 0.0
+        return C
+
+    @staticmethod
     def _bottleneck_dim(
         d1: list[tuple[float, float]],
         d2: list[tuple[float, float]],
@@ -496,35 +532,13 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
         if m == 0 and n == 0:
             return 0.0, 0
 
-        size = m + n
-        BIG = 1e18
-        C = np.full((size, size), BIG)
-
-        for i in range(m):
-            b1, dd1 = d1[i]
-            for j in range(n):
-                b2, dd2 = d2[j]
-                C[i, j] = max(abs(b1 - b2), abs(dd1 - dd2))
-
-        # Match d1 points to the diagonal.
-        for i in range(m):
-            b1, dd1 = d1[i]
-            C[i, n + i] = (dd1 - b1) / 2.0
-        # Match d2 points to the diagonal.
-        for j in range(n):
-            b2, dd2 = d2[j]
-            C[m + j, j] = (dd2 - b2) / 2.0
-        # Diagonal-to-diagonal pairings are free.
-        for j in range(n):
-            for i in range(m):
-                C[m + j, n + i] = 0.0
-
+        C = TDATool._bd_cost_matrix(d1, d2)
         row_ind, col_ind = lsa(C)
         dist = 0.0
         matched = 0
         for r, c in zip(row_ind, col_ind):
             cost = C[r, c]
-            if cost >= BIG:
+            if cost >= _BD_BIG:
                 continue
             if cost > dist:
                 dist = float(cost)
@@ -533,6 +547,21 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
         return dist, matched
 
     # ── persistence landscape ─────────────────────────────────────────
+
+    @staticmethod
+    def _landscape_tents(
+        xs: np.ndarray, finite: list[tuple[float, float]], k: int, res: int
+    ) -> list[list[float]]:
+        """Stack tent functions, sort each column descending, take top-k rows."""
+        tents = [np.maximum(np.minimum(xs - b, d - xs), 0.0) for b, d in finite]
+        tent_matrix = -np.sort(-np.array(tents), axis=0)  # (n_tents, res)
+        landscapes: list[list[float]] = []
+        for i in range(k):
+            if i < tent_matrix.shape[0]:
+                landscapes.append(tent_matrix[i].tolist())
+            else:
+                landscapes.append([0.0] * res)
+        return landscapes
 
     def _landscape(self, args: TDAToolInput) -> ToolResult:
         if not args.diagram:
@@ -566,20 +595,7 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
         xs = np.linspace(x_min, x_max, res)
 
         # Each (b, d) pair is a tent: 0 at b, peak (d-b)/2 at (b+d)/2, 0 at d.
-        tents = []
-        for b, d in finite:
-            tent = np.minimum(xs - b, d - xs)
-            tents.append(np.maximum(tent, 0.0))
-        tent_matrix = np.array(tents)  # (n_tents, res)
-
-        # Sort each column descending so row i holds the i-th largest value.
-        tent_matrix = -np.sort(-tent_matrix, axis=0)
-        landscapes: list[list[float]] = []
-        for i in range(k):
-            if i < tent_matrix.shape[0]:
-                landscapes.append(tent_matrix[i].tolist())
-            else:
-                landscapes.append([0.0] * res)
+        landscapes = self._landscape_tents(xs, finite, k, res)
 
         return ToolResult(
             data={
@@ -593,45 +609,25 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
 
     # ── energy landscape topology ─────────────────────────────────────
 
-    def _energy_landscape_topology(self, args: TDAToolInput) -> ToolResult:
-        if not args.energies or not args.structures:
-            return ToolResult(
-                data=None,
-                success=False,
-                error="energies and structures are required.",
-            )
-        energies = np.asarray(args.energies, dtype=float)
-        structs = np.asarray(args.structures, dtype=float)
-        n = int(len(energies))
-        if structs.shape[0] != n:
-            return ToolResult(
-                data=None,
-                success=False,
-                error="energies and structures must have the same length.",
-            )
-        if n == 0:
-            return ToolResult(
-                data=None, success=False, error="No structures provided."
-            )
-
-        from scipy.sparse import csr_matrix
-        from scipy.sparse.csgraph import connected_components
-        from scipy.spatial.distance import pdist, squareform
-
-        e_diff = squareform(pdist(energies.reshape(-1, 1))) if n > 1 else np.zeros((1, 1))
-        d_mat = squareform(pdist(structs)) if n > 1 else np.zeros((1, 1))
-
-        # Energy cutoff: user-supplied, otherwise the median pairwise gap so
-        # roughly half the structure pairs are within reach.
-        if args.threshold is None:
+    @staticmethod
+    def _elt_thresholds(
+        e_diff: np.ndarray, d_mat: np.ndarray, n: int, threshold: float | None
+    ) -> tuple[float, float]:
+        """Energy cutoff (user or median gap) and spatial cutoff (always median)."""
+        if threshold is None:
             off = e_diff[np.triu_indices(n, 1)]
             e_thr = float(np.percentile(off, 50)) if off.size else 0.0
         else:
-            e_thr = float(args.threshold)
-        # Spatial cutoff is always auto — median pairwise distance.
+            e_thr = float(threshold)
         off_d = d_mat[np.triu_indices(n, 1)]
         d_thr = float(np.percentile(off_d, 50)) if off_d.size else 0.0
+        return e_thr, d_thr
 
+    @staticmethod
+    def _elt_edges(
+        n: int, e_diff: np.ndarray, d_mat: np.ndarray, e_thr: float, d_thr: float
+    ) -> tuple[list[int], list[int], list[float]]:
+        """Weighted bidirectional edge list for pairs within both cutoffs."""
         rows: list[int] = []
         cols: list[int] = []
         weights: list[float] = []
@@ -642,12 +638,38 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
                     rows.extend([i, j])
                     cols.extend([j, i])
                     weights.extend([w, w])
+        return rows, cols, weights
 
-        adj = csr_matrix(
-            (weights, (rows, cols)), shape=(n, n)
-        ) if rows else csr_matrix((n, n))
+    @staticmethod
+    def _elt_input(
+        args: TDAToolInput,
+    ) -> tuple[np.ndarray | None, np.ndarray | None, int, str | None]:
+        """Validate energies/structures; return (energies, structs, n, error)."""
+        if not args.energies or not args.structures:
+            return None, None, 0, "energies and structures are required."
+        energies = np.asarray(args.energies, dtype=float)
+        structs = np.asarray(args.structures, dtype=float)
+        n = int(len(energies))
+        if structs.shape[0] != n:
+            return None, None, 0, "energies and structures must have the same length."
+        if n == 0:
+            return None, None, 0, "No structures provided."
+        return energies, structs, n, None
+
+    @staticmethod
+    def _elt_graph(
+        rows: list[int], cols: list[int], weights: list[float], n: int
+    ) -> dict[str, Any]:
+        """Connected components / cycle count / edge list summary."""
+        from scipy.sparse import csr_matrix
+        from scipy.sparse.csgraph import connected_components
+
+        adj = (
+            csr_matrix((weights, (rows, cols)), shape=(n, n))
+            if rows
+            else csr_matrix((n, n))
+        )
         n_comp, labels = connected_components(csgraph=adj, directed=False)
-
         sizes = [int(np.sum(labels == c)) for c in range(n_comp)]
         sizes.sort(reverse=True)
 
@@ -655,61 +677,70 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
         # Betti-1 = E - V + C (independent cycles via spanning-tree edge count).
         betti1 = n_edges - n + n_comp
         density = (2.0 * n_edges) / (n * (n - 1)) if n > 1 else 0.0
-
         # Dense transition matrix only for modest graphs; otherwise ship the
         # edge list so we don't balloon the payload.
         trans = adj.toarray().tolist() if n <= 80 else None
-        edges = [
-            [rows[2 * t], cols[2 * t], weights[2 * t]] for t in range(n_edges)
-        ]
+        edges = [[rows[2 * t], cols[2 * t], weights[2 * t]] for t in range(n_edges)]
+        return {
+            "n_basins": int(n_comp),
+            "n_pathways": int(betti1),
+            "n_edges": int(n_edges),
+            "connectivity": float(density),
+            "basin_sizes": sizes,
+            "transition_matrix": trans,
+            "edges": edges,
+        }
 
+    def _energy_landscape_topology(self, args: TDAToolInput) -> ToolResult:
+        energies, structs, n, error = self._elt_input(args)
+        if error is not None:
+            return ToolResult(data=None, success=False, error=error)
+
+        from scipy.spatial.distance import pdist, squareform
+
+        e_diff = (
+            squareform(pdist(energies.reshape(-1, 1)))  # type: ignore[union-attr]
+            if n > 1
+            else np.zeros((1, 1))
+        )
+        d_mat = (
+            squareform(pdist(structs)) if n > 1 else np.zeros((1, 1))  # type: ignore[arg-type]
+        )
+
+        # Energy cutoff: user-supplied, otherwise the median pairwise gap so
+        # roughly half the structure pairs are within reach. Spatial cutoff
+        # is always auto — median pairwise distance.
+        e_thr, d_thr = self._elt_thresholds(e_diff, d_mat, n, args.threshold)
+        rows, cols, weights = self._elt_edges(n, e_diff, d_mat, e_thr, d_thr)
+
+        graph = self._elt_graph(rows, cols, weights, n)
         return ToolResult(
             data={
                 "action": "energy_landscape_topology",
                 "n_structures": n,
                 "energy_threshold": e_thr,
                 "spatial_threshold": d_thr,
-                "n_basins": int(n_comp),
-                "n_pathways": int(betti1),
-                "n_edges": int(n_edges),
-                "connectivity": float(density),
-                "basin_sizes": sizes,
-                "transition_matrix": trans,
-                "edges": edges,
+                **graph,
             },
             success=True,
         )
 
     # ── structure topology ────────────────────────────────────────────
 
-    def _structure_topology(self, args: TDAToolInput) -> ToolResult:
-        if not args.structure:
-            return ToolResult(
-                data=None, success=False, error="structure is required."
-            )
-        try:
-            positions, lattice = self._parse_structure(args.structure)
-        except Exception as e:
-            return ToolResult(
-                data=None, success=False, error=f"Failed to parse structure: {e}"
-            )
-
-        n = int(len(positions))
-        if n == 0:
-            return ToolResult(
-                data=None, success=False, error="Structure has no sites."
-            )
-
-        D = self._pbc_distance_matrix(positions, lattice)
-        min_lat = float(np.min(np.linalg.norm(lattice, axis=1)))
-
+    @staticmethod
+    def _st_radii(args: TDAToolInput, lattice: np.ndarray) -> list[float]:
+        """User radii, or a sweep out to half the shortest cell vector."""
         if args.radii:
-            radii = sorted(float(r) for r in args.radii)
-        else:
-            # Sweep from short bonds out to roughly half the shortest cell
-            # vector — beyond that the minimum-image convention double counts.
-            radii = [float(r) for r in np.linspace(0.3, 0.5, 8) * min_lat]
+            return sorted(float(r) for r in args.radii)
+        # Beyond half the shortest cell vector the minimum-image convention
+        # double counts.
+        min_lat = float(np.min(np.linalg.norm(lattice, axis=1)))
+        return [float(r) for r in np.linspace(0.3, 0.5, 8) * min_lat]
 
+    def _st_betti_series(
+        self, D: np.ndarray, radii: list[float], n: int
+    ) -> tuple[list[int], list[int], list[int]]:
+        """Betti numbers across the radius filtration."""
         betti0_list: list[int] = []
         betti1_list: list[int] = []
         betti2_list: list[int] = []
@@ -724,6 +755,25 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
             betti0_list.append(b0)
             betti1_list.append(b1 if b1 is not None else 0)
             betti2_list.append(b2 if b2 is not None else 0)
+        return betti0_list, betti1_list, betti2_list
+
+    def _structure_topology(self, args: TDAToolInput) -> ToolResult:
+        if not args.structure:
+            return ToolResult(data=None, success=False, error="structure is required.")
+        try:
+            positions, lattice = self._parse_structure(args.structure)
+        except Exception as e:
+            return ToolResult(
+                data=None, success=False, error=f"Failed to parse structure: {e}"
+            )
+
+        n = int(len(positions))
+        if n == 0:
+            return ToolResult(data=None, success=False, error="Structure has no sites.")
+
+        D = self._pbc_distance_matrix(positions, lattice)
+        radii = self._st_radii(args, lattice)
+        betti0_list, betti1_list, betti2_list = self._st_betti_series(D, radii, n)
 
         bars0 = self._betti_to_bars(radii, betti0_list, 0)
         bars1 = self._betti_to_bars(radii, betti1_list, 1)
@@ -775,9 +825,7 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
         return betti
 
     @staticmethod
-    def _betti_to_bars(
-        radii: list[float], betti: list[int], dim: int
-    ) -> list[dict]:
+    def _betti_to_bars(radii: list[float], betti: list[int], dim: int) -> list[dict]:
         """Turn a Betti-number sequence across a filtration into bars.
 
         A rise in Betti means new features are born; a fall means features die.
@@ -823,6 +871,80 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
         return len(pivots)
 
     @staticmethod
+    def _fc_edges(
+        adj: list[set[int]], n: int
+    ) -> tuple[list[tuple[int, int]], dict[tuple[int, int], int]]:
+        """C1: undirected edges and their index map."""
+        edges: list[tuple[int, int]] = []
+        edge_index: dict[tuple[int, int], int] = {}
+        for i in range(n):
+            for j in adj[i]:
+                if j > i:
+                    edge_index[(i, j)] = len(edges)
+                    edges.append((i, j))
+        return edges, edge_index
+
+    @staticmethod
+    def _fc_triangles(
+        adj: list[set[int]], edges: list[tuple[int, int]]
+    ) -> tuple[list[tuple[int, int, int]], dict[tuple[int, int, int], int], bool]:
+        """C2: 3-cliques up to a safety budget; flags whether enumeration finished."""
+        tri_budget = 50000
+        triangles: list[tuple[int, int, int]] = []
+        tri_index: dict[tuple[int, int, int], int] = {}
+        tri_complete = True
+        for i, j in edges:
+            common = adj[i] & adj[j]
+            for k in common:
+                if k > j:
+                    tri_index[(i, j, k)] = len(triangles)
+                    triangles.append((i, j, k))
+                    if len(triangles) >= tri_budget:
+                        tri_complete = False
+                        break
+            if not tri_complete:
+                break
+        return triangles, tri_index, tri_complete
+
+    @staticmethod
+    def _fc_tetrahedra(
+        adj: list[set[int]], triangles: list[tuple[int, int, int]], n: int
+    ) -> tuple[list[tuple[int, int, int, int]], bool]:
+        """C3: 4-cliques — only when triangles complete and n is small enough."""
+        tetra_budget = 5000
+        tetra: list[tuple[int, int, int, int]] = []
+        tetra_complete = True
+        if n <= 50:
+            for i, j, k in triangles:
+                common = adj[i] & adj[j] & adj[k]
+                for a in common:
+                    if a > k:
+                        tetra.append((i, j, k, a))
+                        if len(tetra) >= tetra_budget:
+                            tetra_complete = False
+                            break
+                if not tetra_complete:
+                    break
+        return tetra, tetra_complete
+
+    @staticmethod
+    def _fc_tetra_cols(
+        tetra: list[tuple[int, int, int, int]],
+        tri_index: dict[tuple[int, int, int], int],
+    ) -> list[int]:
+        """Boundary columns of tetrahedra, skipping incomplete face sets."""
+        cols: list[int] = []
+        for i, j, k, a in tetra:
+            f1 = tri_index.get((i, j, k))
+            f2 = tri_index.get((i, j, a))
+            f3 = tri_index.get((i, k, a))
+            f4 = tri_index.get((j, k, a))
+            if f1 is None or f2 is None or f3 is None or f4 is None:
+                continue
+            cols.append((1 << f1) | (1 << f2) | (1 << f3) | (1 << f4))
+        return cols
+
+    @staticmethod
     def _flag_complex_betti(
         adj: list[set[int]], max_dim: int = 3
     ) -> tuple[int, int | None, int | None]:
@@ -837,38 +959,13 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
         if n == 0:
             return 0, 0, 0
 
-        # C1: edges
-        edges: list[tuple[int, int]] = []
-        edge_index: dict[tuple[int, int], int] = {}
-        for i in range(n):
-            for j in adj[i]:
-                if j > i:
-                    edge_index[(i, j)] = len(edges)
-                    edges.append((i, j))
-
-        d1_cols = [(1 << i) | (1 << j) for (i, j) in edges]
-        rank_d1 = TDATool._gf2_rank(d1_cols)
+        edges, edge_index = TDATool._fc_edges(adj, n)
+        rank_d1 = TDATool._gf2_rank([(1 << i) | (1 << j) for (i, j) in edges])
         betti0 = n - rank_d1
         if max_dim < 1:
             return betti0, 0, 0
 
-        # C2: triangles (3-cliques)
-        tri_budget = 50000
-        triangles: list[tuple[int, int, int]] = []
-        tri_index: dict[tuple[int, int, int], int] = {}
-        tri_complete = True
-        for (i, j) in edges:
-            common = adj[i] & adj[j]
-            for k in common:
-                if k > j:
-                    tri_index[(i, j, k)] = len(triangles)
-                    triangles.append((i, j, k))
-                    if len(triangles) >= tri_budget:
-                        tri_complete = False
-                        break
-            if not tri_complete:
-                break
-
+        triangles, tri_index, tri_complete = TDATool._fc_triangles(adj, edges)
         d2_cols = [
             (1 << edge_index[(i, j)])
             | (1 << edge_index[(i, k)])
@@ -880,33 +977,8 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
         if max_dim < 2 or not tri_complete:
             return betti0, betti1, None
 
-        # C3: tetrahedra (4-cliques) — only when triangles are complete and
-        # the system is small enough that 4-cliques stay tractable.
-        tetra_budget = 5000
-        tetra: list[tuple[int, int, int, int]] = []
-        tetra_complete = True
-        if n <= 50:
-            for (i, j, k) in triangles:
-                common = adj[i] & adj[j] & adj[k]
-                for a in common:
-                    if a > k:
-                        tetra.append((i, j, k, a))
-                        if len(tetra) >= tetra_budget:
-                            tetra_complete = False
-                            break
-                if not tetra_complete:
-                    break
-
-        d3_cols: list[int] = []
-        for (i, j, k, a) in tetra:
-            f1 = tri_index.get((i, j, k))
-            f2 = tri_index.get((i, j, a))
-            f3 = tri_index.get((i, k, a))
-            f4 = tri_index.get((j, k, a))
-            if f1 is None or f2 is None or f3 is None or f4 is None:
-                continue
-            d3_cols.append((1 << f1) | (1 << f2) | (1 << f3) | (1 << f4))
-        rank_d3 = TDATool._gf2_rank(d3_cols)
+        tetra, tetra_complete = TDATool._fc_tetrahedra(adj, triangles, n)
+        rank_d3 = TDATool._gf2_rank(TDATool._fc_tetra_cols(tetra, tri_index))
         betti2 = len(triangles) - rank_d2 - rank_d3
         if not tetra_complete:
             return betti0, betti1, None

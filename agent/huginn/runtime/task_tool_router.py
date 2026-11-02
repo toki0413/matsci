@@ -54,30 +54,79 @@ CORE_TOOL_NAMES: list[str] = [
 
 TOOL_CATEGORIES: dict[str, list[str]] = {
     # 第一性原理 (DFT)
-    "vasp": ["vasp_tool", "structure_tool", "file_read_tool", "file_write_tool",
-             "analysis_tool", "literature_tool"],
-    "qe": ["qe_tool", "structure_tool", "file_read_tool", "file_write_tool",
-           "analysis_tool", "literature_tool"],
-    "cp2k": ["cp2k_tool", "structure_tool", "file_read_tool", "file_write_tool",
-             "analysis_tool", "literature_tool"],
-    "gaussian": ["gaussian_tool", "structure_tool", "file_read_tool",
-                 "file_write_tool", "analysis_tool", "literature_tool"],
-    "orca": ["orca_tool", "structure_tool", "file_read_tool", "file_write_tool",
-             "analysis_tool", "literature_tool"],
+    "vasp": [
+        "vasp_tool",
+        "structure_tool",
+        "file_read_tool",
+        "file_write_tool",
+        "analysis_tool",
+        "literature_tool",
+    ],
+    "qe": [
+        "qe_tool",
+        "structure_tool",
+        "file_read_tool",
+        "file_write_tool",
+        "analysis_tool",
+        "literature_tool",
+    ],
+    "cp2k": [
+        "cp2k_tool",
+        "structure_tool",
+        "file_read_tool",
+        "file_write_tool",
+        "analysis_tool",
+        "literature_tool",
+    ],
+    "gaussian": [
+        "gaussian_tool",
+        "structure_tool",
+        "file_read_tool",
+        "file_write_tool",
+        "analysis_tool",
+        "literature_tool",
+    ],
+    "orca": [
+        "orca_tool",
+        "structure_tool",
+        "file_read_tool",
+        "file_write_tool",
+        "analysis_tool",
+        "literature_tool",
+    ],
     # 分子动力学
-    "lammps": ["lammps_tool", "structure_tool", "file_read_tool",
-               "file_write_tool", "analysis_tool"],
-    "gromacs": ["gromacs_tool", "structure_tool", "file_read_tool",
-                "file_write_tool", "analysis_tool"],
+    "lammps": [
+        "lammps_tool",
+        "structure_tool",
+        "file_read_tool",
+        "file_write_tool",
+        "analysis_tool",
+    ],
+    "gromacs": [
+        "gromacs_tool",
+        "structure_tool",
+        "file_read_tool",
+        "file_write_tool",
+        "analysis_tool",
+    ],
     # 有限元
-    "abaqus": ["abaqus_tool", "file_read_tool", "file_write_tool",
-               "analysis_tool"],
+    "abaqus": ["abaqus_tool", "file_read_tool", "file_write_tool", "analysis_tool"],
     # 机器学习势函数
-    "ml": ["ml_potential_tool", "structure_tool", "file_read_tool",
-           "file_write_tool", "analysis_tool", "literature_tool"],
+    "ml": [
+        "ml_potential_tool",
+        "structure_tool",
+        "file_read_tool",
+        "file_write_tool",
+        "analysis_tool",
+        "literature_tool",
+    ],
     # 通用分析 (无计算工具)
-    "analysis": ["analysis_tool", "file_read_tool", "literature_tool",
-                 "web_search_tool"],
+    "analysis": [
+        "analysis_tool",
+        "file_read_tool",
+        "literature_tool",
+        "web_search_tool",
+    ],
     # 通用文件操作
     "file": ["file_read_tool", "file_write_tool", "file_edit_tool"],
     # 文献检索
@@ -103,15 +152,12 @@ TASK_KEYWORD_MAP: dict[str, str] = {
     "pbe": "vasp",
     "hse": "vasp",
     "encut": "vasp",
-
     # Quantum ESPRESSO
     "quantum espresso": "qe",
     "qe": "qe",
     "pwscf": "qe",
-
     # CP2K
     "cp2k": "cp2k",
-
     # Gaussian / ORCA (量子化学)
     "gaussian": "gaussian",
     "高斯": "gaussian",
@@ -119,7 +165,6 @@ TASK_KEYWORD_MAP: dict[str, str] = {
     "quantum chemistry": "gaussian",
     "量子化学": "gaussian",
     "dftb": "gaussian",
-
     # LAMMPS / MD
     "lammps": "lammps",
     "molecular dynamics": "lammps",
@@ -133,12 +178,10 @@ TASK_KEYWORD_MAP: dict[str, str] = {
     "msd": "lammps",
     "diffusion": "lammps",
     "扩散": "lammps",
-
     # GROMACS (生物 MD)
     "gromacs": "gromacs",
     "force field": "gromacs",
     "力场": "gromacs",
-
     # Abaqus (FEA)
     "abaqus": "abaqus",
     "fea": "abaqus",
@@ -147,7 +190,6 @@ TASK_KEYWORD_MAP: dict[str, str] = {
     "strain": "abaqus",
     "应力": "abaqus",
     "应变": "abaqus",
-
     # ML potential
     "ml potential": "ml",
     "machine learning potential": "ml",
@@ -156,7 +198,6 @@ TASK_KEYWORD_MAP: dict[str, str] = {
     "nnp": "ml",
     "graph neural network": "ml",
     "机器学习势": "ml",
-
     # 分析
     "analyze": "analysis",
     "analysis": "analysis",
@@ -164,13 +205,11 @@ TASK_KEYWORD_MAP: dict[str, str] = {
     "plot": "analysis",
     "可视化": "analysis",
     "visualize": "analysis",
-
     # 文件
     "read file": "file",
     "write file": "file",
     "edit file": "file",
     "文件": "file",
-
     # 文献
     "search": "web",
     "检索": "web",
@@ -193,12 +232,47 @@ def categorize_tool(tool_name: str) -> str:
     """
     name_lower = tool_name.lower()
     # 精确前缀匹配
-    for prefix in ("vasp", "lammps", "gromacs", "gaussian", "orca",
-                    "qe", "cp2k", "abaqus", "ml", "analysis",
-                    "structure", "file", "literature", "web_search"):
+    for prefix in (
+        "vasp",
+        "lammps",
+        "gromacs",
+        "gaussian",
+        "orca",
+        "qe",
+        "cp2k",
+        "abaqus",
+        "ml",
+        "analysis",
+        "structure",
+        "file",
+        "literature",
+        "web_search",
+    ):
         if name_lower.startswith(prefix) or name_lower == prefix:
             return prefix if prefix != "web_search" else "web"
     return "unknown"
+
+
+def _match_categories(msg_lower: str) -> set[str]:
+    """找所有命中的 category."""
+    matched_categories: set[str] = set()
+    for keyword, category in TASK_KEYWORD_MAP.items():
+        # " md " 这种带空格的关键词特殊处理 (避免 match "md5" / "cmd")
+        if keyword.startswith(" ") and keyword.endswith(" "):
+            if keyword in f" {msg_lower} ":
+                matched_categories.add(category)
+        elif keyword in msg_lower:
+            matched_categories.add(category)
+    return matched_categories
+
+
+def _union_tools(matched_categories: set[str]) -> set[str]:
+    """union 工具集."""
+    routed_set: set[str] = set()
+    for category in matched_categories:
+        tools = TOOL_CATEGORIES.get(category, [])
+        routed_set.update(tools)
+    return routed_set
 
 
 def route_tools(
@@ -224,14 +298,7 @@ def route_tools(
     msg_lower = task_message.lower()
 
     # 1. 找所有命中的 category
-    matched_categories: set[str] = set()
-    for keyword, category in TASK_KEYWORD_MAP.items():
-        # " md " 这种带空格的关键词特殊处理 (避免 match "md5" / "cmd")
-        if keyword.startswith(" ") and keyword.endswith(" "):
-            if keyword in f" {msg_lower} ":
-                matched_categories.add(category)
-        elif keyword in msg_lower:
-            matched_categories.add(category)
+    matched_categories = _match_categories(msg_lower)
 
     if not matched_categories:
         # 无命中 → 空列表, caller fallback
@@ -239,10 +306,7 @@ def route_tools(
         return []
 
     # 2. union 工具集
-    routed_set: set[str] = set()
-    for category in matched_categories:
-        tools = TOOL_CATEGORIES.get(category, [])
-        routed_set.update(tools)
+    routed_set = _union_tools(matched_categories)
 
     # 3. 跟 available 取交集 (静默跳过不存在的工具)
     available_set = set(available_tool_names)
@@ -250,7 +314,9 @@ def route_tools(
 
     logger.debug(
         "task_tool_router: matched categories=%s, routed %d/%d tools",
-        matched_categories, len(routed), len(available_tool_names),
+        matched_categories,
+        len(routed),
+        len(available_tool_names),
     )
     return routed
 
@@ -317,11 +383,24 @@ def compute_effective_subset(
 if __name__ == "__main__":
     # 模拟 ToolRegistry 里实际可用的工具
     AVAILABLE = [
-        "vasp_tool", "lammps_tool", "qe_tool", "cp2k_tool", "gromacs_tool",
-        "gaussian_tool", "orca_tool", "abaqus_tool", "ml_potential_tool",
-        "structure_tool", "file_read_tool", "file_write_tool", "file_edit_tool",
-        "analysis_tool", "literature_tool", "web_search_tool",
-        "diagnose_tool", "knowledge_tool",  # 杂项
+        "vasp_tool",
+        "lammps_tool",
+        "qe_tool",
+        "cp2k_tool",
+        "gromacs_tool",
+        "gaussian_tool",
+        "orca_tool",
+        "abaqus_tool",
+        "ml_potential_tool",
+        "structure_tool",
+        "file_read_tool",
+        "file_write_tool",
+        "file_edit_tool",
+        "analysis_tool",
+        "literature_tool",
+        "web_search_tool",
+        "diagnose_tool",
+        "knowledge_tool",  # 杂项
     ]
 
     # 1. 单关键词命中 — VASP
@@ -367,8 +446,9 @@ if __name__ == "__main__":
     routed = route_tools("vasp calc", ["vasp_tool", "structure_tool"])
     assert "qe_tool" not in routed, "不在 available 的工具应跳过"
     # available 只有 vasp_tool + structure_tool, 其他工具应被静默跳过
-    assert set(routed) == {"vasp_tool", "structure_tool"}, \
+    assert set(routed) == {"vasp_tool", "structure_tool"}, (
         f"应只保留 available 里的工具, got {routed}"
+    )
 
     # 8. 空 task → 空列表
     assert route_tools("", AVAILABLE) == []
@@ -425,7 +505,11 @@ if __name__ == "__main__":
 
     # 额外: TASK_KEYWORD_MAP 所有 category 都在 TOOL_CATEGORIES 里
     for kw, cat in TASK_KEYWORD_MAP.items():
-        assert cat in TOOL_CATEGORIES, f"keyword {kw} → category {cat} 不在 TOOL_CATEGORIES"
+        assert cat in TOOL_CATEGORIES, (
+            f"keyword {kw} → category {cat} 不在 TOOL_CATEGORIES"
+        )
 
-    print(f"task_tool_router selfcheck All passed "
-          f"({len(TOOL_CATEGORIES)} categories, {len(TASK_KEYWORD_MAP)} keywords)")
+    print(
+        f"task_tool_router selfcheck All passed "
+        f"({len(TOOL_CATEGORIES)} categories, {len(TASK_KEYWORD_MAP)} keywords)"
+    )

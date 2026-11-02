@@ -85,19 +85,39 @@ test.describe('accessibility — keyboard navigation', () => {
     // the tab-order check exercises the real focus chain.
     await expect(page.locator('textarea.flex-1')).toBeEnabled({ timeout: 30_000 });
 
-    for (let i = 0; i < 50; i++) {
+    // The composer sits after the backend-populated sidebar, so how many Tab
+    // presses it takes depends on live data (sessions, tools). A fixed budget
+    // of 50 lands exactly one element short once the sidebar grows past it and
+    // flakes the whole e2e job. Instead, walk the tab order until it cycles
+    // back to where it started: that covers however many focusables the live
+    // DOM currently has, with no magic number to outgrow.
+    const stops: string[] = [];
+    for (let i = 0; i < 500; i++) {
       await page.keyboard.press('Tab');
-      const focused = await page.evaluate(() => {
-        const el = document.activeElement;
-        return el ? el.tagName + '.' + el.className : '';
+      const state = await page.evaluate(() => {
+        const el = document.activeElement as HTMLElement | null;
+        if (!el || el === document.body) return { sig: 'BODY', composer: false };
+        // Identify the stop by its position in the tab order. Class names alone
+        // are not unique — the sidebar buttons all share `btn-ghost h-9 w-9`.
+        const selector =
+          'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), ' +
+          'select:not([disabled]), textarea:not([disabled]), ' +
+          '[tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
+        const index = Array.from(document.querySelectorAll(selector)).indexOf(el);
+        return {
+          sig: index >= 0 ? `${el.tagName}#${index}` : `other:${el.outerHTML.length}`,
+          composer: el.matches('textarea.flex-1'),
+        };
       });
-      if (focused.startsWith('TEXTAREA')) return;
+      if (state.composer) return; // reached the composer — keyboard accessible
+      // Wrapping back to the first stop means the whole order was covered.
+      if (stops.length > 0 && state.sig === stops[0]) break;
+      stops.push(state.sig);
     }
-    const focused = await page.evaluate(() => {
-      const el = document.activeElement;
-      return el ? `${el.tagName}(${el.className})` : 'none';
-    });
-    throw new Error(`Chat input not reachable via Tab. Last focused: ${focused}`);
+    throw new Error(
+      `Chat input not reachable via Tab after ${stops.length} stops. ` +
+        `Last focused: ${stops[stops.length - 1] ?? 'none'}`,
+    );
   });
 
   test('send button is keyboard-activatable', async ({ page }) => {

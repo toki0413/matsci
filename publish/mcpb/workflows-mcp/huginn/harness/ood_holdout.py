@@ -22,6 +22,7 @@ toggle: cfg.feature_flags.harness_ood_holdout (默认 off).
 跟 significance_gate 配合使用: significance 检验"是否真涨了",
 OOD 检验"是否泛化而非背题".
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -215,67 +216,27 @@ class OODHoldoutValidator:
         cand_holdout = [r for r in cand_records if r.is_holdout]
         base_holdout = [r for r in base_records if r.is_holdout]
 
-        if len(cand_train) < min_per_split:
-            return OODResult(
-                config_id=config_id,
-                passed=False,
-                reason=f"insufficient train samples: {len(cand_train)}/{min_per_split}",
-                train_n=len(cand_train),
-                holdout_n=len(cand_holdout),
-            )
-
-        if len(cand_holdout) < min_per_split:
-            return OODResult(
-                config_id=config_id,
-                passed=False,
-                reason=f"insufficient holdout samples: {len(cand_holdout)}/{min_per_split}",
-                train_n=len(cand_train),
-                holdout_n=len(cand_holdout),
-            )
-
-        if len(base_holdout) < min_per_split:
-            return OODResult(
-                config_id=config_id,
-                passed=False,
-                reason=(
-                    f"insufficient baseline holdout samples: "
-                    f"{len(base_holdout)}/{min_per_split}"
-                ),
-                train_n=len(cand_train),
-                holdout_n=len(cand_holdout),
-            )
+        insufficient = _insufficient_result(
+            config_id, cand_train, cand_holdout, base_holdout, min_per_split
+        )
+        if insufficient is not None:
+            return insufficient
 
         cand_train_median = self._median([r.score for r in cand_train])
         cand_holdout_median = self._median([r.score for r in cand_holdout])
         base_holdout_median = self._median([r.score for r in base_holdout])
 
-        # 退化 = (baseline - candidate) / baseline, 正值=退化
-        if base_holdout_median > 1e-12:
-            degradation = (
-                base_holdout_median - cand_holdout_median
-            ) / base_holdout_median
-        else:
-            degradation = 0.0 if cand_holdout_median >= 0 else 1.0
+        degradation = _holdout_degradation(base_holdout_median, cand_holdout_median)
 
-        passed = degradation <= tolerance
-        reason = (
-            f"holdout degradation {degradation:.1%} "
-            f"{'<=' if passed else '>'} tolerance {tolerance:.1%} "
-            f"(cand_holdout_med={cand_holdout_median:.3f} "
-            f"vs base_holdout_med={base_holdout_median:.3f})"
-        )
-
-        return OODResult(
-            config_id=config_id,
-            passed=passed,
-            reason=reason,
-            train_n=len(cand_train),
-            holdout_n=len(cand_holdout),
-            train_median=cand_train_median,
-            holdout_median=cand_holdout_median,
-            baseline_holdout_median=base_holdout_median,
-            degradation=degradation,
-            tolerance=tolerance,
+        return _build_ood_result(
+            config_id,
+            cand_train,
+            cand_holdout,
+            cand_train_median,
+            cand_holdout_median,
+            base_holdout_median,
+            degradation,
+            tolerance,
         )
 
     def clear(self, config_id: str | None = None) -> None:
@@ -307,6 +268,102 @@ class OODHoldoutValidator:
             }
 
 
+def _insufficient_result(
+    config_id: str,
+    cand_train: list[OutcomeRecord],
+    cand_holdout: list[OutcomeRecord],
+    base_holdout: list[OutcomeRecord],
+    min_per_split: int,
+) -> OODResult | None:
+    """样本不足时返回 fail 决策; 样本充足返回 None."""
+    if len(cand_train) < min_per_split:
+        return OODResult(
+            config_id=config_id,
+            passed=False,
+            reason=f"insufficient train samples: {len(cand_train)}/{min_per_split}",
+            train_n=len(cand_train),
+            holdout_n=len(cand_holdout),
+        )
+
+    if len(cand_holdout) < min_per_split:
+        return OODResult(
+            config_id=config_id,
+            passed=False,
+            reason=f"insufficient holdout samples: {len(cand_holdout)}/{min_per_split}",
+            train_n=len(cand_train),
+            holdout_n=len(cand_holdout),
+        )
+
+    if len(base_holdout) < min_per_split:
+        return OODResult(
+            config_id=config_id,
+            passed=False,
+            reason=(
+                f"insufficient baseline holdout samples: "
+                f"{len(base_holdout)}/{min_per_split}"
+            ),
+            train_n=len(cand_train),
+            holdout_n=len(cand_holdout),
+        )
+    return None
+
+
+def _holdout_degradation(
+    base_holdout_median: float, cand_holdout_median: float
+) -> float:
+    """计算 holdout 退化率."""
+    # 退化 = (baseline - candidate) / baseline, 正值=退化
+    if base_holdout_median > 1e-12:
+        degradation = (base_holdout_median - cand_holdout_median) / base_holdout_median
+    else:
+        degradation = 0.0 if cand_holdout_median >= 0 else 1.0
+    return degradation
+
+
+def _holdout_reason(
+    degradation: float,
+    passed: bool,
+    tolerance: float,
+    cand_holdout_median: float,
+    base_holdout_median: float,
+) -> str:
+    """生成 OOD 判定 reason 文案."""
+    return (
+        f"holdout degradation {degradation:.1%} "
+        f"{'<=' if passed else '>'} tolerance {tolerance:.1%} "
+        f"(cand_holdout_med={cand_holdout_median:.3f} "
+        f"vs base_holdout_med={base_holdout_median:.3f})"
+    )
+
+
+def _build_ood_result(
+    config_id: str,
+    cand_train: list[OutcomeRecord],
+    cand_holdout: list[OutcomeRecord],
+    cand_train_median: float,
+    cand_holdout_median: float,
+    base_holdout_median: float,
+    degradation: float,
+    tolerance: float,
+) -> OODResult:
+    """组装 OODResult (含 passed / reason 判定)."""
+    passed = degradation <= tolerance
+    return OODResult(
+        config_id=config_id,
+        passed=passed,
+        reason=_holdout_reason(
+            degradation, passed, tolerance, cand_holdout_median, base_holdout_median
+        ),
+        train_n=len(cand_train),
+        holdout_n=len(cand_holdout),
+        train_median=cand_train_median,
+        holdout_median=cand_holdout_median,
+        baseline_holdout_median=base_holdout_median,
+        degradation=degradation,
+        tolerance=tolerance,
+    )
+
+
 def _selfcheck() -> None:
     """H6 selfcheck: 分桶 + 记录 + OOD 验证 + 持久化."""
     import shutil
@@ -319,6 +376,23 @@ def _selfcheck() -> None:
     ood.OODHoldoutValidator._instance = None
 
     val = ood.OODHoldoutValidator.get_instance()
+
+    _selfcheck_split_and_validation(val)
+
+    # 5. 持久化 reload
+    ood.OODHoldoutValidator._instance = None
+    val2 = ood.OODHoldoutValidator.get_instance()
+    _selfcheck_persistence(val2)
+
+    shutil.rmtree(tmp, ignore_errors=True)
+    del os.environ["HUGINN_CACHE_DIR"]
+    ood.OODHoldoutValidator._instance = None
+    print("\nH6 ood_holdout selfcheck OK (6/6)")
+
+
+def _selfcheck_split_basic(val: Any) -> None:
+    """selfcheck 1-2: 确定性分桶 / 样本不足."""
+    import huginn.harness.ood_holdout as ood
 
     # 1. 确定性分桶: 同一 task_id 永远同一桶
     t1_holdout = ood._is_holdout("task_001")
@@ -336,10 +410,17 @@ def _selfcheck() -> None:
     assert "insufficient" in r.reason, r.reason
     print(f"2. insufficient samples → fail OK ({r.reason})")
 
+
+def _selfcheck_good_candidate(val: Any) -> None:
+    """selfcheck 3: candidate 在 holdout 上不退化 → 通过."""
+    import huginn.harness.ood_holdout as ood
+
     # 3. 构造完整场景: baseline + candidate, candidate 在 holdout 上不退化
     # 先记录 baseline 在 10 个任务上的得分
     for i in range(10):
-        val.record_outcome(ood.OODHoldoutValidator._BASELINE_ID, f"base_task_{i}", score=0.5)
+        val.record_outcome(
+            ood.OODHoldoutValidator._BASELINE_ID, f"base_task_{i}", score=0.5
+        )
     # candidate 在同样 10 个任务上得分 0.6 (train + holdout 都好)
     for i in range(10):
         val.record_outcome("cfg_good", f"base_task_{i}", score=0.6)
@@ -352,10 +433,21 @@ def _selfcheck() -> None:
         f"(degradation={r.degradation:.1%}, holdout_med={r.holdout_median:.2f}) OK"
     )
 
+
+def _selfcheck_overfit_candidate(val: Any) -> None:
+    """selfcheck 4: 背题补丁 candidate 在 holdout 上退化 → 不通过."""
+    import huginn.harness.ood_holdout as ood
+
     # 4. 背题补丁: candidate 在 train 上好, holdout 上差
     # 用不同 task_id 让 train/holdout 分开
-    train_tasks = [f"ood_train_{i:03d}" for i in range(20) if not ood._is_holdout(f"ood_train_{i:03d}")][:6]
-    holdout_tasks = [f"ood_train_{i:03d}" for i in range(20) if ood._is_holdout(f"ood_train_{i:03d}")][:6]
+    train_tasks = [
+        f"ood_train_{i:03d}"
+        for i in range(20)
+        if not ood._is_holdout(f"ood_train_{i:03d}")
+    ][:6]
+    holdout_tasks = [
+        f"ood_train_{i:03d}" for i in range(20) if ood._is_holdout(f"ood_train_{i:03d}")
+    ][:6]
 
     # baseline 在 train 和 holdout 上都是 0.5
     for t in train_tasks + holdout_tasks:
@@ -376,24 +468,30 @@ def _selfcheck() -> None:
         f"degradation={r.degradation:.1%}) OK"
     )
 
-    # 5. 持久化 reload
-    ood.OODHoldoutValidator._instance = None
-    val2 = ood.OODHoldoutValidator.get_instance()
+
+def _selfcheck_split_and_validation(val: Any) -> None:
+    """selfcheck 1-4: 确定性分桶 / 样本不足 / 好候选 / 背题候选."""
+    _selfcheck_split_basic(val)
+    _selfcheck_good_candidate(val)
+    _selfcheck_overfit_candidate(val)
+
+
+def _selfcheck_persistence(val2: Any) -> None:
+    """selfcheck 5-6: 持久化 reload / clear."""
+    import huginn.harness.ood_holdout as ood
+
     recs = val2.get_records("cfg_good")
     assert len(recs) == 10, f"persisted wrong: {len(recs)}"
     base_recs = val2.get_records(ood.OODHoldoutValidator._BASELINE_ID)
     assert len(base_recs) >= 10, f"baseline persisted wrong: {len(base_recs)}"
-    print(f"5. persistence reload OK (cfg_good: {len(recs)}, baseline: {len(base_recs)})")
+    print(
+        f"5. persistence reload OK (cfg_good: {len(recs)}, baseline: {len(base_recs)})"
+    )
 
     # 6. clear
     val2.clear("cfg_overfit")
     assert len(val2.get_records("cfg_overfit")) == 0, "clear failed"
     print("6. clear OK")
-
-    shutil.rmtree(tmp, ignore_errors=True)
-    del os.environ["HUGINN_CACHE_DIR"]
-    ood.OODHoldoutValidator._instance = None
-    print("\nH6 ood_holdout selfcheck OK (6/6)")
 
 
 if __name__ == "__main__":

@@ -127,17 +127,15 @@ class ExportManager:
         records 每条 = 一个 chunk (含正文/元数据/检索命中); summary 为
         文档/chunk 计数、按领域与来源类型分布、检索命中 Top 等.
         """
-        from datetime import datetime
-
         try:
             from huginn.knowledge.store import EMBED_MODEL, KnowledgeBase
         except Exception:
-            return [], self._empty_summary()
+            return [], ExportManager._empty_summary()
 
         try:
             kb = KnowledgeBase(self.workspace / ".huginn_kb")
         except Exception:
-            return [], self._empty_summary()
+            return [], ExportManager._empty_summary()
 
         hit_counts: dict[str, int] = {}
         with contextlib.suppress(Exception):
@@ -146,12 +144,34 @@ class ExportManager:
         try:
             data = kb.collection.get(include=["documents", "metadatas"])
         except Exception:
-            return [], self._empty_summary()
+            return [], ExportManager._empty_summary()
 
         ids = data.get("ids") or []
         docs = data.get("documents") or []
         metas = data.get("metadatas") or []
 
+        records, by_domain, by_source, seen_docs = ExportManager._build_chunk_records(
+            self, ids, docs, metas, hit_counts
+        )
+        summary = ExportManager._full_summary(
+            self,
+            seen_docs=seen_docs,
+            ids=ids,
+            by_domain=by_domain,
+            by_source=by_source,
+            hit_counts=hit_counts,
+            embed_model=EMBED_MODEL,
+        )
+        return records, summary
+
+    def _build_chunk_records(
+        self,
+        ids: list[Any],
+        docs: list[Any],
+        metas: list[Any],
+        hit_counts: dict[str, int],
+    ) -> tuple[list[dict[str, Any]], dict[str, int], dict[str, int], set[str]]:
+        """逐 chunk 构造记录, 同时累计领域/来源分布与文档集合."""
         records: list[dict[str, Any]] = []
         by_domain: dict[str, int] = {}
         by_source: dict[str, int] = {}
@@ -170,7 +190,7 @@ class ExportManager:
             if not isinstance(tags, list):
                 tags = []
             by_domain[domain] = by_domain.get(domain, 0) + 1
-            src = self._source_type(filename)
+            src = ExportManager._source_type(filename)
             by_source[src] = by_source.get(src, 0) + 1
             if doc_id:
                 seen_docs.add(doc_id)
@@ -188,6 +208,20 @@ class ExportManager:
                     "text": docs[i] if i < len(docs) else "",
                 }
             )
+        return records, by_domain, by_source, seen_docs
+
+    def _full_summary(
+        self,
+        *,
+        seen_docs: set[str],
+        ids: list[Any],
+        by_domain: dict[str, int],
+        by_source: dict[str, int],
+        hit_counts: dict[str, int],
+        embed_model: str,
+    ) -> dict[str, Any]:
+        """汇总文档/chunk 计数、分布与检索命中 Top."""
+        from datetime import datetime
 
         # 检索命中 Top (按 doc 聚合)
         top_retrieved = sorted(
@@ -202,10 +236,10 @@ class ExportManager:
             "by_source_type": by_source,
             "total_retrieval_hits": sum(hit_counts.values()),
             "top_retrieved": top_retrieved,
-            "embedding_model": EMBED_MODEL,
+            "embedding_model": embed_model,
             "exported_at": datetime.now().isoformat(timespec="seconds"),
         }
-        return records, summary
+        return summary
 
     @staticmethod
     def _empty_summary() -> dict[str, Any]:
@@ -276,9 +310,7 @@ class ExportManager:
         if fmt == "html":
             return self._render_html(records, source)
         if fmt in ("csv", "xlsx"):
-            raise ValueError(
-                f"csv/xlsx 格式仅支持 knowledge source, 当前为 {source}"
-            )
+            raise ValueError(f"csv/xlsx 格式仅支持 knowledge source, 当前为 {source}")
         raise ValueError(f"Unknown export format: {fmt}")
 
     def _render_markdown(self, records: list[dict[str, Any]], source: str) -> str:
@@ -362,7 +394,9 @@ class ExportManager:
             "<h1>Huginn Export: knowledge</h1>",
             "<h2>Summary</h2><ul>",
         ]
-        lines.append(f"<li><strong>Documents:</strong> {summary['total_documents']}</li>")
+        lines.append(
+            f"<li><strong>Documents:</strong> {summary['total_documents']}</li>"
+        )
         lines.append(f"<li><strong>Chunks:</strong> {summary['total_chunks']}</li>")
         lines.append(
             f"<li><strong>Retrieval hits:</strong> {summary['total_retrieval_hits']}</li>"
@@ -409,18 +443,82 @@ class ExportManager:
             )
         writer = csv.writer(buf)
         headers = [
-            "chunk_id", "doc_id", "filename", "chunk_index", "section",
-            "domain", "domain_tags", "created_at", "hit_count", "text",
+            "chunk_id",
+            "doc_id",
+            "filename",
+            "chunk_index",
+            "section",
+            "domain",
+            "domain_tags",
+            "created_at",
+            "hit_count",
+            "text",
         ]
         writer.writerow(headers)
         for rec in records:
-            writer.writerow([
-                rec["chunk_id"], rec["doc_id"], rec["filename"],
-                rec["chunk_index"], rec["section"], rec["domain"],
-                json.dumps(rec["domain_tags"], ensure_ascii=False),
-                rec["created_at"], rec["hit_count"], rec["text"],
-            ])
+            writer.writerow(
+                [
+                    rec["chunk_id"],
+                    rec["doc_id"],
+                    rec["filename"],
+                    rec["chunk_index"],
+                    rec["section"],
+                    rec["domain"],
+                    json.dumps(rec["domain_tags"], ensure_ascii=False),
+                    rec["created_at"],
+                    rec["hit_count"],
+                    rec["text"],
+                ]
+            )
         return buf.getvalue()
+
+    def _write_summary_sheet(self, ws: Any, summary: dict[str, Any]) -> None:
+        """写 Summary sheet: 汇总行 + domain 分布."""
+        summary_rows = [
+            ("Documents", summary["total_documents"]),
+            ("Chunks", summary["total_chunks"]),
+            ("Retrieval hits", summary["total_retrieval_hits"]),
+            ("Embedding model", summary["embedding_model"]),
+            ("Exported at", summary["exported_at"]),
+        ]
+        for k, v in summary_rows:
+            ws.append([k, v])
+        ws.append([])
+        ws.append(["Domain", "Chunks"])
+        for dom, cnt in sorted(summary["by_domain"].items(), key=lambda x: -x[1]):
+            ws.append([dom, cnt])
+
+    def _write_records_sheet(self, ws2: Any, records: list[dict[str, Any]]) -> None:
+        """写 Records sheet: 表头 + 每 chunk 一行."""
+        ws2.append(
+            [
+                "chunk_id",
+                "doc_id",
+                "filename",
+                "chunk_index",
+                "section",
+                "domain",
+                "domain_tags",
+                "created_at",
+                "hit_count",
+                "text",
+            ]
+        )
+        for rec in records:
+            ws2.append(
+                [
+                    rec["chunk_id"],
+                    rec["doc_id"],
+                    rec["filename"],
+                    rec["chunk_index"],
+                    rec["section"],
+                    rec["domain"],
+                    json.dumps(rec["domain_tags"], ensure_ascii=False),
+                    rec["created_at"],
+                    rec["hit_count"],
+                    rec["text"],
+                ]
+            )
 
     def _render_knowledge_xlsx(
         self, records: list[dict[str, Any]], summary: dict[str, Any]
@@ -437,32 +535,10 @@ class ExportManager:
         wb = Workbook()
         ws = wb.active
         ws.title = "Summary"
-        summary_rows = [
-            ("Documents", summary["total_documents"]),
-            ("Chunks", summary["total_chunks"]),
-            ("Retrieval hits", summary["total_retrieval_hits"]),
-            ("Embedding model", summary["embedding_model"]),
-            ("Exported at", summary["exported_at"]),
-        ]
-        for k, v in summary_rows:
-            ws.append([k, v])
-        ws.append([])
-        ws.append(["Domain", "Chunks"])
-        for dom, cnt in sorted(summary["by_domain"].items(), key=lambda x: -x[1]):
-            ws.append([dom, cnt])
+        ExportManager._write_summary_sheet(self, ws, summary)
 
         ws2 = wb.create_sheet("Records")
-        ws2.append([
-            "chunk_id", "doc_id", "filename", "chunk_index", "section",
-            "domain", "domain_tags", "created_at", "hit_count", "text",
-        ])
-        for rec in records:
-            ws2.append([
-                rec["chunk_id"], rec["doc_id"], rec["filename"],
-                rec["chunk_index"], rec["section"], rec["domain"],
-                json.dumps(rec["domain_tags"], ensure_ascii=False),
-                rec["created_at"], rec["hit_count"], rec["text"],
-            ])
+        ExportManager._write_records_sheet(self, ws2, records)
 
         buf = BytesIO()
         wb.save(buf)

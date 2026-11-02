@@ -48,11 +48,11 @@ class BeliefEntropyConfig:
     max_facts_to_check: int = 8
 
     # 自适应阈值
-    threshold_low: float = 0.3   # 低于此值 → 压缩激进
+    threshold_low: float = 0.3  # 低于此值 → 压缩激进
     threshold_high: float = 0.7  # 高于此值 → 压缩保守
 
     # 自适应调整幅度
-    keep_last_n_delta: int = 2    # 高熵时 keep_last_n 加多少
+    keep_last_n_delta: int = 2  # 高熵时 keep_last_n 加多少
     budget_delta_ratio: float = 0.2  # 高熵时 budget 加多少比例
 
     # 是否启用事实覆盖检查 (需要额外 LLM 调用)
@@ -73,7 +73,7 @@ class CompressionResult:
 
     # Belief Entropy 三维度
     h_logprob: float = 0.0
-    c_fact: float = 1.0   # 默认 1.0 = 全覆盖 (没做事实检查时)
+    c_fact: float = 1.0  # 默认 1.0 = 全覆盖 (没做事实检查时)
     r_loss: float = 0.0
     h_belief: float = 0.0  # 加权组合后的总熵
 
@@ -141,6 +141,37 @@ class BeliefEntropy:
         )
 
         # 1. R_loss: 压缩比损失 (永远能算, 最便宜)
+        BeliefEntropy._compute_component_entropy(
+            self, result, summary, logprobs, original_tokens, compressed_tokens
+        )
+
+        # 3. C_fact: 事实覆盖率 (需要额外 LLM 调用, 默认关)
+        BeliefEntropy._apply_fact_coverage(
+            self, result, summary, original_context, model, cfg
+        )
+
+        # 加权组合
+        BeliefEntropy._combine_belief(self, result, cfg)
+
+        # 自适应建议
+        result.adaptive_keep_last_n, result.adaptive_budget_ratio = (
+            self._adaptive_params(result.h_belief)
+        )
+
+        # 记历史
+        BeliefEntropy._record_history(self, result, cfg)
+
+        return result
+
+    def _compute_component_entropy(
+        self,
+        result: CompressionResult,
+        summary: str,
+        logprobs: list[list[dict]] | None,
+        original_tokens: int,
+        compressed_tokens: int,
+    ) -> None:
+        # 1. R_loss: 压缩比损失 (永远能算, 最便宜)
         result.r_loss = self._compute_ratio_loss(original_tokens, compressed_tokens)
 
         # 2. H_logprob: token 级熵 (有 logprobs 才算)
@@ -151,31 +182,43 @@ class BeliefEntropy:
             # 信息密度低 = 可能是泛泛而谈 = 熵高
             result.h_logprob = self._estimate_entropy_from_summary(summary)
 
-        # 3. C_fact: 事实覆盖率 (需要额外 LLM 调用, 默认关)
+    def _apply_fact_coverage(
+        self,
+        result: CompressionResult,
+        summary: str,
+        original_context: str | None,
+        model: Any,
+        cfg: BeliefEntropyConfig,
+    ) -> None:
         if cfg.fact_check_enabled and original_context and model is not None:
             result.c_fact, result.facts_checked, result.facts_retained = (
-                self._compute_fact_coverage(original_context, summary, model)
+                BeliefEntropy._compute_fact_coverage(
+                    self, original_context, summary, model
+                )
             )
         else:
             # 长任务自动开启: 最近 3 次 h_belief 都 > threshold_high → 触发一次 fact check.
             # ponytail: 只在持续高熵时触发, 避免每次都调 LLM. 升级: 按任务类型差异化触发.
             with self._lock:
-                recent_high = (
-                    len(self._history) >= 3
-                    and all(h > cfg.threshold_high for h in self._history[-3:])
+                recent_high = len(self._history) >= 3 and all(
+                    h > cfg.threshold_high for h in self._history[-3:]
                 )
             if recent_high and original_context and model is not None:
                 logger.info(
                     "belief_entropy: h_belief 持续高 (%.3f, %.3f, %.3f), 自动触发 fact_check",
-                    *self._history[-3:]
+                    *self._history[-3:],
                 )
                 result.c_fact, result.facts_checked, result.facts_retained = (
-                    self._compute_fact_coverage(original_context, summary, model)
+                    BeliefEntropy._compute_fact_coverage(
+                        self, original_context, summary, model
+                    )
                 )
             else:
                 result.c_fact = 1.0  # 没检查就当全覆盖
 
-        # 加权组合
+    def _combine_belief(
+        self, result: CompressionResult, cfg: BeliefEntropyConfig
+    ) -> None:
         alpha, beta, gamma = cfg.weight_logprob, cfg.weight_fact, cfg.weight_ratio
         result.h_belief = (
             alpha * result.h_logprob
@@ -185,12 +228,9 @@ class BeliefEntropy:
         # clamp [0, 1]
         result.h_belief = max(0.0, min(1.0, result.h_belief))
 
-        # 自适应建议
-        result.adaptive_keep_last_n, result.adaptive_budget_ratio = (
-            self._adaptive_params(result.h_belief)
-        )
-
-        # 记历史
+    def _record_history(
+        self, result: CompressionResult, cfg: BeliefEntropyConfig
+    ) -> None:
         with self._lock:
             self._history.append(result.h_belief)
             if len(self._history) > cfg.history_window:
@@ -199,11 +239,13 @@ class BeliefEntropy:
         logger.debug(
             "belief entropy: H_b=%.3f (logprob=%.3f, fact=%.3f, ratio=%.3f), "
             "keep_last_n=%s, budget_ratio=%s",
-            result.h_belief, result.h_logprob, result.c_fact, result.r_loss,
-            result.adaptive_keep_last_n, result.adaptive_budget_ratio,
+            result.h_belief,
+            result.h_logprob,
+            result.c_fact,
+            result.r_loss,
+            result.adaptive_keep_last_n,
+            result.adaptive_budget_ratio,
         )
-
-        return result
 
     def _compute_ratio_loss(self, original: int, compressed: int) -> float:
         """压缩比损失: 压缩越狠损失越大.
@@ -272,16 +314,19 @@ class BeliefEntropy:
             return 0.5  # 空摘要, 不好说
 
         # 数数字、术语、实体
-        numbers = len(re.findall(r'\d+\.?\d*', summary))
+        numbers = len(re.findall(r"\d+\.?\d*", summary))
         # 大写开头的词 (可能是实体/术语)
-        entities = len(re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*', summary))
+        entities = len(re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*", summary))
         # 技术术语 (常见材料科学)
-        terms = len(re.findall(
-            r'\b(?:DFT|VASP|band\s*gap|POSCAR|CIF|dos|BZ|k-point|'
-            r'convergence|relaxation|energy|structure|property|'
-            r'material|calculation|simulation|lattice|parameter)\b',
-            summary, re.I,
-        ))
+        terms = len(
+            re.findall(
+                r"\b(?:DFT|VASP|band\s*gap|POSCAR|CIF|dos|BZ|k-point|"
+                r"convergence|relaxation|energy|structure|property|"
+                r"material|calculation|simulation|lattice|parameter)\b",
+                summary,
+                re.I,
+            )
+        )
         # 总词数
         words = len(summary.split())
 
@@ -337,13 +382,13 @@ class BeliefEntropy:
         max_facts = self._config.max_facts_to_check
 
         # 数值参数 (e.g. "ENCUT = 520", "k-points: 4x4x4")
-        for m in re.finditer(r'(\w+)\s*[=:]\s*(\d+\.?\d*)', context):
+        for m in re.finditer(r"(\w+)\s*[=:]\s*(\d+\.?\d*)", context):
             facts.append(f"{m.group(1)}={m.group(2)}")
             if len(facts) >= max_facts:
                 break
 
         # 化学式 (e.g. "Fe2O3", "LiCoO2")
-        for m in re.finditer(r'\b([A-Z][a-z]?\d?)+\b', context):
+        for m in re.finditer(r"\b([A-Z][a-z]?\d?)+\b", context):
             fact = m.group(0)
             if len(fact) > 2 and fact not in facts:
                 facts.append(fact)
@@ -351,7 +396,7 @@ class BeliefEntropy:
                     break
 
         # 文件名 (e.g. "POSCAR", "INCAR", "CONTCAR")
-        for m in re.finditer(r'\b(POSCAR|INCAR|CONTCAR|KPOINTS|OUTCAR)\b', context):
+        for m in re.finditer(r"\b(POSCAR|INCAR|CONTCAR|KPOINTS|OUTCAR)\b", context):
             if m.group(0) not in facts:
                 facts.append(m.group(0))
                 if len(facts) >= max_facts:
@@ -359,27 +404,30 @@ class BeliefEntropy:
 
         return facts[:max_facts]
 
-    def _llm_fact_check(
-        self, summary: str, facts: list[str], model: Any
-    ) -> list[str]:
+    def _llm_fact_check(self, summary: str, facts: list[str], model: Any) -> list[str]:
         """让 LLM 判断摘要里是否包含了某些事实 (语义匹配)."""
         from langchain_core.messages import HumanMessage, SystemMessage
 
         facts_str = "\n".join(f"  - {f}" for f in facts)
         messages = [
-            SystemMessage(content=(
-                "You are a fact checker. Given a summary and a list of facts, "
-                "determine which facts are explicitly or implicitly mentioned "
-                "in the summary. Output ONLY the fact strings that ARE present, "
-                "one per line. If none are present, output nothing."
-            )),
-            HumanMessage(content=(
-                f"Summary:\n{summary}\n\nFacts to check:\n{facts_str}\n\n"
-                f"Which facts are present in the summary?"
-            )),
+            SystemMessage(
+                content=(
+                    "You are a fact checker. Given a summary and a list of facts, "
+                    "determine which facts are explicitly or implicitly mentioned "
+                    "in the summary. Output ONLY the fact strings that ARE present, "
+                    "one per line. If none are present, output nothing."
+                )
+            ),
+            HumanMessage(
+                content=(
+                    f"Summary:\n{summary}\n\nFacts to check:\n{facts_str}\n\n"
+                    f"Which facts are present in the summary?"
+                )
+            ),
         ]
         try:
             import asyncio
+
             try:
                 asyncio.get_running_loop()
                 resp = model.invoke(messages)
@@ -421,8 +469,12 @@ class BeliefEntropy:
         with self._lock:
             if len(self._history) < 2:
                 return 0.0
-            recent = self._history[-min(5, len(self._history)):]
-            older = self._history[:-len(recent)] if len(self._history) > len(recent) else [0.5]
+            recent = self._history[-min(5, len(self._history)) :]
+            older = (
+                self._history[: -len(recent)]
+                if len(self._history) > len(recent)
+                else [0.5]
+            )
             avg_recent = sum(recent) / len(recent)
             avg_older = sum(older) / len(older) if older else 0.5
             return avg_recent - avg_older
@@ -451,16 +503,18 @@ def get_belief_entropy() -> BeliefEntropy:
         with _singleton_lock:
             if _singleton is None:
                 import os
+
                 cfg = BeliefEntropyConfig(
                     fact_check_enabled=os.environ.get(
                         "HUGINN_BELIEF_ENTROPY_FACT_CHECK", "0"
-                    ) == "1",
-                    threshold_low=float(os.environ.get(
-                        "HUGINN_BELIEF_ENTROPY_LOW", "0.3"
-                    )),
-                    threshold_high=float(os.environ.get(
-                        "HUGINN_BELIEF_ENTROPY_HIGH", "0.7"
-                    )),
+                    )
+                    == "1",
+                    threshold_low=float(
+                        os.environ.get("HUGINN_BELIEF_ENTROPY_LOW", "0.3")
+                    ),
+                    threshold_high=float(
+                        os.environ.get("HUGINN_BELIEF_ENTROPY_HIGH", "0.7")
+                    ),
                 )
                 _singleton = BeliefEntropy(cfg)
     return _singleton

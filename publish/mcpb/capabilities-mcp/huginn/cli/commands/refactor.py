@@ -64,12 +64,7 @@ def refactor(
     engine = RefactorEngine(root=obj.workspace, config=obj.load_config())
     target_files = list(file) if file else None
 
-    with console.status("[bold blue]Planning refactor..."):
-        try:
-            plan = engine.plan(task, target_files=target_files)
-        except Exception as exc:
-            console.print(Panel(f"Planning failed: {exc}", border_style="red"))
-            sys.exit(1)
+    plan = _plan_refactor(engine, task, target_files, console)
 
     if not plan:
         console.print("[yellow]No edits proposed.[/yellow]")
@@ -81,6 +76,25 @@ def refactor(
 
     result = engine.apply(plan, dry_run=dry_run or obj.dry_run)
 
+    _show_refactor_result(obj, console, result, dry_run, snapshot_file)
+
+
+def _plan_refactor(engine, task: str, target_files: list[str] | None, console: Console):
+    with console.status("[bold blue]Planning refactor..."):
+        try:
+            return engine.plan(task, target_files=target_files)
+        except Exception as exc:
+            console.print(Panel(f"Planning failed: {exc}", border_style="red"))
+            sys.exit(1)
+
+
+def _show_refactor_result(
+    obj: CliContext,
+    console: Console,
+    result: dict,
+    dry_run: bool,
+    snapshot_file: Path | None,
+) -> None:
     if result["diff"]:
         console.print(
             Panel(

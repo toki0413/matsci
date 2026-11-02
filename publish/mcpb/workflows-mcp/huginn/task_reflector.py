@@ -36,12 +36,51 @@ _MODE_SWITCH_THRESHOLD = 0.5  # 失败率超过 50% 才切 discover
 def _belief_switch_enabled() -> bool:
     """toggle: FeatureFlags `belief_mode_switch` (默认 on). off 时回退原硬规则."""
     from huginn.feature_flags import FeatureFlags
+
     return FeatureFlags.shared().is_enabled("belief_mode_switch")
+
+
+def _hard_rule_switch(success: bool, session_state: Any) -> tuple[bool, str]:
+    """toggle off 时的原硬规则: 单次失败立即切 discover."""
+    if not success and session_state:
+        current_mode = getattr(session_state, "cognitive_mode", None)
+        if current_mode and current_mode.value == "construct":
+            return True, "discover"
+    return False, ""
+
+
+def _track_belief_metric() -> None:
+    try:
+        from huginn.routes.metrics import track_belief_update
+
+        track_belief_update("beta")
+    except Exception:
+        logger.debug("belief update metric tracking failed", exc_info=True)
+
+
+def _decide_switch_by_rate(
+    fail_rate: float,
+    current_mode: Any,
+    in_construct: bool,
+) -> tuple[bool, str]:
+    """按滑动窗口失败率决定是否切 mode."""
+    # 失败率高 + 在 construct → 切 discover
+    if fail_rate > _MODE_SWITCH_THRESHOLD and in_construct:
+        return True, "discover"
+    # 失败率低 + 在 discover → 切 construct (信号: 探索成功, 可以建了)
+    if (
+        fail_rate < (1 - _MODE_SWITCH_THRESHOLD)
+        and current_mode
+        and current_mode.value == "discover"
+    ):
+        return True, "construct"
+    return False, ""
 
 
 @dataclass
 class ReflectionResult:
     """Outcome of reflecting on a tool execution."""
+
     # Did the tool succeed?
     tool_succeeded: bool = True
     # Physics audit findings (if applicable)
@@ -112,7 +151,9 @@ class TaskReflector:
         self._mode_window: list[bool] = []  # True=success, False=fail
 
     def _record_and_decide_switch(
-        self, success: bool, session_state: Any,
+        self,
+        success: bool,
+        session_state: Any,
     ) -> tuple[bool, str]:
         """P2-6 belief-driven mode switch. 返回 (should_switch, suggested_mode).
 
@@ -126,11 +167,7 @@ class TaskReflector:
 
         # toggle off → 回退原硬规则: 单次失败立即切
         if not _belief_switch_enabled():
-            if not success and session_state:
-                current_mode = getattr(session_state, "cognitive_mode", None)
-                if current_mode and current_mode.value == "construct":
-                    return True, "discover"
-            return False, ""
+            return _hard_rule_switch(success, session_state)
 
         # 数据不足时不切 (至少 3 次结果)
         if len(self._mode_window) < 3:
@@ -141,22 +178,14 @@ class TaskReflector:
         fail_rate = beta / (alpha + beta)
 
         # metrics
-        try:
-            from huginn.routes.metrics import track_belief_update
-            track_belief_update("beta")
-        except Exception:
-            logger.debug("belief update metric tracking failed", exc_info=True)
+        _track_belief_metric()
 
-        current_mode = getattr(session_state, "cognitive_mode", None) if session_state else None
+        current_mode = (
+            getattr(session_state, "cognitive_mode", None) if session_state else None
+        )
         in_construct = bool(current_mode and current_mode.value == "construct")
 
-        # 失败率高 + 在 construct → 切 discover
-        if fail_rate > _MODE_SWITCH_THRESHOLD and in_construct:
-            return True, "discover"
-        # 失败率低 + 在 discover → 切 construct (信号: 探索成功, 可以建了)
-        if fail_rate < (1 - _MODE_SWITCH_THRESHOLD) and current_mode and current_mode.value == "discover":
-            return True, "construct"
-        return False, ""
+        return _decide_switch_by_rate(fail_rate, current_mode, in_construct)
 
     def reflect(
         self,
@@ -177,53 +206,21 @@ class TaskReflector:
         input_params = input_params or {}
 
         # 1. Check tool success
-        success = tool_result.get("success", True)
-        error = tool_result.get("error", "")
-        result.tool_succeeded = success
+        success, error, audit = _check_success_and_audit(result, tool_result)
 
-        # 2. Check physics audit (if present)
-        audit = tool_result.get("physics_audit")
-        if audit:
-            result.has_physics_errors = audit.get("has_errors", False)
-            result.has_physics_warnings = audit.get("has_warnings", False)
-
-        # 3. Determine if this was a failure worth learning from
-        if not success or result.has_physics_errors:
-            result.should_evolve = True
-            result.evolve_signal = "failure"
-            result.message = self._build_failure_message(
-                tool_name, error, audit
-            )
-            # P2-6 belief: 不再单次失败立即切. _record_and_decide_switch 算窗口 belief.
-            result.needs_user_input = True
-            result.confirm_type = "replan"
-        elif result.has_physics_warnings:
-            # Warnings don't block, but inform the user
-            findings = audit.get("findings", [])
-            warning_msgs = [
-                f["message"] for f in findings
-                if f.get("severity") == "warning"
-            ]
-            result.message = "Tool completed with warnings:\n" + "\n".join(warning_msgs)
-            result.needs_user_input = True
-            result.confirm_type = "continue"
-        else:
-            # Success — check if plan step is complete
-            result.message = self._build_success_message(tool_name, tool_result)
+        # 2-3. Determine if this was a failure worth learning from
+        TaskReflector._apply_outcome(
+            self, result, tool_name, tool_result, success, error, audit
+        )
 
         # 4. Check plan advancement
-        if session_state and session_state.active_plan_id and success and not result.has_physics_errors:
-            # If the tool succeeded and we're executing a plan,
-            # consider this step potentially complete
-            result.plan_step_completed = True
-            # Check if this was the last step
-            # (the caller will verify and update the plan)
-            result.should_evolve = True
-            result.evolve_signal = "success"
+        _check_plan_advancement(result, session_state, success)
 
         # 5. Cognitive mode assessment — P2-6 belief-driven
         # 单次失败不再立即切; 走滑动窗口 Beta 共轭.
-        should_switch, suggested = self._record_and_decide_switch(success, session_state)
+        should_switch, suggested = self._record_and_decide_switch(
+            success, session_state
+        )
         if should_switch:
             result.should_switch_mode = True
             result.suggested_mode = suggested
@@ -232,6 +229,35 @@ class TaskReflector:
             result.suggested_mode = "construct"
 
         return result
+
+    def _apply_outcome(
+        self,
+        result: ReflectionResult,
+        tool_name: str,
+        tool_result: dict[str, Any],
+        success: bool,
+        error: str,
+        audit: dict[str, Any] | None,
+    ) -> None:
+        if not success or result.has_physics_errors:
+            result.should_evolve = True
+            result.evolve_signal = "failure"
+            result.message = self._build_failure_message(tool_name, error, audit)
+            # P2-6 belief: 不再单次失败立即切. _record_and_decide_switch 算窗口 belief.
+            result.needs_user_input = True
+            result.confirm_type = "replan"
+        elif result.has_physics_warnings:
+            # Warnings don't block, but inform the user
+            findings = audit.get("findings", [])
+            warning_msgs = [
+                f["message"] for f in findings if f.get("severity") == "warning"
+            ]
+            result.message = "Tool completed with warnings:\n" + "\n".join(warning_msgs)
+            result.needs_user_input = True
+            result.confirm_type = "continue"
+        else:
+            # Success — check if plan step is complete
+            result.message = self._build_success_message(tool_name, tool_result)
 
     def _build_failure_message(
         self,
@@ -245,7 +271,8 @@ class TaskReflector:
             parts.append(f"Error: {error}")
         if audit and audit.get("has_errors"):
             error_findings = [
-                f["message"] for f in audit.get("findings", [])
+                f["message"]
+                for f in audit.get("findings", [])
                 if f.get("severity") == "error"
             ]
             if error_findings:
@@ -278,6 +305,72 @@ class TaskReflector:
         return "\n".join(parts)
 
 
+def _check_success_and_audit(
+    result: ReflectionResult, tool_result: dict[str, Any]
+) -> tuple[bool, str, dict[str, Any] | None]:
+    success = tool_result.get("success", True)
+    error = tool_result.get("error", "")
+    result.tool_succeeded = success
+
+    # Check physics audit (if present)
+    audit = tool_result.get("physics_audit")
+    if audit:
+        result.has_physics_errors = audit.get("has_errors", False)
+        result.has_physics_warnings = audit.get("has_warnings", False)
+    return success, error, audit
+
+
+def _check_plan_advancement(
+    result: ReflectionResult, session_state: Any, success: bool
+) -> None:
+    if (
+        session_state
+        and session_state.active_plan_id
+        and success
+        and not result.has_physics_errors
+    ):
+        # If the tool succeeded and we're executing a plan,
+        # consider this step potentially complete
+        result.plan_step_completed = True
+        # Check if this was the last step
+        # (the caller will verify and update the plan)
+        result.should_evolve = True
+        result.evolve_signal = "success"
+
+
+def _selfcheck_belief_cases(fake_state: Any) -> None:
+    # 48. 单次失败不切 (窗口 < 3 不决策)
+    r = TaskReflector()
+    res = r.reflect("vasp_tool", {"success": False}, fake_state("construct"))
+    assert not res.should_switch_mode, "单次失败不应立即切"
+    assert res.confirm_type == "replan", "但仍应提示 replan"
+
+    # 49. 窗口 >= 3, 失败率 > 50% 在 construct → 切 discover
+    r2 = TaskReflector()
+    for _ in range(2):
+        r2.reflect("t", {"success": False}, fake_state("construct"))
+    res = r2.reflect("t", {"success": False}, fake_state("construct"))
+    assert res.should_switch_mode and res.suggested_mode == "discover", (
+        f"3 次失败应切 discover, got switch={res.should_switch_mode} mode={res.suggested_mode}"
+    )
+
+    # 50. 窗口有混合, 失败率 <= 50% 不切
+    r3 = TaskReflector()
+    r3.reflect("t", {"success": True}, fake_state("construct"))
+    r3.reflect("t", {"success": True}, fake_state("construct"))
+    res = r3.reflect("t", {"success": False}, fake_state("construct"))
+    assert not res.should_switch_mode, "2 成功 1 失败不应切"
+
+    # 51. 在 discover 高成功率 → 切 construct
+    r4 = TaskReflector()
+    for _ in range(4):
+        r4.reflect("t", {"success": True}, fake_state("discover"))
+    res = r4.reflect("t", {"success": True}, fake_state("discover"))
+    assert res.should_switch_mode and res.suggested_mode == "construct", (
+        f"5 成功在 discover 应切 construct, got switch={res.should_switch_mode} mode={res.suggested_mode}"
+    )
+
+
 def _selfcheck() -> int:
     """assert-based demo for P2-6 belief-driven mode switch."""
     from enum import Enum
@@ -297,41 +390,15 @@ def _selfcheck() -> int:
     _saved = FeatureFlags.shared().is_enabled("belief_mode_switch")
     FeatureFlags.shared().enable("belief_mode_switch")
 
-    # 48. 单次失败不切 (窗口 < 3 不决策)
-    r = TaskReflector()
-    res = r.reflect("vasp_tool", {"success": False}, _FakeState("construct"))
-    assert not res.should_switch_mode, "单次失败不应立即切"
-    assert res.confirm_type == "replan", "但仍应提示 replan"
-
-    # 49. 窗口 >= 3, 失败率 > 50% 在 construct → 切 discover
-    r2 = TaskReflector()
-    for _ in range(2):
-        r2.reflect("t", {"success": False}, _FakeState("construct"))
-    res = r2.reflect("t", {"success": False}, _FakeState("construct"))
-    assert res.should_switch_mode and res.suggested_mode == "discover", \
-        f"3 次失败应切 discover, got switch={res.should_switch_mode} mode={res.suggested_mode}"
-
-    # 50. 窗口有混合, 失败率 <= 50% 不切
-    r3 = TaskReflector()
-    r3.reflect("t", {"success": True}, _FakeState("construct"))
-    r3.reflect("t", {"success": True}, _FakeState("construct"))
-    res = r3.reflect("t", {"success": False}, _FakeState("construct"))
-    assert not res.should_switch_mode, "2 成功 1 失败不应切"
-
-    # 51. 在 discover 高成功率 → 切 construct
-    r4 = TaskReflector()
-    for _ in range(4):
-        r4.reflect("t", {"success": True}, _FakeState("discover"))
-    res = r4.reflect("t", {"success": True}, _FakeState("discover"))
-    assert res.should_switch_mode and res.suggested_mode == "construct", \
-        f"5 成功在 discover 应切 construct, got switch={res.should_switch_mode} mode={res.suggested_mode}"
+    _selfcheck_belief_cases(_FakeState)
 
     # 52. toggle off → 回退原硬规则 (单次失败立即切)
     FeatureFlags.shared().disable("belief_mode_switch")
     r5 = TaskReflector()
     res = r5.reflect("t", {"success": False}, _FakeState("construct"))
-    assert res.should_switch_mode and res.suggested_mode == "discover", \
+    assert res.should_switch_mode and res.suggested_mode == "discover", (
         "toggle off 时单次失败应立即切 (原硬规则)"
+    )
 
     # restore toggle
     FeatureFlags.shared().toggle("belief_mode_switch", _saved)
@@ -342,4 +409,5 @@ def _selfcheck() -> int:
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(_selfcheck())

@@ -113,7 +113,8 @@ class WakeScheduler:
             if wake.session_id in self._running_sessions:
                 logger.info(
                     "skip wake %s — session %s still running",
-                    wake.id, wake.session_id,
+                    wake.id,
+                    wake.session_id,
                 )
                 continue
             # spawn 前就占 session, 防止同 tick 内同 session 的其他 wake 也被 spawn
@@ -129,7 +130,9 @@ class WakeScheduler:
         except Exception:
             logger.exception(
                 "wake %s (session %s) runner failed [trigger=%s]",
-                wake.id, wake.session_id, trigger,
+                wake.id,
+                wake.session_id,
+                trigger,
             )
         finally:
             self.store.mark_fired(wake.id)
@@ -142,101 +145,116 @@ if __name__ == "__main__":
     from datetime import datetime, timedelta
     from pathlib import Path
 
+    async def _selfcheck_basic(ws, runs):
+        # 1. 基本: past timer → tick → runner 被调 + mark_fired
+        store = WakeStore(ws / "wakes.json")
+
+        async def runner(session_id: str, wake: Wake) -> None:
+            runs.append((session_id, wake.id))
+
+        sched = WakeScheduler(store, runner, tick_seconds=0.05)
+        past = datetime.now(UTC) - timedelta(seconds=5)
+        w1 = store.add_timer("s1", past)
+        sched.start()
+        # 等 catchup tick 跑完
+        await asyncio.sleep(0.2)
+        assert len(runs) == 1, f"expected 1 run, got {len(runs)}"
+        assert runs[0] == ("s1", w1.id)
+        assert store.get(w1.id).state == "fired"
+        await sched.stop()
+        print("1. catchup tick → runner + mark_fired OK")
+        return runner
+
+    async def _selfcheck_overlap(ws, runs):
+        # 2. skip-on-overlap: 同 session 的第二个 wake 在第一个还在跑时跳过
+        runs.clear()
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_runner(session_id: str, wake: Wake) -> None:
+            runs.append((session_id, wake.id))
+            started.set()
+            await release.wait()  # 模拟长 run
+
+        store2 = WakeStore(ws / "wakes2.json")
+        sched2 = WakeScheduler(store2, slow_runner, tick_seconds=0.05)
+        past2 = datetime.now(UTC) - timedelta(seconds=5)
+        w_a = store2.add_timer("s_slow", past2)
+        w_b = store2.add_timer("s_slow", past2)  # 同 session, 同时 due
+        sched2.start()
+        await asyncio.sleep(0.2)
+        # 第一个 wake 应已开始 (slow_runner 阻塞在 release.wait)
+        assert started.is_set(), "first wake should have started"
+        assert len(runs) == 1, f"only 1 should run, got {len(runs)}"
+        # 第二个 wake 应被 skip-on-overlap 跳过
+        assert store2.get(w_b.id).state != "fired", "second wake should be skipped"
+        # 释放第一个, 让它完成
+        release.set()
+        await asyncio.sleep(0.2)
+        assert store2.get(w_a.id).state == "fired"
+        # 第二个 wake 在下一个 tick 会被 pickup (第一个已释放)
+        await asyncio.sleep(0.2)
+        assert len(runs) == 2, (
+            f"second wake should run after first releases, got {len(runs)}"
+        )
+        assert store2.get(w_b.id).state == "fired"
+        await sched2.stop()
+        print("2. skip-on-overlap + release → resume OK")
+
+    async def _selfcheck_failure(ws, runs):
+        # 3. runner 异常不阻塞其他 wake
+        runs.clear()
+
+        async def failing_runner(session_id: str, wake: Wake) -> None:
+            if session_id == "s_fail":
+                raise RuntimeError("intentional failure")
+            runs.append((session_id, wake.id))
+
+        store3 = WakeStore(ws / "wakes3.json")
+        sched3 = WakeScheduler(store3, failing_runner, tick_seconds=0.05)
+        past3 = datetime.now(UTC) - timedelta(seconds=5)
+        w_fail = store3.add_timer("s_fail", past3)
+        w_ok = store3.add_timer("s_ok", past3)
+        sched3.start()
+        await asyncio.sleep(0.2)
+        # 失败的 wake 仍 mark_fired, 不阻塞 ok wake
+        assert store3.get(w_fail.id).state == "fired"
+        assert store3.get(w_ok.id).state == "fired"
+        assert len(runs) == 1
+        assert runs[0] == ("s_ok", w_ok.id)
+        await sched3.stop()
+        print("3. runner exception → other wake still runs OK")
+
+    async def _selfcheck_stop_idempotent(runner):
+        # 4. stop 幂等 + 不残留 task
+        sched4 = WakeScheduler(WakeStore(), runner, tick_seconds=1.0)
+        sched4.start()
+        assert sched4._task is not None
+        await sched4.stop()
+        assert sched4._task is None
+        # 二次 stop 不报错
+        await sched4.stop()
+        print("4. stop idempotent OK")
+
+    async def _selfcheck_start_idempotent(runner):
+        # 5. start 幂等 (重复调只 spawn 一次)
+        sched5 = WakeScheduler(WakeStore(), runner, tick_seconds=1.0)
+        sched5.start()
+        t1 = sched5._task
+        sched5.start()
+        assert sched5._task is t1, "second start should not spawn new task"
+        await sched5.stop()
+        print("5. start idempotent OK")
+
     async def _selfcheck():
         ws = Path(_tf.mkdtemp(prefix="huginn_sched_test_"))
         try:
-            store = WakeStore(ws / "wakes.json")
-
-            # 1. 基本: past timer → tick → runner 被调 + mark_fired
             runs: list[tuple[str, str]] = []  # (session_id, wake_id)
-            async def runner(session_id: str, wake: Wake) -> None:
-                runs.append((session_id, wake.id))
-
-            sched = WakeScheduler(store, runner, tick_seconds=0.05)
-            past = datetime.now(UTC) - timedelta(seconds=5)
-            w1 = store.add_timer("s1", past)
-            sched.start()
-            # 等 catchup tick 跑完
-            await asyncio.sleep(0.2)
-            assert len(runs) == 1, f"expected 1 run, got {len(runs)}"
-            assert runs[0] == ("s1", w1.id)
-            assert store.get(w1.id).state == "fired"
-            await sched.stop()
-            print("1. catchup tick → runner + mark_fired OK")
-
-            # 2. skip-on-overlap: 同 session 的第二个 wake 在第一个还在跑时跳过
-            runs.clear()
-            started = asyncio.Event()
-            release = asyncio.Event()
-            async def slow_runner(session_id: str, wake: Wake) -> None:
-                runs.append((session_id, wake.id))
-                started.set()
-                await release.wait()  # 模拟长 run
-
-            store2 = WakeStore(ws / "wakes2.json")
-            sched2 = WakeScheduler(store2, slow_runner, tick_seconds=0.05)
-            past2 = datetime.now(UTC) - timedelta(seconds=5)
-            w_a = store2.add_timer("s_slow", past2)
-            w_b = store2.add_timer("s_slow", past2)  # 同 session, 同时 due
-            sched2.start()
-            await asyncio.sleep(0.2)
-            # 第一个 wake 应已开始 (slow_runner 阻塞在 release.wait)
-            assert started.is_set(), "first wake should have started"
-            assert len(runs) == 1, f"only 1 should run, got {len(runs)}"
-            # 第二个 wake 应被 skip-on-overlap 跳过
-            assert store2.get(w_b.id).state != "fired", "second wake should be skipped"
-            # 释放第一个, 让它完成
-            release.set()
-            await asyncio.sleep(0.2)
-            assert store2.get(w_a.id).state == "fired"
-            # 第二个 wake 在下一个 tick 会被 pickup (第一个已释放)
-            await asyncio.sleep(0.2)
-            assert len(runs) == 2, f"second wake should run after first releases, got {len(runs)}"
-            assert store2.get(w_b.id).state == "fired"
-            await sched2.stop()
-            print("2. skip-on-overlap + release → resume OK")
-
-            # 3. runner 异常不阻塞其他 wake
-            runs.clear()
-            async def failing_runner(session_id: str, wake: Wake) -> None:
-                if session_id == "s_fail":
-                    raise RuntimeError("intentional failure")
-                runs.append((session_id, wake.id))
-
-            store3 = WakeStore(ws / "wakes3.json")
-            sched3 = WakeScheduler(store3, failing_runner, tick_seconds=0.05)
-            past3 = datetime.now(UTC) - timedelta(seconds=5)
-            w_fail = store3.add_timer("s_fail", past3)
-            w_ok = store3.add_timer("s_ok", past3)
-            sched3.start()
-            await asyncio.sleep(0.2)
-            # 失败的 wake 仍 mark_fired, 不阻塞 ok wake
-            assert store3.get(w_fail.id).state == "fired"
-            assert store3.get(w_ok.id).state == "fired"
-            assert len(runs) == 1
-            assert runs[0] == ("s_ok", w_ok.id)
-            await sched3.stop()
-            print("3. runner exception → other wake still runs OK")
-
-            # 4. stop 幂等 + 不残留 task
-            sched4 = WakeScheduler(WakeStore(), runner, tick_seconds=1.0)
-            sched4.start()
-            assert sched4._task is not None
-            await sched4.stop()
-            assert sched4._task is None
-            # 二次 stop 不报错
-            await sched4.stop()
-            print("4. stop idempotent OK")
-
-            # 5. start 幂等 (重复调只 spawn 一次)
-            sched5 = WakeScheduler(WakeStore(), runner, tick_seconds=1.0)
-            sched5.start()
-            t1 = sched5._task
-            sched5.start()
-            assert sched5._task is t1, "second start should not spawn new task"
-            await sched5.stop()
-            print("5. start idempotent OK")
-
+            runner = await _selfcheck_basic(ws, runs)
+            await _selfcheck_overlap(ws, runs)
+            await _selfcheck_failure(ws, runs)
+            await _selfcheck_stop_idempotent(runner)
+            await _selfcheck_start_idempotent(runner)
             print("ALL CHECKS PASSED")
         finally:
             shutil.rmtree(ws, ignore_errors=True)

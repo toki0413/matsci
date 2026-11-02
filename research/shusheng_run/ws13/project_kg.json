@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "Hypothesis B (optimization dimension)",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-28T01:44:42.078529",
+      "last_seen": "2026-10-28T01:44:42.078529",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "预期得到一个约 100–2000 行的真实 CSV（如 UCI 的 Haberman 乳腺癌生存数据或 Palmer Penguins），主检验的 p 值落在显著或不显著任一方向但 CI 可解释，效应量 Cohen's d 约 0.3–0.8，报告包含 3–5 个带来源标注的数字结论与 2 条以上真实局限。\nPLAN_SLOTS: source_url=<待选定公共URL>; local_path",
+      "persona": "dft_expert",
+      "id": "experiment:Hypothesis B (optimization dimension)"
+    },
+    {
+      "label": "plan_explore_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-28T01:44:42.078572",
+      "last_seen": "2026-10-28T01:44:42.078572",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-28T01:44:42.078583",
+      "last_seen": "2026-10-28T01:44:42.078583",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-28T01:44:42.078593",
+      "last_seen": "2026-10-28T01:44:42.078593",
+      "mentions": 1,
+      "members": [
+        "experiment:Hypothesis B (optimization dimension)",
+        "Method:plan_explore_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_39774283"
+    },
+    {
+      "label": "dft_expert_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-28T01:44:42.078679",
+      "last_seen": "2026-10-28T01:44:42.078679",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "f7a62cfef348dc2b",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:dft_expert_iter5"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:Hypothesis B (optimization dimension)",
+      "confidence": 0.5,
+      "created_at": "2026-10-28T01:44:42.078593",
+      "last_seen": "2026-10-28T01:44:42.078593",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_39774283"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-28T01:44:42.078593",
+      "last_seen": "2026-10-28T01:44:42.078593",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_39774283"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-10-28T01:44:42.078593",
+      "last_seen": "2026-10-28T01:44:42.078593",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_39774283"
+    }
+  ]
+}

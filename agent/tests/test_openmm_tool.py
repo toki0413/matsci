@@ -79,11 +79,9 @@ class _FakeUnitVal:
         return self.v
 
 
-def _install_fake_openmm(monkeypatch):
-    openmm = types.ModuleType("openmm")
-    openmm.LangevinMiddleIntegrator = lambda *a, **k: object()
-    openmm.MonteCarloBarostat = lambda *a, **k: object()
-    openmm.Platform = _FakePlatform
+def _fake_openmm_unit():
+    """伪造 openmm.unit 子模块."""
+
     # unit 值需支持与浮点相乘/相除 (如 300.0*kelvin, 1.0/picoseconds)
     class _Unit:
         def __mul__(self, other):
@@ -100,13 +98,18 @@ def _install_fake_openmm(monkeypatch):
 
     unit = types.ModuleType("openmm.unit")
     for name in [
-        "kelvin", "kilojoules_per_mole", "nanometers", "picoseconds",
+        "kelvin",
+        "kilojoules_per_mole",
+        "nanometers",
+        "picoseconds",
         "atmospheres",
     ]:
         setattr(unit, name, _Unit())
-    openmm.unit = unit
+    return unit
 
-    app = types.ModuleType("openmm.app")
+
+def _fake_openmm_topology():
+    """openmm.app 的拓扑类: PDBFile / Modeller."""
 
     class _FakePositions(list):
         pass
@@ -135,6 +138,12 @@ def _install_fake_openmm(monkeypatch):
         def addSolvent(self, *a, **k):
             self.positions = []
 
+    return {"PDBFile": _PDBFile, "Modeller": _Modeller}
+
+
+def _fake_openmm_forces():
+    """openmm.app 的力场类: ForceField."""
+
     class _FakeSystem:
         def addForce(self, *a, **k):
             pass
@@ -145,6 +154,12 @@ def _install_fake_openmm(monkeypatch):
 
         def createSystem(self, topology, **kw):
             return _FakeSystem()
+
+    return {"ForceField": _ForceField}
+
+
+def _fake_openmm_reporters():
+    """openmm.app 的 reporter / DCD 读取类."""
 
     class _DCDReporter:
         def __init__(self, *a, **k):
@@ -167,7 +182,21 @@ def _install_fake_openmm(monkeypatch):
 
         def readPositions(self, i):
             # returns a list of unit-vector objects
-            return [_FakeUnitVal(np.array([0.0, 0.0, 0.0])), _FakeUnitVal(np.array([1.0, 0.0, 0.0]))]
+            return [
+                _FakeUnitVal(np.array([0.0, 0.0, 0.0])),
+                _FakeUnitVal(np.array([1.0, 0.0, 0.0])),
+            ]
+
+    return {
+        "DCDReporter": _DCDReporter,
+        "StateDataReporter": _StateDataReporter,
+        "DCDFile": _DCDFile,
+        "Simulation": _FakeSimulation,
+    }
+
+
+def _fake_openmm_enums():
+    """openmm.app 的枚举/常量类."""
 
     class _PME:
         pass
@@ -184,18 +213,40 @@ def _install_fake_openmm(monkeypatch):
     class _HBonds:
         pass
 
-    app.PDBFile = _PDBFile
-    app.Modeller = _Modeller
-    app.ForceField = _ForceField
-    app.DCDReporter = _DCDReporter
-    app.StateDataReporter = _StateDataReporter
-    app.DCDFile = _DCDFile
-    app.Simulation = _FakeSimulation
-    app.PME = _PME
-    app.CutoffNonPeriodic = _CutoffNonPeriodic
-    app.NoCutoff = _NoCutoff
-    app.AllBonds = _AllBonds
-    app.HBonds = _HBonds
+    return {
+        "PME": _PME,
+        "CutoffNonPeriodic": _CutoffNonPeriodic,
+        "NoCutoff": _NoCutoff,
+        "AllBonds": _AllBonds,
+        "HBonds": _HBonds,
+    }
+
+
+def _fake_openmm_app():
+    """组装 openmm.app 模块."""
+    app = types.ModuleType("openmm.app")
+    blocks = (
+        _fake_openmm_topology(),
+        _fake_openmm_forces(),
+        _fake_openmm_reporters(),
+        _fake_openmm_enums(),
+    )
+    for block in blocks:
+        for name, obj in block.items():
+            setattr(app, name, obj)
+    return app
+
+
+def _install_fake_openmm(monkeypatch):
+    openmm = types.ModuleType("openmm")
+    openmm.LangevinMiddleIntegrator = lambda *a, **k: object()
+    openmm.MonteCarloBarostat = lambda *a, **k: object()
+    openmm.Platform = _FakePlatform
+
+    unit = _fake_openmm_unit()
+    openmm.unit = unit
+
+    app = _fake_openmm_app()
     openmm.app = app
 
     monkeypatch.setitem(sys.modules, "openmm", openmm)
@@ -292,8 +343,10 @@ def test_energy_minimize_success_max_iterations_zero(monkeypatch, tmp_path):
     pdb.write_text("fake", encoding="utf-8")
     res = _tool().call(
         _args(
-            working_dir=str(tmp_path), pdb_file=str(pdb),
-            action="energy_minimize", max_iterations=0,
+            working_dir=str(tmp_path),
+            pdb_file=str(pdb),
+            action="energy_minimize",
+            max_iterations=0,
         )
     )
     assert res.success is True
@@ -305,8 +358,10 @@ def test_energy_minimize_solvent_implicit(monkeypatch, tmp_path):
     pdb.write_text("fake", encoding="utf-8")
     res = _tool().call(
         _args(
-            working_dir=str(tmp_path), pdb_file=str(pdb),
-            action="energy_minimize", solvent="implicit",
+            working_dir=str(tmp_path),
+            pdb_file=str(pdb),
+            action="energy_minimize",
+            solvent="implicit",
         )
     )
     assert res.success is True
@@ -354,7 +409,9 @@ def test_energy_minimize_audit_exception(monkeypatch, tmp_path):
 
 
 def test_md_run_pdb_missing(tmp_path):
-    res = _tool().call(_args(working_dir=str(tmp_path), pdb_file="missing.pdb", action="md_run"))
+    res = _tool().call(
+        _args(working_dir=str(tmp_path), pdb_file="missing.pdb", action="md_run")
+    )
     assert res.success is False
     assert "PDB file not found" in res.error
 
@@ -403,8 +460,11 @@ def test_md_run_nvt_no_equil(monkeypatch, tmp_path):
     pdb.write_text("fake", encoding="utf-8")
     res = _tool().call(
         _args(
-            working_dir=str(tmp_path), pdb_file=str(pdb), action="md_run",
-            ensemble="nvt", equilibration_steps=0,
+            working_dir=str(tmp_path),
+            pdb_file=str(pdb),
+            action="md_run",
+            ensemble="nvt",
+            equilibration_steps=0,
         )
     )
     assert res.success is True
@@ -453,7 +513,9 @@ def test_md_run_exception(monkeypatch, tmp_path):
 
 def test_analyze_traj_missing(tmp_path):
     res = _tool().call(
-        _args(working_dir=str(tmp_path), action="analyze", trajectory_file="missing.dcd")
+        _args(
+            working_dir=str(tmp_path), action="analyze", trajectory_file="missing.dcd"
+        )
     )
     assert res.success is False
     assert "Trajectory file not found" in res.error
@@ -489,8 +551,11 @@ def test_analyze_rmsd(monkeypatch, tmp_path):
     pdb.write_text("fake", encoding="utf-8")
     res = _tool().call(
         _args(
-            working_dir=str(tmp_path), action="analyze",
-            trajectory_file=str(traj), pdb_file=str(pdb), analysis_type="rmsd",
+            working_dir=str(tmp_path),
+            action="analyze",
+            trajectory_file=str(traj),
+            pdb_file=str(pdb),
+            analysis_type="rmsd",
         )
     )
     assert res.success is True
@@ -513,8 +578,11 @@ def test_analyze_energy(monkeypatch, tmp_path):
     )
     res = _tool().call(
         _args(
-            working_dir=str(tmp_path), action="analyze",
-            trajectory_file=str(traj), pdb_file=str(pdb), analysis_type="energy",
+            working_dir=str(tmp_path),
+            action="analyze",
+            trajectory_file=str(traj),
+            pdb_file=str(pdb),
+            analysis_type="energy",
         )
     )
     assert res.success is True
@@ -529,8 +597,11 @@ def test_analyze_energy_no_log(monkeypatch, tmp_path):
     pdb.write_text("fake", encoding="utf-8")
     res = _tool().call(
         _args(
-            working_dir=str(tmp_path), action="analyze",
-            trajectory_file=str(traj), pdb_file=str(pdb), analysis_type="energy",
+            working_dir=str(tmp_path),
+            action="analyze",
+            trajectory_file=str(traj),
+            pdb_file=str(pdb),
+            analysis_type="energy",
         )
     )
     assert res.success is False
@@ -551,8 +622,11 @@ def test_analyze_temperature(monkeypatch, tmp_path):
     )
     res = _tool().call(
         _args(
-            working_dir=str(tmp_path), action="analyze",
-            trajectory_file=str(traj), pdb_file=str(pdb), analysis_type="temperature",
+            working_dir=str(tmp_path),
+            action="analyze",
+            trajectory_file=str(traj),
+            pdb_file=str(pdb),
+            analysis_type="temperature",
         )
     )
     assert res.success is True
@@ -567,8 +641,11 @@ def test_analyze_radius_gyration(monkeypatch, tmp_path):
     pdb.write_text("fake", encoding="utf-8")
     res = _tool().call(
         _args(
-            working_dir=str(tmp_path), action="analyze",
-            trajectory_file=str(traj), pdb_file=str(pdb), analysis_type="radius_gyration",
+            working_dir=str(tmp_path),
+            action="analyze",
+            trajectory_file=str(traj),
+            pdb_file=str(pdb),
+            analysis_type="radius_gyration",
         )
     )
     assert res.success is True
@@ -583,14 +660,20 @@ def test_analyze_unknown_type(monkeypatch, tmp_path):
     pdb.write_text("fake", encoding="utf-8")
     res = _tool().call(
         _args(
-            working_dir=str(tmp_path), action="analyze",
-            trajectory_file=str(traj), pdb_file=str(pdb), analysis_type="rmsd",
+            working_dir=str(tmp_path),
+            action="analyze",
+            trajectory_file=str(traj),
+            pdb_file=str(pdb),
+            analysis_type="rmsd",
         )
     )
     # 触发未知类型: 直接构造 (analysis_type 是 Literal, 用 model_construct 绕过校验)
     bad = OpenMMToolInput.model_construct(
-        action="analyze", working_dir=str(tmp_path),
-        trajectory_file=str(traj), pdb_file=str(pdb), analysis_type="bogus",
+        action="analyze",
+        working_dir=str(tmp_path),
+        trajectory_file=str(traj),
+        pdb_file=str(pdb),
+        analysis_type="bogus",
     )
     res2 = _tool()._analyze(bad, Path(tmp_path))
     assert res2.success is False
@@ -612,8 +695,11 @@ def test_analyze_exception(monkeypatch, tmp_path):
     openmm_app.PDBFile = _BoomPDBFile
     res = _tool().call(
         _args(
-            working_dir=str(tmp_path), action="analyze",
-            trajectory_file=str(traj), pdb_file=str(pdb), analysis_type="rmsd",
+            working_dir=str(tmp_path),
+            action="analyze",
+            trajectory_file=str(traj),
+            pdb_file=str(pdb),
+            analysis_type="rmsd",
         )
     )
     assert res.success is False
@@ -667,15 +753,30 @@ def test_resolve_file():
 
 def test_nonbonded_method(monkeypatch):
     _install_fake_openmm(monkeypatch)
-    assert OpenMMTool._nonbonded_method(_inp(solvent="explicit")) is sys.modules["openmm.app"].PME
-    assert OpenMMTool._nonbonded_method(_inp(solvent="implicit")) is sys.modules["openmm.app"].NoCutoff
-    assert OpenMMTool._nonbonded_method(_inp(solvent="vacuum")) is sys.modules["openmm.app"].CutoffNonPeriodic
+    assert (
+        OpenMMTool._nonbonded_method(_inp(solvent="explicit"))
+        is sys.modules["openmm.app"].PME
+    )
+    assert (
+        OpenMMTool._nonbonded_method(_inp(solvent="implicit"))
+        is sys.modules["openmm.app"].NoCutoff
+    )
+    assert (
+        OpenMMTool._nonbonded_method(_inp(solvent="vacuum"))
+        is sys.modules["openmm.app"].CutoffNonPeriodic
+    )
 
 
 def test_constraints(monkeypatch):
     _install_fake_openmm(monkeypatch)
-    assert OpenMMTool._constraints(_inp(solvent="vacuum")) is sys.modules["openmm.app"].AllBonds
-    assert OpenMMTool._constraints(_inp(solvent="explicit")) is sys.modules["openmm.app"].HBonds
+    assert (
+        OpenMMTool._constraints(_inp(solvent="vacuum"))
+        is sys.modules["openmm.app"].AllBonds
+    )
+    assert (
+        OpenMMTool._constraints(_inp(solvent="explicit"))
+        is sys.modules["openmm.app"].HBonds
+    )
 
 
 def test_make_simulation(monkeypatch):
@@ -720,9 +821,7 @@ def test_parse_md_log_bad_rows(tmp_path):
 def test_parse_md_log_short_rows(tmp_path):
     log = tmp_path / "md_log.csv"
     log.write_text(
-        "Step,Potential,Kinetic,Temperature,Volume\n"
-        "0\n"
-        "10,-11.0,1.1,302.0,1.1\n",
+        "Step,Potential,Kinetic,Temperature,Volume\n0\n10,-11.0,1.1,302.0,1.1\n",
         encoding="utf-8",
     )
     parsed = OpenMMTool._parse_md_log(log)

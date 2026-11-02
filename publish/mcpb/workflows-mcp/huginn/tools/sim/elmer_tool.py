@@ -26,14 +26,17 @@ class ElmerToolInput(BaseModel):
     working_dir: str | None = Field(default=None)
     # solve_sif / validate_sif params
     sif_content: str | None = Field(
-        default=None, description="Elmer .sif file content. Required for solve_sif/validate_sif."
+        default=None,
+        description="Elmer .sif file content. Required for solve_sif/validate_sif.",
     )
     sif_file: str | None = Field(
-        default=None, description="Path to existing .sif file. Alternative to sif_content."
+        default=None,
+        description="Path to existing .sif file. Alternative to sif_content.",
     )
     # mesh_to_elmer params
     mesh_dir: str | None = Field(
-        default=None, description="Path to mesh directory to convert to Elmer format.",
+        default=None,
+        description="Path to mesh directory to convert to Elmer format.",
     )
 
 
@@ -43,6 +46,86 @@ def _elmer_available() -> bool:
 
 def _elmergrid_available() -> bool:
     return shutil.which("ElmerGrid") is not None
+
+
+def _attach_elmer_audit(
+    action: str, data: dict[str, Any], extra: dict[str, Any]
+) -> None:
+    """附加物理审计报告，失败不阻断结果返回."""
+    try:
+        from huginn.execution.physics_auditor import PhysicsAuditor
+
+        auditor = PhysicsAuditor()
+        audit_report = auditor.audit("elmer_tool", action, data, extra)
+        data["physics_audit"] = audit_report.to_dict()
+    except Exception:  # 防御: 审计失败不阻断结果返回
+        logger.debug("audit failure can't block result delivery", exc_info=True)
+
+
+def _elmer_sif_exported_result(sif_path: Path) -> ToolResult:
+    """ElmerSolver 缺失时返回已导出的 SIF 路径."""
+    return ToolResult(
+        data={
+            "action": "solve_sif",
+            "status": "sif_exported",
+            "sif_path": str(sif_path),
+            "message": (
+                "ElmerSolver not installed. SIF file saved — run with: "
+                f"ElmerSolver {sif_path.name}"
+            ),
+        },
+        success=True,
+    )
+
+
+def _elmergrid_skipped_result() -> ToolResult:
+    """ElmerGrid 缺失时跳过网格转换."""
+    return ToolResult(
+        data={
+            "action": "mesh_to_elmer",
+            "status": "skipped",
+            "message": "ElmerGrid not installed. Cannot convert mesh.",
+        },
+        success=True,
+    )
+
+
+def _solve_sif_data(
+    result: Any, success: bool, sif_path: Path, work_dir: Path
+) -> dict[str, Any]:
+    """构造 solve_sif 的结果 data."""
+    return {
+        "action": "solve_sif",
+        "returncode": result.returncode,
+        "stdout": result.stdout[-2000:] if result.stdout else "",
+        "stderr": result.stderr[-2000:] if result.stderr else "",
+        "sif_path": str(sif_path),
+        "working_dir": str(work_dir),
+        "message": (
+            "Elmer solve completed."
+            if success
+            else f"Elmer solve failed (exit {result.returncode})."
+        ),
+    }
+
+
+def _mesh_converted_result(result: Any, success: bool, work_dir: Path) -> ToolResult:
+    """构造网格转换结果."""
+    return ToolResult(
+        data={
+            "action": "mesh_to_elmer",
+            "returncode": result.returncode,
+            "output_dir": str(work_dir / "elmer_mesh"),
+            "stdout": result.stdout[-1000:] if result.stdout else "",
+            "message": (
+                "Mesh converted to Elmer format."
+                if success
+                else f"ElmerGrid failed (exit {result.returncode})."
+            ),
+        },
+        success=success,
+        error=None if success else f"ElmerGrid failed: {result.stderr[:300]}",
+    )
 
 
 class ElmerTool(HuginnTool):
@@ -91,9 +174,7 @@ class ElmerTool(HuginnTool):
             data=None, success=False, error=f"Unknown action: {input_data.action}"
         )
 
-    def _resolve_sif(
-        self, input_data: ElmerToolInput, work_dir: Path
-    ) -> Path | None:
+    def _resolve_sif(self, input_data: ElmerToolInput, work_dir: Path) -> Path | None:
         """Write sif_content to file or resolve existing sif_file path."""
         if input_data.sif_content:
             sif_path = work_dir / "case.sif"
@@ -107,9 +188,7 @@ class ElmerTool(HuginnTool):
                 return p
         return None
 
-    def _solve_sif(
-        self, input_data: ElmerToolInput, work_dir: Path
-    ) -> ToolResult:
+    def _solve_sif(self, input_data: ElmerToolInput, work_dir: Path) -> ToolResult:
         sif_path = self._resolve_sif(input_data, work_dir)
         if sif_path is None:
             return ToolResult(
@@ -119,18 +198,7 @@ class ElmerTool(HuginnTool):
             )
 
         if not _elmer_available():
-            return ToolResult(
-                data={
-                    "action": "solve_sif",
-                    "status": "sif_exported",
-                    "sif_path": str(sif_path),
-                    "message": (
-                        "ElmerSolver not installed. SIF file saved — run with: "
-                        f"ElmerSolver {sif_path.name}"
-                    ),
-                },
-                success=True,
-            )
+            return _elmer_sif_exported_result(sif_path)
 
         try:
             result = self.sandbox.run(
@@ -141,28 +209,10 @@ class ElmerTool(HuginnTool):
                 timeout=600.0,
             )
             success = result.returncode == 0
-            data = {
-                "action": "solve_sif",
-                "returncode": result.returncode,
-                "stdout": result.stdout[-2000:] if result.stdout else "",
-                "stderr": result.stderr[-2000:] if result.stderr else "",
-                "sif_path": str(sif_path),
-                "working_dir": str(work_dir),
-                "message": (
-                    "Elmer solve completed." if success
-                    else f"Elmer solve failed (exit {result.returncode})."
-                ),
-            }
+            data = _solve_sif_data(result, success, sif_path, work_dir)
 
             # Physics audit — convergence, singular matrix, NaN/Inf
-            try:
-                from huginn.execution.physics_auditor import PhysicsAuditor
-
-                auditor = PhysicsAuditor()
-                audit_report = auditor.audit("elmer_tool", "solve_sif", data, {})
-                data["physics_audit"] = audit_report.to_dict()
-            except Exception:  # 防御: 审计失败不阻断结果返回
-                logger.debug("audit failure can't block result delivery", exc_info=True)
+            _attach_elmer_audit("solve_sif", data, {})
 
             return ToolResult(
                 data=data,
@@ -178,9 +228,7 @@ class ElmerTool(HuginnTool):
                 data=None, success=False, error="Elmer solve timed out (600s)."
             )
 
-    def _validate_sif(
-        self, input_data: ElmerToolInput, work_dir: Path
-    ) -> ToolResult:
+    def _validate_sif(self, input_data: ElmerToolInput, work_dir: Path) -> ToolResult:
         sif_path = self._resolve_sif(input_data, work_dir)
         if sif_path is None:
             return ToolResult(
@@ -211,14 +259,14 @@ class ElmerTool(HuginnTool):
                 "sif_path": str(sif_path),
                 "valid": len(issues) == 0,
                 "issues": issues,
-                "message": "SIF valid." if not issues else f"{len(issues)} issue(s) found.",
+                "message": "SIF valid."
+                if not issues
+                else f"{len(issues)} issue(s) found.",
             },
             success=True,
         )
 
-    def _mesh_to_elmer(
-        self, input_data: ElmerToolInput, work_dir: Path
-    ) -> ToolResult:
+    def _mesh_to_elmer(self, input_data: ElmerToolInput, work_dir: Path) -> ToolResult:
         if not input_data.mesh_dir:
             return ToolResult(
                 data=None, success=False, error="mesh_to_elmer requires 'mesh_dir'."
@@ -232,39 +280,26 @@ class ElmerTool(HuginnTool):
             )
 
         if not _elmergrid_available():
-            return ToolResult(
-                data={
-                    "action": "mesh_to_elmer",
-                    "status": "skipped",
-                    "message": "ElmerGrid not installed. Cannot convert mesh.",
-                },
-                success=True,
-            )
+            return _elmergrid_skipped_result()
 
         try:
             # ElmerGrid 格式: ElmerGrid 14 2 <mesh_dir> [output_dir]
             result = self.sandbox.run(
-                ["ElmerGrid", "14", "2", str(mesh_path), "2", str(work_dir / "elmer_mesh")],
+                [
+                    "ElmerGrid",
+                    "14",
+                    "2",
+                    str(mesh_path),
+                    "2",
+                    str(work_dir / "elmer_mesh"),
+                ],
                 cwd=str(work_dir),
                 capture_output=True,
                 text=True,
                 timeout=120.0,
             )
             success = result.returncode == 0
-            return ToolResult(
-                data={
-                    "action": "mesh_to_elmer",
-                    "returncode": result.returncode,
-                    "output_dir": str(work_dir / "elmer_mesh"),
-                    "stdout": result.stdout[-1000:] if result.stdout else "",
-                    "message": (
-                        "Mesh converted to Elmer format." if success
-                        else f"ElmerGrid failed (exit {result.returncode})."
-                    ),
-                },
-                success=success,
-                error=None if success else f"ElmerGrid failed: {result.stderr[:300]}",
-            )
+            return _mesh_converted_result(result, success, work_dir)
         except SandboxError as e:
             return ToolResult(
                 data=None, success=False, error=f"ElmerGrid blocked by sandbox: {e}"

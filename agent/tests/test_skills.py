@@ -88,6 +88,72 @@ class TestSymbolicVerifySkill:
         assert "lean_tool" in SYMBOLIC_VERIFY.required_tools
 
 
+def _slow_tool_classes(start_times: dict):
+    """Slow tool doubles recording their start time, for concurrency checks."""
+    import time
+
+    from pydantic import BaseModel
+
+    from huginn.tools.base import HuginnTool, ToolResult
+
+    class SlowInput(BaseModel):
+        label: str = ""
+        delay: float = 0.2
+
+    class SlowTool(HuginnTool):
+        input_schema = SlowInput
+        read_only = True
+
+        async def call(self, raw, ctx):
+            data = raw if isinstance(raw, dict) else raw.model_dump()
+            start_times[data["label"]] = time.monotonic()
+            await asyncio.sleep(data["delay"])
+            return ToolResult(success=True, data={"label": data["label"]})
+
+    class SlowToolA(SlowTool):
+        name = "slow_a"
+        description = "slow tool a"
+
+    class SlowToolB(SlowTool):
+        name = "slow_b"
+        description = "slow tool b"
+
+    return SlowToolA, SlowToolB
+
+
+def _parallel_group_skill() -> SkillDefinition:
+    return SkillDefinition(
+        name="parallel_test",
+        description="two parallel slow steps",
+        category="test",
+        steps=[
+            SkillStep(
+                name="step_a",
+                tool="slow_a",
+                input_mapping={"label": "'a'", "delay": "0.2"},
+                output_key="out_a",
+                parallel_group="g1",
+            ),
+            SkillStep(
+                name="step_b",
+                tool="slow_b",
+                input_mapping={"label": "'b'", "delay": "0.2"},
+                output_key="out_b",
+                parallel_group="g1",
+            ),
+        ],
+    )
+
+
+def _assert_parallel_timing(result: dict, elapsed: float, start_times: dict) -> None:
+    assert result["success"] is True
+    # 串行 ≈ 0.4s, 并行 ≈ 0.2s. 用 0.35s 阈值区分
+    assert elapsed < 0.35, f"expected parallel (<0.35s), got {elapsed:.3f}s"
+    # 两个 step 启动时间差应 < delay (基本同时启动)
+    if "a" in start_times and "b" in start_times:
+        assert abs(start_times["a"] - start_times["b"]) < 0.1
+
+
 class TestDeclarativeSkillExecutor:
     def test_missing_tool_returns_error(self):
         from huginn.tools.registry import ToolRegistry
@@ -115,78 +181,28 @@ class TestDeclarativeSkillExecutor:
 
     def test_parallel_group_runs_concurrently(self):
         """同 parallel_group 的 step 应并行执行 (耗时 ≈ max 而非 sum)."""
-        import asyncio
         import time
 
-        from pydantic import BaseModel
-
-        from huginn.tools.base import HuginnTool, ToolResult
         from huginn.tools.registry import ToolRegistry
 
         # 清理残留注册, 避免上一次测试污染
         ToolRegistry.clear()
 
-        class SlowInput(BaseModel):
-            label: str = ""
-            delay: float = 0.2
-
         # 记录每个 step 的启动时间, 验证并发
         start_times: dict[str, float] = {}
+        slow_tool_a, slow_tool_b = _slow_tool_classes(start_times)
 
-        class SlowTool(HuginnTool):
-            input_schema = SlowInput
-            read_only = True
-
-            async def call(self, raw, ctx):
-                data = raw if isinstance(raw, dict) else raw.model_dump()
-                start_times[data["label"]] = time.monotonic()
-                await asyncio.sleep(data["delay"])
-                return ToolResult(success=True, data={"label": data["label"]})
-
-        class SlowToolA(SlowTool):
-            name = "slow_a"
-            description = "slow tool a"
-
-        class SlowToolB(SlowTool):
-            name = "slow_b"
-            description = "slow tool b"
-
-        ToolRegistry.register(SlowToolA())
-        ToolRegistry.register(SlowToolB())
+        ToolRegistry.register(slow_tool_a())
+        ToolRegistry.register(slow_tool_b())
 
         executor = DeclarativeSkillExecutor(ToolRegistry)
-        skill = SkillDefinition(
-            name="parallel_test",
-            description="two parallel slow steps",
-            category="test",
-            steps=[
-                SkillStep(
-                    name="step_a",
-                    tool="slow_a",
-                    input_mapping={"label": "'a'", "delay": "0.2"},
-                    output_key="out_a",
-                    parallel_group="g1",
-                ),
-                SkillStep(
-                    name="step_b",
-                    tool="slow_b",
-                    input_mapping={"label": "'b'", "delay": "0.2"},
-                    output_key="out_b",
-                    parallel_group="g1",
-                ),
-            ],
-        )
+        skill = _parallel_group_skill()
 
         t0 = time.monotonic()
         result = asyncio.run(executor.execute(skill, {}, {}))
         elapsed = time.monotonic() - t0
 
-        assert result["success"] is True
-        # 串行 ≈ 0.4s, 并行 ≈ 0.2s. 用 0.35s 阈值区分
-        assert elapsed < 0.35, f"expected parallel (<0.35s), got {elapsed:.3f}s"
-        # 两个 step 启动时间差应 < delay (基本同时启动)
-        if "a" in start_times and "b" in start_times:
-            assert abs(start_times["a"] - start_times["b"]) < 0.1
+        _assert_parallel_timing(result, elapsed, start_times)
 
 
 class TestUQGPSkills:
@@ -334,6 +350,42 @@ class TestSkillInputResolution:
         assert DeclarativeSkillExecutor._resolve_value("$missing.key", {}) is None
 
 
+def _write_synthesis_csv(data_path) -> None:
+    """Write a small deterministic synthesis dataset with a learnable signal."""
+    import csv
+
+    import numpy as np
+
+    rng = np.random.default_rng(42)
+    rows = []
+    for _ in range(10):
+        temp = float(rng.uniform(300, 800))
+        time = float(rng.uniform(1, 10))
+        rows.append(
+            {
+                "temperature": temp,
+                "time": time,
+                "yield": temp * 0.01 + time * 0.5 + rng.normal(0, 0.1),
+            }
+        )
+    with data_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["temperature", "time", "yield"])
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _synthesis_skill_inputs(data_path, output_path) -> dict:
+    return {
+        "data_path": str(data_path),
+        "target_column": "yield",
+        "feature_columns": ["temperature", "time"],
+        "bounds": {"temperature": [300.0, 800.0], "time": [1.0, 10.0]},
+        "n_recommendations": 2,
+        "maximize": True,
+        "output_path": str(output_path),
+    }
+
+
 class TestNewSkills:
     def test_topological_geometry_analysis_registered(self):
         from huginn.skills.registry import SkillRegistry
@@ -428,10 +480,6 @@ class TestNewSkills:
         assert output_path.exists()
 
     def test_synthesis_planning_skill_runs(self, tmp_path):
-        import csv
-
-        import numpy as np
-
         from huginn.config import HuginnConfig
         from huginn.skills.base import DeclarativeSkillExecutor
         from huginn.skills.registry import SkillRegistry
@@ -442,40 +490,13 @@ class TestNewSkills:
         register_all_tools(config=HuginnConfig())
 
         data_path = tmp_path / "synthesis.csv"
-        rng = np.random.default_rng(42)
-        rows = []
-        for _ in range(10):
-            temp = float(rng.uniform(300, 800))
-            time = float(rng.uniform(1, 10))
-            rows.append(
-                {
-                    "temperature": temp,
-                    "time": time,
-                    "yield": temp * 0.01 + time * 0.5 + rng.normal(0, 0.1),
-                }
-            )
-        with data_path.open("w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["temperature", "time", "yield"])
-            writer.writeheader()
-            writer.writerows(rows)
+        _write_synthesis_csv(data_path)
 
         output_path = tmp_path / "recommendations.md"
         skill = SkillRegistry.get("synthesis_planning")
         executor = DeclarativeSkillExecutor(ToolRegistry)
         result = asyncio.run(
-            executor.execute(
-                skill,
-                {
-                    "data_path": str(data_path),
-                    "target_column": "yield",
-                    "feature_columns": ["temperature", "time"],
-                    "bounds": {"temperature": [300.0, 800.0], "time": [1.0, 10.0]},
-                    "n_recommendations": 2,
-                    "maximize": True,
-                    "output_path": str(output_path),
-                },
-                {},
-            )
+            executor.execute(skill, _synthesis_skill_inputs(data_path, output_path), {})
         )
 
         assert result["success"] is True

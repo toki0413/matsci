@@ -83,6 +83,32 @@ class _Backend:
 # the upstream repo at runtime.
 
 
+def _ijepa_env() -> tuple[str, str, int, str]:
+    """Read and validate the I-JEPA environment configuration."""
+    ckpt_path = os.environ.get("IJEPA_CHECKPOINT", "").strip()
+    if not ckpt_path or not os.path.isfile(ckpt_path):
+        raise RuntimeError("I-JEPA checkpoint not found (set IJEPA_CHECKPOINT)")
+
+    arch = os.environ.get("IJEPA_ARCH", "vit_huge_patch16_224")
+    img_size = int(os.environ.get("IJEPA_IMG_SIZE", "224"))
+    device = os.environ.get(
+        "IJEPA_DEVICE", "cuda" if _torch_cuda_available() else "cpu"
+    )
+    return ckpt_path, arch, img_size, device
+
+
+def _strip_ijepa_prefixes(state: dict[str, Any]) -> dict[str, Any]:
+    """Strip common I-JEPA checkpoint prefixes so timm can match."""
+    cleaned: dict[str, Any] = {}
+    for k, v in state.items():
+        nk = k
+        for prefix in ("module.", "target_encoder.", "encoder."):
+            if nk.startswith(prefix):
+                nk = nk[len(prefix) :]
+        cleaned[nk] = v
+    return cleaned
+
+
 class _IJEPABackend(_Backend):
     name = "ijepa"
 
@@ -90,13 +116,7 @@ class _IJEPABackend(_Backend):
         import timm
         import torch  # noqa: F401
 
-        ckpt_path = os.environ.get("IJEPA_CHECKPOINT", "").strip()
-        if not ckpt_path or not os.path.isfile(ckpt_path):
-            raise RuntimeError("I-JEPA checkpoint not found (set IJEPA_CHECKPOINT)")
-
-        arch = os.environ.get("IJEPA_ARCH", "vit_huge_patch16_224")
-        img_size = int(os.environ.get("IJEPA_IMG_SIZE", "224"))
-        device = os.environ.get("IJEPA_DEVICE", "cuda" if _torch_cuda_available() else "cpu")
+        ckpt_path, arch, img_size, device = _ijepa_env()
 
         # num_classes=0 drops the classification head — we want raw features.
         self._model = timm.create_model(
@@ -112,13 +132,7 @@ class _IJEPABackend(_Backend):
             state = state["model"]
         # I-JEPA prefixes encoder weights with "module." / "target_encoder."
         # in some checkpoints. Strip common prefixes so timm can match.
-        cleaned: dict[str, Any] = {}
-        for k, v in state.items():
-            nk = k
-            for prefix in ("module.", "target_encoder.", "encoder."):
-                if nk.startswith(prefix):
-                    nk = nk[len(prefix):]
-            cleaned[nk] = v
+        cleaned = _strip_ijepa_prefixes(state)
         self._model.load_state_dict(cleaned, strict=False)
         self._model.eval()
         self._device = torch.device(device)
@@ -132,19 +146,25 @@ class _IJEPABackend(_Backend):
         # Precompute the preprocessing transform once.
         from torchvision import transforms
 
-        self._tfm = transforms.Compose([
-            transforms.Resize(img_size, interpolation=transforms.InterpolationMode.BICUBIC),
-            transforms.CenterCrop(img_size),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=_IMAGENET_MEAN, std=_IMAGENET_STD),
-        ])
+        self._tfm = transforms.Compose(
+            [
+                transforms.Resize(
+                    img_size, interpolation=transforms.InterpolationMode.BICUBIC
+                ),
+                transforms.CenterCrop(img_size),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=_IMAGENET_MEAN, std=_IMAGENET_STD),
+            ]
+        )
 
     def encode(self, pil_img: Any) -> np.ndarray:
         import torch
 
         with torch.no_grad():
             x = self._tfm(pil_img).unsqueeze(0).to(self._device)
-            feats = self._model.forward_head(self._model.forward_features(x), pre_logits=True)
+            feats = self._model.forward_head(
+                self._model.forward_features(x), pre_logits=True
+            )
             vec = feats.squeeze(0).float().cpu().numpy()
         return _l2_normalize(vec)
 
@@ -166,7 +186,9 @@ class _CLIPBackend(_Backend):
         import torch
         from transformers import CLIPModel, CLIPProcessor
 
-        device = os.environ.get("CLIP_DEVICE", "cuda" if _torch_cuda_available() else "cpu")
+        device = os.environ.get(
+            "CLIP_DEVICE", "cuda" if _torch_cuda_available() else "cpu"
+        )
         self._device = torch.device(device)
 
         # 优先从 ModelScope 下载
@@ -227,18 +249,22 @@ class _ResNetBackend(_Backend):
         resnet.fc = nn.Identity()
         resnet.eval()
 
-        device = os.environ.get("RESNET_DEVICE", "cuda" if _torch_cuda_available() else "cpu")
+        device = os.environ.get(
+            "RESNET_DEVICE", "cuda" if _torch_cuda_available() else "cpu"
+        )
         self._device = torch.device(device)
         resnet.to(self._device)
         self._model = resnet
         self.dim = 2048  # avgpool output width, fixed for ResNet50
 
-        self._tfm = transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=_IMAGENET_MEAN, std=_IMAGENET_STD),
-        ])
+        self._tfm = transforms.Compose(
+            [
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=_IMAGENET_MEAN, std=_IMAGENET_STD),
+            ]
+        )
 
     def encode(self, pil_img: Any) -> np.ndarray:
         import torch
@@ -307,11 +333,14 @@ def _is_offline_mode() -> bool:
 
     通过环境变量判断: HF_HUB_OFFLINE=1 或 TRANSFORMERS_OFFLINE=1 或 HUGINN_OFFLINE=1
     """
-    return any(os.environ.get(k) == "1" for k in (
-        "HF_HUB_OFFLINE",
-        "TRANSFORMERS_OFFLINE",
-        "HUGINN_OFFLINE",
-    ))
+    return any(
+        os.environ.get(k) == "1"
+        for k in (
+            "HF_HUB_OFFLINE",
+            "TRANSFORMERS_OFFLINE",
+            "HUGINN_OFFLINE",
+        )
+    )
 
 
 # ── public API ──────────────────────────────────────────────────────
@@ -415,7 +444,9 @@ class VisualEncoder:
             self._init_error = f"encode failed: {exc}"
             return None
 
-    def encode_batch(self, image_paths: Iterable[str | Path]) -> list[np.ndarray | None]:
+    def encode_batch(
+        self, image_paths: Iterable[str | Path]
+    ) -> list[np.ndarray | None]:
         """Encode several images. ``None`` entries are kept in order so the
         result aligns 1:1 with the input paths."""
         results: list[np.ndarray | None] = []

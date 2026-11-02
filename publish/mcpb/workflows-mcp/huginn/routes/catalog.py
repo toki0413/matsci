@@ -11,8 +11,8 @@ from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException
 
+from huginn.catalog.manager import discover_handles
 from huginn.catalog.reconcile import apply_enabled
-from huginn.plugins.loader import DEFAULT_PLUGINS_DIR
 from huginn.server_core import get_context
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
@@ -30,9 +30,8 @@ async def list_catalog() -> dict[str, Any]:
     cat = _catalog()
     if cat is None:
         return {"items": [], "total": 0}
-    entries = cat.discover_all(
-        mcp_manager=get_context().mcp_manager, plugins_dir=DEFAULT_PLUGINS_DIR
-    )
+    ctx = get_context()
+    entries = cat.discover_all(**discover_handles(ctx))
     return {
         "items": [e.to_dict() for e in entries],
         "total": len(entries),

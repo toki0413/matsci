@@ -29,6 +29,7 @@ def _num_close(value: float, expected: float, tol: float) -> bool:
 
 # ── T1: 合金成分优化 ─────────────────────────────────────────────
 
+
 def _eval_alloy_optim(output: str) -> tuple[bool, str, float]:
     """目标: 最大化硬度 H = 5*x + 3*y, 约束 x+y<=10, x,y>=0.
     最优解 x=10, y=0, H=50. 容差 ±2."""
@@ -53,6 +54,7 @@ def _eval_alloy_optim(output: str) -> tuple[bool, str, float]:
 
 # ── T2: 晶格常数优化 ─────────────────────────────────────────────
 
+
 def _eval_lattice_optim(output: str) -> tuple[bool, str, float]:
     """Lennard-Jones 势能: E(a) = 4ε[(σ/a)¹² - (σ/a)⁶], ε=1, σ=1.
     平衡晶格常数 a₀ = 2^(1/6) ≈ 1.1225. 最小能量 E_min = -ε = -1.
@@ -69,6 +71,7 @@ def _eval_lattice_optim(output: str) -> tuple[bool, str, float]:
 
 
 # ── T3: KRR 超参优化 ─────────────────────────────────────────────
+
 
 def _eval_krr_optim(output: str) -> tuple[bool, str, float]:
     """Kernel Ridge Regression: K(x,x') = exp(-||x-x'||²/(2σ²)).
@@ -87,6 +90,7 @@ def _eval_krr_optim(output: str) -> tuple[bool, str, float]:
 
 # ── T4: 带隙最大化 ───────────────────────────────────────────────
 
+
 def _eval_bandgap_optim(output: str) -> tuple[bool, str, float]:
     """合金带隙 Eg(x) = 1.0 + 0.5*x - 0.1*x² (x: 掺杂浓度 0~5).
     最优 x=2.5, Eg_max=1.625 eV. 判 x 或 Eg."""
@@ -102,6 +106,7 @@ def _eval_bandgap_optim(output: str) -> tuple[bool, str, float]:
 
 
 # ── T5: 0-1 背包问题 ─────────────────────────────────────────────
+
 
 def _eval_knapsack(output: str) -> tuple[bool, str, float]:
     """物品 w=[2,3,4,5], v=[3,4,5,6], 容量 C=5. 最优: 选物品0+1, v=7."""
@@ -120,6 +125,7 @@ def _eval_knapsack(output: str) -> tuple[bool, str, float]:
 
 # ── T6: 梯度下降 ─────────────────────────────────────────────────
 
+
 def _eval_gradient_descent(output: str) -> tuple[bool, str, float]:
     """f(x)=x²+2x+1, f'(x)=2x+2, α=0.1, x0=5. 最小值 x=-1."""
     val = _extract_number(output, r"(?:x|最小值|min)[\s=:]*(-?\d+\.?\d*)")
@@ -136,6 +142,7 @@ def _eval_gradient_descent(output: str) -> tuple[bool, str, float]:
 
 
 # ── T7: Pareto 前沿 ──────────────────────────────────────────────
+
 
 def _eval_pareto(output: str) -> tuple[bool, str, float]:
     """5 个解 (f1,f2): A(1,5) B(2,3) C(3,4) D(4,2) E(5,1).
@@ -155,6 +162,7 @@ def _eval_pareto(output: str) -> tuple[bool, str, float]:
 
 # ── T8: 蒙特卡洛 π 估算 ──────────────────────────────────────────
 
+
 def _eval_monte_carlo_pi(output: str) -> tuple[bool, str, float]:
     """蒙特卡洛 N=10000 估算 π. 答案 ~3.14, 容差 ±0.3."""
     val = _extract_number(output, r"(?:π|pi|估算|estimate)[^0-9]*(\d+\.?\d*)")
@@ -172,6 +180,15 @@ def _eval_monte_carlo_pi(output: str) -> tuple[bool, str, float]:
 
 def build_optim_tasks() -> list[BenchmarkTask]:
     """算法优化 benchmark: 8 题, 覆盖 LP/势能/超参/二次/背包/梯度/Pareto/MC."""
+    return (
+        _build_optim_tasks_1_2()
+        + _build_optim_tasks_3_4()
+        + _build_optim_tasks_5_6()
+        + _build_optim_tasks_7_8()
+    )
+
+
+def _build_optim_tasks_1_2() -> list[BenchmarkTask]:
     return [
         BenchmarkTask(
             id="optim-alloy",
@@ -199,6 +216,11 @@ def build_optim_tasks() -> list[BenchmarkTask]:
             requires_api_key=True,
             reference="a₀=2^(1/6)=1.1225, E_min=-1.0 (LJ 势能最小值)",
         ),
+    ]
+
+
+def _build_optim_tasks_3_4() -> list[BenchmarkTask]:
+    return [
         BenchmarkTask(
             id="optim-krr",
             category="optimization",
@@ -225,6 +247,11 @@ def build_optim_tasks() -> list[BenchmarkTask]:
             requires_api_key=True,
             reference="x=2.5, Eg=1.625 eV (二次函数顶点)",
         ),
+    ]
+
+
+def _build_optim_tasks_5_6() -> list[BenchmarkTask]:
+    return [
         BenchmarkTask(
             id="optim-knapsack",
             category="optimization",
@@ -251,6 +278,11 @@ def build_optim_tasks() -> list[BenchmarkTask]:
             requires_api_key=True,
             reference="x=-1.0 (f(x)=x²+2x+1=(x+1)² 的最小值)",
         ),
+    ]
+
+
+def _build_optim_tasks_7_8() -> list[BenchmarkTask]:
+    return [
         BenchmarkTask(
             id="optim-pareto",
             category="optimization",
@@ -286,11 +318,19 @@ def build_optim_tasks() -> list[BenchmarkTask]:
 
 # ── self-check ─────────────────────────────────────────────────
 
+
 def _selfcheck() -> None:
     """验证 8 题: 正确答案 pass, 错误答案 fail."""
     tasks = build_optim_tasks()
     assert len(tasks) == 8, f"expected 8 optim tasks, got {len(tasks)}"
 
+    _selfcheck_tasks_1_4(tasks)
+    _selfcheck_tasks_5_8(tasks)
+
+    print(f"PASS: optim_bench ({len(tasks)} tasks)")
+
+
+def _selfcheck_tasks_1_4(tasks: list[BenchmarkTask]) -> None:
     # T1 合金: H=50, x=10, y=0
     t1 = tasks[0]
     r = t1.evaluate("x=10, y=0, H=50")
@@ -319,6 +359,8 @@ def _selfcheck() -> None:
     r = t4.evaluate("Eg=0.5")
     assert not r.passed, "T4 wrong should fail"
 
+
+def _selfcheck_tasks_5_8(tasks: list[BenchmarkTask]) -> None:
     # T5 背包: V=7
     t5 = tasks[4]
     r = t5.evaluate("最大总价值 V=7")
@@ -346,8 +388,6 @@ def _selfcheck() -> None:
     assert r.passed, f"T8 correct should pass: {r.reason}"
     r = t8.evaluate("π ≈ 2.0")
     assert not r.passed, "T8 wrong should fail"
-
-    print(f"PASS: optim_bench ({len(tasks)} tasks)")
 
 
 if __name__ == "__main__":

@@ -7,12 +7,14 @@ observation 的语义解释力, 是 abduction 的关键升级路径.
 env HUGINN_LLM_LIKELIHOOD=1 启用 (v14 HUGINN_DARWIN_LLM_EVAL=1 兼容映射),
 默认关闭. HUGINN_LLM_LIKELIHOOD_INTERVAL (默认 5) 控制 LLM 调用频率.
 """
+
 from __future__ import annotations
 
 # 直接跑脚本时把 agent/ 加到 sys.path (被 import 时不执行, rcb_runner 已设好)
 if __name__ == "__main__":
     import sys as _sys
     from pathlib import Path as _Path
+
     _agent_root = str(_Path(__file__).resolve().parents[2])
     if _agent_root not in _sys.path:
         _sys.path.insert(0, _agent_root)
@@ -65,7 +67,7 @@ def _build_llm_lik_prompt(
         "You are a Bayesian likelihood estimator for scientific hypotheses. "
         "Given hypothesis H and observation O, estimate log P(O|H) — the "
         "log-likelihood of observing O under H.\n"
-        f"Return STRICT JSON: {{\"log_lik\": <float>, \"reason\": <short string>}}. "
+        f'Return STRICT JSON: {{"log_lik": <float>, "reason": <short string>}}. '
         f"log_lik range: [{_LOG_LIK_MIN}, {_LOG_LIK_MAX}]. "
         "0 = O exactly as H predicts; -50 = O essentially impossible under H."
     )
@@ -130,7 +132,9 @@ class LLMLikelihood:
         self._model = model
         self._task_ctx = task_ctx or ""
         self._interval = max(1, int(interval))
-        self._gaussian = gaussian_fallback or HypothesisManifold._gaussian_log_likelihood
+        self._gaussian = (
+            gaussian_fallback or HypothesisManifold._gaussian_log_likelihood
+        )
         # rcb_runner 主循环每轮 set, 决定本轮是否调 LLM
         self.iter_n = 0
 
@@ -139,25 +143,34 @@ class LLMLikelihood:
             return self._gaussian(hypothesis, observation)
         try:
             sys_text, usr_text = _build_llm_lik_prompt(
-                hypothesis, observation, self._task_ctx,
+                hypothesis,
+                observation,
+                self._task_ctx,
             )
             text = self._call_llm_sync(sys_text, usr_text)
             val, reason = _parse_log_lik_json(text)
             if val is None:
                 logger.warning(
                     "llm_likelihood_fallback: reason=%s, hypothesis=%s, observation=%s",
-                    reason, hypothesis.h_id, observation.name,
+                    reason,
+                    hypothesis.h_id,
+                    observation.name,
                 )
                 return self._gaussian(hypothesis, observation)
             logger.debug(
                 "llm_likelihood: h=%s o=%s log_lik=%.3f reason=%s",
-                hypothesis.h_id, observation.name, val, reason,
+                hypothesis.h_id,
+                observation.name,
+                val,
+                reason,
             )
             return val
         except Exception as e:
             logger.warning(
                 "llm_likelihood_fallback: reason=%s, hypothesis=%s, observation=%s",
-                e, hypothesis.h_id, observation.name,
+                e,
+                hypothesis.h_id,
+                observation.name,
             )
             return self._gaussian(hypothesis, observation)
 
@@ -166,6 +179,7 @@ class LLMLikelihood:
         # 不在 sync 函数里 asyncio.run — 跟 rcb 主循环 event loop 冲突.
         # 升级路径: 整条 log_posterior → abductive_inference 链路 async 化.
         from huginn.metacog.step_evaluator import _build_messages, _resp_to_text
+
         messages = _build_messages(sys_text, usr_text)
         model = self._model
         if hasattr(model, "invoke"):
@@ -177,35 +191,23 @@ class LLMLikelihood:
 
 # ---------- Self-check ----------
 
-def _selfcheck() -> None:
-    """Assert-based demo: 验证 LLMLikelihood 的 4 条路径 + interval 控制 + env 兼容 + 注入."""
-    import math
-    import tempfile  # noqa: F401  # 保留 import 习惯, 后续扩展用
 
-    class _MockModel:
-        """Mock LLM client. invoke() 返回固定文本或抛异常."""
-        def __init__(self, response: str = "", error: Exception | None = None):
-            self.response = response
-            self.error = error
-            self.call_count = 0
+class _MockModel:
+    """Mock LLM client. invoke() 返回固定文本或抛异常."""
 
-        def invoke(self, messages):
-            self.call_count += 1
-            if self.error is not None:
-                raise self.error
-            return self.response
+    def __init__(self, response: str = "", error: Exception | None = None):
+        self.response = response
+        self.error = error
+        self.call_count = 0
 
-    h = Hypothesis(
-        h_id="h_test",
-        description="Test hypothesis: predicts x=1.0",
-        predictions={"x": 1.0},
-        n_params=1,
-    )
-    o = Observation("x", 1.05, sigma=0.1)
-    gaussian_val = HypothesisManifold._gaussian_log_likelihood(h, o)
-    # z = 0.05/0.1 = 0.5, -0.5*0.25 = -0.125 (浮点有 epsilon, 用 isclose)
-    assert math.isclose(gaussian_val, -0.125, abs_tol=1e-9), f"setup: gaussian_val={gaussian_val}"
+    def invoke(self, messages):
+        self.call_count += 1
+        if self.error is not None:
+            raise self.error
+        return self.response
 
+
+def _sc_cases_1_to_4(h: Hypothesis, o: Observation, gaussian_val: float) -> None:
     # Case 1: 正常路径 — LLM 返回合法 JSON → 返回 log_lik
     mock_ok = _MockModel(response='{"log_lik": -0.3, "reason": "close fit"}')
     llm1 = LLMLikelihood(mock_ok, interval=1)
@@ -244,6 +246,8 @@ def _selfcheck() -> None:
     assert val4 == gaussian_val, f"case4: expect Gaussian, got {val4}"
     print(f"[CHECK] case4 ok: LLM exception -> Gaussian {val4}")
 
+
+def _sc_interval(h: Hypothesis, o: Observation, gaussian_val: float) -> None:
     # Case 5: interval=5 — iter 0/5/10 调 LLM, iter 1/2/3/4/6/7/8/9 用 Gaussian
     mock_int = _MockModel(response='{"log_lik": -0.2, "reason": "interval test"}')
     llm5 = LLMLikelihood(mock_int, interval=5)
@@ -254,18 +258,26 @@ def _selfcheck() -> None:
         if it % 5 == 0:
             assert v == llm_val, f"iter {it}: expect LLM {llm_val}, got {v}"
         else:
-            assert v == gaussian_val, f"iter {it}: expect Gaussian {gaussian_val}, got {v}"
+            assert v == gaussian_val, (
+                f"iter {it}: expect Gaussian {gaussian_val}, got {v}"
+            )
     assert mock_int.call_count == 3, (
         f"interval=5: LLM called 3 times (iter 0,5,10), got {mock_int.call_count}"
     )
-    print(f"[CHECK] case5 ok: interval=5, LLM called {mock_int.call_count} times in 11 iters")
+    print(
+        f"[CHECK] case5 ok: interval=5, LLM called {mock_int.call_count} times in 11 iters"
+    )
 
+
+def _sc_model_none(h: Hypothesis, o: Observation, gaussian_val: float) -> None:
     # Case 6: model=None → 一律 Gaussian (不调 LLM)
     llm6 = LLMLikelihood(None, interval=1)
     llm6.iter_n = 0
     assert llm6.log_lik(h, o) == gaussian_val, "case6: model=None -> Gaussian"
     print("[CHECK] case6 ok: model=None -> Gaussian")
 
+
+def _sc_env() -> None:
     # Case 7: env 兼容映射 (v14 HUGINN_DARWIN_LLM_EVAL -> v15 HUGINN_LLM_LIKELIHOOD)
     _saved_lik = os.environ.get("HUGINN_LLM_LIKELIHOOD")
     _saved_darwin = os.environ.get("HUGINN_DARWIN_LLM_EVAL")
@@ -297,6 +309,8 @@ def _selfcheck() -> None:
                 os.environ.pop(k, None)
     print("[CHECK] case7 ok: env compat mapping + interval read")
 
+
+def _sc_injection(h: Hypothesis, o: Observation) -> None:
     # Case 8: 注入到 HypothesisManifold 验证接口兼容 + interval gate
     mock_inj = _MockModel(response='{"log_lik": -0.1, "reason": "inject test"}')
     llm8 = LLMLikelihood(mock_inj, interval=5)  # interval=5 才能测 gate
@@ -305,13 +319,40 @@ def _selfcheck() -> None:
     llm8.iter_n = 0  # 0%5==0 → 调 LLM
     post = m.log_posterior([o])
     assert "h_test" in post, f"manifold injection: posterior keys={post}"
-    assert mock_inj.call_count == 1, f"iter 0 should call LLM once, got {mock_inj.call_count}"
+    assert mock_inj.call_count == 1, (
+        f"iter 0 should call LLM once, got {mock_inj.call_count}"
+    )
     # iter_n=1 + interval=5 → Gaussian, 不调 LLM
     llm8.iter_n = 1
     pre_calls = mock_inj.call_count
     m.log_posterior([o])
     assert mock_inj.call_count == pre_calls, "iter_n=1 interval=5 should not call LLM"
     print(f"[CHECK] case8 ok: injected into HypothesisManifold, posterior={post}")
+
+
+def _selfcheck() -> None:
+    """Assert-based demo: 验证 LLMLikelihood 的 4 条路径 + interval 控制 + env 兼容 + 注入."""
+    import math
+    import tempfile  # noqa: F401  # 保留 import 习惯, 后续扩展用
+
+    h = Hypothesis(
+        h_id="h_test",
+        description="Test hypothesis: predicts x=1.0",
+        predictions={"x": 1.0},
+        n_params=1,
+    )
+    o = Observation("x", 1.05, sigma=0.1)
+    gaussian_val = HypothesisManifold._gaussian_log_likelihood(h, o)
+    # z = 0.05/0.1 = 0.5, -0.5*0.25 = -0.125 (浮点有 epsilon, 用 isclose)
+    assert math.isclose(gaussian_val, -0.125, abs_tol=1e-9), (
+        f"setup: gaussian_val={gaussian_val}"
+    )
+
+    _sc_cases_1_to_4(h, o, gaussian_val)
+    _sc_interval(h, o, gaussian_val)
+    _sc_model_none(h, o, gaussian_val)
+    _sc_env()
+    _sc_injection(h, o)
 
     print("OK llm_likelihood self-check passed (8 cases)")
 

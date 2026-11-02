@@ -55,14 +55,14 @@ class RecordType(StrEnum):
     继承 str 是为了直接 json.dumps / 写库时当字符串用, 省得到处 .value.
     """
 
-    CONJECTURE = "conjecture"          # 新猜想 / 假设
-    PROOF_ATTEMPT = "proof_attempt"    # 证明 / 验证尝试
+    CONJECTURE = "conjecture"  # 新猜想 / 假设
+    PROOF_ATTEMPT = "proof_attempt"  # 证明 / 验证尝试
     COUNTEREXAMPLE = "counterexample"  # 反例
-    OPEN_QUESTION = "open_question"    # 开放问题
-    OBSTACLE = "obstacle"             # 障碍识别
-    BRIDGE = "bridge"                 # 理论搭桥 (跨领域关联)
-    BOUNDARY = "boundary"             # 边界刻画 (适用条件确定)
-    VERIFICATION = "verification"    # 独立验证结果
+    OPEN_QUESTION = "open_question"  # 开放问题
+    OBSTACLE = "obstacle"  # 障碍识别
+    BRIDGE = "bridge"  # 理论搭桥 (跨领域关联)
+    BOUNDARY = "boundary"  # 边界刻画 (适用条件确定)
+    VERIFICATION = "verification"  # 独立验证结果
 
 
 @dataclass
@@ -162,9 +162,7 @@ class ResearchLog:
         self._db_path = str(self._resolve_path(db_path))
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         # check_same_thread=False: 跨线程共用连接, 锁我们自己管
-        self._conn = sqlite3.connect(
-            self._db_path, check_same_thread=False
-        )
+        self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.Lock()
         # Run versioned migrations before applying the base schema
@@ -192,6 +190,7 @@ class ResearchLog:
             return Path(db_path)
         try:
             from huginn.utils.runtime import get_runtime_home
+
             return get_runtime_home() / "research_log.sqlite"
         except Exception:
             base = os.environ.get("HUGINN_CACHE_DIR")
@@ -235,6 +234,17 @@ class ResearchLog:
             source=source,
         )
 
+        ResearchLog._persist_record(self, record)
+
+        logger.info(
+            "research record added: %s [%s] %s",
+            record.id,
+            record.record_type.value,
+            record.title,
+        )
+        return record
+
+    def _persist_record(self, record: ResearchRecord) -> None:
         with self._lock:
             self._conn.execute(
                 """
@@ -260,12 +270,6 @@ class ResearchLog:
             # 写完顺手做一次容量检查, 超了就清最老的归档记录
             self._maybe_cleanup()
 
-        logger.info(
-            "research record added: %s [%s] %s",
-            record.id, record.record_type.value, record.title,
-        )
-        return record
-
     def update_status(self, record_id: str, new_status: str) -> bool:
         """更新某条记录的状态. refuted/superseded 在 auto_archive 开启时
         会顺带打上 archived 标记 (记录本身不删, 树还得留着看).
@@ -276,9 +280,11 @@ class ResearchLog:
             logger.warning("unknown status %r, ignored", new_status)
             return False
 
-        archive_flag = 1 if (
-            self.config.auto_archive and new_status in ("refuted", "superseded")
-        ) else None
+        archive_flag = (
+            1
+            if (self.config.auto_archive and new_status in ("refuted", "superseded"))
+            else None
+        )
 
         with self._lock:
             if archive_flag is not None:
@@ -335,9 +341,12 @@ class ResearchLog:
             (overflow,),
         )
         # 归档不够删, 再补一刀 superseded
-        remaining = total - self._conn.execute(
-            "SELECT COUNT(*) AS c FROM research_records"
-        ).fetchone()["c"]
+        remaining = (
+            total
+            - self._conn.execute(
+                "SELECT COUNT(*) AS c FROM research_records"
+            ).fetchone()["c"]
+        )
         if remaining > self.config.max_records:
             extra = remaining - self.config.max_records
             self._conn.execute(
@@ -374,7 +383,9 @@ class ResearchLog:
             ).fetchall()
         return [self._row_to_record(r) for r in rows]
 
-    def list_by_status(self, status: str, limit: int | None = None) -> list[ResearchRecord]:
+    def list_by_status(
+        self, status: str, limit: int | None = None
+    ) -> list[ResearchRecord]:
         """按状态列出, 时间升序. limit 截取前 N 条."""
         with self._lock:
             if limit is not None:
@@ -453,7 +464,10 @@ def get_research_log() -> ResearchLog:
             # 双检锁, 避免两个线程同时过了第一道 None 检查
             if _research_log_singleton is None:
                 _research_log_singleton = ResearchLog()
-                logger.info("research log singleton initialized at %s", _research_log_singleton._db_path)
+                logger.info(
+                    "research log singleton initialized at %s",
+                    _research_log_singleton._db_path,
+                )
     return _research_log_singleton
 
 

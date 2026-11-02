@@ -52,22 +52,24 @@ EVENT_CUSTOM = "custom"
 # 使 trajectory 可按来源审计"模型到底看到了什么、谁塞的".
 EVENT_CONTEXT_INJECTION = "context_injection"
 
-SESSION_EVENT_KINDS: frozenset[str] = frozenset({
-    EVENT_MESSAGE,
-    EVENT_REASONING,
-    EVENT_TOOL_CALL,
-    EVENT_TOOL_RESULT,
-    EVENT_MODEL_CHANGE,
-    EVENT_PHASE_CHANGE,
-    EVENT_COGNITIVE_MODE_CHANGE,
-    EVENT_COMPACTION,
-    EVENT_BRANCH_SUMMARY,
-    EVENT_RESET_BOUNDARY,
-    EVENT_FILE_HASH_MISMATCH,
-    EVENT_AUTOLOOP_PHASE,
-    EVENT_CONTEXT_INJECTION,
-    EVENT_CUSTOM,
-})
+SESSION_EVENT_KINDS: frozenset[str] = frozenset(
+    {
+        EVENT_MESSAGE,
+        EVENT_REASONING,
+        EVENT_TOOL_CALL,
+        EVENT_TOOL_RESULT,
+        EVENT_MODEL_CHANGE,
+        EVENT_PHASE_CHANGE,
+        EVENT_COGNITIVE_MODE_CHANGE,
+        EVENT_COMPACTION,
+        EVENT_BRANCH_SUMMARY,
+        EVENT_RESET_BOUNDARY,
+        EVENT_FILE_HASH_MISMATCH,
+        EVENT_AUTOLOOP_PHASE,
+        EVENT_CONTEXT_INJECTION,
+        EVENT_CUSTOM,
+    }
+)
 
 
 @dataclass
@@ -189,7 +191,9 @@ class SessionEventLog:
         self._leaf_id = ev.id
         try:
             with open(self.path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(ev.to_dict(), ensure_ascii=False, default=str) + "\n")
+                f.write(
+                    json.dumps(ev.to_dict(), ensure_ascii=False, default=str) + "\n"
+                )
         except Exception:
             logger.exception("session log: append failed for %s", self.path)
 
@@ -216,7 +220,9 @@ class SessionEventLog:
             seq=self._seq,
             kind=kind,
             id=event_id or uuid.uuid4().hex[:8],
-            parent_id=None if parent_id == "" else (parent_id if isinstance(parent_id, str) else None),
+            parent_id=None
+            if parent_id == ""
+            else (parent_id if isinstance(parent_id, str) else None),
             ts=time.time(),
             payload=dict(payload or {}),
         )
@@ -324,9 +330,7 @@ class SessionEventLog:
         )
         return [ev for ev in path if ev.seq >= first_kept]
 
-    def compaction_entries(
-        self, leaf_id: str | None = None
-    ) -> list[CompactionEntry]:
+    def compaction_entries(self, leaf_id: str | None = None) -> list[CompactionEntry]:
         """T-BCSE-10: 当前路径上的 compaction 边界清单 (按 seq 升序)."""
         path = self.events_on_path(leaf_id)
         path_ids = {ev.id for ev in path}
@@ -421,6 +425,80 @@ class SessionEventLog:
         return cls(session_id, path, load=False)
 
 
+def _sc_append_chain(log):
+    # ── append builds a linear chain ──
+    e1 = log.append(EVENT_MESSAGE, {"role": "user", "content": "hi"})
+    e2 = log.append(EVENT_MESSAGE, {"role": "assistant", "content": "hello"})
+    e3 = log.append(EVENT_TOOL_CALL, {"tool": "run_dft", "args": {}})
+    assert e1.parent_id is None, "first event is root"
+    assert e2.parent_id == e1.id, "second chains to first"
+    assert e3.parent_id == e2.id, "third chains to second"
+    assert log.leaf_id == e3.id
+    assert log.seq == 3
+    assert len(log) == 3
+    print("  [OK] append chains events + advances leaf")
+    return e1, e2, e3
+
+
+def _sc_path_order(log, e1, e2, e3) -> None:
+    # ── events_on_path returns root→leaf order ──
+    path = log.events_on_path()
+    assert [ev.id for ev in path] == [e1.id, e2.id, e3.id], (
+        f"path order wrong: {[ev.id for ev in path]}"
+    )
+    print("  [OK] events_on_path root→leaf")
+
+
+def _sc_branch(log, e1):
+    # ── branch moves leaf without mutating history ──
+    log.branch(e1.seq)
+    assert log.leaf_id == e1.id, "branch should move leaf to e1"
+    assert len(log) == 3, "branch must not delete events"
+    e4 = log.append(EVENT_MESSAGE, {"role": "user", "content": "branch from e1"})
+    assert e4.parent_id == e1.id, "post-branch append chains to new leaf"
+    assert log.seq == 4
+    path2 = log.events_on_path()
+    assert [ev.id for ev in path2] == [e1.id, e4.id], (
+        f"branch path wrong: {[ev.id for ev in path2]}"
+    )
+    print("  [OK] branch moves leaf, history intact")
+    return e4
+
+
+def _sc_read_after(log, e1, e2, e3, e4) -> None:
+    # ── read_after incremental (global): all events seq > given ──
+    after = log.read_after(e1.seq)
+    assert [ev.id for ev in after] == [e2.id, e3.id, e4.id], (
+        f"read_after should return e2,e3,e4, got {[ev.id for ev in after]}"
+    )
+    print("  [OK] read_after(seq) incremental")
+
+
+def _sc_persistence(log, base, e1) -> None:
+    # ── persistence: reopen from disk (linear tail branch) ──
+    log.reset_leaf()
+    log.branch(e1.seq)
+    log.append(EVENT_MESSAGE, {"role": "user", "content": "persisted"})
+    loaded = SessionEventLog.open("s1", base / "s1.jsonl")
+    assert loaded.seq == log.seq, "replay should recover seq"
+    assert loaded.leaf_id == loaded.get("id") is not None or True
+    assert len(loaded) == 5, f"replay should keep 5 events, got {len(loaded)}"
+    # disk tail is the persisted branch chain
+    persisted_path = loaded.events_on_path()
+    assert persisted_path[-1].payload["content"] == "persisted"
+    print("  [OK] open() replays from disk")
+
+
+def _sc_unknown_kind(log) -> None:
+    # ── unknown kind raises ──
+    try:
+        log.append("nope", {})
+        raise AssertionError("unknown kind should raise")
+    except ValueError:
+        pass
+    print("  [OK] unknown kind rejected")
+
+
 def _selfcheck() -> None:
     import tempfile
 
@@ -430,65 +508,12 @@ def _selfcheck() -> None:
         base = Path(tmp)
         log = SessionEventLog("s1", base / "s1.jsonl", load=False)
 
-        # ── append builds a linear chain ──
-        e1 = log.append(EVENT_MESSAGE, {"role": "user", "content": "hi"})
-        e2 = log.append(EVENT_MESSAGE, {"role": "assistant", "content": "hello"})
-        e3 = log.append(EVENT_TOOL_CALL, {"tool": "run_dft", "args": {}})
-        assert e1.parent_id is None, "first event is root"
-        assert e2.parent_id == e1.id, "second chains to first"
-        assert e3.parent_id == e2.id, "third chains to second"
-        assert log.leaf_id == e3.id
-        assert log.seq == 3
-        assert len(log) == 3
-        print("  [OK] append chains events + advances leaf")
-
-        # ── events_on_path returns root→leaf order ──
-        path = log.events_on_path()
-        assert [ev.id for ev in path] == [e1.id, e2.id, e3.id], (
-            f"path order wrong: {[ev.id for ev in path]}"
-        )
-        print("  [OK] events_on_path root→leaf")
-
-        # ── branch moves leaf without mutating history ──
-        log.branch(e1.seq)
-        assert log.leaf_id == e1.id, "branch should move leaf to e1"
-        assert len(log) == 3, "branch must not delete events"
-        e4 = log.append(EVENT_MESSAGE, {"role": "user", "content": "branch from e1"})
-        assert e4.parent_id == e1.id, "post-branch append chains to new leaf"
-        assert log.seq == 4
-        path2 = log.events_on_path()
-        assert [ev.id for ev in path2] == [e1.id, e4.id], (
-            f"branch path wrong: {[ev.id for ev in path2]}"
-        )
-        print("  [OK] branch moves leaf, history intact")
-
-        # ── read_after incremental (global): all events seq > given ──
-        after = log.read_after(e1.seq)
-        assert [ev.id for ev in after] == [e2.id, e3.id, e4.id], (
-            f"read_after should return e2,e3,e4, got {[ev.id for ev in after]}"
-        )
-        print("  [OK] read_after(seq) incremental")
-
-        # ── persistence: reopen from disk (linear tail branch) ──
-        log.reset_leaf()
-        log.branch(e1.seq)
-        log.append(EVENT_MESSAGE, {"role": "user", "content": "persisted"})
-        loaded = SessionEventLog.open("s1", base / "s1.jsonl")
-        assert loaded.seq == log.seq, "replay should recover seq"
-        assert loaded.leaf_id == loaded.get("id") is not None or True
-        assert len(loaded) == 5, f"replay should keep 5 events, got {len(loaded)}"
-        # disk tail is the persisted branch chain
-        persisted_path = loaded.events_on_path()
-        assert persisted_path[-1].payload["content"] == "persisted"
-        print("  [OK] open() replays from disk")
-
-        # ── unknown kind raises ──
-        try:
-            log.append("nope", {})
-            raise AssertionError("unknown kind should raise")
-        except ValueError:
-            pass
-        print("  [OK] unknown kind rejected")
+        e1, e2, e3 = _sc_append_chain(log)
+        _sc_path_order(log, e1, e2, e3)
+        e4 = _sc_branch(log, e1)
+        _sc_read_after(log, e1, e2, e3, e4)
+        _sc_persistence(log, base, e1)
+        _sc_unknown_kind(log)
 
     print("session_log selfcheck passed.")
 

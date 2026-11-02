@@ -71,9 +71,19 @@ class _ExperimentSpec:
 
 # 只收 JSON 可序列化字段, 闭包/回调用例由深研程序化 API 本地提供.
 _PAYLOAD_KEYS = {
-    "goal", "objectives_config", "experiments", "max_iterations",
-    "min_iterations", "max_parallel", "model", "base_url",
-    "human_review", "debate", "strictness", "harness_agent", "harness_machine",
+    "goal",
+    "objectives_config",
+    "experiments",
+    "max_iterations",
+    "min_iterations",
+    "max_parallel",
+    "model",
+    "base_url",
+    "human_review",
+    "debate",
+    "strictness",
+    "harness_agent",
+    "harness_machine",
 }
 _INT_KEYS = {"max_iterations", "min_iterations", "max_parallel", "strictness"}
 _BOOL_KEYS = {"debate"}
@@ -126,12 +136,57 @@ def _normalize_options(body: dict, exps: list[Experiment]) -> dict:
             opts[k] = v
     human = body.get("human_review")
     if isinstance(human, str) and human.lower() in ("keep", "drop", "guidance"):
-        opts["human_review"] = (lambda card, _gdec=human: {"decision": _gdec, "card": card})
+        opts["human_review"] = lambda card, _gdec=human: {
+            "decision": _gdec,
+            "card": card,
+        }
     # 默认小预算: 确定性综合不必长跑; 调用方可调高复现完整演化
     opts.setdefault("max_iterations", 12)
     opts.setdefault("min_iterations", 2)
     opts.setdefault("max_parallel", 2)
     return opts
+
+
+def _validate_run_program_body(body: dict) -> tuple[str, dict]:
+    if not isinstance(body, dict):
+        raise _bad("body must be a JSON object")
+    unknown = set(body) - _PAYLOAD_KEYS
+    if unknown:
+        raise _bad(f"unknown fields: {sorted(unknown)}")
+    goal = body.get("goal")
+    if not isinstance(goal, str) or not goal.strip():
+        raise _bad("goal must be a non-empty string")
+    objectives_config = body.get("objectives_config")
+    if not isinstance(objectives_config, dict) or not objectives_config:
+        raise _bad("objectives_config must be a non-empty object")
+    return goal, objectives_config
+
+
+def _call_run_program(
+    goal: str, exps: list[Experiment], objectives_config: dict, opts: dict
+):
+    try:
+        # run_research_program 是同步阻塞(还跑 orchestrator 循环), 放进线程隔离,
+        # 不卡 FastAPI 事件循环.
+        return run_research_program(
+            goal,
+            exps,
+            objectives_config,
+            max_iterations=opts.get("max_iterations", 12),
+            min_iterations=opts.get("min_iterations", 2),
+            max_parallel=opts.get("max_parallel", 2),
+            client=None,
+            model=opts.get("model", "intern-s2-preview"),
+            base_url=opts.get("base_url"),
+            human_review=opts.get("human_review"),
+            debate=opts.get("debate", False),
+            strictness=opts.get("strictness", 0),
+            harness_agent=opts.get("harness_agent", ""),
+            harness_machine=opts.get("harness_machine", ""),
+        )
+    except Exception:
+        logger.exception("deep research run_program failed")
+        raise
 
 
 @router.post("/run_program")
@@ -155,44 +210,14 @@ async def run_program(body: dict) -> dict:
 
     响应: ResearchOutcome 序列化 (含 pareto_front / report / verdict / consolidated).
     """
-    if not isinstance(body, dict):
-        raise _bad("body must be a JSON object")
-    unknown = set(body) - _PAYLOAD_KEYS
-    if unknown:
-        raise _bad(f"unknown fields: {sorted(unknown)}")
-    goal = body.get("goal")
-    if not isinstance(goal, str) or not goal.strip():
-        raise _bad("goal must be a non-empty string")
-    objectives_config = body.get("objectives_config")
-    if not isinstance(objectives_config, dict) or not objectives_config:
-        raise _bad("objectives_config must be a non-empty object")
+    goal, objectives_config = _validate_run_program_body(body)
 
     exps = _build_experiments(body.get("experiments"))
     opts = _normalize_options(body, exps)
 
-    try:
-        # run_research_program 是同步阻塞(还跑 orchestrator 循环), 放进线程隔离,
-        # 不卡 FastAPI 事件循环.
-        out = await asyncio.to_thread(
-            run_research_program,
-            goal,
-            exps,
-            objectives_config,
-            max_iterations=opts.get("max_iterations", 12),
-            min_iterations=opts.get("min_iterations", 2),
-            max_parallel=opts.get("max_parallel", 2),
-            client=None,
-            model=opts.get("model", "intern-s2-preview"),
-            base_url=opts.get("base_url"),
-            human_review=opts.get("human_review"),
-            debate=opts.get("debate", False),
-            strictness=opts.get("strictness", 0),
-            harness_agent=opts.get("harness_agent", ""),
-            harness_machine=opts.get("harness_machine", ""),
-        )
-    except Exception:
-        logger.exception("deep research run_program failed")
-        raise
+    out = await asyncio.to_thread(
+        _call_run_program, goal, exps, objectives_config, opts
+    )
 
     result = asdict(out)
     return result

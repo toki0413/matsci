@@ -1,4 +1,5 @@
 """相场后处理 — 灰度量化分相 + 体积分数 + 界面宽度 + domain 形态学."""
+
 from __future__ import annotations
 
 import logging
@@ -15,41 +16,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def phase_field(args: ImageAnalysisInput) -> ToolResult:
-    arr = load_gray(args.image_path)
-    n_phases = int(args.parameters.get("n_phases", 2))
-    interface_width_px = args.parameters.get("interface_width_px", None)
-    pixel_size = float(args.parameters.get("pixel_size_nm", 1.0))
-
-    n_phases = max(2, min(n_phases, 10))
-
-    # 等间距量化把灰度分成 n_phases 个相
-    a_min = float(arr.min())
-    a_max = float(arr.max()) + 1e-6
-    bins = np.linspace(a_min, a_max, n_phases + 1)
-    phase_map = np.digitize(arr, bins) - 1
-    phase_map = np.clip(phase_map, 0, n_phases - 1)
-
-    # 体积分数
-    total = int(phase_map.size)
-    vol_fracs = {
-        f"phase_{i + 1}": float((phase_map == i).sum() / total)
-        for i in range(n_phases)
-    }
-
-    # 界面像素: 相邻像素属于不同相
-    diff_x = np.abs(np.diff(phase_map, axis=1))
-    diff_y = np.abs(np.diff(phase_map, axis=0))
-    interface_mask = np.zeros_like(phase_map, dtype=bool)
-    interface_mask[:, :-1] |= diff_x > 0
-    interface_mask[:, 1:] |= diff_x > 0
-    interface_mask[:-1, :] |= diff_y > 0
-    interface_mask[1:, :] |= diff_y > 0
-
-    interface_pixels = int(interface_mask.sum())
-    interface_fraction = float(interface_pixels / total)
-
-    # 界面宽度估计
+def _interface_width(
+    arr: np.ndarray,
+    interface_mask: np.ndarray,
+    interface_pixels: int,
+    a_min: float,
+    a_max: float,
+    interface_width_px: Any,
+) -> float:
+    """界面宽度估计: 给定值直接用, 否则按梯度均值粗估."""
     if interface_width_px is None:
         try:
             from scipy.ndimage import sobel
@@ -62,16 +37,17 @@ def phase_field(args: ImageAnalysisInput) -> ToolResult:
                 grad_mean = 0.0
             contrast_range = a_max - a_min + 1e-6
             # 粗估: 阶跃宽度 ≈ contrast_range / grad_mean
-            interface_width_px = float(
-                contrast_range / max(grad_mean, 1e-6)
-            )
+            interface_width_px = float(contrast_range / max(grad_mean, 1e-6))
         except ImportError:
             logger.debug("best-effort op failed", exc_info=True)
             interface_width_px = 1.0
     else:
         interface_width_px = float(interface_width_px)
+    return float(interface_width_px)
 
-    # 每个相的 domain 形态学
+
+def _phase_morphology(phase_map: np.ndarray, n_phases: int) -> dict[str, Any]:
+    """每个相的 domain 形态学."""
     phase_morph: dict[str, Any] = {}
     try:
         from scipy.ndimage import center_of_mass
@@ -112,14 +88,40 @@ def phase_field(args: ImageAnalysisInput) -> ToolResult:
             f"phase_{i + 1}": {"note": "scipy.ndimage 不可用, 跳过 domain 形态学"}
             for i in range(n_phases)
         }
+    return phase_morph
 
+
+def _interface_mask(phase_map: np.ndarray) -> tuple[np.ndarray, int, float]:
+    """界面像素: 相邻像素属于不同相, 返回 (mask, 像素数, 占比)."""
+    diff_x = np.abs(np.diff(phase_map, axis=1))
+    diff_y = np.abs(np.diff(phase_map, axis=0))
+    interface_mask = np.zeros_like(phase_map, dtype=bool)
+    interface_mask[:, :-1] |= diff_x > 0
+    interface_mask[:, 1:] |= diff_x > 0
+    interface_mask[:-1, :] |= diff_y > 0
+    interface_mask[1:, :] |= diff_y > 0
+    interface_pixels = int(interface_mask.sum())
+    interface_fraction = float(interface_pixels / int(phase_map.size))
+    return interface_mask, interface_pixels, interface_fraction
+
+
+def _phase_data(
+    arr: np.ndarray,
+    n_phases: int,
+    bins: np.ndarray,
+    vol_fracs: dict[str, float],
+    interface_fraction: float,
+    interface_width_px: float,
+    pixel_size: float,
+    phase_morph: dict[str, Any],
+) -> dict[str, Any]:
+    """组装 summary + measurements."""
     vol_str = ", ".join(f"{k}: {v * 100:.1f}%" for k, v in vol_fracs.items())
     summary = (
         f"相场分析: {n_phases} 个相, {vol_str}, "
         f"界面占比 {interface_fraction * 100:.2f}%"
     )
-
-    data = {
+    return {
         "summary": summary,
         "measurements": {
             "image_shape": [int(arr.shape[0]), int(arr.shape[1])],
@@ -132,4 +134,48 @@ def phase_field(args: ImageAnalysisInput) -> ToolResult:
             "morphology": phase_morph,
         },
     }
+
+
+def phase_field(args: ImageAnalysisInput) -> ToolResult:
+    arr = load_gray(args.image_path)
+    n_phases = int(args.parameters.get("n_phases", 2))
+    interface_width_px = args.parameters.get("interface_width_px", None)
+    pixel_size = float(args.parameters.get("pixel_size_nm", 1.0))
+
+    n_phases = max(2, min(n_phases, 10))
+
+    # 等间距量化把灰度分成 n_phases 个相
+    a_min = float(arr.min())
+    a_max = float(arr.max()) + 1e-6
+    bins = np.linspace(a_min, a_max, n_phases + 1)
+    phase_map = np.digitize(arr, bins) - 1
+    phase_map = np.clip(phase_map, 0, n_phases - 1)
+
+    # 体积分数
+    total = int(phase_map.size)
+    vol_fracs = {
+        f"phase_{i + 1}": float((phase_map == i).sum() / total) for i in range(n_phases)
+    }
+
+    # 界面像素: 相邻像素属于不同相
+    interface_mask, interface_pixels, interface_fraction = _interface_mask(phase_map)
+
+    # 界面宽度估计
+    interface_width_px = _interface_width(
+        arr, interface_mask, interface_pixels, a_min, a_max, interface_width_px
+    )
+
+    # 每个相的 domain 形态学
+    phase_morph = _phase_morphology(phase_map, n_phases)
+
+    data = _phase_data(
+        arr,
+        n_phases,
+        bins,
+        vol_fracs,
+        interface_fraction,
+        interface_width_px,
+        pixel_size,
+        phase_morph,
+    )
     return ToolResult(data=data)

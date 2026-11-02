@@ -45,12 +45,78 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
             return True
         try:
             from huginn.models.registry import get_model_capabilities
+
             caps = get_model_capabilities(model_name)
             # vision=True → 保留; vision=False → 剥离; 未知名 → fail-closed 剥离
             return not caps.vision
         except Exception:  # 防御: 能力判定失败则 fail-closed 剥离
             logger.debug("best-effort op failed", exc_info=True)
             return True
+
+    @staticmethod
+    def _has_cv_context(messages: list) -> bool:
+        """扫 str content 和 list[text block], 判断 [CV context] 是否已注入."""
+        for m in messages:
+            c = getattr(m, "content", None)
+            if isinstance(c, str) and "[CV context]" in c:
+                return True
+            if isinstance(c, list):
+                for b in c:
+                    if isinstance(b, dict) and "[CV context]" in str(b.get("text", "")):
+                        return True
+        return False
+
+    def _patch_block_list(self, blocks: list, cv_already: bool) -> tuple[list, bool]:
+        """替换一条消息的 content blocks, 返回 (新 blocks, 是否改动)."""
+        new_blocks = []
+        changed = False
+        for block in blocks:
+            if isinstance(block, dict) and block.get("type") not in ("text", None):
+                btype = block.get("type", "unknown")
+                if btype in ("image_url", "image"):
+                    # vision=False: image block 交给 CV 工作流提取结构化视觉特征,
+                    # 而不是删成占位. CV 失败/已注入时降级 [content omitted].
+                    new_blocks.append(self._cv_text_for_block(block, cv_already))
+                else:
+                    # 非 image 的非 text block (file 等) 仍走原占位逻辑
+                    new_blocks.append(self._omitted_block(block))
+                changed = True
+            else:
+                new_blocks.append(block)
+        return new_blocks, changed
+
+    def _patch_message_content(self, msg: Any, cv_already: bool) -> tuple[Any, bool]:
+        """就地把一条消息的 content blocks 打补丁, 返回 (msg, 是否改动)."""
+        content = getattr(msg, "content", None)
+        if not isinstance(content, list):
+            return msg, False
+        new_blocks, changed = self._patch_block_list(content, cv_already)
+        if not changed:
+            return msg, False
+        try:
+            return msg.model_copy(update={"content": new_blocks}), True
+        except Exception:  # 防御: model_copy 失败则回退直接改 content
+            try:
+                msg.content = new_blocks
+                return msg, True
+            except Exception:  # 非致命: 直接改 content 也失败则忽略
+                logger.debug("message content patch failed", exc_info=True)
+                return msg, False
+
+    @staticmethod
+    def _has_orphan_tool_calls(messages: list) -> bool:
+        """是否存在没有对应 ToolMessage 的 tool_call."""
+        answered_ids = {
+            getattr(msg, "tool_call_id", None)
+            for msg in messages
+            if hasattr(msg, "type") and msg.type == "tool"
+        }
+        return any(
+            tc.get("id") is not None and tc["id"] not in answered_ids
+            for msg in messages
+            if isinstance(msg, AIMessage)
+            for tc in (*msg.tool_calls, *getattr(msg, "invalid_tool_calls", []))
+        )
 
     def _patch_messages(self, messages: list) -> list:
         if not messages:
@@ -67,51 +133,12 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
             return self._reorder_tool_messages(messages)
         patched = list(messages)
         # 双保险去重: streaming.py 入口层已注入 [CV context] 时, middleware 不重复
-        # 提取, image block 退回 [content omitted]. 扫 str content 和 list[text block].
-        _cv_already = False
-        for _m in patched:
-            _c = getattr(_m, "content", None)
-            if isinstance(_c, str) and "[CV context]" in _c:
-                _cv_already = True
-                break
-            if isinstance(_c, list):
-                for _b in _c:
-                    if isinstance(_b, dict) and "[CV context]" in str(_b.get("text", "")):
-                        _cv_already = True
-                        break
-                if _cv_already:
-                    break
-        _changed_blocks = False
-        for _i, _msg in enumerate(patched):
-            _content = getattr(_msg, "content", None)
-            if not isinstance(_content, list):
-                continue
-            _new_blocks = []
-            _msg_changed = False
-            for _block in _content:
-                if isinstance(_block, dict) and _block.get("type") not in ("text", None):
-                    _btype = _block.get("type", "unknown")
-                    if _btype in ("image_url", "image"):
-                        # vision=False: image block 交给 CV 工作流提取结构化视觉特征,
-                        # 而不是删成占位. 视觉工作流是给文本 LLM 补 vision 能力的
-                        # 工程通道, 不是辅助. CV 失败/已注入时降级 [content omitted].
-                        _new_blocks.append(self._cv_text_for_block(_block, _cv_already))
-                    else:
-                        # 非 image 的非 text block (file 等) 仍走原占位逻辑
-                        _new_blocks.append(self._omitted_block(_block))
-                    _msg_changed = True
-                else:
-                    _new_blocks.append(_block)
-            if _msg_changed:
-                try:
-                    patched[_i] = _msg.model_copy(update={"content": _new_blocks})
-                    _changed_blocks = True
-                except Exception:  # 防御: model_copy 失败则回退直接改 content 后退出
-                    try:
-                        _msg.content = _new_blocks
-                        _changed_blocks = True
-                    except Exception:  # 非致命: 直接改 content 也失败则忽略
-                        logger.debug("message content patch failed", exc_info=True)
+        # 提取, image block 退回 [content omitted].
+        cv_already = self._has_cv_context(patched)
+        changed_blocks = False
+        for i, msg in enumerate(patched):
+            patched[i], changed = self._patch_message_content(msg, cv_already)
+            changed_blocks = changed_blocks or changed
 
         # 再重建 list 保证 ToolMessage 紧跟 AIMessage(tool_calls), 同时补 orphan.
         # DeepSeek 严格要求 assistant(tool_calls) 后面必须紧跟 tool messages
@@ -122,27 +149,18 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
         # ponytail: 重建可能改变语义连续性, 但比 400 强. 升级路径: 修上游
         # 不产生错位 (langgraph add_messages reducer ID 冲突 / ctx 注入位置).
         # 检测 orphan: 没对应 ToolMessage 的 tool_call
-        answered_ids = {
-            getattr(msg, "tool_call_id", None)
-            for msg in patched
-            if hasattr(msg, "type") and msg.type == "tool"
-        }
-        has_orphan = any(
-            tc.get("id") is not None and tc["id"] not in answered_ids
-            for msg in patched
-            if isinstance(msg, AIMessage)
-            for tc in (*msg.tool_calls, *getattr(msg, "invalid_tool_calls", []))
-        )
+        has_orphan = self._has_orphan_tool_calls(patched)
         # 总是调 _reorder_tool_messages: 它内部 _changed 检测, 顺序没错位时
         # 返回原 list (零开销). 不能只在 has_orphan 时调 — 顺序错位但无 orphan
         # 时 (ToolMessage 在但被 SystemMessage 隔开) 也需要修.
         rebuilt = self._reorder_tool_messages(
-            patched, force_cancel_orphans=has_orphan,
+            patched,
+            force_cancel_orphans=has_orphan,
         )
         if rebuilt is not patched:
             patched = rebuilt
-            _changed_blocks = True
-        return patched if _changed_blocks else messages
+            changed_blocks = True
+        return patched if changed_blocks else messages
 
     @staticmethod
     def _omitted_block(block: dict) -> dict:
@@ -166,6 +184,68 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
         _mime = _rest.split(";", 1)[0] if ";" in _rest else _rest
         return _mime, _payload
 
+    @staticmethod
+    def _write_tmp_image(raw: bytes, ext: str) -> str | None:
+        """把图片字节写到临时文件, 返回路径 (调用方负责删除)."""
+        try:
+            with tempfile.NamedTemporaryFile(
+                suffix=ext,
+                prefix="huginn_cv_",
+                delete=False,
+            ) as tf:
+                tf.write(raw)
+                return tf.name
+        except Exception:  # 非致命: 临时图片写盘失败则跳过
+            logger.debug("best-effort op failed", exc_info=True)
+            return None
+
+    @classmethod
+    def _tmp_image_from_url(cls, block: dict) -> tuple[str | None, bool]:
+        """data URL base64 → 临时图片路径; 无 data URL / 解码失败时 (None, False)."""
+        url_obj = block.get("image_url")
+        if not (isinstance(url_obj, dict) and isinstance(url_obj.get("url"), str)):
+            return None, False
+        mime, b64 = cls._parse_data_url(url_obj["url"])
+        if not b64:
+            return None, False
+        try:
+            raw = base64.b64decode(b64)
+        except Exception:  # 非致命: base64 解码失败则置空
+            logger.debug("best-effort op failed", exc_info=True)
+            return None, False
+        path = cls._write_tmp_image(raw, mimetypes.guess_extension(mime) or ".png")
+        return path, path is not None
+
+    @classmethod
+    def _image_path_for_block(cls, block: dict) -> tuple[str | None, bool]:
+        """取 block 的图片路径: data URL 解码写临时文件, 否则用 image_path 字段."""
+        image_path, is_tmp = cls._tmp_image_from_url(block)
+        if image_path is None:
+            p = block.get("image_path")
+            if isinstance(p, str) and p:
+                image_path = p
+        return image_path, is_tmp
+
+    @staticmethod
+    def _cv_block_or_omitted(block: dict, image_path: str) -> dict:
+        """跑 CV 提取; 失败/空返回降级 [content omitted] 占位."""
+        try:
+            from huginn.vision.router import build_cv_context
+
+            cv_text = build_cv_context(image_path)
+        except Exception as exc:
+            logger.warning(
+                "build_cv_context failed (%s); degrading to [content omitted]",
+                exc,
+            )
+            return FixDanglingToolCallsMiddleware._omitted_block(block)
+        if not cv_text:
+            logger.warning(
+                "build_cv_context returned empty; degrading to [content omitted]"
+            )
+            return FixDanglingToolCallsMiddleware._omitted_block(block)
+        return {"type": "text", "text": f"[CV context]\n{cv_text}"}
+
     def _cv_text_for_block(self, block: dict, cv_already: bool) -> dict:
         """vision=False: image block → [CV context] text, 失败/已注入降级 omitted.
 
@@ -177,61 +257,66 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
         if cv_already:
             return self._omitted_block(block)
 
-        image_path: str | None = None
-        _is_tmp = False
-        _url_obj = block.get("image_url")
-        if isinstance(_url_obj, dict) and isinstance(_url_obj.get("url"), str):
-            _mime, _b64 = self._parse_data_url(_url_obj["url"])
-            if _b64:
-                try:
-                    _raw = base64.b64decode(_b64)
-                except Exception:  # 非致命: base64 解码失败则置空
-                    logger.debug("best-effort op failed", exc_info=True)
-                    _raw = None
-                if _raw is not None:
-                    _ext = mimetypes.guess_extension(_mime) or ".png"
-                    try:
-                        with tempfile.NamedTemporaryFile(
-                            suffix=_ext, prefix="huginn_cv_", delete=False,
-                        ) as _tf:
-                            _tf.write(_raw)
-                            image_path = _tf.name
-                            _is_tmp = True
-                    except Exception:  # 非致命: 临时图片写盘失败则跳过
-                        logger.debug("best-effort op failed", exc_info=True)
-                        image_path = None
-        # image_path block (非 OpenAI 标准, 但有些路径会塞): 直接取路径不解码
-        if image_path is None:
-            _p = block.get("image_path")
-            if isinstance(_p, str) and _p:
-                image_path = _p
-
+        image_path, is_tmp = self._image_path_for_block(block)
         if image_path is None:
             return self._omitted_block(block)
 
         try:
-            try:
-                from huginn.vision.router import build_cv_context
-                _cv_text = build_cv_context(image_path)
-            except Exception as _exc:
-                logger.warning(
-                    "build_cv_context failed (%s); degrading to [content omitted]",
-                    _exc,
-                )
-                return self._omitted_block(block)
-            if not _cv_text:
-                logger.warning(
-                    "build_cv_context returned empty; degrading to [content omitted]"
-                )
-                return self._omitted_block(block)
-            return {"type": "text", "text": f"[CV context]\n{_cv_text}"}
+            return self._cv_block_or_omitted(block, image_path)
         finally:
-            if _is_tmp:
+            if is_tmp:
                 with contextlib.suppress(OSError):
                     os.unlink(image_path)
 
+    @staticmethod
+    def _index_tool_messages(messages: list) -> dict[str, ToolMessage]:
+        """按 tool_call_id 索引 ToolMessage (后面同 id 的覆盖前面)."""
+        return {
+            msg.tool_call_id: msg for msg in messages if isinstance(msg, ToolMessage)
+        }
+
+    @staticmethod
+    def _cancel_orphan_msg(tc: dict, tc_id: str) -> ToolMessage:
+        """为没有对应 ToolMessage 的 tool_call 造一条 cancelled 回复."""
+        name = tc.get("name") or "unknown"
+        return ToolMessage(
+            content=(
+                f"Tool call {name} (id={tc_id}) was cancelled — "
+                f"summarization compaction removed its result."
+            ),
+            name=name,
+            tool_call_id=tc_id,
+        )
+
+    @classmethod
+    def _ordered_replies(
+        cls,
+        msg: AIMessage,
+        tool_msgs_by_id: dict[str, ToolMessage],
+        used_tool_ids: set[str],
+        force_cancel_orphans: bool,
+    ) -> tuple[list, bool]:
+        """一条 AIMessage 应紧跟的 ToolMessage 序列, 返回 (msgs, 是否补了 orphan)."""
+        replies: list = []
+        changed = False
+        tool_calls = (*msg.tool_calls, *getattr(msg, "invalid_tool_calls", []))
+        for tc in tool_calls:
+            tc_id = tc.get("id")
+            if tc_id is None:
+                continue
+            if tc_id in tool_msgs_by_id:
+                replies.append(tool_msgs_by_id[tc_id])
+                used_tool_ids.add(tc_id)
+            elif force_cancel_orphans and tc_id not in used_tool_ids:
+                replies.append(cls._cancel_orphan_msg(tc, tc_id))
+                used_tool_ids.add(tc_id)
+                changed = True
+        return replies, changed
+
     def _reorder_tool_messages(
-        self, messages: list, force_cancel_orphans: bool = False,
+        self,
+        messages: list,
+        force_cancel_orphans: bool = False,
     ) -> list:
         """重排 messages 让 ToolMessage 紧跟 AIMessage(tool_calls).
 
@@ -243,49 +328,27 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
         """
         if not messages:
             return messages
-        # 收集所有 ToolMessage, 按 tool_call_id 索引 (后面同 id 的覆盖前面)
-        tool_msgs_by_id: dict[str, ToolMessage] = {}
-        for msg in messages:
-            if isinstance(msg, ToolMessage):
-                tool_msgs_by_id[msg.tool_call_id] = msg
-
+        tool_msgs_by_id = self._index_tool_messages(messages)
         rebuilt: list = []
         used_tool_ids: set[str] = set()
-        _changed = False
+        changed = False
         for msg in messages:
             if isinstance(msg, ToolMessage):
-                # 已被前面的 AIMessage 吸收 → 跳过 (避免重复)
+                # 已被前面的 AIMessage 吸收 → 跳过 (避免重复); 孤儿保留原位
                 if msg.tool_call_id in used_tool_ids:
-                    _changed = True
+                    changed = True
                     continue
-                # 孤儿 ToolMessage (没对应 AIMessage) → 保留原位
                 rebuilt.append(msg)
-                continue
-            if isinstance(msg, AIMessage):
-                tool_calls = (*msg.tool_calls, *getattr(msg, "invalid_tool_calls", []))
+            elif isinstance(msg, AIMessage):
+                replies, orphaned = self._ordered_replies(
+                    msg, tool_msgs_by_id, used_tool_ids, force_cancel_orphans
+                )
                 rebuilt.append(msg)
-                # 紧跟生成所有对应 ToolMessage
-                for tc in tool_calls:
-                    tc_id = tc.get("id")
-                    if tc_id is None:
-                        continue
-                    if tc_id in tool_msgs_by_id:
-                        rebuilt.append(tool_msgs_by_id[tc_id])
-                        used_tool_ids.add(tc_id)
-                    elif force_cancel_orphans and tc_id not in used_tool_ids:
-                        name = tc.get("name") or "unknown"
-                        rebuilt.append(ToolMessage(
-                            content=(
-                                f"Tool call {name} (id={tc_id}) was cancelled — "
-                                f"summarization compaction removed its result."
-                            ),
-                            name=name, tool_call_id=tc_id,
-                        ))
-                        used_tool_ids.add(tc_id)
-                        _changed = True
-                continue
-            rebuilt.append(msg)
-        return rebuilt if _changed else messages
+                rebuilt.extend(replies)
+                changed = changed or orphaned
+            else:
+                rebuilt.append(msg)
+        return rebuilt if changed else messages
 
     def wrap_model_call(self, request, handler):
         request = request.override(messages=self._patch_messages(request.messages))
@@ -298,12 +361,12 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
     # Also patch at before_agent — _get_model_input_state runs before
     # wrap_model_call, so we need to fix orphan tool calls earlier.
     def before_agent(self, request, handler=None):
-        if hasattr(request, 'messages') and request.messages:
+        if hasattr(request, "messages") and request.messages:
             request = request.override(messages=self._patch_messages(request.messages))
         return handler(request) if handler else None
 
     async def abefore_agent(self, request, handler=None):
-        if hasattr(request, 'messages') and request.messages:
+        if hasattr(request, "messages") and request.messages:
             request = request.override(messages=self._patch_messages(request.messages))
         return await handler(request) if handler else None
 
@@ -358,7 +421,8 @@ class RateLimitMiddleware(AgentMiddleware):
     def wrap_model_call(self, request, handler):
         _tid = get_thread_id() or "default"
         ok, reason = self._limiter.check_allowed(
-            "agent", self._estimate_tokens(getattr(request, "messages", [])),
+            "agent",
+            self._estimate_tokens(getattr(request, "messages", [])),
             thread_id=_tid,
         )
         if not ok:
@@ -373,7 +437,8 @@ class RateLimitMiddleware(AgentMiddleware):
     async def awrap_model_call(self, request, handler):
         _tid = get_thread_id() or "default"
         ok, reason = self._limiter.check_allowed(
-            "agent", self._estimate_tokens(getattr(request, "messages", [])),
+            "agent",
+            self._estimate_tokens(getattr(request, "messages", [])),
             thread_id=_tid,
         )
         if not ok:
@@ -394,6 +459,46 @@ class RateLimitMiddleware(AgentMiddleware):
 
 # _extract_keywords 中文覆盖依赖 jieba 分词. 懒加载逻辑收敛到
 # huginn/utils/jieba_utils.get_jieba, 避免各模块重复实现.
+
+# 纵向分层缺失时, 每层的可操作补全提示
+_LAYER_ACTIONS: dict[str, str] = {
+    "concept": "在 report 任意位置引入该物理概念 (定义 + 物理含义), 不能只在未来工作段提及",
+    "equation": "在 report 给出该量的定义式或约束方程 (LaTeX 公式), 从 related_work 引用也可",
+    "data": "在 ## Results 段给出该量的具体数值 (不是定性描述, 必须有数字 + 单位)",
+    "method": "在 ## Methodology 段描述该量的推导/计算方法 (公式来源 + 计算步骤)",
+    "claim": "在 ## Discussion 或 ## Conclusion 段给出 upper limit/point estimate 的具体数值 + 单位 + 置信水平 (如 'g < X GeV⁻¹ at 95% CL')",
+}
+
+# 纵向分层的强制要求 (测试按 key wording 断言, 勿改措辞)
+_LAYER_FRONTIER_RULES = (
+    "## 强制要求 (违反 = 该 criterion 直接 0 分或大幅扣分)\n\n"
+    "1. **禁止 hedge 词**: preliminary / simplified / approximate / "
+    "initial / first-pass / toy model — judge 看到这些词直接扣分到 "
+    "21-30 区间. methodology 要么是 'Bayesian framework applied to "
+    "the exclusion probability curve' 要么别写, 不要给自己留退路.\n\n"
+    "2. **禁止放入 Future Work / Limitations 段**: 写成 'our constraints "
+    "apply primarily to weakly interacting ULBs' 或 'the framework can "
+    "incorporate X' = acknowledge 而非 deliver, judge 判 0. 必须在 "
+    "## Results / ## Discussion 给数值.\n\n"
+    "3. **coupling strength 必须给 g [GeV⁻¹]**: 关键换算 g [GeV⁻¹] = "
+    "1/f_a [GeV] — 算出 f_a > X GeV 必须改写为 g < 1/X GeV⁻¹. "
+    "不接受 dimensionless g = μ/f_a 或裸 f_a 数值, judge 按 GeV⁻¹ 评分.\n\n"
+    "4. **每个 g 必须对应 specific μ_X**: 'g < Y GeV⁻¹ at 95% CL for "
+    "μ = X eV' — 四要素 (a) 数值 Y, (b) 单位 GeV⁻¹, (c) 置信水平, "
+    "(d) 对应 boson mass X. 缺任一 = 0 分. 不是 'we constrain' / "
+    "'consistent with' 这种定性描述.\n\n"
+    "5. **g 必须从 Result 2 的 exclusion probability curve 推**: task "
+    "description 明确要求 'by identifying where the exclusion "
+    "probability falls below a specific confidence threshold'. 不能 "
+    "另起炉灶用 Bosenova equilibrium 或 simplified regime 算 — 在 "
+    "P(excluded) vs μ 曲线上找 P=0.95 的 μ 临界点, 该 μ 对应 g = 1/f_a(μ).\n\n"
+    "6. **数值合理性自检**: QCD axion 典型 g ~ 10⁻¹⁰ GeV⁻¹. 如果你算出 "
+    "g > 10⁻⁵ GeV⁻¹ (远弱于典型值), 说明方法太简化, 不要写 'weaker "
+    "than existing bounds' 然后承认 flaw — 直接换方法重算.\n\n"
+    "7. **数据来源**: related_work/ 里的 PDF 已有相关公式, 用 read_file "
+    "读 paper_*.pdf 找 coupling 定义, 在 code/ 写脚本算数值上限. "
+    "不要凭空造数.\n"
+)
 
 
 class DeliverableCoverageMiddleware(AgentMiddleware):
@@ -419,43 +524,109 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
     # 和 "metal/insulator" 这种带连字符/斜杠的复合词被当成一个词.
     _QUANTITY_PATTERNS = [
         re.compile(
-            r'(?:upper limits? on|limits? on|derive|constrain|estimate|'
-            r'calculate|determine|measure|compute|obtain|provide|report|'
-            r'analyze|investigate|study|explore|examine|fit|infer|extract|'
-            r'bound|restrict|classify|categorize|predict|identify|characterize)'
-            r'\s+([\w\-/]+(?:\s+[\w\-/]+){0,4}?)\s+and\s+'
-            r'([\w\-/]+(?:\s+[\w\-/]+){0,4}?)'
-            r'(?=[.,;)]|\s+(?:to|in|for|by|using|via|with|from|thereby|thus|hence)\s|$)',
+            r"(?:upper limits? on|limits? on|derive|constrain|estimate|"
+            r"calculate|determine|measure|compute|obtain|provide|report|"
+            r"analyze|investigate|study|explore|examine|fit|infer|extract|"
+            r"bound|restrict|classify|categorize|predict|identify|characterize)"
+            r"\s+([\w\-/]+(?:\s+[\w\-/]+){0,4}?)\s+and\s+"
+            r"([\w\-/]+(?:\s+[\w\-/]+){0,4}?)"
+            r"(?=[.,;)]|\s+(?:to|in|for|by|using|via|with|from|thereby|thus|hence)\s|$)",
             re.IGNORECASE,
         ),
         re.compile(
-            r'(?:classifications?|categories?|properties|predictions?|types?|labels?)'
-            r'\s+such\s+as\s+([\w\-/]+(?:\s+[\w\-/]+){0,4}?)\s+and\s+'
-            r'([\w\-/]+(?:\s+[\w\-/]+){0,4}?)'
-            r'(?=[.,;)]|\s+(?:to|in|for|by|using|via|with|from|thereby|thus|hence)\s|$)',
+            r"(?:classifications?|categories?|properties|predictions?|types?|labels?)"
+            r"\s+such\s+as\s+([\w\-/]+(?:\s+[\w\-/]+){0,4}?)\s+and\s+"
+            r"([\w\-/]+(?:\s+[\w\-/]+){0,4}?)"
+            r"(?=[.,;)]|\s+(?:to|in|for|by|using|via|with|from|thereby|thus|hence)\s|$)",
             re.IGNORECASE,
         ),
     ]
 
-    _STOPWORDS = frozenset({
-        "the", "a", "an", "of", "and", "or", "to", "in", "for", "by",
-        "with", "from", "on", "at", "is", "are", "was", "were", "be",
-        "been", "being", "this", "that", "these", "those", "as", "it",
-        # 代词/限定词 — 会让 keyword 误匹配 report 里无关行
-        "their", "its", "our", "your", "his", "her", "such", "other",
-        "some", "many", "most", "all", "both", "each", "every", "any",
-        "specific", "general", "overall", "main", "primary", "novel",
-        "new", "different", "similar", "certain", "particular",
-    })
+    _STOPWORDS = frozenset(
+        {
+            "the",
+            "a",
+            "an",
+            "of",
+            "and",
+            "or",
+            "to",
+            "in",
+            "for",
+            "by",
+            "with",
+            "from",
+            "on",
+            "at",
+            "is",
+            "are",
+            "was",
+            "were",
+            "be",
+            "been",
+            "being",
+            "this",
+            "that",
+            "these",
+            "those",
+            "as",
+            "it",
+            # 代词/限定词 — 会让 keyword 误匹配 report 里无关行
+            "their",
+            "its",
+            "our",
+            "your",
+            "his",
+            "her",
+            "such",
+            "other",
+            "some",
+            "many",
+            "most",
+            "all",
+            "both",
+            "each",
+            "every",
+            "any",
+            "specific",
+            "general",
+            "overall",
+            "main",
+            "primary",
+            "novel",
+            "new",
+            "different",
+            "similar",
+            "certain",
+            "particular",
+        }
+    )
 
     # meta 语言黑名单 — 这些词出现在 quantity 里说明不是物理量
     # (从 INSTRUCTIONS 的 meta 句子 "study the related work and data" 等误提取)
-    _META_TERMS = frozenset({
-        "related work", "data", "deliverables", "report", "written",
-        "complete", "instructions", "workspace", "files", "code",
-        "figures", "results", "methodology", "discussion", "fully",
-        "task", "phase", "tool", "call",
-    })
+    _META_TERMS = frozenset(
+        {
+            "related work",
+            "data",
+            "deliverables",
+            "report",
+            "written",
+            "complete",
+            "instructions",
+            "workspace",
+            "files",
+            "code",
+            "figures",
+            "results",
+            "methodology",
+            "discussion",
+            "fully",
+            "task",
+            "phase",
+            "tool",
+            "call",
+        }
+    )
 
     # 数值模式 — 行里有真实数值才算 "真的分析了", future work / caveat 无数值 = missing
     # 优先匹配小数/科学计数法/单位/比较符; 最后兜底纯整数 (2位+), 排除列表编号 "1. " / "1."
@@ -479,30 +650,26 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
     _LAYER_PATTERNS = {
         # Concept 层: quantity 关键词在 report 任一段出现即算 (复用 _extract_keywords)
         "concept": None,  # 用 _extract_keywords(q) 做匹配, 无独立正则
-
         # Equation 层: LaTeX 行内/块级公式, 或显式等式
         "equation": re.compile(
-            r"\$\$.+?\$\$"            # 块级 $$...$$
-            r"|\$[^$]{3,}\$"          # 行内 $...$ (至少3字符, 排除 $1$ 编号)
-            r"|\\begin\{equation\}"   # LaTeX equation 环境
-            r"|=\s*[\w\d\-+\\]{2,}"  # 显式等式 "λ = g²/(2m²)" (右值至少2字符)
-            , re.DOTALL,
+            r"\$\$.+?\$\$"  # 块级 $$...$$
+            r"|\$[^$]{3,}\$"  # 行内 $...$ (至少3字符, 排除 $1$ 编号)
+            r"|\\begin\{equation\}"  # LaTeX equation 环境
+            r"|=\s*[\w\d\-+\\]{2,}",  # 显式等式 "λ = g²/(2m²)" (右值至少2字符)
+            re.DOTALL,
         ),
-
         # Method 层: ## Methodology 或 ## Method 段落
         "method": re.compile(
             r"^##\s*(?:Methodology|Methods?|Approach|Framework)\b.*?"
             r"(?=^##\s|\Z)",
             re.MULTILINE | re.DOTALL,
         ),
-
         # Data 层: ## Results 段落, 或 ## Findings
         "data": re.compile(
             r"^##\s*(?:Results?|Findings?|Numerical\s+Results?)\b.*?"
             r"(?=^##\s|\Z)",
             re.MULTILINE | re.DOTALL,
         ),
-
         # Claim 层: ## Discussion / ## Conclusion 段, 或显式 upper limit / point estimate 声明
         "claim": re.compile(
             r"^##\s*(?:Discussion|Conclusion|Conclusions)\b.*?"
@@ -545,7 +712,8 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
         切出中文词追加 (仅当短语含 CJK 时), 英文行为保持不变.
         """
         words = [
-            w for w in re.split(r"[\s\-/]+", phrase)
+            w
+            for w in re.split(r"[\s\-/]+", phrase)
             if w.lower() not in self._STOPWORDS and len(w) > 2
         ]
         if not words:
@@ -568,9 +736,7 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
         # 所有实词 + 中文补充词 + 整个短语, 任一匹配即视为 covered
         return words + cn_words + [phrase]
 
-    def _check_coverage(
-        self, instructions_text: str, report_text: str
-    ) -> list[str]:
+    def _check_coverage(self, instructions_text: str, report_text: str) -> list[str]:
         """返回 report.md 里缺失的物理量列表.
 
         判定逻辑 (行级 ±1 窗口数值检测):
@@ -594,7 +760,7 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
                 if not any(kw in line for kw in keywords):
                     continue
                 # ±1 行窗口
-                window = "\n".join(lines[max(0, i - 1):i + 2])
+                window = "\n".join(lines[max(0, i - 1) : i + 2])
                 if self._NUMERIC_PATTERN.search(window):
                     covered = True
                     break
@@ -602,9 +768,51 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
                 missing.append(q)
         return missing
 
-    def _check_layer_coverage(
-        self, quantity: str, report_text: str
-    ) -> list[str]:
+    def _section_block(self, layer: str, report_text: str) -> str | None:
+        """## 锚点段落原文; 找不到返回 None."""
+        match = self._LAYER_PATTERNS[layer].search(report_text)
+        return match.group(0) if match else None
+
+    def _layer_equation_missing(self, keywords: list[str], report_text: str) -> bool:
+        """公式层: 有公式, 且任一公式 ±200 字符窗口内出现 quantity 关键词."""
+        blocks = list(self._LAYER_PATTERNS["equation"].finditer(report_text))
+        if not blocks:
+            return True
+        return not any(
+            any(
+                kw in report_text[max(0, m.start() - 200) : m.end() + 200].lower()
+                for kw in keywords
+            )
+            for m in blocks
+        )
+
+    def _layer_method_missing(self, keywords: list[str], report_text: str) -> bool:
+        """Method 层: ## Methodology 段内出现 quantity 关键词."""
+        block = self._section_block("method", report_text)
+        if block is None:
+            return True
+        return not any(kw in block.lower() for kw in keywords)
+
+    def _layer_data_missing(self, keywords: list[str], report_text: str) -> bool:
+        """Data 层: ## Results 段内出现 quantity 关键词 + 数值."""
+        block = self._section_block("data", report_text)
+        if block is None:
+            return True
+        lower = block.lower()
+        return not (
+            any(kw in lower for kw in keywords) and self._NUMERIC_PATTERN.search(block)
+        )
+
+    def _layer_claim_missing(self, keywords: list[str], report_text: str) -> bool:
+        """Claim 层: ## Discussion 段出现 quantity 关键词 + claim 声明关键词."""
+        block = self._section_block("claim", report_text)
+        if block is None:
+            return True
+        lower = block.lower()
+        has_q = any(kw in lower for kw in keywords)
+        return not (has_q and self._CLAIM_KEYWORDS.search(block))
+
+    def _check_layer_coverage(self, quantity: str, report_text: str) -> list[str]:
         """v13: 返回该 quantity 缺失的层名列表 (subset of
         ["concept", "equation", "data", "method", "claim"]).
 
@@ -613,61 +821,20 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
         equation 用全文公式正则, 不绑定段落 (公式可能在 Methodology 也可能在
         Results). 升级路径: concept 层可换 kg 查 (huginn/kg/graph.py), 漏报严重再上.
         """
-        missing_layers: list[str] = []
         keywords = self._extract_keywords(quantity)
         report_lower = report_text.lower()
 
-        # Concept 层: quantity 关键词在 report 任一处出现
+        # Concept 层: quantity 关键词在 report 任一处出现; 缺则后续层无意义
         if not any(kw in report_lower for kw in keywords):
-            missing_layers.append("concept")
-            # concept 缺 → 后面几层都不必查 (没提概念就是没分析)
-            return missing_layers
+            return ["concept"]
 
-        # Equation 层: report 有公式 + 公式附近 (±200 字符窗口) 出现 quantity 关键词
-        eq_blocks = list(self._LAYER_PATTERNS["equation"].finditer(report_text))
-        if eq_blocks:
-            # 检查任一公式 ±200 字符窗口内出现 quantity 关键词
-            eq_has_q = any(
-                any(kw in report_text[max(0, m.start()-200):m.end()+200].lower()
-                    for kw in keywords)
-                for m in eq_blocks
-            )
-            if not eq_has_q:
-                missing_layers.append("equation")
-        else:
-            missing_layers.append("equation")
-
-        # Method 层: ## Methodology 段内出现 quantity 关键词
-        method_match = self._LAYER_PATTERNS["method"].search(report_text)
-        if method_match:
-            if not any(kw in method_match.group(0).lower() for kw in keywords):
-                missing_layers.append("method")
-        else:
-            missing_layers.append("method")
-
-        # Data 层: ## Results 段内出现 quantity 关键词 + 数值
-        data_match = self._LAYER_PATTERNS["data"].search(report_text)
-        if data_match:
-            data_block = data_match.group(0)
-            if not (any(kw in data_block.lower() for kw in keywords)
-                    and self._NUMERIC_PATTERN.search(data_block)):
-                missing_layers.append("data")
-        else:
-            missing_layers.append("data")
-
-        # Claim 层: ## Discussion 段出现 quantity 关键词 + claim 声明关键词
-        #   (upper limit / 单位 / confidence level)
-        claim_match = self._LAYER_PATTERNS["claim"].search(report_text)
-        if claim_match:
-            claim_block = claim_match.group(0)
-            has_q = any(kw in claim_block.lower() for kw in keywords)
-            has_claim = bool(self._CLAIM_KEYWORDS.search(claim_block))
-            if not (has_q and has_claim):
-                missing_layers.append("claim")
-        else:
-            missing_layers.append("claim")
-
-        return missing_layers
+        checks = (
+            ("equation", self._layer_equation_missing),
+            ("method", self._layer_method_missing),
+            ("data", self._layer_data_missing),
+            ("claim", self._layer_claim_missing),
+        )
+        return [layer for layer, check in checks if check(keywords, report_text)]
 
     def _check_layer_gaps(
         self, instructions_text: str, report_text: str
@@ -703,9 +870,15 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
             "必须给出数值结果或上界. 完成后再次确认所有量都已覆盖."
         )
 
-    def _build_layer_frontier_msg(
-        self, gaps: list[tuple[str, list[str]]]
-    ) -> str:
+    @staticmethod
+    def _gap_block(quantity: str, layers: list[str]) -> str:
+        """单个物理量的缺失层清单."""
+        lines = [f"  ■ {quantity}:\n"]
+        lines.extend(f"    - [{layer}] {_LAYER_ACTIONS[layer]}\n" for layer in layers)
+        lines.append("\n")
+        return "".join(lines)
+
+    def _build_layer_frontier_msg(self, gaps: list[tuple[str, list[str]]]) -> str:
         """v13: 拼接纵向层次缺失的 frontier message.
 
         改进 (Astronomy_000 多轮验证后):
@@ -719,53 +892,13 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
           必须明确禁止这种 escape hatch.
         - 物理量计算 hint: 告诉 agent 去 related_work 找公式, 不要凭空造数.
         """
-        layer_action = {
-            "concept": "在 report 任意位置引入该物理概念 (定义 + 物理含义), 不能只在未来工作段提及",
-            "equation": "在 report 给出该量的定义式或约束方程 (LaTeX 公式), 从 related_work 引用也可",
-            "data": "在 ## Results 段给出该量的具体数值 (不是定性描述, 必须有数字 + 单位)",
-            "method": "在 ## Methodology 段描述该量的推导/计算方法 (公式来源 + 计算步骤)",
-            "claim": "在 ## Discussion 或 ## Conclusion 段给出 upper limit/point estimate 的具体数值 + 单位 + 置信水平 (如 'g < X GeV⁻¹ at 95% CL')",
-        }
-        lines = [
-            "[FRONTIER TASK — DeliverableCoverageMiddleware / v13 纵向分层]\n",
-            "以下物理量已提及但层次不完整 (横向上 covered, 纵向缺层).\n",
-            "必须在 report.md 对应 section 补全每一层, 不是补一段就够了:\n\n",
-        ]
-        for q, layers in gaps:
-            lines.append(f"  ■ {q}:\n")
-            for layer in layers:
-                lines.append(f"    - [{layer}] {layer_action[layer]}\n")
-            lines.append("\n")
-        lines.append(
-            "## 强制要求 (违反 = 该 criterion 直接 0 分或大幅扣分)\n\n"
-            "1. **禁止 hedge 词**: preliminary / simplified / approximate / "
-            "initial / first-pass / toy model — judge 看到这些词直接扣分到 "
-            "21-30 区间. methodology 要么是 'Bayesian framework applied to "
-            "the exclusion probability curve' 要么别写, 不要给自己留退路.\n\n"
-            "2. **禁止放入 Future Work / Limitations 段**: 写成 'our constraints "
-            "apply primarily to weakly interacting ULBs' 或 'the framework can "
-            "incorporate X' = acknowledge 而非 deliver, judge 判 0. 必须在 "
-            "## Results / ## Discussion 给数值.\n\n"
-            "3. **coupling strength 必须给 g [GeV⁻¹]**: 关键换算 g [GeV⁻¹] = "
-            "1/f_a [GeV] — 算出 f_a > X GeV 必须改写为 g < 1/X GeV⁻¹. "
-            "不接受 dimensionless g = μ/f_a 或裸 f_a 数值, judge 按 GeV⁻¹ 评分.\n\n"
-            "4. **每个 g 必须对应 specific μ_X**: 'g < Y GeV⁻¹ at 95% CL for "
-            "μ = X eV' — 四要素 (a) 数值 Y, (b) 单位 GeV⁻¹, (c) 置信水平, "
-            "(d) 对应 boson mass X. 缺任一 = 0 分. 不是 'we constrain' / "
-            "'consistent with' 这种定性描述.\n\n"
-            "5. **g 必须从 Result 2 的 exclusion probability curve 推**: task "
-            "description 明确要求 'by identifying where the exclusion "
-            "probability falls below a specific confidence threshold'. 不能 "
-            "另起炉灶用 Bosenova equilibrium 或 simplified regime 算 — 在 "
-            "P(excluded) vs μ 曲线上找 P=0.95 的 μ 临界点, 该 μ 对应 g = 1/f_a(μ).\n\n"
-            "6. **数值合理性自检**: QCD axion 典型 g ~ 10⁻¹⁰ GeV⁻¹. 如果你算出 "
-            "g > 10⁻⁵ GeV⁻¹ (远弱于典型值), 说明方法太简化, 不要写 'weaker "
-            "than existing bounds' 然后承认 flaw — 直接换方法重算.\n\n"
-            "7. **数据来源**: related_work/ 里的 PDF 已有相关公式, 用 read_file "
-            "读 paper_*.pdf 找 coupling 定义, 在 code/ 写脚本算数值上限. "
-            "不要凭空造数.\n"
+        header = (
+            "[FRONTIER TASK — DeliverableCoverageMiddleware / v13 纵向分层]\n"
+            "以下物理量已提及但层次不完整 (横向上 covered, 纵向缺层).\n"
+            "必须在 report.md 对应 section 补全每一层, 不是补一段就够了:\n\n"
         )
-        return "".join(lines)
+        blocks = [self._gap_block(quantity, layers) for quantity, layers in gaps]
+        return header + "".join(blocks) + _LAYER_FRONTIER_RULES
 
     def _build_planning_msg(self, quantities: list[str]) -> str:
         """v13: report.md 还没写时, 基于 INSTRUCTIONS 注入 planning hint.
@@ -815,6 +948,36 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
         )
         return "".join(lines)
 
+    def _inject_planning_hint(self, request, msgs: list, quantities: list[str]) -> None:
+        """report 还没写 → 注入 planning hint, 让 agent 在 code/ 阶段就算全."""
+        planning = self._build_planning_msg(quantities)
+        request.messages = [SystemMessage(content=planning)] + list(msgs)
+        logger.info(
+            f"DeliverableCoverage planning hint injected: quantities={quantities}"
+        )
+
+    def _inject_report_frontier(
+        self, request, msgs: list, inst_text: str, report: Path
+    ) -> None:
+        """report 已写 → 横向 + 纵向检查, 缺啥补啥."""
+        report_text = report.read_text(encoding="utf-8")
+        missing = self._check_coverage(inst_text, report_text)
+        gaps = self._check_layer_gaps(inst_text, report_text)
+        if not missing and not gaps:
+            return
+
+        parts = []
+        if missing:
+            parts.append(self._build_frontier_msg(missing))
+        if gaps:
+            parts.append(self._build_layer_frontier_msg(gaps))
+
+        # prepend SystemMessage, 不累积 — messages 每轮从 state 重建
+        request.messages = [SystemMessage(content="\n\n".join(parts))] + list(msgs)
+        logger.info(
+            f"DeliverableCoverage injected: horizontal={missing}, layer_gaps={gaps}"
+        )
+
     def _inject_frontier(self, request) -> None:
         """读 INSTRUCTIONS.md + report.md, 缺失量 + 层次缺失注入 frontier task.
 
@@ -836,35 +999,10 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
             if msgs is None:
                 return
 
-            # report 还没写 → 注入 planning hint, 让 agent 在 code/ 阶段就算全
             if not report.exists():
-                planning = self._build_planning_msg(quantities)
-                request.messages = [SystemMessage(content=planning)] + list(msgs)
-                logger.info(
-                    f"DeliverableCoverage planning hint injected: quantities={quantities}"
-                )
+                self._inject_planning_hint(request, msgs, quantities)
                 return
-
-            # report 已写 → 横向 + 纵向检查, 缺啥补啥
-            report_text = report.read_text(encoding="utf-8")
-            missing = self._check_coverage(inst_text, report_text)
-            gaps = self._check_layer_gaps(inst_text, report_text)
-
-            if not missing and not gaps:
-                return
-
-            parts = []
-            if missing:
-                parts.append(self._build_frontier_msg(missing))
-            if gaps:
-                parts.append(self._build_layer_frontier_msg(gaps))
-            frontier = "\n\n".join(parts)
-
-            # prepend SystemMessage, 不累积 — messages 每轮从 state 重建
-            request.messages = [SystemMessage(content=frontier)] + list(msgs)
-            logger.info(
-                f"DeliverableCoverage injected: horizontal={missing}, layer_gaps={gaps}"
-            )
+            self._inject_report_frontier(request, msgs, inst_text, report)
         except Exception as e:
             logger.debug(f"DeliverableCoverage inject skipped: {e}")
 
@@ -885,11 +1023,9 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
 
 # ── self-check ────────────────────────────────────────────────
 
-def _self_check() -> int:
-    """assert-based demo: 验证 DeliverableCoverageMiddleware 正则提取 + 覆盖检查."""
-    m = DeliverableCoverageMiddleware()
 
-    # 场景 1: Astronomy_000 真实 INSTRUCTIONS — 提取 "X and Y" 物理量
+def _sc_astronomy_quantities(m: DeliverableCoverageMiddleware) -> str:
+    """场景 1: Astronomy_000 真实 INSTRUCTIONS — 提取 "X and Y" 物理量."""
     inst = (
         "To constrain the properties of ultralight bosons by developing and "
         "applying a novel Bayesian statistical framework. This framework "
@@ -901,11 +1037,17 @@ def _self_check() -> int:
     quantities = m._extract_quantities(inst)
     # 应该提取出 mass 相关和 coupling 相关
     assert any("mass" in q for q in quantities), f"mass not extracted: {quantities}"
-    assert any("coupling" in q or "self-interaction" in q for q in quantities), \
+    assert any("coupling" in q or "self-interaction" in q for q in quantities), (
         f"coupling not extracted: {quantities}"
+    )
     print(f"[CHECK] extracted quantities: {quantities}")
+    return inst
 
-    # 场景 2: report 缺 coupling (future work 段落无数值) — 应报 missing
+
+def _sc_missing_coupling_future_work(
+    m: DeliverableCoverageMiddleware, inst: str
+) -> None:
+    """场景 2: report 缺 coupling (future work 段落无数值) — 应报 missing."""
     report_missing_coupling = (
         "# Bayesian Constraints on Ultralight Bosons\n\n"
         "## Results\n"
@@ -916,11 +1058,14 @@ def _self_check() -> int:
         "not just the mass but also the coupling strength of ultralight bosons.\n"
     )
     missing = m._check_coverage(inst, report_missing_coupling)
-    assert any("coupling" in x or "self-interaction" in x for x in missing), \
+    assert any("coupling" in x or "self-interaction" in x for x in missing), (
         f"coupling should be missing (future work, no numeric): {missing}"
+    )
     print(f"[CHECK] missing (coupling in future work): {missing}")
 
-    # 场景 3: report 全覆盖 (mass + coupling 都有数值) — 应返回空
+
+def _sc_full_coverage_report(m: DeliverableCoverageMiddleware, inst: str) -> None:
+    """场景 3: report 全覆盖 (mass + coupling 都有数值) — 应返回空."""
     report_full = (
         "# Bayesian Constraints on Ultralight Bosons\n\n"
         "## Mass Constraints\n"
@@ -933,15 +1078,21 @@ def _self_check() -> int:
     assert missing_full == [], f"should be fully covered: {missing_full}"
     print(f"[CHECK] missing (full coverage): {missing_full}")
 
-    # 场景 4: frontier message 格式
+
+def _sc_frontier_message(m: DeliverableCoverageMiddleware) -> None:
+    """场景 4: frontier message 格式."""
     msg = m._build_frontier_msg(["self-interaction coupling strengths"])
     assert "FRONTIER TASK" in msg
     assert "self-interaction coupling strengths" in msg
     assert "0 分" in msg
     print("[CHECK] frontier msg OK")
 
-    # 场景 5: Material_000 INSTRUCTIONS — "classifications such as X and Y" 模式
-    # X = metal/insulator (斜杠复合词), Y = d/g/i-wave anisotropy (连字符+斜杠)
+
+def _sc_material_quantities(m: DeliverableCoverageMiddleware) -> str:
+    """场景 5: Material_000 INSTRUCTIONS — "classifications such as X and Y" 模式.
+
+    X = metal/insulator (斜杠复合词), Y = d/g/i-wave anisotropy (连字符+斜杠)
+    """
     mat_inst = (
         "The output is a list of candidate materials predicted to be "
         "altermagnets with high probability, along with their electronic "
@@ -950,13 +1101,20 @@ def _self_check() -> int:
         "as metal/insulator and d/g/i-wave anisotropy)."
     )
     mat_q = m._extract_quantities(mat_inst)
-    assert any("metal" in q or "insulator" in q for q in mat_q), \
+    assert any("metal" in q or "insulator" in q for q in mat_q), (
         f"metal/insulator not extracted: {mat_q}"
-    assert any("anisotropy" in q or "wave" in q for q in mat_q), \
+    )
+    assert any("anisotropy" in q or "wave" in q for q in mat_q), (
         f"d/g/i-wave anisotropy not extracted: {mat_q}"
+    )
     print(f"[CHECK] Material_000 extracted: {mat_q}")
+    return mat_inst
 
-    # 场景 6: Material_000 report 缺分类 — 应报 missing
+
+def _sc_material_missing_categories(
+    m: DeliverableCoverageMiddleware, mat_inst: str
+) -> str:
+    """场景 6: Material_000 report 缺分类 — 应报 missing."""
     mat_report_missing = (
         "# Altermagnetic Materials Discovery\n\n"
         "## Results\n"
@@ -966,11 +1124,15 @@ def _self_check() -> int:
         "The model struggles due to extreme class imbalance.\n"
     )
     mat_missing = m._check_coverage(mat_inst, mat_report_missing)
-    assert len(mat_missing) >= 1, \
+    assert len(mat_missing) >= 1, (
         f"should report missing classifications: {mat_missing}"
+    )
     print(f"[CHECK] Material_000 missing (no classification): {mat_missing}")
+    return mat_report_missing
 
-    # 场景 7: Material_000 report 有分类数值 — 应 covered
+
+def _sc_material_full_coverage(m: DeliverableCoverageMiddleware, mat_inst: str) -> None:
+    """场景 7: Material_000 report 有分类数值 — 应 covered."""
     mat_report_full = (
         "# Altermagnetic Materials Discovery\n\n"
         "## Classification Results\n"
@@ -978,12 +1140,15 @@ def _self_check() -> int:
         "Anisotropy analysis: 12 d-wave, 8 g-wave, 10 i-wave patterns.\n"
     )
     mat_missing_full = m._check_coverage(mat_inst, mat_report_full)
-    assert mat_missing_full == [], \
-        f"should be fully covered: {mat_missing_full}"
+    assert mat_missing_full == [], f"should be fully covered: {mat_missing_full}"
     print(f"[CHECK] Material_000 full coverage: {mat_missing_full}")
 
-    # 场景 8 (v13): criterion 2 错位 — agent 给 dimensionless λ 而非 g (GeV⁻¹)
-    # 横向 covered (coupling + 数值都有), 纵向 Claim 层缺失 (无 GeV⁻¹ / 无 upper limit 声明)
+
+def _sc_claim_layer_gap(m: DeliverableCoverageMiddleware, inst: str) -> None:
+    """场景 8 (v13): criterion 2 错位 — agent 给 dimensionless λ 而非 g (GeV⁻¹).
+
+    横向 covered (coupling + 数值都有), 纵向 Claim 层缺失 (无 GeV⁻¹ / 无 upper limit 声明)
+    """
     report_claim_mismatch = (
         "# Bayesian Constraints on Ultralight Bosons\n\n"
         "## Methodology\n"
@@ -996,13 +1161,17 @@ def _self_check() -> int:
     )
     gaps = m._check_layer_gaps(inst, report_claim_mismatch)
     # coupling 应该报 Claim 层缺失 (无 GeV⁻¹, 无 upper limit/point estimate 声明)
-    coupling_gaps = [layers for q, layers in gaps
-                     if "coupling" in q or "self-interaction" in q]
-    assert coupling_gaps and "claim" in coupling_gaps[0], \
+    coupling_gaps = [
+        layers for q, layers in gaps if "coupling" in q or "self-interaction" in q
+    ]
+    assert coupling_gaps and "claim" in coupling_gaps[0], (
         f"criterion 2 错位应报 Claim 层缺失: {gaps}"
+    )
     print(f"[CHECK v13] criterion 2 Claim layer gap: {coupling_gaps}")
 
-    # 场景 9 (v13): 全覆盖 — report 五层齐全, 不应报任何 layer gap
+
+def _sc_full_layer_coverage(m: DeliverableCoverageMiddleware, inst: str) -> None:
+    """场景 9 (v13): 全覆盖 — report 五层齐全, 不应报任何 layer gap."""
     report_full_with_claim = (
         "# Bayesian Constraints on Ultralight Bosons\n\n"
         "## Methodology\n"
@@ -1020,22 +1189,29 @@ def _self_check() -> int:
     assert gaps_full == [], f"五层齐全不应报 layer gap: {gaps_full}"
     print(f"[CHECK v13] full layer coverage: {gaps_full}")
 
-    # 场景 10 (v13): concept 缺 — Metal_000 report 没提 metal/insulator 分类
+
+def _sc_metal_concept_layer(
+    m: DeliverableCoverageMiddleware, mat_inst: str, mat_report_missing: str
+) -> None:
+    """场景 10 (v13): concept 缺 — Metal_000 report 没提 metal/insulator 分类."""
     mat_gaps = m._check_layer_gaps(mat_inst, mat_report_missing)
     # metal/insulator 应该报 concept 层缺失 (根本没出现)
-    [layers for q, layers in mat_gaps
-                  if "metal" in q or "insulator" in q]
+    [layers for q, layers in mat_gaps if "metal" in q or "insulator" in q]
     # 注意: 横向 missing 的 quantity 会被 _check_layer_gaps 跳过 (A 已经会报).
     # mat_report_missing 里 metal/insulator 是横向 missing, 所以 gaps 里不会有它.
     # 改用 _check_layer_coverage 直接查 (绕过 horizontal filter)
     direct_metal_layers = m._check_layer_coverage("metal/insulator", mat_report_missing)
-    assert "concept" in direct_metal_layers, \
+    assert "concept" in direct_metal_layers, (
         f"Metal_000 缺分类应报 Concept 层缺失: {direct_metal_layers}"
+    )
     print(f"[CHECK v13] Metal_000 Concept layer gap (direct): {direct_metal_layers}")
 
-    # 场景 11 (v13 wording): frontier msg 必须包含反 future-work + 数值要求
-    msg = m._build_layer_frontier_msg([("self-interaction coupling strengths",
-                                        ["method", "data", "claim"])])
+
+def _sc_layer_frontier_wording(m: DeliverableCoverageMiddleware) -> None:
+    """场景 11 (v13 wording): frontier msg 必须包含反 future-work + 数值要求."""
+    msg = m._build_layer_frontier_msg(
+        [("self-interaction coupling strengths", ["method", "data", "claim"])]
+    )
     assert "Future Work" in msg, "frontier msg 必须明确禁止 Future Work 模式"
     assert "GeV⁻¹" in msg, "frontier msg 必须给出单位提示 GeV⁻¹"
     assert "1/f_a" in msg, "frontier msg 必须给出 g=1/f_a 换算公式"
@@ -1043,12 +1219,18 @@ def _self_check() -> int:
     assert "0 分" in msg, "frontier msg 必须明确 0 分后果"
     # 反 hedge + 合理性自检 + exclusion curve 来源 (Astronomy_000 第8轮 judge 反馈)
     assert "preliminary" in msg, "frontier msg 必须禁止 hedge 词"
-    assert "exclusion probability curve" in msg, "frontier msg 必须指出 g 从 exclusion curve 推"
+    assert "exclusion probability curve" in msg, (
+        "frontier msg 必须指出 g 从 exclusion curve 推"
+    )
     assert "QCD axion" in msg, "frontier msg 必须给数值合理性自检参考量级"
     print("[CHECK v13] layer frontier msg wording OK")
 
-    # 场景 12 (v13 planning): planning hint 必须包含所有 required quantities
-    planning = m._build_planning_msg(["ulb masses", "self-interaction coupling strengths"])
+
+def _sc_planning_wording(m: DeliverableCoverageMiddleware) -> None:
+    """场景 12 (v13 planning): planning hint 必须包含所有 required quantities."""
+    planning = m._build_planning_msg(
+        ["ulb masses", "self-interaction coupling strengths"]
+    )
     assert "PLANNING HINT" in planning
     assert "ulb masses" in planning
     assert "self-interaction coupling strengths" in planning
@@ -1056,14 +1238,33 @@ def _self_check() -> int:
     assert "1/f_a" in planning, "planning hint 必须给出 g=1/f_a 换算"
     assert "GeV⁻¹" in planning
     assert "preliminary" in planning, "planning hint 必须禁止 hedge 词"
-    assert "exclusion probability curve" in planning, "planning hint 必须指出 g 从 exclusion curve 推"
+    assert "exclusion probability curve" in planning, (
+        "planning hint 必须指出 g 从 exclusion curve 推"
+    )
     assert "QCD axion" in planning, "planning hint 必须给数值合理性自检参考"
     print("[CHECK v13] planning hint wording OK")
 
+
+def _self_check() -> int:
+    """assert-based demo: 验证 DeliverableCoverageMiddleware 正则提取 + 覆盖检查."""
+    m = DeliverableCoverageMiddleware()
+    inst = _sc_astronomy_quantities(m)
+    _sc_missing_coupling_future_work(m, inst)
+    _sc_full_coverage_report(m, inst)
+    _sc_frontier_message(m)
+    mat_inst = _sc_material_quantities(m)
+    mat_report_missing = _sc_material_missing_categories(m, mat_inst)
+    _sc_material_full_coverage(m, mat_inst)
+    _sc_claim_layer_gap(m, inst)
+    _sc_full_layer_coverage(m, inst)
+    _sc_metal_concept_layer(m, mat_inst, mat_report_missing)
+    _sc_layer_frontier_wording(m)
+    _sc_planning_wording(m)
     print("[MIDDLEWARES] self-check OK")
     return 0
 
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(_self_check())

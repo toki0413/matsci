@@ -60,9 +60,7 @@ class GenerativeDesignInput(BaseModel):
     )
 
     # 通用可选
-    work_dir: str | None = Field(
-        default=None, description="工作目录, 默认临时目录"
-    )
+    work_dir: str | None = Field(default=None, description="工作目录, 默认临时目录")
     filename: str | None = Field(
         default=None, description="输出文件名, 默认 design_output.<ext>"
     )
@@ -114,9 +112,7 @@ class GenerativeDesignTool(HuginnTool):
                         message=f"未知原子: {a['atom_name']}",
                     )
         if args.action == "run_from_code" and not args.code:
-            return ValidationResult(
-                result=False, message="run_from_code 需要 code"
-            )
+            return ValidationResult(result=False, message="run_from_code 需要 code")
         return ValidationResult(result=True)
 
     async def call(
@@ -159,9 +155,7 @@ class GenerativeDesignTool(HuginnTool):
             success=True,
         )
 
-    async def _render_and_run(
-        self, args: GenerativeDesignInput
-    ) -> ToolResult:
+    async def _render_and_run(self, args: GenerativeDesignInput) -> ToolResult:
         """渲染 + 执行 + 返回反馈."""
         fmt = args.output_format
         if fmt == "auto":
@@ -178,109 +172,15 @@ class GenerativeDesignTool(HuginnTool):
 
         # html 不执行, 直接返回文件路径让用户在浏览器打开
         if fmt == "html":
-            return ToolResult(
-                data={
-                    "code": code,
-                    "format": "html",
-                    "file_path": str(file_path),
-                    "message": (
-                        f"HTML 已生成: {file_path}. 用浏览器打开预览. "
-                        "需要调整就改 atom 参数重新 render_and_run."
-                    ),
-                },
-                success=True,
-            )
+            return _html_result(code, file_path)
 
         # python: 调 sandbox 执行
         if not self.sandbox:
-            return ToolResult(
-                data={
-                    "code": code,
-                    "format": "python",
-                    "file_path": str(file_path),
-                    "message": (
-                        "无 sandbox 可用, 代码已写入文件但未执行. "
-                        f"可手动运行: python {file_path}"
-                    ),
-                },
-                success=True,
-            )
+            return _missing_sandbox_result(code, file_path)
 
-        try:
-            start = time.time()
-            result = self.sandbox.run(
-                code,
-                work_dir=str(work_dir),
-                timeout=args.timeout,
-            )
-            dt = time.time() - start
-            # SandboxExecutor.run 返回 dict: {stdout, stderr, returncode, ...}
-            stdout = ""
-            stderr = ""
-            returncode = 0
-            output_files: list[str] = []
-            if isinstance(result, dict):
-                stdout = result.get("stdout", "") or ""
-                stderr = result.get("stderr", "") or ""
-                returncode = int(result.get("returncode", 0) or 0)
-                output_files = result.get("output_files", []) or []
-            elif hasattr(result, "stdout"):
-                stdout = getattr(result, "stdout", "") or ""
-                stderr = getattr(result, "stderr", "") or ""
-                returncode = int(getattr(result, "returncode", 0) or 0)
+        return _run_python_file(self.sandbox, code, file_path, work_dir, args.timeout)
 
-            # 扫工作目录看新生成的文件 (png/json/csv 等)
-            try:
-                after_files = set(work_dir.iterdir())
-                before = {file_path}  # 至少有自己
-                new_files = [
-                    str(p) for p in after_files - before
-                    if p.is_file() and p.suffix in (".png", ".jpg", ".svg", ".json", ".csv", ".pdf")
-                ]
-                if new_files:
-                    output_files = list(set(output_files + new_files))
-            except Exception:
-                logger.debug("iterdir failed", exc_info=True)
-
-            return ToolResult(
-                data={
-                    "code": code,
-                    "format": "python",
-                    "file_path": str(file_path),
-                    "stdout": stdout[:4000],  # 截断防 token 爆
-                    "stderr": stderr[:4000],
-                    "returncode": returncode,
-                    "output_files": output_files,
-                    "duration_ms": int(dt * 1000),
-                    "success": returncode == 0,
-                    "message": (
-                        "执行成功, 输出文件: "
-                        + ", ".join(output_files)
-                        if returncode == 0 and output_files
-                        else (
-                            "执行成功" if returncode == 0
-                            else f"执行失败 returncode={returncode}, stderr 见上"
-                        )
-                    ),
-                },
-                success=returncode == 0,
-            )
-        except Exception as e:
-            return ToolResult(
-                data={
-                    "code": code,
-                    "format": "python",
-                    "file_path": str(file_path),
-                    "error": str(e),
-                    "message": f"sandbox 执行异常: {e}",
-                },
-                success=False,
-                error=str(e),
-            )
-
-    async def _run_from_code(
-        self, args: GenerativeDesignInput
-    ) -> ToolResult:
+    async def _run_from_code(self, args: GenerativeDesignInput) -> ToolResult:
         """直接执行 LLM 提供的代码, 跟 render_and_run 共用执行路径."""
         work_dir = Path(args.work_dir) if args.work_dir else Path.cwd() / "_design_runs"
         work_dir.mkdir(parents=True, exist_ok=True)
@@ -301,24 +201,9 @@ class GenerativeDesignTool(HuginnTool):
             )
 
         try:
-            start = time.time()
-            result = self.sandbox.run(
-                args.code,
-                work_dir=str(work_dir),
-                timeout=args.timeout,
+            stdout, stderr, returncode, dt, _ = _run_in_sandbox(
+                self.sandbox, args.code, work_dir, args.timeout
             )
-            dt = time.time() - start
-            stdout = ""
-            stderr = ""
-            returncode = 0
-            if isinstance(result, dict):
-                stdout = result.get("stdout", "") or ""
-                stderr = result.get("stderr", "") or ""
-                returncode = int(result.get("returncode", 0) or 0)
-            elif hasattr(result, "stdout"):
-                stdout = getattr(result, "stdout", "") or ""
-                stderr = getattr(result, "stderr", "") or ""
-                returncode = int(getattr(result, "returncode", 0) or 0)
             return ToolResult(
                 data={
                     "code": args.code,
@@ -351,8 +236,7 @@ class GenerativeDesignTool(HuginnTool):
             name = a["atom_name"]
             params = a.get("params", {})
             defaults = {
-                k: v["default"]
-                for k, v in _ATOM_REGISTRY[name]["params"].items()
+                k: v["default"] for k, v in _ATOM_REGISTRY[name]["params"].items()
             }
             merged = {**defaults, **(params or {})}
             renderer = _RENDERERS.get(name)
@@ -360,39 +244,175 @@ class GenerativeDesignTool(HuginnTool):
                 snippets.append(renderer(merged))
 
         if fmt == "python":
-            parts = [
-                "# GenerativeDesignTool generated code",
-                "# Arial 20pt+ bold 按用户规范",
-                "",
-            ]
-            for a, s in zip(atoms, snippets):
-                parts.append(f"# === {a['atom_name']} ===")
-                parts.append(s)
-                parts.append("")
-            return "\n".join(parts)
+            return _build_python_code(atoms, snippets)
 
         # html: 拼完整文档
-        css_parts = []
-        html_parts = []
-        svg_parts = []
-        for a, s in zip(atoms, snippets):
-            cat = _ATOM_REGISTRY[a["atom_name"]]["category"]
-            if cat == "style":
-                css_parts.append(f"/* {a['atom_name']} */\n{s}")
-            elif cat == "layout" and "<" in s:
-                html_parts.append(f"<!-- {a['atom_name']} -->\n{s}")
-            elif cat == "layout":
-                css_parts.append(f"/* {a['atom_name']} */\n{s}")
-            elif cat == "geometry":
-                svg_parts.append(f"<!-- {a['atom_name']} -->\n{s}")
-        css_block = "\n".join(css_parts) or "/* no css */"
-        html_block = "\n".join(html_parts)
-        svg_block = "\n".join(svg_parts)
-        return (
-            "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n"
-            "<meta charset=\"UTF-8\">\n"
-            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
-            "<title>Generative Design</title>\n<style>\n"
-            f"{css_block}\n</style>\n</head>\n<body>\n"
-            f"{html_block}\n{svg_block}\n</body>\n</html>\n"
+        return _build_html_code(atoms, snippets)
+
+
+def _html_result(code: str, file_path: Path) -> ToolResult:
+    """HTML 输出: 只写文件不执行, 返回路径给浏览器预览."""
+    return ToolResult(
+        data={
+            "code": code,
+            "format": "html",
+            "file_path": str(file_path),
+            "message": (
+                f"HTML 已生成: {file_path}. 用浏览器打开预览. "
+                "需要调整就改 atom 参数重新 render_and_run."
+            ),
+        },
+        success=True,
+    )
+
+
+def _missing_sandbox_result(code: str, file_path: Path) -> ToolResult:
+    """无 sandbox 时的降级结果: 代码已写入文件但未执行."""
+    return ToolResult(
+        data={
+            "code": code,
+            "format": "python",
+            "file_path": str(file_path),
+            "message": (
+                "无 sandbox 可用, 代码已写入文件但未执行. "
+                f"可手动运行: python {file_path}"
+            ),
+        },
+        success=True,
+    )
+
+
+def _run_in_sandbox(
+    sandbox: Any, code: str, work_dir: Path, timeout: int
+) -> tuple[str, str, int, float, list[str]]:
+    """执行代码并把 dict / 对象两种 sandbox 返回形态归一化."""
+    start = time.time()
+    result = sandbox.run(
+        code,
+        work_dir=str(work_dir),
+        timeout=timeout,
+    )
+    dt = time.time() - start
+    # SandboxExecutor.run 返回 dict: {stdout, stderr, returncode, ...}
+    stdout = ""
+    stderr = ""
+    returncode = 0
+    output_files: list[str] = []
+    if isinstance(result, dict):
+        stdout = result.get("stdout", "") or ""
+        stderr = result.get("stderr", "") or ""
+        returncode = int(result.get("returncode", 0) or 0)
+        output_files = result.get("output_files", []) or []
+    elif hasattr(result, "stdout"):
+        stdout = getattr(result, "stdout", "") or ""
+        stderr = getattr(result, "stderr", "") or ""
+        returncode = int(getattr(result, "returncode", 0) or 0)
+    return stdout, stderr, returncode, dt, output_files
+
+
+def _scan_new_outputs(
+    work_dir: Path, file_path: Path, output_files: list[str]
+) -> list[str]:
+    """扫工作目录看新生成的文件 (png/json/csv 等)."""
+    try:
+        after_files = set(work_dir.iterdir())
+        before = {file_path}  # 至少有自己
+        new_files = [
+            str(p)
+            for p in after_files - before
+            if p.is_file()
+            and p.suffix in (".png", ".jpg", ".svg", ".json", ".csv", ".pdf")
+        ]
+        if new_files:
+            return list(set(output_files + new_files))
+    except Exception:
+        logger.debug("iterdir failed", exc_info=True)
+    return output_files
+
+
+def _run_python_file(
+    sandbox: Any, code: str, file_path: Path, work_dir: Path, timeout: int
+) -> ToolResult:
+    """执行渲染出的 python 文件并合并 sandbox 反馈与新产物."""
+    try:
+        stdout, stderr, returncode, dt, output_files = _run_in_sandbox(
+            sandbox, code, work_dir, timeout
         )
+        output_files = _scan_new_outputs(work_dir, file_path, output_files)
+        return ToolResult(
+            data={
+                "code": code,
+                "format": "python",
+                "file_path": str(file_path),
+                "stdout": stdout[:4000],  # 截断防 token 爆
+                "stderr": stderr[:4000],
+                "returncode": returncode,
+                "output_files": output_files,
+                "duration_ms": int(dt * 1000),
+                "success": returncode == 0,
+                "message": (
+                    "执行成功, 输出文件: " + ", ".join(output_files)
+                    if returncode == 0 and output_files
+                    else (
+                        "执行成功"
+                        if returncode == 0
+                        else f"执行失败 returncode={returncode}, stderr 见上"
+                    )
+                ),
+            },
+            success=returncode == 0,
+        )
+    except Exception as e:
+        return ToolResult(
+            data={
+                "code": code,
+                "format": "python",
+                "file_path": str(file_path),
+                "error": str(e),
+                "message": f"sandbox 执行异常: {e}",
+            },
+            success=False,
+            error=str(e),
+        )
+
+
+def _build_python_code(atoms: list[dict[str, Any]], snippets: list[str]) -> str:
+    """拼 python 版生成代码."""
+    parts = [
+        "# GenerativeDesignTool generated code",
+        "# Arial 20pt+ bold 按用户规范",
+        "",
+    ]
+    for a, s in zip(atoms, snippets):
+        parts.append(f"# === {a['atom_name']} ===")
+        parts.append(s)
+        parts.append("")
+    return "\n".join(parts)
+
+
+def _build_html_code(atoms: list[dict[str, Any]], snippets: list[str]) -> str:
+    """拼 html 版完整文档."""
+    css_parts = []
+    html_parts = []
+    svg_parts = []
+    for a, s in zip(atoms, snippets):
+        cat = _ATOM_REGISTRY[a["atom_name"]]["category"]
+        if cat == "style":
+            css_parts.append(f"/* {a['atom_name']} */\n{s}")
+        elif cat == "layout" and "<" in s:
+            html_parts.append(f"<!-- {a['atom_name']} -->\n{s}")
+        elif cat == "layout":
+            css_parts.append(f"/* {a['atom_name']} */\n{s}")
+        elif cat == "geometry":
+            svg_parts.append(f"<!-- {a['atom_name']} -->\n{s}")
+    css_block = "\n".join(css_parts) or "/* no css */"
+    html_block = "\n".join(html_parts)
+    svg_block = "\n".join(svg_parts)
+    return (
+        '<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n'
+        '<meta charset="UTF-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
+        "<title>Generative Design</title>\n<style>\n"
+        f"{css_block}\n</style>\n</head>\n<body>\n"
+        f"{html_block}\n{svg_block}\n</body>\n</html>\n"
+    )

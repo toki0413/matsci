@@ -8,7 +8,7 @@ Noether 定理 (对称性 → 守恒流)
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import sympy as sp
 
@@ -33,6 +33,169 @@ def _substitute_partials(expr_str: str, u_name: str, x_names: list[str]) -> str:
     return out
 
 
+def _el_parts(L: Any, u_func: Any, u_prime: Any, x: Any) -> tuple[Any, Any, Any, Any]:
+    """算 ∂L/∂u, ∂L/∂u', d/dx(∂L/∂u') 与化简后的 EL 左端."""
+    dL_du = sp.diff(L, u_func)
+    dL_du_prime = sp.diff(L, u_prime)
+    ddx_dL_du_prime = sp.diff(dL_du_prime, x)
+    el = sp.simplify(dL_du - ddx_dL_du_prime)
+    return dL_du, dL_du_prime, ddx_dL_du_prime, el
+
+
+def _euler_lagrange_single(
+    args: SymbolicMathInput, sym_dict: dict, L_str: str
+) -> ToolResult:
+    """单变量 Euler-Lagrange: L(u, u', x)."""
+    u_name = args.variable or "u"
+    x_name = "x"
+    u = sym_dict.get(u_name)
+    x = sym_dict.get(x_name)
+    if u is None or x is None:
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"Need symbols [{u_name}, {x_name}]",
+        )
+    # 把 L 当成 u(x) 的函数, u' 用 Derivative(u, x)
+    u_func = sp.Function(u_name)(x)
+    u_prime = sp.Derivative(u_func, x)
+    # 字符串里 u' 不是合法标识符, 先替换成占位符
+    L_sub = _substitute_primes(L_str, u_name)
+    try:
+        L = safe_parse(L_sub, {**sym_dict, u_name: u_func, "__u_prime__": u_prime})
+    except Exception as exc:
+        return ToolResult(data=None, success=False, error=f"Parse error: {exc}")
+
+    dL_du, dL_du_prime, ddx_dL_du_prime, el = _el_parts(L, u_func, u_prime, x)
+    return ToolResult(
+        data={
+            "lagrangian": str(L),
+            "lagrangian_latex": sp.latex(L),
+            "dL_du": str(dL_du),
+            "dL_du_prime": str(dL_du_prime),
+            "d_dx_dL_du_prime": str(ddx_dL_du_prime),
+            "euler_lagrange": f"{sp.simplify(el)} = 0",
+            "euler_lagrange_latex": sp.latex(el),
+        },
+        success=True,
+    )
+
+
+def _euler_lagrange_multivar(
+    args: SymbolicMathInput, sym_dict: dict, L_str: str
+) -> ToolResult:
+    """多变量 Euler-Lagrange: L(u, ∂u/∂x_i, x_i)."""
+    # 多变量: L(u, ∂u/∂x_i, x_i);  EL = ∂L/∂u - Σ_i d/dx_i (∂L/∂(∂u/∂x_i)) = 0
+    if not args.symbols:
+        return ToolResult(
+            data=None, success=False, error="multivar needs symbols [x1, x2, ..., u]"
+        )
+    var_names = list(args.symbols)
+    u_name = args.variable or var_names[-1]
+    x_names = [n for n in var_names if n != u_name]
+    if not x_names:
+        return ToolResult(
+            data=None, success=False, error="Need at least one spatial variable"
+        )
+    x_syms = [sym_dict[n] for n in x_names]
+    u_func = sp.Function(u_name)(*x_syms)
+    # 替换 u_x, u_y 占位符
+    L_sub = _substitute_partials(L_str, u_name, x_names)
+    local = {**sym_dict, u_name: u_func}
+    for xn in x_names:
+        local[f"__u_{xn}__"] = sp.Derivative(u_func, sym_dict[xn])
+    try:
+        L = safe_parse(L_sub, local)
+    except Exception as exc:
+        return ToolResult(data=None, success=False, error=f"Parse error: {exc}")
+
+    dL_du = sp.diff(L, u_func)
+    el_sum = dL_du
+    for _xn, xs in zip(x_names, x_syms):
+        du_i = sp.Derivative(u_func, xs)
+        dL_du_i = sp.diff(L, du_i)
+        term = sp.diff(dL_du_i, xs)
+        el_sum -= term
+    el = sp.simplify(el_sum)
+    return ToolResult(
+        data={
+            "lagrangian": str(L),
+            "lagrangian_latex": sp.latex(L),
+            "spatial_vars": x_names,
+            "field": u_name,
+            "euler_lagrange": f"{el} = 0",
+            "euler_lagrange_latex": sp.latex(el),
+            "note": "Multi-variable Euler-Lagrange with Σ_i d/dx_i (∂L/∂(∂u/∂x_i)).",
+        },
+        success=True,
+    )
+
+
+def _noether_symmetry(
+    args: SymbolicMathInput, u: Any, sym_dict: dict
+) -> tuple[Any, str, ToolResult | None]:
+    """解析 noether target, 返回 (eta, symmetry 描述, 错误 ToolResult)."""
+    target = (args.target or "translation").lower()
+    if target == "translation":
+        return sp.Integer(1), "u → u + ε", None
+    if target == "scaling":
+        return u, "u → (1 + ε) u", None
+    if target == "custom":
+        eta_str = args.sub_action or "1"
+        try:
+            eta = safe_parse(eta_str, sym_dict)
+        except Exception as exc:
+            return (
+                None,
+                "",
+                ToolResult(data=None, success=False, error=f"Parse eta: {exc}"),
+            )
+        return eta, f"u → u + ε ({eta})", None
+    return (
+        None,
+        "",
+        ToolResult(data=None, success=False, error=f"Unknown noether target: {target}"),
+    )
+
+
+def _parse_lagrangian(
+    L_str: str, sym_dict: dict, u_name: str, u_func: Any, u_prime: Any
+) -> tuple[Any, ToolResult | None]:
+    """解析 L 表达式; 失败时返回错误 ToolResult."""
+    L_sub = _substitute_primes(L_str, u_name)
+    try:
+        return (
+            safe_parse(L_sub, {**sym_dict, u_name: u_func, "__u_prime__": u_prime}),
+            None,
+        )
+    except Exception as exc:
+        return None, ToolResult(data=None, success=False, error=f"Parse error: {exc}")
+
+
+def _noether_current(L: Any, u_prime: Any, eta: Any, u: Any, u_func: Any) -> Any:
+    """Noether 守恒流 J = η ∂L/∂u' (eta 里的 u 替换成 u_func)."""
+    dL_du_prime = sp.diff(L, u_prime)
+    # 把 eta 里的 u 也替换成 u_func
+    eta_sub = eta.subs(u, u_func) if hasattr(eta, "subs") else eta
+    return sp.simplify(eta_sub * dL_du_prime)
+
+
+def _noether_result(L: Any, symmetry: str, eta: Any, J: Any) -> ToolResult:
+    """组装 noether 的返回结果."""
+    return ToolResult(
+        data={
+            "lagrangian": str(L),
+            "symmetry": symmetry,
+            "eta": str(eta),
+            "conserved_current": f"J = {J}",
+            "conserved_current_latex": sp.latex(J),
+            "conservation_law": "dJ/dx = 0",
+            "note": "Noether: δL = 0 under continuous symmetry ⇒ J = η ∂L/∂u' is conserved.",
+        },
+        success=True,
+    )
+
+
 def euler_lagrange(args: SymbolicMathInput) -> ToolResult:
     """Euler-Lagrange 方程: 给定 L(u, u', x) 推导 ∂L/∂u - d/dx(∂L/∂u') = 0.
 
@@ -49,88 +212,10 @@ def euler_lagrange(args: SymbolicMathInput) -> ToolResult:
 
     target = (args.target or "single").lower()
     if target == "single":
-        u_name = args.variable or "u"
-        x_name = "x"
-        u = sym_dict.get(u_name)
-        x = sym_dict.get(x_name)
-        if u is None or x is None:
-            return ToolResult(
-                data=None,
-                success=False,
-                error=f"Need symbols [{u_name}, {x_name}]",
-            )
-        # 把 L 当成 u(x) 的函数, u' 用 Derivative(u, x)
-        u_func = sp.Function(u_name)(x)
-        u_prime = sp.Derivative(u_func, x)
-        # 字符串里 u' 不是合法标识符, 先替换成占位符
-        L_sub = _substitute_primes(L_str, u_name)
-        try:
-            L = safe_parse(L_sub, {**sym_dict, u_name: u_func, "__u_prime__": u_prime})
-        except Exception as exc:
-            return ToolResult(data=None, success=False, error=f"Parse error: {exc}")
-
-        dL_du = sp.diff(L, u_func)
-        dL_du_prime = sp.diff(L, u_prime)
-        ddx_dL_du_prime = sp.diff(dL_du_prime, x)
-        el = sp.simplify(dL_du - ddx_dL_du_prime)
-        return ToolResult(
-            data={
-                "lagrangian": str(L),
-                "lagrangian_latex": sp.latex(L),
-                "dL_du": str(dL_du),
-                "dL_du_prime": str(dL_du_prime),
-                "d_dx_dL_du_prime": str(ddx_dL_du_prime),
-                "euler_lagrange": f"{sp.simplify(el)} = 0",
-                "euler_lagrange_latex": sp.latex(el),
-            },
-            success=True,
-        )
+        return _euler_lagrange_single(args, sym_dict, L_str)
 
     if target == "multivar":
-        # 多变量: L(u, ∂u/∂x_i, x_i);  EL = ∂L/∂u - Σ_i d/dx_i (∂L/∂(∂u/∂x_i)) = 0
-        if not args.symbols:
-            return ToolResult(
-                data=None, success=False, error="multivar needs symbols [x1, x2, ..., u]"
-            )
-        var_names = list(args.symbols)
-        u_name = args.variable or var_names[-1]
-        x_names = [n for n in var_names if n != u_name]
-        if not x_names:
-            return ToolResult(
-                data=None, success=False, error="Need at least one spatial variable"
-            )
-        x_syms = [sym_dict[n] for n in x_names]
-        u_func = sp.Function(u_name)(*x_syms)
-        # 替换 u_x, u_y 占位符
-        L_sub = _substitute_partials(L_str, u_name, x_names)
-        local = {**sym_dict, u_name: u_func}
-        for xn in x_names:
-            local[f"__u_{xn}__"] = sp.Derivative(u_func, sym_dict[xn])
-        try:
-            L = safe_parse(L_sub, local)
-        except Exception as exc:
-            return ToolResult(data=None, success=False, error=f"Parse error: {exc}")
-
-        dL_du = sp.diff(L, u_func)
-        el_sum = dL_du
-        for _xn, xs in zip(x_names, x_syms):
-            du_i = sp.Derivative(u_func, xs)
-            dL_du_i = sp.diff(L, du_i)
-            term = sp.diff(dL_du_i, xs)
-            el_sum -= term
-        el = sp.simplify(el_sum)
-        return ToolResult(
-            data={
-                "lagrangian": str(L),
-                "lagrangian_latex": sp.latex(L),
-                "spatial_vars": x_names,
-                "field": u_name,
-                "euler_lagrange": f"{el} = 0",
-                "euler_lagrange_latex": sp.latex(el),
-                "note": "Multi-variable Euler-Lagrange with Σ_i d/dx_i (∂L/∂(∂u/∂x_i)).",
-            },
-            success=True,
-        )
+        return _euler_lagrange_multivar(args, sym_dict, L_str)
 
     return ToolResult(
         data=None, success=False, error=f"Unknown euler_lagrange target: {target}"
@@ -158,6 +243,36 @@ def functional_derivative(args: SymbolicMathInput) -> ToolResult:
     return ToolResult(data=data, success=True)
 
 
+def _split_fg(raw: str) -> tuple[list[str] | None, ToolResult | None]:
+    """把 'F;G' 拆成两段; 失败时返回错误 ToolResult."""
+    parts = [p.strip() for p in raw.split(";")]
+    if len(parts) != 2:
+        return None, ToolResult(
+            data=None,
+            success=False,
+            error="Expected 2 semicolon-separated values F;G",
+        )
+    return parts, None
+
+
+def _parse_fg_parts(
+    parts: list[str], sym_dict: dict, u_name: str, u_func: Any, u_prime: Any
+) -> tuple[Any, Any, ToolResult | None]:
+    """解析 F;G 两段表达式; 失败时返回错误 ToolResult."""
+    F_sub = _substitute_primes(parts[0], u_name)
+    G_sub = _substitute_primes(parts[1], u_name)
+    try:
+        F = safe_parse(F_sub, {**sym_dict, u_name: u_func, "__u_prime__": u_prime})
+        G = safe_parse(G_sub, {**sym_dict, u_name: u_func, "__u_prime__": u_prime})
+    except Exception as exc:
+        return (
+            None,
+            None,
+            ToolResult(data=None, success=False, error=f"Parse error: {exc}"),
+        )
+    return F, G, None
+
+
 def isoperimetric(args: SymbolicMathInput) -> ToolResult:
     """等周问题: 在约束 ∫ G dx = const 下极值化 ∫ F dx.
 
@@ -171,13 +286,9 @@ def isoperimetric(args: SymbolicMathInput) -> ToolResult:
         return ToolResult(
             data=None, success=False, error="isoperimetric needs 'F;G' in expression"
         )
-    parts = [p.strip() for p in raw.split(";")]
-    if len(parts) != 2:
-        return ToolResult(
-            data=None,
-            success=False,
-            error="Expected 2 semicolon-separated values F;G",
-        )
+    parts, split_err = _split_fg(raw)
+    if split_err is not None:
+        return split_err
 
     u_name = args.variable or "u"
     x_name = "x"
@@ -191,19 +302,12 @@ def isoperimetric(args: SymbolicMathInput) -> ToolResult:
     u_prime = sp.Derivative(u_func, x)
     lam = sp.Symbol("lambda")
 
-    F_sub = _substitute_primes(parts[0], u_name)
-    G_sub = _substitute_primes(parts[1], u_name)
-    try:
-        F = safe_parse(F_sub, {**sym_dict, u_name: u_func, "__u_prime__": u_prime})
-        G = safe_parse(G_sub, {**sym_dict, u_name: u_func, "__u_prime__": u_prime})
-    except Exception as exc:
-        return ToolResult(data=None, success=False, error=f"Parse error: {exc}")
+    F, G, parse_err = _parse_fg_parts(parts, sym_dict, u_name, u_func, u_prime)
+    if parse_err is not None:
+        return parse_err
 
     L_aug = sp.simplify(F - lam * G)
-    dL_du = sp.diff(L_aug, u_func)
-    dL_du_prime = sp.diff(L_aug, u_prime)
-    ddx_dL_du_prime = sp.diff(dL_du_prime, x)
-    el = sp.simplify(dL_du - ddx_dL_du_prime)
+    _, dL_du_prime, ddx_dL_du_prime, el = _el_parts(L_aug, u_func, u_prime, x)
 
     return ToolResult(
         data={
@@ -247,47 +351,16 @@ def noether(args: SymbolicMathInput) -> ToolResult:
             data=None, success=False, error=f"Need symbols [{u_name}, {x_name}]"
         )
 
-    target = (args.target or "translation").lower()
-    if target == "translation":
-        eta = sp.Integer(1)
-        symmetry = "u → u + ε"
-    elif target == "scaling":
-        eta = u
-        symmetry = "u → (1 + ε) u"
-    elif target == "custom":
-        eta_str = args.sub_action or "1"
-        try:
-            eta = safe_parse(eta_str, sym_dict)
-        except Exception as exc:
-            return ToolResult(data=None, success=False, error=f"Parse eta: {exc}")
-        symmetry = f"u → u + ε ({eta})"
-    else:
-        return ToolResult(
-            data=None, success=False, error=f"Unknown noether target: {target}"
-        )
+    eta, symmetry, sym_err = _noether_symmetry(args, u, sym_dict)
+    if sym_err is not None:
+        return ToolResult(data=None, success=False, error=sym_err)
 
     u_func = sp.Function(u_name)(x)
     u_prime = sp.Derivative(u_func, x)
-    L_sub = _substitute_primes(L_str, u_name)
-    try:
-        L = safe_parse(L_sub, {**sym_dict, u_name: u_func, "__u_prime__": u_prime})
-    except Exception as exc:
-        return ToolResult(data=None, success=False, error=f"Parse error: {exc}")
+    L, parse_err = _parse_lagrangian(L_str, sym_dict, u_name, u_func, u_prime)
+    if parse_err is not None:
+        return parse_err
 
-    dL_du_prime = sp.diff(L, u_prime)
-    # 把 eta 里的 u 也替换成 u_func
-    eta_sub = eta.subs(u, u_func) if hasattr(eta, "subs") else eta
-    J = sp.simplify(eta_sub * dL_du_prime)
+    J = _noether_current(L, u_prime, eta, u, u_func)
 
-    return ToolResult(
-        data={
-            "lagrangian": str(L),
-            "symmetry": symmetry,
-            "eta": str(eta),
-            "conserved_current": f"J = {J}",
-            "conserved_current_latex": sp.latex(J),
-            "conservation_law": "dJ/dx = 0",
-            "note": "Noether: δL = 0 under continuous symmetry ⇒ J = η ∂L/∂u' is conserved.",
-        },
-        success=True,
-    )
+    return _noether_result(L, symmetry, eta, J)

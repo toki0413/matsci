@@ -20,7 +20,6 @@ from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 logger = logging.getLogger(__name__)
 
 
-
 # 统一 MLIP 注册表: agent 可以查哪些 U-MLIP 可用 + 怎么导入
 # diversity_metadata 记录每个模型的训练来源、软化倾向、元素盲区、已知失效模式和互补模型,
 # 交叉验证时用来挑互补模型, 避免"柏拉图收敛"(不同模型系统性地一起错)
@@ -92,9 +91,9 @@ class MLPotentialInput(BaseModel):
     backend: Literal["mace", "chgnet", "nep", "grace", "equiformer_v2_omat24"] = Field(
         ..., description="ML potential backend"
     )
-    action: Literal["predict", "fine_tune", "relax", "energy_landscape", "cross_validate"] = Field(
-        default="predict"
-    )
+    action: Literal[
+        "predict", "fine_tune", "relax", "energy_landscape", "cross_validate"
+    ] = Field(default="predict")
     structure_file: str = Field(..., description="Path to structure file")
     model_path: str | None = Field(
         default=None,
@@ -281,7 +280,7 @@ class MLPotentialTool(HuginnTool):
             from pynep import Nep
         except ImportError as exc:
             raise RuntimeError(
-                "NEP backend requires pynep and ase. " "Install: pip install pynep ase"
+                "NEP backend requires pynep and ase. Install: pip install pynep ase"
             ) from exc
 
         atoms = read(args.structure_file)
@@ -357,23 +356,17 @@ class MLPotentialTool(HuginnTool):
         权重在 HuggingFace facebook/OMAT24, 用户可以传本地 checkpoint 路径覆盖.
         fairchem 没装就降级 not_available, 不影响其他 backend.
         """
-        try:
-            from ase.io import read, write
-            from fairchem.core.oc.calculator import OCCalculator
-        except ImportError:
-            # 新版 fairchem 可能把 OCCalculator 挪到顶层
-            try:
-                from ase.io import read, write  # noqa: F811
-                from fairchem.core import OCCalculator  # type: ignore[import-not-found]
-            except ImportError:
-                return ToolResult(
-                    data={"backend": "equiformer_v2_omat24", "status": "not_available"},
-                    success=False,
-                    error=(
-                        "OMat24 backend requires fairchem-core and ase. "
-                        "Install: pip install fairchem-core ase"
-                    ),
-                )
+        imports = _import_occ_calculator()
+        if imports is None:
+            return ToolResult(
+                data={"backend": "equiformer_v2_omat24", "status": "not_available"},
+                success=False,
+                error=(
+                    "OMat24 backend requires fairchem-core and ase. "
+                    "Install: pip install fairchem-core ase"
+                ),
+            )
+        read, write, OCCalculator = imports
 
         atoms = read(args.structure_file)
         # model_path 可以是本地 checkpoint, 也可以是 HF repo id "facebook/OMAT24"
@@ -407,111 +400,10 @@ class MLPotentialTool(HuginnTool):
         """Fine-tune an MLIP.  MACE is wired to its ``mace.finetune.run`` API;
         other backends don't expose a programmatic fine-tune entry point yet."""
         if args.backend == "mace":
-            try:
-                from mace.finetune import run as run_finetune
-            except ImportError:
-                return ToolResult(
-                    data={
-                        "backend": "mace",
-                        "action": "fine_tune",
-                        "status": "not_available",
-                        "message": (
-                            "MACE fine-tuning requires the mace.finetune module. "
-                            "Install a recent mace-torch build that ships it."
-                        ),
-                    },
-                    success=False,
-                    error="mace.finetune not importable",
-                )
-
-            config_path = args.parameters.get("config_path")
-            if not config_path:
-                return ToolResult(
-                    data={
-                        "backend": "mace",
-                        "action": "fine_tune",
-                        "status": "missing_config",
-                        "message": (
-                            "MACE fine-tune needs a YAML config file. "
-                            "Pass parameters.config_path pointing to the training config."
-                        ),
-                    },
-                    success=False,
-                    error="parameters.config_path is required for MACE fine-tune",
-                )
-
-            cli_args = ["--config", str(config_path)]
-            for key in ("device", "seed", "default_dtype", "log_level"):
-                val = args.parameters.get(key)
-                if val is not None:
-                    cli_args += [f"--{key}", str(val)]
-
-            import traceback
-            try:
-                run_finetune(cli_args)
-                return ToolResult(
-                    data={
-                        "backend": "mace",
-                        "action": "fine_tune",
-                        "status": "completed",
-                        "config_path": str(config_path),
-                        "message": "MACE fine-tune finished. Check the log for the model checkpoint path.",
-                    },
-                    success=True,
-                )
-            except SystemExit:
-                return ToolResult(
-                    data={
-                        "backend": "mace",
-                        "action": "fine_tune",
-                        "status": "completed",
-                        "config_path": str(config_path),
-                        "message": "MACE fine-tune finished (argparse exit).",
-                    },
-                    success=True,
-                )
-            except Exception as exc:
-                return ToolResult(
-                    data={
-                        "backend": "mace",
-                        "action": "fine_tune",
-                        "status": "failed",
-                        "config_path": str(config_path),
-                        "traceback": traceback.format_exc()[-1000:],
-                    },
-                    success=False,
-                    error=f"MACE fine-tune failed: {exc}",
-                )
-
+            return _fine_tune_mace(args)
         if args.backend == "chgnet":
-            return ToolResult(
-                data={
-                    "backend": "chgnet",
-                    "action": "fine_tune",
-                    "status": "not_supported",
-                    "message": (
-                        "CHGNet fine-tuning is not exposed as a programmatic API. "
-                        "Use the chgnet.train.Trainer CLI directly: "
-                        "python -m chgnet.train --train-set train.json --val-set val.json"
-                    ),
-                },
-                success=False,
-                error="fine_tune not supported for chgnet via this tool",
-            )
-
-        return ToolResult(
-            data={
-                "backend": args.backend,
-                "action": "fine_tune",
-                "status": "not_supported",
-                "message": (
-                    f"fine_tune is not implemented for backend '{args.backend}'. "
-                    f"Supported backends: mace (requires config_path)."
-                ),
-            },
-            success=False,
-            error=f"fine_tune not supported for {args.backend}",
-        )
+            return _fine_tune_chgnet()
+        return _fine_tune_unsupported(args.backend)
 
     # ------------------------------------------------------------------
     # energy_landscape: 沿指定/随机方向扰动结构, 采样能量地形
@@ -565,14 +457,7 @@ class MLPotentialTool(HuginnTool):
         每个采样点记录: displacement (Å, 相对初始位置的总位移矢量展平)、
         energy (eV)、force (eV/Å, 当前构型受力展平). 不修改原结构文件.
         """
-        try:
-            from ase.io import read
-        except ImportError as exc:
-            raise RuntimeError(
-                "energy_landscape requires ase. Install: pip install ase"
-            ) from exc
-
-        atoms = read(args.structure_file)
+        atoms = _read_structure_with_ase(args.structure_file)
         self._attach_calculator(atoms, args)
 
         positions0 = atoms.get_positions().copy()
@@ -580,64 +465,15 @@ class MLPotentialTool(HuginnTool):
         magnitude = float(args.displacement_magnitude)
 
         # 准备扰动方向列表: 用户指定的优先, 否则随机生成
-        directions = []
-        if args.perturbation_directions:
-            for atom_idx, axis in args.perturbation_directions:
-                if not (0 <= atom_idx < n_atoms) or axis not in (0, 1, 2):
-                    raise RuntimeError(
-                        f"perturbation_directions 含非法项 [{atom_idx}, {axis}]"
-                    )
-                vec = np.zeros((n_atoms, 3))
-                vec[atom_idx, axis] = 1.0
-                directions.append(vec)
-        else:
-            rng = np.random.default_rng(42)
-            for _ in range(int(args.n_samples)):
-                vec = rng.standard_normal((n_atoms, 3))
-                norm = np.linalg.norm(vec)
-                if norm < 1e-12:
-                    vec = np.zeros((n_atoms, 3))
-                    vec[0, 0] = 1.0
-                    norm = 1.0
-                vec = vec / norm
-                directions.append(vec)
+        directions = _landscape_directions(args, n_atoms)
 
-        samples: list[dict[str, Any]] = []
         # 第一个采样点用原始位置做基准 (零位移)
-        try:
-            e0 = float(atoms.get_potential_energy())
-            f0 = atoms.get_forces()
-        except Exception as exc:
-            raise RuntimeError(f"ML 势评估失败: {exc}") from exc
-
-        samples.append(
-            {
-                "displacement": [0.0] * (3 * n_atoms),
-                "displacement_magnitude": 0.0,
-                "energy": e0,
-                "force": np.asarray(f0).ravel().tolist(),
-            }
-        )
+        samples: list[dict[str, Any]] = [_landscape_base_sample(atoms)]
 
         # 沿每个方向扰动一次 (固定幅度), 评估并复位
-        for vec in directions:
-            atoms.set_positions(positions0 + magnitude * vec)
-            try:
-                e = float(atoms.get_potential_energy())
-                f = atoms.get_forces()
-            except Exception:
-                # 单点失败就跳过, 不让整个 landscape 挂掉
-                logger.debug("best-effort op failed", exc_info=True)
-                continue
-            disp = (magnitude * vec).ravel().tolist()
-            samples.append(
-                {
-                    "displacement": disp,
-                    "displacement_magnitude": float(magnitude),
-                    "energy": e,
-                    "force": np.asarray(f).ravel().tolist(),
-                }
-            )
+        samples.extend(
+            _landscape_perturbed_samples(atoms, positions0, directions, magnitude)
+        )
 
         # 复位, 避免影响后续调用 (虽然本方法不写回文件, 但 atoms 可能被复用)
         atoms.set_positions(positions0)
@@ -703,46 +539,15 @@ class MLPotentialTool(HuginnTool):
         柏拉图收敛风险: 如果互补模型之间偏差大 (std > 阈值), 说明预测不可靠,
         即使模型们彼此一致也不能全信 (它们可能一起错).
         """
-        # ---- 选模型 ----
-        if args.models:
-            models = args.models
-        else:
-            meta = UMLIP_REGISTRY.get(args.backend, {})
-            complementary = (
-                meta.get("diversity_metadata", {}).get("complementary_models", [])
-            )
-            models = [args.backend] + complementary[:2]
-
-        # 去重保序, 只留注册表里有的
-        seen: set[str] = set()
-        selected: list[str] = []
-        for m in models:
-            if m not in seen and m in UMLIP_REGISTRY:
-                seen.add(m)
-                selected.append(m)
-
+        selected = self._cv_select_models(args)
         if len(selected) < 2:
             return ToolResult(
                 data=None,
                 success=False,
                 error="cross_validate needs at least 2 models, got: " + str(selected),
             )
-
         property_type = args.property_type or "energy"
-
-        # ---- 逐模型跑 predict ----
-        predictions: dict[str, dict[str, Any]] = {}
-        errors: dict[str, str] = {}
-        for model in selected:
-            try:
-                result = self._predict_single(model, args)
-                if result.success and result.data:
-                    predictions[model] = result.data
-                else:
-                    errors[model] = result.error or "prediction failed"
-            except Exception as exc:
-                errors[model] = str(exc)
-
+        predictions, errors = self._cv_predict_all(selected, args)
         if len(predictions) < 2:
             return ToolResult(
                 data={
@@ -756,167 +561,237 @@ class MLPotentialTool(HuginnTool):
                 success=False,
                 error="At least 2 models must succeed for cross-validation",
             )
+        n_atoms = self._cv_count_atoms(args.structure_file)
+        if property_type == "energy":
+            return self._cv_energy_result(selected, predictions, errors, n_atoms)
+        if property_type == "forces":
+            return self._cv_forces_result(selected, predictions, errors)
+        return self._cv_phonon_result(selected, predictions, errors, n_atoms)
 
-        # ---- 拿原子数 (算 per-atom 量用) ----
-        n_atoms = 1
+    @staticmethod
+    def _cv_select_models(args: MLPotentialInput) -> list[str]:
+        """选模型: 用户指定优先, 否则 backend + 互补模型 (最多 3), 去重保序."""
+        if args.models:
+            models = args.models
+        else:
+            meta = UMLIP_REGISTRY.get(args.backend, {})
+            complementary = meta.get("diversity_metadata", {}).get(
+                "complementary_models", []
+            )
+            models = [args.backend] + complementary[:2]
+        seen: set[str] = set()
+        selected: list[str] = []
+        for m in models:
+            if m not in seen and m in UMLIP_REGISTRY:
+                seen.add(m)
+                selected.append(m)
+        return selected
+
+    def _cv_predict_all(
+        self,
+        selected: list[str],
+        args: MLPotentialInput,
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+        """逐模型跑 predict, 分开收集成功预测与错误."""
+        predictions: dict[str, dict[str, Any]] = {}
+        errors: dict[str, str] = {}
+        for model in selected:
+            try:
+                result = self._predict_single(model, args)
+                if result.success and result.data:
+                    predictions[model] = result.data
+                else:
+                    errors[model] = result.error or "prediction failed"
+            except Exception as exc:
+                errors[model] = str(exc)
+        return predictions, errors
+
+    @staticmethod
+    def _cv_count_atoms(structure_file: str | None) -> int:
+        """读结构文件拿原子数; 读不了就用 1 (energy_per_atom == energy)."""
         try:
             from ase.io import read
 
-            n_atoms = len(read(args.structure_file))
+            return len(read(structure_file))
         except Exception:
-            logger.debug("cross validate umlips failed", exc_info=True)  # 读不了就用 1, energy_per_atom == energy
+            logger.debug(
+                "cross validate umlips failed", exc_info=True
+            )  # 读不了就用 1, energy_per_atom == energy
+            return 1
 
-        # ---- 按性质类型算统计量 ----
-        warnings: list[str] = []
-
-        if property_type == "energy":
-            per_model_e: dict[str, float] = {}
-            for model, data in predictions.items():
-                e = data.get("energy")
-                if e is not None:
-                    per_model_e[model] = float(e) / n_atoms
-
-            values = list(per_model_e.values())
-            if len(values) < 2:
-                return ToolResult(
-                    data={
-                        "property_type": "energy",
-                        "selected_models": selected,
-                        "predictions": predictions,
-                        "errors": errors,
-                        "status": "insufficient_energy_data",
-                    },
-                    success=False,
-                    error="Not enough models returned valid energy",
-                )
-
-            mean_e = float(np.mean(values))
-            std_e = float(np.std(values))
-            # 一致性分数: 1.0 = 完全一致, 0.0 = 差异 >= 2x 阈值
-            consistency = max(0.0, 1.0 - std_e / (2 * self._CV_ENERGY_THRESHOLD))
-
-            if std_e > self._CV_ENERGY_THRESHOLD:
-                warnings.append(
-                    f"Multi-model inconsistency: std={std_e * 1000:.1f} meV/atom > "
-                    f"threshold={self._CV_ENERGY_THRESHOLD * 1000:.0f} meV/atom. "
-                    f"Plato-convergence risk — models may agree but all be wrong."
-                )
-
-            # 附上每个模型的 diversity_metadata, 方便判断哪些模型互补
-            model_metadata = {
-                m: UMLIP_REGISTRY.get(m, {}).get("diversity_metadata", {})
-                for m in per_model_e
-            }
-
-            return ToolResult(
-                data={
-                    "property_type": "energy",
-                    "selected_models": selected,
-                    "per_model": {
-                        m: {"energy_per_atom": e} for m, e in per_model_e.items()
-                    },
-                    "mean": mean_e,
-                    "std": std_e,
-                    "consistency_score": round(consistency, 4),
-                    "threshold": self._CV_ENERGY_THRESHOLD,
-                    "warnings": warnings,
-                    "errors": errors,
-                    "model_diversity_metadata": model_metadata,
-                },
-                success=True,
-            )
-
-        if property_type == "forces":
-            per_model_f: dict[str, np.ndarray] = {}
-            for model, data in predictions.items():
-                f = data.get("forces")
-                if f:
-                    per_model_f[model] = np.asarray(f, dtype=float)
-
-            if len(per_model_f) < 2:
-                return ToolResult(
-                    data={
-                        "property_type": "forces",
-                        "selected_models": selected,
-                        "predictions": predictions,
-                        "errors": errors,
-                        "status": "insufficient_force_data",
-                    },
-                    success=False,
-                    error="Not enough models returned valid forces",
-                )
-
-            # 两两算 RMSE
-            model_names = list(per_model_f.keys())
-            pairwise_rmses: list[float] = []
-            for i in range(len(model_names)):
-                for j in range(i + 1, len(model_names)):
-                    diff = per_model_f[model_names[i]] - per_model_f[model_names[j]]
-                    pairwise_rmses.append(float(np.sqrt(np.mean(diff ** 2))))
-
-            mean_rmse = float(np.mean(pairwise_rmses))
-            max_rmse = float(np.max(pairwise_rmses))
-            consistency = max(
-                0.0, 1.0 - mean_rmse / (2 * self._CV_FORCE_THRESHOLD)
-            )
-
-            if mean_rmse > self._CV_FORCE_THRESHOLD:
-                warnings.append(
-                    f"Multi-model force inconsistency: mean RMSE={mean_rmse * 1000:.1f} "
-                    f"meV/Å > threshold={self._CV_FORCE_THRESHOLD * 1000:.0f} meV/Å. "
-                    f"Plato-convergence risk."
-                )
-
-            model_metadata = {
-                m: UMLIP_REGISTRY.get(m, {}).get("diversity_metadata", {})
-                for m in per_model_f
-            }
-
-            return ToolResult(
-                data={
-                    "property_type": "forces",
-                    "selected_models": selected,
-                    "per_model": {
-                        m: {"forces": per_model_f[m].tolist()} for m in model_names
-                    },
-                    "mean_rmse": mean_rmse,
-                    "max_rmse": max_rmse,
-                    "consistency_score": round(consistency, 4),
-                    "threshold": self._CV_FORCE_THRESHOLD,
-                    "warnings": warnings,
-                    "errors": errors,
-                    "model_diversity_metadata": model_metadata,
-                },
-                success=True,
-            )
-
-        # property_type == "phonons"
-        # phonon 交叉验证需要力常数 (有限差分), 单点预测不够.
-        # 退而求其次: 用能量一致性做 proxy, 附说明.
-        per_model_e = {}
+    @staticmethod
+    def _cv_per_atom_energy(
+        predictions: dict[str, dict[str, Any]],
+        n_atoms: int,
+    ) -> dict[str, float]:
+        """各模型能量归一化到 per-atom."""
+        per_model_e: dict[str, float] = {}
         for model, data in predictions.items():
             e = data.get("energy")
             if e is not None:
                 per_model_e[model] = float(e) / n_atoms
+        return per_model_e
 
+    def _cv_energy_consistency(
+        self,
+        values: list[float],
+    ) -> tuple[float, float, float, str | None]:
+        """能量一致性统计: (mean, std, consistency, 不一致警告)."""
+        mean_e = float(np.mean(values))
+        std_e = float(np.std(values))
+        consistency = max(0.0, 1.0 - std_e / (2 * self._CV_ENERGY_THRESHOLD))
+        warning = None
+        if std_e > self._CV_ENERGY_THRESHOLD:
+            warning = (
+                f"Multi-model inconsistency: std={std_e * 1000:.1f} meV/atom > "
+                f"threshold={self._CV_ENERGY_THRESHOLD * 1000:.0f} meV/atom. "
+                f"Plato-convergence risk — models may agree but all be wrong."
+            )
+        return mean_e, std_e, consistency, warning
+
+    @staticmethod
+    def _cv_model_metadata(models: Any) -> dict[str, Any]:
+        """附上每个模型的 diversity_metadata, 方便判断哪些模型互补."""
+        return {
+            m: UMLIP_REGISTRY.get(m, {}).get("diversity_metadata", {}) for m in models
+        }
+
+    def _cv_energy_result(
+        self,
+        selected: list[str],
+        predictions: dict[str, dict[str, Any]],
+        errors: dict[str, str],
+        n_atoms: int,
+    ) -> ToolResult:
+        """property_type=energy: per-atom 能量一致性."""
+        per_model_e = self._cv_per_atom_energy(predictions, n_atoms)
+        values = list(per_model_e.values())
+        if len(values) < 2:
+            return ToolResult(
+                data={
+                    "property_type": "energy",
+                    "selected_models": selected,
+                    "predictions": predictions,
+                    "errors": errors,
+                    "status": "insufficient_energy_data",
+                },
+                success=False,
+                error="Not enough models returned valid energy",
+            )
+        mean_e, std_e, consistency, warning = self._cv_energy_consistency(values)
+        return ToolResult(
+            data={
+                "property_type": "energy",
+                "selected_models": selected,
+                "per_model": {
+                    m: {"energy_per_atom": e} for m, e in per_model_e.items()
+                },
+                "mean": mean_e,
+                "std": std_e,
+                "consistency_score": round(consistency, 4),
+                "threshold": self._CV_ENERGY_THRESHOLD,
+                "warnings": [warning] if warning else [],
+                "errors": errors,
+                "model_diversity_metadata": self._cv_model_metadata(per_model_e),
+            },
+            success=True,
+        )
+
+    @staticmethod
+    def _cv_pairwise_rmse(
+        per_model_f: dict[str, np.ndarray],
+        model_names: list[str],
+    ) -> tuple[float, float]:
+        """两两力场 RMSE: (mean_rmse, max_rmse)."""
+        pairwise_rmses: list[float] = []
+        for i in range(len(model_names)):
+            for j in range(i + 1, len(model_names)):
+                diff = per_model_f[model_names[i]] - per_model_f[model_names[j]]
+                pairwise_rmses.append(float(np.sqrt(np.mean(diff**2))))
+        return float(np.mean(pairwise_rmses)), float(np.max(pairwise_rmses))
+
+    def _cv_force_consistency(self, mean_rmse: float) -> tuple[float, list[str]]:
+        """力场一致性分数 + 超阈值警告."""
+        consistency = max(0.0, 1.0 - mean_rmse / (2 * self._CV_FORCE_THRESHOLD))
+        warnings: list[str] = []
+        if mean_rmse > self._CV_FORCE_THRESHOLD:
+            warnings.append(
+                f"Multi-model force inconsistency: mean RMSE={mean_rmse * 1000:.1f} "
+                f"meV/Å > threshold={self._CV_FORCE_THRESHOLD * 1000:.0f} meV/Å. "
+                f"Plato-convergence risk."
+            )
+        return consistency, warnings
+
+    def _cv_forces_result(
+        self,
+        selected: list[str],
+        predictions: dict[str, dict[str, Any]],
+        errors: dict[str, str],
+    ) -> ToolResult:
+        """property_type=forces: 两两 RMSE 一致性."""
+        per_model_f: dict[str, np.ndarray] = {}
+        for model, data in predictions.items():
+            f = data.get("forces")
+            if f:
+                per_model_f[model] = np.asarray(f, dtype=float)
+        if len(per_model_f) < 2:
+            return ToolResult(
+                data={
+                    "property_type": "forces",
+                    "selected_models": selected,
+                    "predictions": predictions,
+                    "errors": errors,
+                    "status": "insufficient_force_data",
+                },
+                success=False,
+                error="Not enough models returned valid forces",
+            )
+        model_names = list(per_model_f.keys())
+        mean_rmse, max_rmse = self._cv_pairwise_rmse(per_model_f, model_names)
+        consistency, warnings = self._cv_force_consistency(mean_rmse)
+        return ToolResult(
+            data={
+                "property_type": "forces",
+                "selected_models": selected,
+                "per_model": {
+                    m: {"forces": per_model_f[m].tolist()} for m in model_names
+                },
+                "mean_rmse": mean_rmse,
+                "max_rmse": max_rmse,
+                "consistency_score": round(consistency, 4),
+                "threshold": self._CV_FORCE_THRESHOLD,
+                "warnings": warnings,
+                "errors": errors,
+                "model_diversity_metadata": self._cv_model_metadata(per_model_f),
+            },
+            success=True,
+        )
+
+    def _cv_phonon_result(
+        self,
+        selected: list[str],
+        predictions: dict[str, dict[str, Any]],
+        errors: dict[str, str],
+        n_atoms: int,
+    ) -> ToolResult:
+        """property_type=phonons: 力常数缺失, 用能量一致性做 proxy."""
+        per_model_e = self._cv_per_atom_energy(predictions, n_atoms)
         values = list(per_model_e.values())
         mean_e = float(np.mean(values)) if values else 0.0
         std_e = float(np.std(values)) if values else 0.0
         consistency = max(0.0, 1.0 - std_e / (2 * self._CV_ENERGY_THRESHOLD))
-
-        warnings.append(
+        warnings = [
             "Phonon cross-validation requires force constants via finite differences. "
             "Energy consistency is used as a proxy here. "
             "For rigorous phonon validation, run energy_landscape with each model "
             "and compare curvatures, or use phonopy with multiple MLIP backends."
-        )
+        ]
         if std_e > self._CV_ENERGY_THRESHOLD:
             warnings.append(
                 f"Multi-model energy inconsistency (phonon proxy): "
                 f"std={std_e * 1000:.1f} meV/atom > "
                 f"threshold={self._CV_ENERGY_THRESHOLD * 1000:.0f} meV/atom."
             )
-
         return ToolResult(
             data={
                 "property_type": "phonons",
@@ -937,3 +812,231 @@ class MLPotentialTool(HuginnTool):
             },
             success=True,
         )
+
+
+# ── Module-level helpers ────────────────────────────────────
+
+
+def _import_occ_calculator():
+    """Import ase read/write and OCCalculator, trying both fairchem paths."""
+    try:
+        from ase.io import read, write
+        from fairchem.core.oc.calculator import OCCalculator
+    except ImportError:
+        # 新版 fairchem 可能把 OCCalculator 挪到顶层
+        try:
+            from ase.io import read, write  # noqa: F811
+            from fairchem.core import OCCalculator  # type: ignore[import-not-found]
+        except ImportError:
+            return None
+    return read, write, OCCalculator
+
+
+def _fine_tune_mace(args: MLPotentialInput) -> ToolResult:
+    """Run MACE fine-tuning via ``mace.finetune.run`` when it is installed."""
+    try:
+        from mace.finetune import run as run_finetune
+    except ImportError:
+        return ToolResult(
+            data={
+                "backend": "mace",
+                "action": "fine_tune",
+                "status": "not_available",
+                "message": (
+                    "MACE fine-tuning requires the mace.finetune module. "
+                    "Install a recent mace-torch build that ships it."
+                ),
+            },
+            success=False,
+            error="mace.finetune not importable",
+        )
+
+    config_path = args.parameters.get("config_path")
+    if not config_path:
+        return ToolResult(
+            data={
+                "backend": "mace",
+                "action": "fine_tune",
+                "status": "missing_config",
+                "message": (
+                    "MACE fine-tune needs a YAML config file. "
+                    "Pass parameters.config_path pointing to the training config."
+                ),
+            },
+            success=False,
+            error="parameters.config_path is required for MACE fine-tune",
+        )
+
+    cli_args = _mace_finetune_cli_args(args, config_path)
+    return _run_mace_finetune(run_finetune, cli_args, config_path)
+
+
+def _mace_finetune_cli_args(args: MLPotentialInput, config_path: str) -> list[str]:
+    """Translate parameters into the mace.finetune CLI argument list."""
+    cli_args = ["--config", str(config_path)]
+    for key in ("device", "seed", "default_dtype", "log_level"):
+        val = args.parameters.get(key)
+        if val is not None:
+            cli_args += [f"--{key}", str(val)]
+    return cli_args
+
+
+def _run_mace_finetune(
+    run_finetune, cli_args: list[str], config_path: str
+) -> ToolResult:
+    """Invoke the MACE fine-tune runner and map its outcome to a ToolResult."""
+    import traceback
+
+    try:
+        run_finetune(cli_args)
+        return ToolResult(
+            data={
+                "backend": "mace",
+                "action": "fine_tune",
+                "status": "completed",
+                "config_path": str(config_path),
+                "message": "MACE fine-tune finished. Check the log for the model checkpoint path.",
+            },
+            success=True,
+        )
+    except SystemExit:
+        return ToolResult(
+            data={
+                "backend": "mace",
+                "action": "fine_tune",
+                "status": "completed",
+                "config_path": str(config_path),
+                "message": "MACE fine-tune finished (argparse exit).",
+            },
+            success=True,
+        )
+    except Exception as exc:
+        return ToolResult(
+            data={
+                "backend": "mace",
+                "action": "fine_tune",
+                "status": "failed",
+                "config_path": str(config_path),
+                "traceback": traceback.format_exc()[-1000:],
+            },
+            success=False,
+            error=f"MACE fine-tune failed: {exc}",
+        )
+
+
+def _fine_tune_chgnet() -> ToolResult:
+    """CHGNet exposes no programmatic fine-tune entry point."""
+    return ToolResult(
+        data={
+            "backend": "chgnet",
+            "action": "fine_tune",
+            "status": "not_supported",
+            "message": (
+                "CHGNet fine-tuning is not exposed as a programmatic API. "
+                "Use the chgnet.train.Trainer CLI directly: "
+                "python -m chgnet.train --train-set train.json --val-set val.json"
+            ),
+        },
+        success=False,
+        error="fine_tune not supported for chgnet via this tool",
+    )
+
+
+def _fine_tune_unsupported(backend: str) -> ToolResult:
+    """Report fine_tune as unsupported for any other backend."""
+    return ToolResult(
+        data={
+            "backend": backend,
+            "action": "fine_tune",
+            "status": "not_supported",
+            "message": (
+                f"fine_tune is not implemented for backend '{backend}'. "
+                f"Supported backends: mace (requires config_path)."
+            ),
+        },
+        success=False,
+        error=f"fine_tune not supported for {backend}",
+    )
+
+
+def _read_structure_with_ase(structure_file: str):
+    """Read a structure file with ase, raising a helpful error when it is missing."""
+    try:
+        from ase.io import read
+    except ImportError as exc:
+        raise RuntimeError(
+            "energy_landscape requires ase. Install: pip install ase"
+        ) from exc
+    return read(structure_file)
+
+
+def _landscape_directions(args: MLPotentialInput, n_atoms: int) -> list[np.ndarray]:
+    """Prepare perturbation directions: user-specified first, else random."""
+    directions = []
+    if args.perturbation_directions:
+        for atom_idx, axis in args.perturbation_directions:
+            if not (0 <= atom_idx < n_atoms) or axis not in (0, 1, 2):
+                raise RuntimeError(
+                    f"perturbation_directions 含非法项 [{atom_idx}, {axis}]"
+                )
+            vec = np.zeros((n_atoms, 3))
+            vec[atom_idx, axis] = 1.0
+            directions.append(vec)
+    else:
+        rng = np.random.default_rng(42)
+        for _ in range(int(args.n_samples)):
+            vec = rng.standard_normal((n_atoms, 3))
+            norm = np.linalg.norm(vec)
+            if norm < 1e-12:
+                vec = np.zeros((n_atoms, 3))
+                vec[0, 0] = 1.0
+                norm = 1.0
+            vec = vec / norm
+            directions.append(vec)
+    return directions
+
+
+def _landscape_base_sample(atoms) -> dict[str, Any]:
+    """Evaluate the unperturbed structure as the zero-displacement baseline."""
+    n_atoms = len(atoms)
+    try:
+        e0 = float(atoms.get_potential_energy())
+        f0 = atoms.get_forces()
+    except Exception as exc:
+        raise RuntimeError(f"ML 势评估失败: {exc}") from exc
+    return {
+        "displacement": [0.0] * (3 * n_atoms),
+        "displacement_magnitude": 0.0,
+        "energy": e0,
+        "force": np.asarray(f0).ravel().tolist(),
+    }
+
+
+def _landscape_perturbed_samples(
+    atoms,
+    positions0: np.ndarray,
+    directions: list[np.ndarray],
+    magnitude: float,
+) -> list[dict[str, Any]]:
+    """Perturb along each direction, evaluate, and collect landscape samples."""
+    samples: list[dict[str, Any]] = []
+    # 沿每个方向扰动一次 (固定幅度), 评估并复位
+    for vec in directions:
+        atoms.set_positions(positions0 + magnitude * vec)
+        try:
+            e = float(atoms.get_potential_energy())
+            f = atoms.get_forces()
+        except Exception:
+            # 单点失败就跳过, 不让整个 landscape 挂掉
+            logger.debug("best-effort op failed", exc_info=True)
+            continue
+        disp = (magnitude * vec).ravel().tolist()
+        samples.append(
+            {
+                "displacement": disp,
+                "displacement_magnitude": float(magnitude),
+                "energy": e,
+                "force": np.asarray(f).ravel().tolist(),
+            }
+        )
+    return samples

@@ -1,4 +1,5 @@
 """XRD 谱图场景: 多相叠加 + 峰位竖线 + hkl 标注 + Bragg d-spacing."""
+
 from __future__ import annotations
 
 import logging
@@ -33,64 +34,13 @@ def xrd_pattern(args: ImageDesignInput) -> ToolResult:
     wavelength = float(get_param(args, "wavelength", 1.5406))
 
     fig, ax = plt.subplots(figsize=(12, 7))
-    ax.plot(
-        two_theta, intensity, color="#2196F3", linewidth=1.8, label="Measured"
-    )
+    ax.plot(two_theta, intensity, color="#2196F3", linewidth=1.8, label="Measured")
 
     # 多相叠加 (虚线)
-    if phases:
-        for ph in phases:
-            tt = np.array(ph.get("two_theta", []), dtype=float)
-            ii = np.array(ph.get("intensity", []), dtype=float)
-            if tt.size == 0:
-                continue
-            c = ph.get("color", "#FF5722")
-            lbl = ph.get("label", "phase")
-            ax.plot(
-                tt,
-                ii,
-                color=c,
-                linewidth=1.5,
-                linestyle="--",
-                alpha=0.8,
-                label=lbl,
-            )
+    _draw_phases(ax, phases)
 
     # 峰位竖线 + hkl 标注, 顺便算 d-spacing (Bragg)
-    peak_info: list[dict[str, Any]] = []
-    y_top = float(intensity.max()) if intensity.size else 1.0
-    if peaks:
-        for pk in peaks:
-            tt_pk = float(pk.get("two_theta", 0))
-            hkl = pk.get("hkl", "")
-            phase_name = pk.get("phase", "")
-            theta_rad = np.deg2rad(tt_pk / 2.0)
-            sin_t = np.sin(theta_rad)
-            d_nm = (
-                wavelength / (2.0 * sin_t) * 0.1 if sin_t > 1e-6 else 0.0
-            )  # Å → nm
-            ax.axvline(
-                tt_pk, color="#F44336", linestyle=":", linewidth=1.5, alpha=0.7
-            )
-            label_text = f"{phase_name} {hkl}".strip()
-            ax.text(
-                tt_pk,
-                y_top * 0.95,
-                f" {label_text}\n d={d_nm:.3f}nm",
-                color="#F44336",
-                fontweight="bold",
-                rotation=90,
-                va="top",
-                fontsize=14,
-            )
-            peak_info.append(
-                {
-                    "two_theta": tt_pk,
-                    "hkl": hkl,
-                    "phase": phase_name,
-                    "d_spacing_nm": float(d_nm),
-                }
-            )
+    peak_info = _draw_peaks(ax, peaks, intensity, wavelength)
 
     ax.set_xlabel("2θ (degree)", fontweight="bold")
     ax.set_ylabel("Intensity (a.u.)", fontweight="bold")
@@ -100,18 +50,8 @@ def xrd_pattern(args: ImageDesignInput) -> ToolResult:
 
     save_figure(fig, args.output_path)
 
-    summary = (
-        f"XRD 谱图: {two_theta.size} 个数据点, "
-        f"标注 {len(peaks or [])} 个峰, 波长 {wavelength} Å"
-    )
-    metadata = {
-        "action": "xrd_pattern",
-        "n_points": int(two_theta.size),
-        "n_peaks": int(len(peaks or [])),
-        "wavelength_A": wavelength,
-        "peaks": peak_info,
-        "n_phases": int(len(phases or [])),
-    }
+    summary = _xrd_summary(two_theta, peaks, wavelength)
+    metadata = _xrd_metadata(two_theta, peaks, wavelength, peak_info, phases)
     return ToolResult(
         data={
             "output_path": args.output_path,
@@ -119,3 +59,81 @@ def xrd_pattern(args: ImageDesignInput) -> ToolResult:
             "metadata": metadata,
         }
     )
+
+
+def _draw_phases(ax, phases) -> None:
+    """多相叠加 (虚线)."""
+    if not phases:
+        return
+    for ph in phases:
+        tt = np.array(ph.get("two_theta", []), dtype=float)
+        ii = np.array(ph.get("intensity", []), dtype=float)
+        if tt.size == 0:
+            continue
+        c = ph.get("color", "#FF5722")
+        lbl = ph.get("label", "phase")
+        ax.plot(
+            tt,
+            ii,
+            color=c,
+            linewidth=1.5,
+            linestyle="--",
+            alpha=0.8,
+            label=lbl,
+        )
+
+
+def _draw_peaks(ax, peaks, intensity, wavelength: float) -> list:
+    """峰位竖线 + hkl 标注, 顺便算 d-spacing (Bragg)."""
+    peak_info: list[dict[str, Any]] = []
+    y_top = float(intensity.max()) if intensity.size else 1.0
+    if not peaks:
+        return peak_info
+    for pk in peaks:
+        tt_pk = float(pk.get("two_theta", 0))
+        hkl = pk.get("hkl", "")
+        phase_name = pk.get("phase", "")
+        theta_rad = np.deg2rad(tt_pk / 2.0)
+        sin_t = np.sin(theta_rad)
+        d_nm = wavelength / (2.0 * sin_t) * 0.1 if sin_t > 1e-6 else 0.0  # Å → nm
+        ax.axvline(tt_pk, color="#F44336", linestyle=":", linewidth=1.5, alpha=0.7)
+        label_text = f"{phase_name} {hkl}".strip()
+        ax.text(
+            tt_pk,
+            y_top * 0.95,
+            f" {label_text}\n d={d_nm:.3f}nm",
+            color="#F44336",
+            fontweight="bold",
+            rotation=90,
+            va="top",
+            fontsize=14,
+        )
+        peak_info.append(
+            {
+                "two_theta": tt_pk,
+                "hkl": hkl,
+                "phase": phase_name,
+                "d_spacing_nm": float(d_nm),
+            }
+        )
+    return peak_info
+
+
+def _xrd_summary(two_theta, peaks, wavelength: float) -> str:
+    """summary 文本."""
+    return (
+        f"XRD 谱图: {two_theta.size} 个数据点, "
+        f"标注 {len(peaks or [])} 个峰, 波长 {wavelength} Å"
+    )
+
+
+def _xrd_metadata(two_theta, peaks, wavelength: float, peak_info, phases) -> dict:
+    """metadata 字典."""
+    return {
+        "action": "xrd_pattern",
+        "n_points": int(two_theta.size),
+        "n_peaks": int(len(peaks or [])),
+        "wavelength_A": wavelength,
+        "peaks": peak_info,
+        "n_phases": int(len(phases or [])),
+    }

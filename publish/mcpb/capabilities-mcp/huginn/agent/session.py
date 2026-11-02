@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from huginn.agent_modes import SETTABLE_MODES
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,6 +49,12 @@ class SessionMixin:
         """
         self._csm.start_session()
 
+        SessionMixin._restore_last_session_context(self)
+        SessionMixin._restore_active_plan(self)
+        SessionMixin._restore_csm_from_event_log(self)
+        SessionMixin._restore_session_snapshot(self)
+
+    def _restore_last_session_context(self) -> None:
         try:
             ctx = self.memory.load_last_session_context()
             if ctx and ctx.get("summary"):
@@ -63,6 +71,7 @@ class SessionMixin:
         except Exception:  # 非致命: 上次会话上下文加载失败则不恢复
             logger.debug("session continuity load failed", exc_info=True)
 
+    def _restore_active_plan(self) -> None:
         try:
             plan = self.memory.load_active_plan()
             if plan and plan.get("status") not in ("completed", "abandoned"):
@@ -73,6 +82,7 @@ class SessionMixin:
                     self._session_state.set_plan(plan_id, objective)
                     self._session_state.active_plan_step_index = step_index
                     from huginn.cognitive_engine import CognitiveState
+
                     self._csm._state = CognitiveState.S4_CONSTRUCT
                     self._csm.l1_coordinates = plan.get("l1_coordinates", "")
                 logger.info(
@@ -83,6 +93,7 @@ class SessionMixin:
         except Exception:  # 非致命: 活动计划加载失败则忽略
             logger.debug("active plan load failed", exc_info=True)
 
+    def _restore_csm_from_event_log(self) -> None:
         # H2: 事件级恢复优先 — 若会话有事件日志且含 csm_state, 用事件投影重建
         # 状态机 (替代快照), 保证"重放即恢复"且状态与事件日志强一致.
         try:
@@ -97,6 +108,7 @@ class SessionMixin:
         except Exception:  # 非致命: 事件日志 CSM 恢复失败则忽略
             logger.debug("event-log csm restore failed", exc_info=True)
 
+    def _restore_session_snapshot(self) -> None:
         # 结构化 snapshot 恢复: 上面只恢复 summary / plan, 这里补 _mode / _csm / _phase /
         # turns_count. 之前 session resume 这几个字段全丢, agent 默默回 chat mode + S0 + OPEN.
         # ponytail: 只读最新一条, 不覆盖已恢复的 plan. 升级: 按 session_id 精确读 + 版本化.
@@ -106,43 +118,62 @@ class SessionMixin:
                 session_id=self._session_state.session_id
             )
             if isinstance(snap, dict):
-                mode = snap.get("mode")
-                if mode in ("chat", "research", "plan", "extreme"):
-                    # 不覆盖 plan 恢复触发的 S4_CONSTRUCT, 只在 csm 还是 S0 时恢复
-                    self._mode = mode
-                csm_state = snap.get("csm_state")
-                if isinstance(csm_state, str) and csm_state:
-                    from huginn.cognitive_engine import CognitiveState
-                    try:
-                        # 验证 csm_state 合法; 不合法走 except 跳过
-                        CognitiveState(csm_state)
-                        # plan 恢复已经设了 S4_CONSTRUCT, 别覆盖; 否则恢复 csm
-                        if self._csm._state == CognitiveState.S0_BLANK:
-                            l1 = snap.get("l1_coordinates", "")
-                            self._csm.restore_from_snapshot({
-                                "state": csm_state,
-                                "l1_coordinates": l1,
-                                "history": [],
-                            })
-                    except ValueError:
-                        logger.debug("best-effort op failed", exc_info=True)
-                phase = snap.get("research_phase")
-                if phase:
-                    try:
-                        from huginn.phases import ResearchPhase
-                        # plan 恢复路径没动 _phase_manager, 这里恢复
-                        self._phase_manager.reset(ResearchPhase(phase))
-                    except (ValueError, KeyError):
-                        logger.debug("best-effort op failed", exc_info=True)
+                SessionMixin._restore_snapshot_mode(self, snap)
+                csm_state = SessionMixin._restore_snapshot_csm(self, snap)
+                phase = SessionMixin._restore_snapshot_phase(self, snap)
                 turns = snap.get("turns_count")
                 if isinstance(turns, int) and turns > 0:
                     self._turn_count = turns
                 logger.info(
                     "restored session snapshot: mode=%s csm=%s phase=%s turns=%d",
-                    self._mode, csm_state, phase, self._turn_count,
+                    self._mode,
+                    csm_state,
+                    phase,
+                    self._turn_count,
                 )
         except Exception:  # 非致命: 会话快照恢复失败则忽略
             logger.debug("session snapshot restore failed", exc_info=True)
+
+    def _restore_snapshot_mode(self, snap: dict) -> None:
+        mode = snap.get("mode")
+        # 词表单一来源 (A3): 可恢复的 mode == set_mode() 值域.
+        if mode in SETTABLE_MODES:
+            # 不覆盖 plan 恢复触发的 S4_CONSTRUCT, 只在 csm 还是 S0 时恢复
+            self._mode = mode
+
+    def _restore_snapshot_csm(self, snap: dict) -> Any:
+        csm_state = snap.get("csm_state")
+        if isinstance(csm_state, str) and csm_state:
+            from huginn.cognitive_engine import CognitiveState
+
+            try:
+                # 验证 csm_state 合法; 不合法走 except 跳过
+                CognitiveState(csm_state)
+                # plan 恢复已经设了 S4_CONSTRUCT, 别覆盖; 否则恢复 csm
+                if self._csm._state == CognitiveState.S0_BLANK:
+                    l1 = snap.get("l1_coordinates", "")
+                    self._csm.restore_from_snapshot(
+                        {
+                            "state": csm_state,
+                            "l1_coordinates": l1,
+                            "history": [],
+                        }
+                    )
+            except ValueError:
+                logger.debug("best-effort op failed", exc_info=True)
+        return csm_state
+
+    def _restore_snapshot_phase(self, snap: dict) -> Any:
+        phase = snap.get("research_phase")
+        if phase:
+            try:
+                from huginn.phases import ResearchPhase
+
+                # plan 恢复路径没动 _phase_manager, 这里恢复
+                self._phase_manager.reset(ResearchPhase(phase))
+            except (ValueError, KeyError):
+                logger.debug("best-effort op failed", exc_info=True)
+        return phase
 
     def _save_session_snapshot(self) -> None:
         """保存当前 session 状态快照. reflection 末尾节流调用.
@@ -152,20 +183,26 @@ class SessionMixin:
         """
         try:
             from huginn.cognitive_engine import CognitiveState
+
             csm_state = ""
             if hasattr(self, "_csm") and hasattr(self._csm, "_state"):
-                csm_state = self._csm._state.value if isinstance(
-                    self._csm._state, CognitiveState
-                ) else str(self._csm._state)
+                csm_state = (
+                    self._csm._state.value
+                    if isinstance(self._csm._state, CognitiveState)
+                    else str(self._csm._state)
+                )
             snap = {
                 "session_id": self._session_state.session_id,
                 "mode": self._mode,
                 "turns_count": self._turn_count,
                 "csm_state": csm_state,
-                "l1_coordinates": self._csm.l1_coordinates if hasattr(self, "_csm") else "",
+                "l1_coordinates": self._csm.l1_coordinates
+                if hasattr(self, "_csm")
+                else "",
                 "research_phase": (
                     self._phase_manager.phase.value
-                    if hasattr(self, "_phase_manager") else ""
+                    if hasattr(self, "_phase_manager")
+                    else ""
                 ),
                 "session_state": self._session_state.to_snapshot(),
             }

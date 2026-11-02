@@ -30,8 +30,16 @@ logger = logging.getLogger(__name__)
 
 # 触发追问的模糊动词. 命中这些词但缺少具体对象时, 认为意图模糊.
 _VAGUE_VERBS_CN = (
-    "分析一下", "研究一下", "探索一下", "看看", "帮我看看", "帮我分析",
-    "帮我研究", "处理一下", "弄一下", "搞一下",
+    "分析一下",
+    "研究一下",
+    "探索一下",
+    "看看",
+    "帮我看看",
+    "帮我分析",
+    "帮我研究",
+    "处理一下",
+    "弄一下",
+    "搞一下",
 )
 _VAGUE_VERBS_EN = (
     r"analyze\s*(?:it|this|that)?\s*$",
@@ -52,9 +60,21 @@ _GENERATE_VERBS_EN = ("generate", "draw", "write", "create")
 # 高成本计算工具关键词. 命中时检查是否带了参数确认.
 # 这些工具动辄跑几小时, 没明确参数就该追问
 _EXPENSIVE_TOOLS = (
-    "vasp", "lammps", "gaussian", "quantum espresso", "qe ", "abinit",
-    "siesta", "cp2k", "orca", "molpro", "nwchem", "vasp_tool", "lammps_tool",
-    "gaussian_tool", "qe_tool",
+    "vasp",
+    "lammps",
+    "gaussian",
+    "quantum espresso",
+    "qe ",
+    "abinit",
+    "siesta",
+    "cp2k",
+    "orca",
+    "molpro",
+    "nwchem",
+    "vasp_tool",
+    "lammps_tool",
+    "gaussian_tool",
+    "qe_tool",
 )
 
 # 多路径选择词. 命中说明用户在多个方案间犹豫, 值得追问倾向
@@ -72,22 +92,70 @@ _MULTI_PATH_EN = (
 # 工具引用标记: prompt 里出现这些说明用户已明确指定工具, 意图清晰不追问
 _TOOL_REFERENCES = (
     "_tool",  # 通配: xxx_tool 都算
-    "remember", "recall",  # 记忆工具
-    "orchestrate", "design_plan", "nudge", "design_atom", "generative_design",
+    "remember",
+    "recall",  # 记忆工具
+    "orchestrate",
+    "design_plan",
+    "nudge",
+    "design_atom",
+    "generative_design",
 )
 
 # 具体名词标记: 出现这些词认为有具体对象, 不追问目标
 _CONCRETE_NOUNS_CN = (
-    "硅", "锗", "碳", "铜", "铁", "钛", "铝", "镍", "钴", "锌",
-    "GaAs", "GaN", "ZnO", "TiO2", "SiC", "MoS2", "石墨烯",
-    "晶体", "结构", "带隙", "能带", "晶格", "原子", "分子",
-    "VASP", "LAMMPS", "Gaussian", "INCAR", "POSCAR",
-    "文件", "数据", "矩阵", "方程", "函数",
+    "硅",
+    "锗",
+    "碳",
+    "铜",
+    "铁",
+    "钛",
+    "铝",
+    "镍",
+    "钴",
+    "锌",
+    "GaAs",
+    "GaN",
+    "ZnO",
+    "TiO2",
+    "SiC",
+    "MoS2",
+    "石墨烯",
+    "晶体",
+    "结构",
+    "带隙",
+    "能带",
+    "晶格",
+    "原子",
+    "分子",
+    "VASP",
+    "LAMMPS",
+    "Gaussian",
+    "INCAR",
+    "POSCAR",
+    "文件",
+    "数据",
+    "矩阵",
+    "方程",
+    "函数",
 )
 _CONCRETE_NOUNS_EN = (
-    "silicon", "germanium", "copper", "iron", "crystal", "lattice",
-    "bandgap", "band gap", "structure", "file", "data", "matrix",
-    "equation", "function", "VASP", "LAMMPS", "Gaussian",
+    "silicon",
+    "germanium",
+    "copper",
+    "iron",
+    "crystal",
+    "lattice",
+    "bandgap",
+    "band gap",
+    "structure",
+    "file",
+    "data",
+    "matrix",
+    "equation",
+    "function",
+    "VASP",
+    "LAMMPS",
+    "Gaussian",
 )
 
 # 输出格式标记: 出现这些词认为输出已定, 不追问格式
@@ -108,6 +176,42 @@ _QUESTION_TEMPLATES = {
 _MIN_PROMPT_LEN = 12
 
 
+def _has_plan_or_continuation(text: str, text_lower: str) -> bool:
+    """用户已列步骤或明确要执行续接 → 视为意图清晰, 不追问."""
+    # 多步骤任务标记: 用户已列步骤或明确要执行, 不追问
+    # 例如 "帮我做以下任务: 1) 算硅带隙 2) 算铜电导率" 不应被拦
+    _MULTI_STEP_MARKERS = (
+        "1)",
+        "2)",
+        "3)",
+        "首先",
+        "然后",
+        "最后",
+        "任务",
+        "step 1",
+        "step 2",
+        "first,",
+        "then,",
+        "finally,",
+    )
+    # 执行续接标记: 用户在催促继续执行, 不追问
+    # 例如 "现在可以执行 SCF 计算了" 不应被拦
+    _EXEC_CONT_MARKERS = (
+        "现在可以",
+        "继续",
+        "执行",
+        "开始",
+        "已经",
+        "完成",
+        "proceed",
+        "continue",
+        "go ahead",
+    )
+    return any(m in text for m in _MULTI_STEP_MARKERS) or any(
+        m in text_lower for m in _EXEC_CONT_MARKERS
+    )
+
+
 class ClarifyQuestionsHook:
     """USER_PROMPT_SUBMIT 钩子: 信息不足时生成结构化追问.
 
@@ -121,9 +225,7 @@ class ClarifyQuestionsHook:
         # thread_id -> 上次追问时间戳, 冷却用
         self._last_asked: dict[str, float] = {}
         # 英文模糊动词预编译
-        self._vague_en_pattern = re.compile(
-            "|".join(_VAGUE_VERBS_EN), re.IGNORECASE
-        )
+        self._vague_en_pattern = re.compile("|".join(_VAGUE_VERBS_EN), re.IGNORECASE)
         self._compute_en_pattern = re.compile(
             r"\b(" + "|".join(_COMPUTE_VERBS_EN) + r")\b", re.IGNORECASE
         )
@@ -174,23 +276,39 @@ class ClarifyQuestionsHook:
         if any(t in text_lower for t in _TOOL_REFERENCES):
             return questions
 
-        # 多步骤任务标记: 用户已列步骤或明确要执行, 不追问
-        # 例如 "帮我做以下任务: 1) 算硅带隙 2) 算铜电导率" 不应被拦
-        _MULTI_STEP_MARKERS = (
-            "1)", "2)", "3)", "首先", "然后", "最后", "任务",
-            "step 1", "step 2", "first,", "then,", "finally,",
-        )
-        # 执行续接标记: 用户在催促继续执行, 不追问
-        # 例如 "现在可以执行 SCF 计算了" 不应被拦
-        _EXEC_CONT_MARKERS = (
-            "现在可以", "继续", "执行", "开始", "已经", "完成",
-            "proceed", "continue", "go ahead",
-        )
-        if any(m in text for m in _MULTI_STEP_MARKERS) or any(
-            m in text_lower for m in _EXEC_CONT_MARKERS
-        ):
+        # 多步骤任务标记 / 执行续接标记: 用户已有明确计划, 不追问
+        if _has_plan_or_continuation(text, text_lower):
             return questions
 
+        has_concrete, has_vague, has_compute, has_generate, has_output_format = (
+            ClarifyQuestionsHook._detect_features(self, text, text_lower)
+        )
+
+        # 4) 过短且无具体名词 → 极模糊, 直接追问
+        if len(text_stripped) < _MIN_PROMPT_LEN and not has_concrete:
+            questions.append(_QUESTION_TEMPLATES["vague"])
+            return questions
+
+        ClarifyQuestionsHook._append_rule_questions(
+            self,
+            questions,
+            text,
+            text_lower,
+            text_stripped,
+            has_concrete,
+            has_vague,
+            has_compute,
+            has_generate,
+            has_output_format,
+        )
+
+        # 最多 3 个追问, 避免刷屏
+        return questions[:3]
+
+    def _detect_features(
+        self, text: str, text_lower: str
+    ) -> tuple[bool, bool, bool, bool, bool]:
+        """返回 (具体名词/模糊动词/计算类/生成类/输出格式) 的检测结果."""
         # 1) 检测具体名词: 有具体对象就不追问目标
         has_concrete = any(n in text for n in _CONCRETE_NOUNS_CN) or any(
             n.lower() in text_lower for n in _CONCRETE_NOUNS_EN
@@ -210,14 +328,29 @@ class ClarifyQuestionsHook:
         has_output_format = any(f in text for f in _OUTPUT_FORMATS_CN) or any(
             f.lower() in text_lower for f in _OUTPUT_FORMATS_EN
         )
+        return (
+            has_concrete,
+            has_vague_cn or has_vague_en,
+            has_compute,
+            has_generate,
+            has_output_format,
+        )
 
-        # 4) 过短且无具体名词 → 极模糊, 直接追问
-        if len(text_stripped) < _MIN_PROMPT_LEN and not has_concrete:
-            questions.append(_QUESTION_TEMPLATES["vague"])
-            return questions
-
+    def _append_rule_questions(
+        self,
+        questions: list[str],
+        text: str,
+        text_lower: str,
+        text_stripped: str,
+        has_concrete: bool,
+        has_vague: bool,
+        has_compute: bool,
+        has_generate: bool,
+        has_output_format: bool,
+    ) -> None:
+        """按规则 5-9 追加追问 (规则 4 的早退在调用方)."""
         # 5) 模糊动词 + 无具体对象 → 追问目标
-        if (has_vague_cn or has_vague_en) and not has_concrete:
+        if has_vague and not has_concrete:
             questions.append(_QUESTION_TEMPLATES["goal"])
 
         # 6) 计算类动词 + 无具体名词(参数) → 追问参数
@@ -239,7 +372,11 @@ class ClarifyQuestionsHook:
         # 8) 高成本工具检测: VASP/LAMMPS/Gaussian 等但没带参数确认
         #    长消息(>=25字)通常已含参数和材料, 不追问; 短消息只提了工具名才追问
         has_expensive = any(t in text_lower for t in _EXPENSIVE_TOOLS)
-        if has_expensive and len(text_stripped) < 25 and _QUESTION_TEMPLATES["cost"] not in questions:
+        if (
+            has_expensive
+            and len(text_stripped) < 25
+            and _QUESTION_TEMPLATES["cost"] not in questions
+        ):
             questions.append(_QUESTION_TEMPLATES["cost"])
 
         # 9) 多路径检测: 用户在 "A 还是 B" 之间犹豫
@@ -247,6 +384,3 @@ class ClarifyQuestionsHook:
         has_multi_path_en = bool(self._multi_path_en_pattern.search(text))
         if (has_multi_path_cn or has_multi_path_en) and len(questions) < 3:
             questions.append(_QUESTION_TEMPLATES["multi_path"])
-
-        # 最多 3 个追问, 避免刷屏
-        return questions[:3]

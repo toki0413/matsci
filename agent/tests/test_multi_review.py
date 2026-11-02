@@ -5,6 +5,7 @@
   2. 透镜失败降级: mock LLM 返回无效 JSON, 失败透镜进 lenses_failed, 不阻塞其他
   3. 无 papers 报错
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -82,6 +83,76 @@ class TestTripleVerify:
         assert v3 is False
 
 
+def _multi_review_papers():
+    return [
+        {
+            "title": "Paper A",
+            "authors": ["X"],
+            "year": 2020,
+            "doi": "10.1/a",
+            "abstract": "测试摘要 A",
+        },
+        {
+            "title": "Paper B",
+            "authors": ["Y"],
+            "year": 2021,
+            "doi": "10.1/b",
+            "abstract": "测试摘要 B",
+        },
+        {
+            "title": "Paper C",
+            "authors": ["Z"],
+            "year": 2022,
+            "doi": "10.1/c",
+            "abstract": "测试摘要 C",
+        },
+    ]
+
+
+def _lens_mock_invoker():
+    """mock _llm_invoke: methodology 有效, contributions 垃圾, limitations 有效."""
+    call_count = 0
+
+    async def mock_llm(model, system_prompt, user_prompt):
+        nonlocal call_count
+        call_count += 1
+        if "methodology" in system_prompt:
+            return (
+                '{"lens":"methodology","findings":[{"claim":"如果样本量够则结果可信",'
+                '"paper_idx":[1,2],"confidence":"medium"}],"summary":"方法整体OK"}'
+            )
+        if "contributions" in system_prompt:
+            return "这不是JSON垃圾内容"
+        if "limitations" in system_prompt:
+            return (
+                '{"lens":"limitations","findings":[{"claim":"未测试高温场景",'
+                '"paper_idx":[1],"confidence":"high"}],"summary":"有局限"}'
+            )
+        return ""
+
+    return mock_llm
+
+
+def _assert_lens_degradation(result) -> None:
+    assert result.success
+    data = result.data
+    assert data["action"] == "multi_review"
+    assert data["n_lenses_requested"] == 3
+    assert data["n_lenses_ok"] == 2  # contributions 挂了
+    assert "contributions" in data["lenses_failed"]
+    assert len(data["lenses_failed"]) == 1
+    # methodology + limitations 各 1 条 claim
+    assert data["n_claims_total"] == 2
+    # methodology 的 claim: paper_idx=[1,2] n=3 → V1=True, "如果...则" → V2=True, 2/3=0.67 → V3=False
+    # score=2 → high
+    assert data["n_claims_high"] == 1
+    # limitations 的 claim: paper_idx=[1] n=3 → V1=False, 无预测词 → V2=False, 1/3=0.33 < 0.5 → V3=True
+    # score=1 → medium
+    medium_claims = [c for c in data["all_claims"] if c["final_confidence"] == "medium"]
+    assert len(medium_claims) == 1
+    assert "未测试高温场景" in medium_claims[0]["claim"]
+
+
 class TestMultiReviewDispatch:
     """multi_review action 分发 + 降级路径."""
 
@@ -101,57 +172,25 @@ class TestMultiReviewDispatch:
         验证 nuwa failure degradation 路径.
         """
         tool = LiteratureTool()
-        papers = [
-            {"title": "Paper A", "authors": ["X"], "year": 2020, "doi": "10.1/a",
-             "abstract": "测试摘要 A"},
-            {"title": "Paper B", "authors": ["Y"], "year": 2021, "doi": "10.1/b",
-             "abstract": "测试摘要 B"},
-            {"title": "Paper C", "authors": ["Z"], "year": 2022, "doi": "10.1/c",
-             "abstract": "测试摘要 C"},
-        ]
         args = LiteratureInput(
             action="multi_review",
-            papers=papers,
+            papers=_multi_review_papers(),
             lenses=["methodology", "contributions", "limitations"],
             verify_claims=True,
         )
 
-        # mock _llm_invoke: methodology 返回有效, contributions 返回垃圾, limitations 返回有效
-        call_count = 0
-
-        async def mock_llm(model, system_prompt, user_prompt):
-            nonlocal call_count
-            call_count += 1
-            if "methodology" in system_prompt:
-                return '{"lens":"methodology","findings":[{"claim":"如果样本量够则结果可信","paper_idx":[1,2],"confidence":"medium"}],"summary":"方法整体OK"}'
-            if "contributions" in system_prompt:
-                return "这不是JSON垃圾内容"
-            if "limitations" in system_prompt:
-                return '{"lens":"limitations","findings":[{"claim":"未测试高温场景","paper_idx":[1],"confidence":"high"}],"summary":"有局限"}'
-            return ""
-
         # mock _get_model 避免真初始化 LLM
-        with patch.object(LiteratureTool, "_get_model", return_value="fake_model"), \
-             patch.object(LiteratureTool, "_llm_invoke", side_effect=mock_llm):
+        with (
+            patch.object(LiteratureTool, "_get_model", return_value="fake_model"),
+            patch.object(
+                LiteratureTool,
+                "_llm_invoke",
+                side_effect=_lens_mock_invoker(),
+            ),
+        ):
             result = await tool.call(args, context=None)
 
-        assert result.success
-        data = result.data
-        assert data["action"] == "multi_review"
-        assert data["n_lenses_requested"] == 3
-        assert data["n_lenses_ok"] == 2  # contributions 挂了
-        assert "contributions" in data["lenses_failed"]
-        assert len(data["lenses_failed"]) == 1
-        # methodology + limitations 各 1 条 claim
-        assert data["n_claims_total"] == 2
-        # methodology 的 claim: paper_idx=[1,2] n=3 → V1=True, "如果...则" → V2=True, 2/3=0.67 → V3=False
-        # score=2 → high
-        assert data["n_claims_high"] == 1
-        # limitations 的 claim: paper_idx=[1] n=3 → V1=False, 无预测词 → V2=False, 1/3=0.33 < 0.5 → V3=True
-        # score=1 → medium
-        medium_claims = [c for c in data["all_claims"] if c["final_confidence"] == "medium"]
-        assert len(medium_claims) == 1
-        assert "未测试高温场景" in medium_claims[0]["claim"]
+        _assert_lens_degradation(result)
 
     @pytest.mark.asyncio
     async def test_verify_claims_disabled(self):
@@ -168,8 +207,10 @@ class TestMultiReviewDispatch:
         async def mock_llm(model, system_prompt, user_prompt):
             return '{"lens":"methodology","findings":[{"claim":"test","paper_idx":[1],"confidence":"high"}],"summary":"ok"}'
 
-        with patch.object(LiteratureTool, "_get_model", return_value="fake"), \
-             patch.object(LiteratureTool, "_llm_invoke", side_effect=mock_llm):
+        with (
+            patch.object(LiteratureTool, "_get_model", return_value="fake"),
+            patch.object(LiteratureTool, "_llm_invoke", side_effect=mock_llm),
+        ):
             result = await tool.call(args, context=None)
 
         assert result.success

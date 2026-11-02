@@ -27,6 +27,58 @@ class PrivacyDecision:
     signal: str | None = None
 
 
+def _override_decision(override: str | None) -> PrivacyDecision | None:
+    """0) 用户显式覆盖优先 (自由度): 无覆盖返回 None."""
+    if override == "allow":
+        return PrivacyDecision(
+            False,
+            "explicit user override: allow remote for this call",
+            signal="user_override_allow",
+        )
+    if override == "local":
+        return PrivacyDecision(
+            True,
+            "explicit user override: keep local for this call",
+            signal="user_override_local",
+        )
+    return None
+
+
+def _hard_signal_decision(
+    privacy: Any,
+    content: str,
+    content_type: str,
+    conservative_temporary: bool,
+) -> PrivacyDecision | None:
+    """1)–4) 硬信号/分级/保留策略判定; 命中返回决策, 否则 None."""
+    # 1) 硬信号: 用户标记"始终本地"
+    if privacy.is_tagged_local(content):
+        return PrivacyDecision(True, "matched local_only tag", signal="local_only_tag")
+
+    # 2) 分级: ephemeral (凭证/密钥/内部路径) → 绝不发云端
+    tier = privacy.classify_data(content, content_type)
+    if tier == "ephemeral":
+        return PrivacyDecision(
+            True, "ephemeral data (secrets/internal paths)", signal="ephemeral"
+        )
+
+    # 3) 保留策略永不发云端
+    policy = privacy.get_retention_policy(tier)
+    if policy.get("never_cloud"):
+        return PrivacyDecision(
+            True, "retention policy never_cloud", signal="never_cloud"
+        )
+
+    # 4) 可选更严档: 私密设备把实验原始数据也留本地 (不阻碍任务, 只改落点)
+    if conservative_temporary and tier == "temporary":
+        return PrivacyDecision(
+            True,
+            "private device keeps temporary data local",
+            signal="private_device_temporary",
+        )
+    return None
+
+
 def decide_privacy(
     content: str,
     content_type: str = "auto",
@@ -49,48 +101,20 @@ def decide_privacy(
         None   → 默认规则 (敏感→本地, 否则放行).
     """
     # 0) 用户显式覆盖优先 (自由度): 默认安全兜底, 但用户有最终决定权.
-    if override == "allow":
-        return PrivacyDecision(
-            False, "explicit user override: allow remote for this call",
-            signal="user_override_allow",
-        )
-    if override == "local":
-        return PrivacyDecision(
-            True, "explicit user override: keep local for this call",
-            signal="user_override_local",
-        )
+    override_decision = _override_decision(override)
+    if override_decision is not None:
+        return override_decision
 
     if privacy is None:
         from huginn.privacy_guard import PrivacyGuard
 
         privacy = PrivacyGuard.shared()
 
-    # 1) 硬信号: 用户标记"始终本地"
-    if privacy.is_tagged_local(content):
-        return PrivacyDecision(
-            True, "matched local_only tag", signal="local_only_tag"
-        )
-
-    # 2) 分级: ephemeral (凭证/密钥/内部路径) → 绝不发云端
-    tier = privacy.classify_data(content, content_type)
-    if tier == "ephemeral":
-        return PrivacyDecision(
-            True, "ephemeral data (secrets/internal paths)", signal="ephemeral"
-        )
-
-    # 3) 保留策略永不发云端
-    policy = privacy.get_retention_policy(tier)
-    if policy.get("never_cloud"):
-        return PrivacyDecision(
-            True, "retention policy never_cloud", signal="never_cloud"
-        )
-
-    # 4) 可选更严档: 私密设备把实验原始数据也留本地 (不阻碍任务, 只改落点)
-    if conservative_temporary and tier == "temporary":
-        return PrivacyDecision(
-            True, "private device keeps temporary data local",
-            signal="private_device_temporary",
-        )
+    hard_decision = _hard_signal_decision(
+        privacy, content, content_type, conservative_temporary
+    )
+    if hard_decision is not None:
+        return hard_decision
 
     # 5) 默认放行 (normal / unknown)。核心: 无法判定不拦截, 正常任务不被妨碍.
     return PrivacyDecision(False, "not sensitive (default allow)", signal=None)

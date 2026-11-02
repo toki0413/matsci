@@ -33,22 +33,22 @@ logger = logging.getLogger(__name__)
 class CognitiveState(StrEnum):
     """S0-S6 states from the Double Helix state machine."""
 
-    S0_BLANK = "s0_blank"          # fresh session, no goal yet
-    S1_DISCOVER = "s1_discover"    # exploring problem space, generating hypotheses
-    S2_VALIDATE = "s2_validate"    # checking hypotheses against data
-    S3_SWITCH = "s3_switch"        # user confirmed approach, transitioning to execution
+    S0_BLANK = "s0_blank"  # fresh session, no goal yet
+    S1_DISCOVER = "s1_discover"  # exploring problem space, generating hypotheses
+    S2_VALIDATE = "s2_validate"  # checking hypotheses against data
+    S3_SWITCH = "s3_switch"  # user confirmed approach, transitioning to execution
     S4_CONSTRUCT = "s4_construct"  # executing plan, building solution rigorously
-    S5_UNIFY = "s5_unify"          # integrating results into coherent whole
-    S6_FEEDBACK = "s6_feedback"    # gaps found, looping back to discovery
-    S7_SELF_MODIFY = "s7_self_modify"   # 哥德尔机自修改触发点：评估要不要改策略/原则
+    S5_UNIFY = "s5_unify"  # integrating results into coherent whole
+    S6_FEEDBACK = "s6_feedback"  # gaps found, looping back to discovery
+    S7_SELF_MODIFY = "s7_self_modify"  # 哥德尔机自修改触发点：评估要不要改策略/原则
 
 
 class AttentionMode(StrEnum):
     """Which attention strategy the agent uses."""
 
     SINGULARITY_CONDENSATION = "singularity_condensation"  # discovery: what's glowing?
-    AXIOM_FOCUS = "axiom_focus"                            # construction: what's weakest?
-    MODE_SWITCH = "mode_switch"                            # transition state
+    AXIOM_FOCUS = "axiom_focus"  # construction: what's weakest?
+    MODE_SWITCH = "mode_switch"  # transition state
 
 
 # ── State → mode mapping ──────────────────────────────────────────────
@@ -118,6 +118,7 @@ def get_phase_for_state(state: CognitiveState) -> str:
 
 # ── Transition signals ────────────────────────────────────────────────
 
+
 @dataclass
 class TransitionSignal:
     """A signal that may trigger a state transition.
@@ -125,10 +126,11 @@ class TransitionSignal:
     Produced by reflection, user input analysis, or plan events.
     The state machine consumes these to decide transitions.
     """
+
     signal_type: str  # "user_goal" | "hypothesis_generated" | "user_confirmed" |
-                      # "user_rejected" | "tool_success" | "tool_failure" |
-                      # "physics_error" | "plan_complete" | "new_question" |
-                      # "gap_found" | "session_start"
+    # "user_rejected" | "tool_success" | "tool_failure" |
+    # "physics_error" | "plan_complete" | "new_question" |
+    # "gap_found" | "session_start"
     data: dict[str, Any] = field(default_factory=dict)
 
 
@@ -152,26 +154,136 @@ ALLOWED_TRANSITIONS: dict[CognitiveState, set[CognitiveState]] = {
     },
     CognitiveState.S4_CONSTRUCT: {
         CognitiveState.S5_UNIFY,
-        CognitiveState.S6_FEEDBACK,   # construction hit a wall
-        CognitiveState.S1_DISCOVER,   # explicit re-discover
+        CognitiveState.S6_FEEDBACK,  # construction hit a wall
+        CognitiveState.S1_DISCOVER,  # explicit re-discover
     },
     CognitiveState.S5_UNIFY: {
         CognitiveState.S6_FEEDBACK,
-        CognitiveState.S1_DISCOVER,   # user asks new question
+        CognitiveState.S1_DISCOVER,  # user asks new question
     },
     CognitiveState.S6_FEEDBACK: {
         CognitiveState.S0_BLANK,
         CognitiveState.S1_DISCOVER,
-        CognitiveState.S7_SELF_MODIFY,   # gap_found 时进自修改评估
+        CognitiveState.S7_SELF_MODIFY,  # gap_found 时进自修改评估
     },
     CognitiveState.S7_SELF_MODIFY: {
-        CognitiveState.S1_DISCOVER,   # 提案处理完回 discovery
-        CognitiveState.S0_BLANK,       # 兜底重置
+        CognitiveState.S1_DISCOVER,  # 提案处理完回 discovery
+        CognitiveState.S0_BLANK,  # 兜底重置
     },
 }
 
 
 # ── Signal → transition logic ─────────────────────────────────────────
+
+# Sentinel: 该 resolver 未命中任何规则, 继续尝试下一个 resolver.
+_UNRESOLVED = object()
+
+
+def _resolve_user_signals(
+    current: CognitiveState,
+    st: str,
+    allowed: set[CognitiveState],
+) -> CognitiveState | None | object:
+    """处理 session / 用户输入 / 假设类信号. 未命中返回 _UNRESOLVED."""
+    # session_start always resets to blank
+    if st == "session_start":
+        return CognitiveState.S0_BLANK
+
+    # user_goal from blank/feedback/self-modify → discover
+    if st == "user_goal" and current in (
+        CognitiveState.S0_BLANK,
+        CognitiveState.S6_FEEDBACK,
+        CognitiveState.S7_SELF_MODIFY,
+    ):
+        return (
+            CognitiveState.S1_DISCOVER
+            if CognitiveState.S1_DISCOVER in allowed
+            else None
+        )
+
+    # new_question from any state → back to discover
+    if st == "new_question" and CognitiveState.S1_DISCOVER in allowed:
+        return CognitiveState.S1_DISCOVER
+
+    # hypothesis_generated → validate
+    if st == "hypothesis_generated" and CognitiveState.S2_VALIDATE in allowed:
+        return CognitiveState.S2_VALIDATE
+
+    # user_confirmed → switch (if in validate/discover) or construct (if in switch)
+    if st == "user_confirmed":
+        if (
+            current in (CognitiveState.S1_DISCOVER, CognitiveState.S2_VALIDATE)
+            and CognitiveState.S3_SWITCH in allowed
+        ):
+            return CognitiveState.S3_SWITCH
+        if (
+            current == CognitiveState.S3_SWITCH
+            and CognitiveState.S4_CONSTRUCT in allowed
+        ):
+            return CognitiveState.S4_CONSTRUCT
+
+    # user_rejected → back to discover
+    if st == "user_rejected" and CognitiveState.S1_DISCOVER in allowed:
+        return CognitiveState.S1_DISCOVER
+
+    return _UNRESOLVED
+
+
+def _resolve_execution_signals(
+    current: CognitiveState,
+    st: str,
+    allowed: set[CognitiveState],
+) -> CognitiveState | None | object:
+    """处理执行阶段/故障类信号. 未命中返回 _UNRESOLVED."""
+    # tool_success → stay in construct (no transition needed)
+    # plan_complete → unify
+    if st == "plan_complete" and CognitiveState.S5_UNIFY in allowed:
+        return CognitiveState.S5_UNIFY
+
+    # tool_failure / physics_error → feedback
+    if (
+        st in ("tool_failure", "physics_error")
+        and CognitiveState.S6_FEEDBACK in allowed
+    ):
+        return CognitiveState.S6_FEEDBACK
+
+    # gap_found in S6 → S7 (self-modify trigger)
+    if (
+        st == "gap_found"
+        and current == CognitiveState.S6_FEEDBACK
+        and CognitiveState.S7_SELF_MODIFY in allowed
+    ):
+        return CognitiveState.S7_SELF_MODIFY
+
+    # gap_found → feedback or discover
+    if st == "gap_found":
+        if CognitiveState.S6_FEEDBACK in allowed:
+            return CognitiveState.S6_FEEDBACK
+        if CognitiveState.S1_DISCOVER in allowed:
+            return CognitiveState.S1_DISCOVER
+
+    return _UNRESOLVED
+
+
+def _resolve_meta_signals(
+    st: str,
+    allowed: set[CognitiveState],
+) -> CognitiveState | None | object:
+    """处理元状态/自省类信号. 未命中返回 _UNRESOLVED."""
+    # belief_high → S6_FEEDBACK (confused, reassess)
+    if st == "belief_high" and CognitiveState.S6_FEEDBACK in allowed:
+        return CognitiveState.S6_FEEDBACK
+
+    # context_overflow → S6_FEEDBACK (summarize and reset)
+    if st == "context_overflow" and CognitiveState.S6_FEEDBACK in allowed:
+        return CognitiveState.S6_FEEDBACK
+
+    # evolution_rule_learned → S1_DISCOVER (re-explore with new rule)
+    if st == "evolution_rule_learned" and CognitiveState.S1_DISCOVER in allowed:
+        return CognitiveState.S1_DISCOVER
+
+    return _UNRESOLVED
+
 
 def resolve_transition(
     current: CognitiveState,
@@ -184,64 +296,17 @@ def resolve_transition(
     st = signal.signal_type
     allowed = ALLOWED_TRANSITIONS.get(current, set())
 
-    # session_start always resets to blank
-    if st == "session_start":
-        return CognitiveState.S0_BLANK
+    result = _resolve_user_signals(current, st, allowed)
+    if result is not _UNRESOLVED:
+        return result
 
-    # user_goal from blank/feedback/self-modify → discover
-    if st == "user_goal" and current in (CognitiveState.S0_BLANK, CognitiveState.S6_FEEDBACK, CognitiveState.S7_SELF_MODIFY):
-        return CognitiveState.S1_DISCOVER if CognitiveState.S1_DISCOVER in allowed else None
+    result = _resolve_execution_signals(current, st, allowed)
+    if result is not _UNRESOLVED:
+        return result
 
-    # new_question from any state → back to discover
-    if st == "new_question" and CognitiveState.S1_DISCOVER in allowed:
-        return CognitiveState.S1_DISCOVER
-
-    # hypothesis_generated → validate
-    if st == "hypothesis_generated" and CognitiveState.S2_VALIDATE in allowed:
-        return CognitiveState.S2_VALIDATE
-
-    # user_confirmed → switch (if in validate/discover) or construct (if in switch)
-    if st == "user_confirmed":
-        if current in (CognitiveState.S1_DISCOVER, CognitiveState.S2_VALIDATE) and CognitiveState.S3_SWITCH in allowed:
-            return CognitiveState.S3_SWITCH
-        if current == CognitiveState.S3_SWITCH and CognitiveState.S4_CONSTRUCT in allowed:
-            return CognitiveState.S4_CONSTRUCT
-
-    # user_rejected → back to discover
-    if st == "user_rejected" and CognitiveState.S1_DISCOVER in allowed:
-        return CognitiveState.S1_DISCOVER
-
-    # tool_success → stay in construct (no transition needed)
-    # plan_complete → unify
-    if st == "plan_complete" and CognitiveState.S5_UNIFY in allowed:
-        return CognitiveState.S5_UNIFY
-
-    # tool_failure / physics_error → feedback
-    if st in ("tool_failure", "physics_error") and CognitiveState.S6_FEEDBACK in allowed:
-        return CognitiveState.S6_FEEDBACK
-
-    # gap_found in S6 → S7 (self-modify trigger)
-    if st == "gap_found" and current == CognitiveState.S6_FEEDBACK and CognitiveState.S7_SELF_MODIFY in allowed:
-        return CognitiveState.S7_SELF_MODIFY
-
-    # gap_found → feedback or discover
-    if st == "gap_found":
-        if CognitiveState.S6_FEEDBACK in allowed:
-            return CognitiveState.S6_FEEDBACK
-        if CognitiveState.S1_DISCOVER in allowed:
-            return CognitiveState.S1_DISCOVER
-
-    # belief_high → S6_FEEDBACK (confused, reassess)
-    if st == "belief_high" and CognitiveState.S6_FEEDBACK in allowed:
-        return CognitiveState.S6_FEEDBACK
-
-    # context_overflow → S6_FEEDBACK (summarize and reset)
-    if st == "context_overflow" and CognitiveState.S6_FEEDBACK in allowed:
-        return CognitiveState.S6_FEEDBACK
-
-    # evolution_rule_learned → S1_DISCOVER (re-explore with new rule)
-    if st == "evolution_rule_learned" and CognitiveState.S1_DISCOVER in allowed:
-        return CognitiveState.S1_DISCOVER
+    result = _resolve_meta_signals(st, allowed)
+    if result is not _UNRESOLVED:
+        return result
 
     return None
 
@@ -341,16 +406,26 @@ def get_tool_preference(state: CognitiveState) -> dict[str, list[str]]:
     if state in DISCOVERY_STATES:
         return {
             "prefer": [
-                "web_search", "literature", "materials_database",
-                "structure", "hypothesis_generator", "knowledge",
+                "web_search",
+                "literature",
+                "materials_database",
+                "structure",
+                "hypothesis_generator",
+                "knowledge",
             ],
             "deprioritize": ["vasp", "lammps", "qe", "cp2k", "abaqus"],
         }
     if state in CONSTRUCTION_STATES:
         return {
             "prefer": [
-                "vasp", "lammps", "qe", "cp2k", "abaqus",
-                "convergence_test", "validate", "physics_audit",
+                "vasp",
+                "lammps",
+                "qe",
+                "cp2k",
+                "abaqus",
+                "convergence_test",
+                "validate",
+                "physics_audit",
             ],
             "deprioritize": ["web_search", "literature"],
         }
@@ -358,6 +433,38 @@ def get_tool_preference(state: CognitiveState) -> dict[str, list[str]]:
 
 
 # ── L1 coordinate management ──────────────────────────────────────────
+
+
+def _append_state_coordinates(
+    parts: list[str],
+    state: CognitiveState,
+    event: str,
+    obj: str,
+    step: Any,
+    tool: str,
+    result_summary: str,
+) -> None:
+    """按状态把本轮学习到的结构坐标追加到 parts."""
+    if state == CognitiveState.S1_DISCOVER:
+        if obj:
+            parts.append(f"exploring: {obj}")
+    elif state == CognitiveState.S2_VALIDATE:
+        if obj:
+            parts.append(f"validating: {obj}")
+    elif state == CognitiveState.S4_CONSTRUCT:
+        if obj and step:
+            parts.append(f"constructing: {obj}, step {step}")
+        if tool and result_summary:
+            parts.append(f"  {tool} → {result_summary}")
+    elif state == CognitiveState.S5_UNIFY:
+        if obj:
+            parts.append(f"unifying: {obj}")
+    elif state == CognitiveState.S6_FEEDBACK:
+        if event == "physics_error":
+            parts.append(f"GAP: physics error in {tool}")
+        elif event == "tool_failure":
+            parts.append(f"GAP: {tool} failed")
+
 
 def update_l1_coordinates(
     current_coords: str,
@@ -384,25 +491,7 @@ def update_l1_coordinates(
     tool = context.get("tool_name", "")
     result_summary = context.get("result_summary", "")
 
-    if state == CognitiveState.S1_DISCOVER:
-        if obj:
-            parts.append(f"exploring: {obj}")
-    elif state == CognitiveState.S2_VALIDATE:
-        if obj:
-            parts.append(f"validating: {obj}")
-    elif state == CognitiveState.S4_CONSTRUCT:
-        if obj and step:
-            parts.append(f"constructing: {obj}, step {step}")
-        if tool and result_summary:
-            parts.append(f"  {tool} → {result_summary}")
-    elif state == CognitiveState.S5_UNIFY:
-        if obj:
-            parts.append(f"unifying: {obj}")
-    elif state == CognitiveState.S6_FEEDBACK:
-        if event == "physics_error":
-            parts.append(f"GAP: physics error in {tool}")
-        elif event == "tool_failure":
-            parts.append(f"GAP: {tool} failed")
+    _append_state_coordinates(parts, state, event, obj, step, tool, result_summary)
 
     # Keep it compact — L1 coords are meant to survive compression
     coords = " | ".join(parts)
@@ -413,6 +502,7 @@ def update_l1_coordinates(
 
 
 # ── Cognitive state machine ───────────────────────────────────────────
+
 
 class CognitiveStateMachine:
     """Drives the S0-S6 state machine for one conversation session.
@@ -472,8 +562,10 @@ class CognitiveStateMachine:
             from huginn.events.session_log import EVENT_COGNITIVE_MODE_CHANGE
 
             mode = (
-                "construct" if new in CONSTRUCTION_STATES
-                else "discover" if new in DISCOVERY_STATES
+                "construct"
+                if new in CONSTRUCTION_STATES
+                else "discover"
+                if new in DISCOVERY_STATES
                 else "discover"
             )
             phase = STATE_TO_PHASE.get(new, "")
@@ -509,6 +601,7 @@ class CognitiveStateMachine:
         """
         try:
             from huginn.events.unified_bus import UnifiedBus
+
             ubus = UnifiedBus()
             ubus._publish_internal_sync(
                 "cognitive.csm.transition",
@@ -521,7 +614,9 @@ class CognitiveStateMachine:
                 source="csm",
             )
         except Exception:
-            logger.debug("UnifiedBus csm.transition publish failed (non-fatal)", exc_info=True)
+            logger.debug(
+                "UnifiedBus csm.transition publish failed (non-fatal)", exc_info=True
+            )
 
     @property
     def state(self) -> CognitiveState:
@@ -537,7 +632,9 @@ class CognitiveStateMachine:
 
     @property
     def attention_mode(self) -> AttentionMode:
-        return STATE_TO_ATTENTION.get(self._state, AttentionMode.SINGULARITY_CONDENSATION)
+        return STATE_TO_ATTENTION.get(
+            self._state, AttentionMode.SINGULARITY_CONDENSATION
+        )
 
     @property
     def is_discovery(self) -> bool:
@@ -563,6 +660,63 @@ class CognitiveStateMachine:
         self._awaiting_confirmation = False
         self._history.append((self._state, "session_start"))
 
+    def _apply_transition(
+        self,
+        next_state: CognitiveState,
+        signal: TransitionSignal,
+        context: dict[str, Any] | None,
+    ) -> None:
+        """执行一次已确认的状态跃迁 (状态/历史/坐标/广播)."""
+        old = self._state
+        self._state = next_state
+        self._history.append((next_state, signal.signal_type))
+        logger.info(
+            "cognitive state: %s → %s (%s)",
+            old.value,
+            next_state.value,
+            signal.signal_type,
+        )
+
+        # Update L1 coordinates on transition
+        self._l1_coordinates = update_l1_coordinates(
+            self._l1_coordinates,
+            next_state,
+            signal.signal_type,
+            context or signal.data,
+        )
+
+        # H1 正向: 把这次跃迁 append 进事件日志 (若已绑定)
+        self._append_transition_event(old, next_state, signal, context)
+
+        # Manage confirmation gate state
+        if next_state == CognitiveState.S3_SWITCH:
+            self._awaiting_confirmation = False  # user already confirmed to get here
+        elif next_state in (CognitiveState.S4_CONSTRUCT,):
+            self._awaiting_confirmation = False
+
+        # v6 R22: 广播转移给注册的 listener (PhaseManager / UnifiedSessionState / etc.)
+        # 放在状态更新之后, 让 listener 读 self.state 时拿到新状态.
+        self._notify_listeners(old, next_state, signal)
+
+    def _update_coordinates_for_event(
+        self,
+        signal: TransitionSignal,
+        context: dict[str, Any] | None,
+    ) -> None:
+        """非跃迁事件 (工具结果等) 也刷新 L1 坐标."""
+        ctx = context or signal.data
+        if ctx and signal.signal_type in (
+            "tool_success",
+            "tool_failure",
+            "physics_error",
+        ):
+            self._l1_coordinates = update_l1_coordinates(
+                self._l1_coordinates,
+                self._state,
+                signal.signal_type,
+                ctx,
+            )
+
     def transition(
         self,
         signal: TransitionSignal,
@@ -578,46 +732,10 @@ class CognitiveStateMachine:
         next_state = resolve_transition(self._state, signal)
 
         if next_state is not None and next_state != self._state:
-            old = self._state
-            self._state = next_state
-            self._history.append((next_state, signal.signal_type))
-            logger.info(
-                "cognitive state: %s → %s (%s)",
-                old.value, next_state.value, signal.signal_type,
-            )
-
-            # Update L1 coordinates on transition
-            self._l1_coordinates = update_l1_coordinates(
-                self._l1_coordinates,
-                next_state,
-                signal.signal_type,
-                context or signal.data,
-            )
-
-            # H1 正向: 把这次跃迁 append 进事件日志 (若已绑定)
-            self._append_transition_event(old, next_state, signal, context)
-
-            # Manage confirmation gate state
-            if next_state == CognitiveState.S3_SWITCH:
-                self._awaiting_confirmation = False  # user already confirmed to get here
-            elif next_state in (CognitiveState.S4_CONSTRUCT,):
-                self._awaiting_confirmation = False
-
-            # v6 R22: 广播转移给注册的 listener (PhaseManager / UnifiedSessionState / etc.)
-            # 放在状态更新之后, 让 listener 读 self.state 时拿到新状态.
-            self._notify_listeners(old, next_state, signal)
+            CognitiveStateMachine._apply_transition(self, next_state, signal, context)
 
         # Also update L1 coordinates on non-transition events (tool results etc.)
-        ctx = context or signal.data
-        if ctx and signal.signal_type in (
-            "tool_success", "tool_failure", "physics_error"
-        ):
-            self._l1_coordinates = update_l1_coordinates(
-                self._l1_coordinates,
-                self._state,
-                signal.signal_type,
-                ctx,
-            )
+        CognitiveStateMachine._update_coordinates_for_event(self, signal, context)
 
         return self._state
 

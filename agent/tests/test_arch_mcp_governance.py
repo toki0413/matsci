@@ -1,3 +1,4 @@
+# governance-gate
 """制度化闭环：MCP server 连接必须走单入口，禁止散落硬编码。
 
 单网关原则的延伸：真正的 MCP client 接线（构造 MCPServerConfig、拉起 stdio/sse

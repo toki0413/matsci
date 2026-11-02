@@ -8,6 +8,7 @@ key_properties 预先塞进上下文, 让压缩后的 agent 仍能接着干.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,54 @@ def _sibling(path: str, name: str) -> str:
     if not path:
         return name
     return str(Path(path).parent / name)
+
+
+def _predict_recent_outputs(
+    recent: list[ProvenanceEntry], add: Callable[[str], None]
+) -> None:
+    # a. 最近产出的文件 (OUTCAR/trajectory 等) 很可能被分析
+    for e in recent:
+        fmt = (e.file_format or "").lower()
+        fname = Path(e.file_path).name.lower() if e.file_path else ""
+        if (
+            fmt in ("outcar", "trajectory", "traj", "log")
+            or "outcar" in fname
+            or "trajectory" in fname
+        ):
+            add(e.file_path)
+
+
+def _predict_from_relax(
+    recent: list[ProvenanceEntry], add: Callable[[str], None]
+) -> None:
+    # b. 最近做了 relax, 下一步可能需要优化后的 POSCAR (CONTCAR)
+    for e in recent:
+        action = str(e.parameters.get("action", "")).lower()
+        if "relax" in action:
+            add(_sibling(e.file_path, "CONTCAR"))
+            add(_sibling(e.file_path, "POSCAR"))
+            break  # 一次 relax 的预测就够
+
+
+def _predict_from_static(
+    recent: list[ProvenanceEntry], add: Callable[[str], None]
+) -> None:
+    # c. 最近做了 static/scf, 下一步可能需要 band/dos 输入结构
+    for e in recent:
+        action = str(e.parameters.get("action", "")).lower()
+        if "static" in action or "scf" in action:
+            add(_sibling(e.file_path, "CONTCAR"))
+            add(_sibling(e.file_path, "POSCAR"))
+            break
+
+
+def _predict_artifacts(
+    recent: list[ProvenanceEntry], add: Callable[[str], None]
+) -> None:
+    # d. 离线 artifact (磁盘卸载的 .txt) 预取关键值
+    for e in recent:
+        if e.file_path and e.file_path.endswith(".txt"):
+            add(e.file_path)
 
 
 class SmartPrefetcher:
@@ -60,39 +109,19 @@ class SmartPrefetcher:
                 seen.add(p)
 
         # a. 最近产出的文件 (OUTCAR/trajectory 等) 很可能被分析
-        for e in recent:
-            fmt = (e.file_format or "").lower()
-            fname = Path(e.file_path).name.lower() if e.file_path else ""
-            if (
-                fmt in ("outcar", "trajectory", "traj", "log")
-                or "outcar" in fname
-                or "trajectory" in fname
-            ):
-                _add(e.file_path)
+        _predict_recent_outputs(recent, _add)
 
         # 最近一条的输出文件, 大概率下一步要读
         _add(entries[-1].file_path)
 
         # b. 最近做了 relax, 下一步可能需要优化后的 POSCAR (CONTCAR)
-        for e in recent:
-            action = str(e.parameters.get("action", "")).lower()
-            if "relax" in action:
-                _add(_sibling(e.file_path, "CONTCAR"))
-                _add(_sibling(e.file_path, "POSCAR"))
-                break  # 一次 relax 的预测就够
+        _predict_from_relax(recent, _add)
 
         # c. 最近做了 static/scf, 下一步可能需要 band/dos 输入结构
-        for e in recent:
-            action = str(e.parameters.get("action", "")).lower()
-            if "static" in action or "scf" in action:
-                _add(_sibling(e.file_path, "CONTCAR"))
-                _add(_sibling(e.file_path, "POSCAR"))
-                break
+        _predict_from_static(recent, _add)
 
         # d. 离线 artifact (磁盘卸载的 .txt) 预取关键值
-        for e in recent:
-            if e.file_path and e.file_path.endswith(".txt"):
-                _add(e.file_path)
+        _predict_artifacts(recent, _add)
 
         return predicted[:20]  # 上限 20 个, 避免上下文膨胀
 

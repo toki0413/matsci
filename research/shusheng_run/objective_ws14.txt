@@ -1,0 +1,33 @@
+自主科研实战（第三轮）：你自己选题、自己找数据、自己做研究，我只在关键节点校准。
+
+【已验证的执行环境事实，必须遵守】
+1. execute 阶段一律选 MODE: coder。coder 是唯一真能执行命令、能写文件的路径（内置 bash_tool + file_write）。
+2. 只用下面两个已验证可达的数据源（任选其一）。禁用 plotly 镜像（实测 404），禁止用 seaborn 之外的第三方镜像换皮：
+   A) UCI Cleveland heart disease（无表头，14 列，303 行）：
+      https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.cleveland.data
+      实测凭证：18461 bytes，sha256 a74b7efa387bc9d108d7d0115d831fe9b414b29ae7124f331b622b4efa0427c8
+   B) seaborn titanic（有表头，15 列，891 行）：
+      https://raw.githubusercontent.com/mwaskom/seaborn-data/master/titanic.csv
+      实测凭证：57018 bytes，sha256 81787d320d7f7b03df935e91de8bd19e11d45c5bbcab86ef4d4a76dc91b7d4f2
+3. 下载实现二选一：bash_tool 直接跑 python3 -c 的 urllib 一行式；或先 file_write 一个 download.py，再 bash_tool ["python3","download.py"]。工作目录就是本工作区，python3 已放行，HTTP(S)_PROXY 已注入子进程。
+4. 下载脚本成功时必须 exit 0；失败信息写进 data/download_summary.json 的 error 字段，不要用非零退出码让整个 execute 被判失败。
+5. 若 data/ 下已有非空且 sha256 与上表一致的文件，禁止重复下载，直接进入分析。
+6. 绝对不要用 code_lab 取数：它被移除了 open()、import 白名单不含 urllib/requests/socket、bash_tool/code_tool 被屏蔽，只能算、不能下载、不能写文件。用它做数据获取只会得到合成假数据。
+7. 假设阶段写一句可证伪的具体陈述，必须点名具体列与方向（例："在 Cleveland 数据中，target=1 组的最大心率 thalach 均值低于 target=0 组，且均值差的 95%CI 不含 0"）。禁止输出 [DIM: xx] 标签或 "H1 (measure dimension)" 这类空壳占位假设。
+8. export.arxiv.org 被环境阻断，不要在文献检索上耗迭代。
+9. DESCRIPTION 里要写清本轮要跑的具体命令与预期产物路径（data/xxx.csv、analysis.py、results.json 等），不要只复述任务要求。
+10. 每次 execute 都要**收尾**：用尽量少的 bash 命令做完本轮目标，产物落盘后立刻用一段简短最终答复总结（产物路径、sha256、行列数、关键统计量）。不要在收尾前跑 pytest、翻仓库或反复校验同一件事 —— 空转到 coder 迭代上限会让本轮被判失败。
+
+【研究任务】
+在 A/B 两个数据源中自行挑选一个，提出一个真实、可证伪、与数据结构匹配的研究问题，用该数据完成一次完整实证研究并写出报告。
+
+【硬约束（任一条不满足即判本轮失败）】
+1. 数据必须真的下载到本地 data/ 目录；报告记录 source_url、下载时间、字节数、sha256、行数与列数。禁止用随机数、硬编码或凭空构造的数据冒充真实数据。
+2. 下载失败必须如实记录失败的 URL 与错误信息；可改用另一个候选数据源，但不得虚构数据或结果。
+3. 研究问题必须与该数据结构匹配：写明分析单位、样本量、自变量与因变量、分组或配对结构。
+4. 分析必须包含：描述统计（含缺失值与异常值如何处理）、与设计匹配的统计检验（报统计量、p 值、效应量、95% 置信区间，区间用与样本量匹配的 t 分布而非正态近似）、至少一项前提假设检查或稳健性/敏感性分析。
+5. 结论区分「数据支持的结论」与「基于领域知识的推测」，并给出至少 2 条真实局限（样本代表性、混杂、测量误差、选择偏倚等）。
+6. 报告里每个数字都必须能追溯到本次执行的产物（脚本输出、表格或图），不得出现无来源的数字。
+
+【成功判据】
+报告含真实下载凭证（sha256 + 行列数）、一条可复核的主结论（含统计量与区间）、可重跑的分析脚本。数据已就绪后，剩下的 execute 应集中在分析与报告，不要回头重下数据。

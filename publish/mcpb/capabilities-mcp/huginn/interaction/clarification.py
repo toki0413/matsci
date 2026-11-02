@@ -31,7 +31,6 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-
 @dataclass
 class ClarificationQuestion:
     """一个待回答的问题."""
@@ -173,16 +172,24 @@ class ClarificationManager:
         # 有真实 LLM 时让它生成更好的问题
         if model is not None and not hasattr(model, "_mock_name"):
             try:
-                return self._llm_generate_question(model, qtype, phase, summary, context)
+                return self._llm_generate_question(
+                    model, qtype, phase, summary, context
+                )
             except Exception:
-                logger.debug("llm generate question failed", exc_info=True)  # 降级到模板
+                logger.debug(
+                    "llm generate question failed", exc_info=True
+                )  # 降级到模板
 
         # 模板兜底
         return self._template_question(qtype, summary, context)
 
     def _llm_generate_question(
-        self, model: Any, qtype: str, phase: str,
-        summary: str, context: dict[str, Any],
+        self,
+        model: Any,
+        qtype: str,
+        phase: str,
+        summary: str,
+        context: dict[str, Any],
     ) -> tuple[str, list[str], str]:
         """调 LLM 生成上下文相关的提问. 失败时抛异常让上层降级."""
         from langchain_core.messages import HumanMessage, SystemMessage
@@ -204,7 +211,9 @@ class ClarificationManager:
             f"Available options hint: {options_str}\n"
             "Generate one question, options, and a safe default."
         )
-        resp = model.ainvoke([SystemMessage(content=sys_prompt), HumanMessage(content=user_prompt)])
+        resp = model.ainvoke(
+            [SystemMessage(content=sys_prompt), HumanMessage(content=user_prompt)]
+        )
         # model.ainvoke 返回 coroutine, 但这里可能不在 async 上下文
         # 如果是 coroutine, 抛异常让上层走模板
         if asyncio.iscoroutine(resp):
@@ -213,12 +222,16 @@ class ClarificationManager:
         parts = text.split("\n")
         question = parts[0].strip() if parts else text
         options = [o.strip() for o in parts[1].split(",")] if len(parts) > 1 else []
-        default = parts[2].strip() if len(parts) > 2 else (options[0] if options else "")
+        default = (
+            parts[2].strip() if len(parts) > 2 else (options[0] if options else "")
+        )
         return question, options, default
 
     @staticmethod
     def _template_question(
-        qtype: str, summary: str, context: dict[str, Any],
+        qtype: str,
+        summary: str,
+        context: dict[str, Any],
     ) -> tuple[str, list[str], str]:
         """无 LLM 时的模板提问. 按类型走不同模板."""
         options_hint = context.get("options_hint", [])
@@ -240,17 +253,17 @@ class ClarificationManager:
 
         if qtype == "validation_fail":
             fails = context.get("consecutive_failures", 1)
-            q = (
-                f"已连续 {fails} 轮验证未通过. "
-                f"当前结果: {summary[:200]}. "
-                "建议方向？"
-            )
-            return q, [
-                "修正假设重新实验",
-                "调整计算参数",
-                "换一种方法",
+            q = f"已连续 {fails} 轮验证未通过. 当前结果: {summary[:200]}. 建议方向？"
+            return (
+                q,
+                [
+                    "修正假设重新实验",
+                    "调整计算参数",
+                    "换一种方法",
+                    "继续当前路径",
+                ],
                 "继续当前路径",
-            ], "继续当前路径"
+            )
 
         # task_vague 兜底
         q = f"当前任务描述不够具体: {summary[:200]}. 请补充目标或输入？"
@@ -259,12 +272,66 @@ class ClarificationManager:
     def _record_stats(self, question_type: str, outcome: str) -> None:
         """记录提问结果 (answered / timed_out / skipped)."""
         with self._lock:
-            s = self._stats.setdefault(question_type, {"asked": 0, "answered": 0, "timed_out": 0})
+            s = self._stats.setdefault(
+                question_type, {"asked": 0, "answered": 0, "timed_out": 0}
+            )
             s["asked"] += 1
             if outcome in ("answered", "timed_out"):
                 s[outcome] += 1
 
     # ── agent 侧: 提问并等回答 ─────────────────────────────────
+
+    def _register_question(self, qid: str, q: Any, thread_id: str) -> None:
+        """登记问题到 _questions / _by_thread (同步上下文无 loop 时)."""
+        with self._lock:
+            self._questions[qid] = q
+            self._by_thread.setdefault(thread_id, []).append(qid)
+
+    def _register_question_and_future(
+        self,
+        qid: str,
+        q: Any,
+        thread_id: str,
+        loop: asyncio.AbstractEventLoop,
+    ) -> asyncio.Future:
+        """登记问题并创建 Future (有 running loop 时)."""
+        fut: asyncio.Future = loop.create_future()
+        with self._lock:
+            self._questions[qid] = q
+            self._by_thread.setdefault(thread_id, []).append(qid)
+            self._futures[qid] = fut
+            self._last_ask_time[thread_id] = time.time()
+        return fut
+
+    async def _await_answer(
+        self,
+        qid: str,
+        fut: asyncio.Future,
+        q: Any,
+        qtype: str,
+        timeout_val: float,
+        default_answer: str,
+    ) -> str:
+        """挂起等回答, 超时退回 default; 无论如何清掉 Future."""
+        try:
+            # 挂着等回答, 超时退回 default
+            answer = await asyncio.wait_for(fut, timeout=timeout_val)
+            ClarificationManager._record_stats(self, qtype, "answered")
+            return str(answer)
+        except TimeoutError:
+            q.answer = default_answer or ""
+            q.answered_at = time.time()
+            ClarificationManager._record_stats(self, qtype, "timed_out")
+            return q.answer
+        except asyncio.CancelledError:
+            # agent loop 被取消时跟着退, Future 自动清理
+            with self._lock:
+                self._futures.pop(qid, None)
+            raise
+        finally:
+            # 不管成功还是超时, 都把 Future 清掉, 防止内存泄漏
+            with self._lock:
+                self._futures.pop(qid, None)
 
     async def ask(
         self,
@@ -299,40 +366,18 @@ class ClarificationManager:
         except RuntimeError:
             # 同步上下文里调, 没法阻塞等. 直接走默认值, 但还是把问题
             # 登记进 _questions, 让前端能看到 agent 想问什么.
-            with self._lock:
-                self._questions[qid] = q
-                self._by_thread.setdefault(thread_id, []).append(qid)
+            ClarificationManager._register_question(self, qid, q, thread_id)
             q.answer = default_answer or ""
             q.answered_at = time.time()
             return q.answer
 
-        fut: asyncio.Future = loop.create_future()
-        with self._lock:
-            self._questions[qid] = q
-            self._by_thread.setdefault(thread_id, []).append(qid)
-            self._futures[qid] = fut
-            self._last_ask_time[thread_id] = time.time()
-
+        fut = ClarificationManager._register_question_and_future(
+            self, qid, q, thread_id, loop
+        )
         qtype = (metadata or {}).get("question_type", "agent_initiated")
-        try:
-            # 挂着等回答, 超时退回 default
-            answer = await asyncio.wait_for(fut, timeout=timeout_val)
-            self._record_stats(qtype, "answered")
-            return str(answer)
-        except TimeoutError:
-            q.answer = default_answer or ""
-            q.answered_at = time.time()
-            self._record_stats(qtype, "timed_out")
-            return q.answer
-        except asyncio.CancelledError:
-            # agent loop 被取消时跟着退, Future 自动清理
-            with self._lock:
-                self._futures.pop(qid, None)
-            raise
-        finally:
-            # 不管成功还是超时, 都把 Future 清掉, 防止内存泄漏
-            with self._lock:
-                self._futures.pop(qid, None)
+        return await ClarificationManager._await_answer(
+            self, qid, fut, q, qtype, timeout_val, default_answer
+        )
 
     # ── 用户侧: 回答 ───────────────────────────────────────────
 
@@ -452,6 +497,62 @@ _MATERIAL_PATTERN = _re.compile(
 )
 
 
+def _analogy_clarification(message: str) -> dict[str, Any] | None:
+    """cross_domain_analogy: 跨领域类比 → 问是机制映射还是比喻."""
+    if _ANALOGY_SIGNAL.search(message):
+        return {
+            "reason": "cross_domain_analogy",
+            "suggestion": [
+                "你想把这个机制的物理原理迁移过来吗?",
+                "还是只是打个比方帮助理解?",
+                "需要我查一下两个领域的相关性吗?",
+            ],
+            "raw": message[:120],
+        }
+    return None
+
+
+def _no_action_verb_clarification(message: str) -> dict[str, Any] | None:
+    """no_action_verb: 无明确动词 + 短消息 → 问想做什么."""
+    if not _ACTION_VERBS.search(message) and len(message.split()) <= 8:
+        return {
+            "reason": "no_action_verb",
+            "suggestion": [
+                "你是想让我计算/模拟这个体系?",
+                "还是查找相关文献/数据?",
+                "或者只是记录这个想法供后续参考?",
+            ],
+            "raw": message[:120],
+        }
+    return None
+
+
+def _new_material_clarification(
+    message: str,
+    session_history: list[dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    """new_material: 首次提到材料体系 → 问具体操作."""
+    mat_match = _MATERIAL_PATTERN.search(message)
+    if mat_match and session_history is not None:
+        material = mat_match.group(0)
+        seen_before = any(
+            material in (m.get("content", "") or "") for m in session_history[-20:]
+        )
+        if not seen_before:
+            return {
+                "reason": "new_material",
+                "material": material,
+                "suggestion": [
+                    f"首次提到 {material}, 你想做什么?",
+                    f"查 {material} 的结构/性质数据?",
+                    f"用 {material} 跑模拟 (VASP/LAMMPS)?",
+                    "只是记录, 不需要现在处理?",
+                ],
+                "raw": message[:120],
+            }
+    return None
+
+
 def should_ask_clarification(
     message: str,
     session_history: list[dict[str, Any]] | None = None,
@@ -468,46 +569,12 @@ def should_ask_clarification(
     if not message or len(message) < 3:
         return None
 
-    if _ANALOGY_SIGNAL.search(message):
-        return {
-            "reason": "cross_domain_analogy",
-            "suggestion": [
-                "你想把这个机制的物理原理迁移过来吗?",
-                "还是只是打个比方帮助理解?",
-                "需要我查一下两个领域的相关性吗?",
-            ],
-            "raw": message[:120],
-        }
+    result = _analogy_clarification(message)
+    if result is not None:
+        return result
 
-    if not _ACTION_VERBS.search(message) and len(message.split()) <= 8:
-        return {
-            "reason": "no_action_verb",
-            "suggestion": [
-                "你是想让我计算/模拟这个体系?",
-                "还是查找相关文献/数据?",
-                "或者只是记录这个想法供后续参考?",
-            ],
-            "raw": message[:120],
-        }
+    result = _no_action_verb_clarification(message)
+    if result is not None:
+        return result
 
-    mat_match = _MATERIAL_PATTERN.search(message)
-    if mat_match and session_history is not None:
-        material = mat_match.group(0)
-        seen_before = any(
-            material in (m.get("content", "") or "")
-            for m in session_history[-20:]
-        )
-        if not seen_before:
-            return {
-                "reason": "new_material",
-                "material": material,
-                "suggestion": [
-                    f"首次提到 {material}, 你想做什么?",
-                    f"查 {material} 的结构/性质数据?",
-                    f"用 {material} 跑模拟 (VASP/LAMMPS)?",
-                    "只是记录, 不需要现在处理?",
-                ],
-                "raw": message[:120],
-            }
-
-    return None
+    return _new_material_clarification(message, session_history)

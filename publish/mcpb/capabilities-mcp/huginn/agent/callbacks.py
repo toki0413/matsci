@@ -13,6 +13,118 @@ from huginn.utils.session_context import get_thread_id, get_user_message
 logger = logging.getLogger(__name__)
 
 
+async def _acquire_admission(
+    host: Any, tool_name: str, input_data: dict
+) -> tuple[Any, Any, dict | None]:
+    """Scheduler admission by cost_tier; 资源耗尽时返回错误响应."""
+    admission = None
+    sched = getattr(host, "scheduler", None)
+    if sched is not None:
+        cost_tier, cost = host._scheduler_cost(tool_name, input_data)
+        try:
+            admission = await sched.acquire(tool_name, cost_tier, cost)
+        except Exception as exc:
+            return (
+                None,
+                None,
+                {
+                    "error": "resource_exhausted",
+                    "block_reason": str(exc),
+                },
+            )
+    return admission, sched, None
+
+
+def _release_admission(sched: Any, admission: Any, tool_name: str) -> None:
+    """释放 scheduler 名额; 失败仅告警."""
+    if admission is not None and sched is not None:
+        try:
+            sched.release(admission)
+        except Exception:  # 非致命: 调度释放失败仅告警
+            logger.warning("scheduler release failed for %s", tool_name)
+
+
+async def _run_post_hooks(
+    host: Any,
+    hm: Any,
+    tool_name: str,
+    input_data: dict,
+    result: Any,
+    error: BaseException | None,
+    duration_ms: float,
+) -> Any:
+    return await hm.run_post(
+        tool_name,
+        input_data,
+        result,
+        error,
+        duration_ms,
+        thread_id=get_thread_id() or getattr(host, "thread_id", None),
+        user_message=get_user_message() or getattr(host, "_current_user_message", None),
+    )
+
+
+def _record_bandit_tool_call() -> None:
+    """v18: bandit effort controller — record tool call for reward_fast."""
+    # ponytail: 无条件调, bandit 内部 fallback (无 items 注册时直接 return).
+    try:
+        from huginn.agent.bandit_controller import EffortBandit
+
+        EffortBandit.get_instance().record_tool_call()
+    except Exception:  # 非致命: bandit 记录失败则忽略
+        logger.debug("bandit record_tool_call failed", exc_info=True)
+
+
+async def _invoke_tool_with_hooks(
+    host: Any,
+    hm: Any,
+    tool_name: str,
+    original: Any,
+    input_data: dict,
+) -> Any:
+    """Async 主流程: pre hook → 调度准入 → 调用 → post hook."""
+    allowed, modified, pre_ctx = await hm.run_pre(
+        tool_name,
+        input_data,
+        thread_id=get_thread_id() or getattr(host, "thread_id", None),
+    )
+    if not allowed:
+        reason = pre_ctx.metadata.get("block_reason") if pre_ctx else None
+        return {
+            "error": "blocked by pre_tool_use hook",
+            "block_reason": reason or "blocked by pre_tool_use hook",
+        }
+    if isinstance(modified, dict):
+        input_data = modified
+    # Scheduler admission: gate every tool call by cost_tier so
+    # the heavy/light semaphores arbitrate concurrency.
+    admission, sched, early = await _acquire_admission(host, tool_name, input_data)
+    if early is not None:
+        return early
+    start = time.time()
+    result: Any = None
+    try:
+        result = await original.ainvoke(input_data)
+    except Exception as exc:
+        _release_admission(sched, admission, tool_name)
+        duration_ms = (time.time() - start) * 1000
+        await _run_post_hooks(host, hm, tool_name, input_data, result, exc, duration_ms)
+        raise
+
+    _release_admission(sched, admission, tool_name)
+    duration_ms = (time.time() - start) * 1000
+    post_ctx = await _run_post_hooks(
+        host, hm, tool_name, input_data, result, None, duration_ms
+    )
+    if post_ctx and post_ctx.metadata.get("blocked_by_hook"):
+        block_reason = post_ctx.metadata.get(
+            "block_reason", "blocked by post_tool_use hook"
+        )
+        return {"error": block_reason, "_hook_blocked": True}
+    _record_bandit_tool_call()
+    return result
+
+
 class CallbackMixin:
     """Hook registration, tool wrapping, and approval callbacks."""
 
@@ -56,76 +168,12 @@ class CallbackMixin:
         original = tool
         tool_name = getattr(original, "name", "")
         hm = self.hook_manager
+        host = self
 
         async def _invoke_with_hooks(input_data: dict) -> Any:
-            allowed, modified, pre_ctx = await hm.run_pre(
-                tool_name,
-                input_data,
-                thread_id=get_thread_id() or getattr(self, "thread_id", None),
+            return await _invoke_tool_with_hooks(
+                host, hm, tool_name, original, input_data
             )
-            if not allowed:
-                reason = pre_ctx.metadata.get("block_reason") if pre_ctx else None
-                return {
-                    "error": "blocked by pre_tool_use hook",
-                    "block_reason": reason or "blocked by pre_tool_use hook",
-                }
-            if isinstance(modified, dict):
-                input_data = modified
-            # Scheduler admission: gate every tool call by cost_tier so
-            # the heavy/light semaphores arbitrate concurrency.
-            admission = None
-            sched = getattr(self, "scheduler", None)
-            if sched is not None:
-                cost_tier, cost = self._scheduler_cost(tool_name, input_data)
-                try:
-                    admission = await sched.acquire(tool_name, cost_tier, cost)
-                except Exception as exc:
-                    return {
-                        "error": "resource_exhausted",
-                        "block_reason": str(exc),
-                    }
-            start = time.time()
-            error: BaseException | None = None
-            result: Any = None
-            try:
-                result = await original.ainvoke(input_data)
-            except Exception as exc:
-                error = exc
-                if admission is not None and sched is not None:
-                    try:
-                        sched.release(admission)
-                    except Exception as exc:
-                        logger.warning("scheduler release failed for %s", tool_name)
-                duration_ms = (time.time() - start) * 1000
-                await hm.run_post(
-                    tool_name, input_data, result, error, duration_ms,
-                    thread_id=get_thread_id() or getattr(self, "thread_id", None),
-                    user_message=get_user_message() or getattr(self, "_current_user_message", None),
-                )
-                raise
-
-            if admission is not None and sched is not None:
-                try:
-                    sched.release(admission)
-                except Exception:  # 非致命: 调度释放失败仅告警
-                    logger.warning("scheduler release failed for %s", tool_name)
-            duration_ms = (time.time() - start) * 1000
-            post_ctx = await hm.run_post(
-                tool_name, input_data, result, None, duration_ms,
-                thread_id=get_thread_id() or getattr(self, "thread_id", None),
-                user_message=get_user_message() or getattr(self, "_current_user_message", None),
-            )
-            if post_ctx and post_ctx.metadata.get("blocked_by_hook"):
-                block_reason = post_ctx.metadata.get("block_reason", "blocked by post_tool_use hook")
-                return {"error": block_reason, "_hook_blocked": True}
-            # v18: bandit effort controller — record tool call for reward_fast.
-            # ponytail: 无条件调, bandit 内部 fallback (无 items 注册时直接 return).
-            try:
-                from huginn.agent.bandit_controller import EffortBandit
-                EffortBandit.get_instance().record_tool_call()
-            except Exception:  # 非致命: bandit 记录失败则忽略
-                logger.debug("bandit record_tool_call failed", exc_info=True)
-            return result
 
         async def hooked_coroutine(**kwargs: Any) -> Any:
             return await _invoke_with_hooks(kwargs)

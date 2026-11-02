@@ -98,13 +98,6 @@ def cli(
     """Huginn: Material Science specialized AI Agent Harness."""
     ctx.ensure_object(dict)
 
-    # 逗号分隔的工具列表拆成 list[str], 去掉空白和空串
-    def _split_csv(s: str | None) -> list[str] | None:
-        if not s:
-            return None
-        items = [x.strip() for x in s.split(",")]
-        return [x for x in items if x] or None
-
     ctx.obj = CliContext(
         workspace=Path(workspace).resolve(),
         config_path=config,
@@ -130,6 +123,14 @@ def cli(
     # 把一堆用不了的命令暴露给用户
     auth_state = get_auth_state()
     filter_commands_by_availability(cli, auth_state)
+
+
+def _split_csv(s: str | None) -> list[str] | None:
+    # 逗号分隔的工具列表拆成 list[str], 去掉空白和空串
+    if not s:
+        return None
+    items = [x.strip() for x in s.split(",")]
+    return [x for x in items if x] or None
 
 
 # 懒加载模式: 通过 HUGINN_LAZY_CLI=1 启用, 启动时不导入任何命令模块

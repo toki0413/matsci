@@ -47,6 +47,7 @@ def _phase_whitelist(phase: str | None) -> list[str] | None:
         return None
     try:
         from huginn.harness.phase_spec import PhaseRegistry
+
         spec = PhaseRegistry.get_instance().get_phase_spec(phase)
         if spec is None:
             return None
@@ -103,25 +104,46 @@ async def dispatch_tool(
     reg = registry if registry is not None else ToolRegistry
     tool = reg.get(name)
     if tool is None:
-        from huginn.core_types import ToolResult
-        return ToolResult(
-            data=None,
-            success=False,
-            error=f"Tool '{name}' not registered",
-        )
+        return _not_found_result(name)
 
     if session_id is None:
         session_id = getattr(ctx, "session_id", None)
     if not is_tool_allowed(name, phase, session_id=session_id):
-        from huginn.core_types import ToolResult
-        return ToolResult(
-            data=None,
-            success=False,
-            error=f"Tool '{name}' not allowed in phase '{phase}' (tool_whitelist)",
-        )
+        return _blocked_result(name, phase)
 
     result = await tool.call(args, ctx)
 
+    await _apply_action_fusion(result, name, args, ctx)
+
+    return result
+
+
+def _not_found_result(name: str) -> Any:
+    """工具未注册时的失败结果."""
+    from huginn.core_types import ToolResult
+
+    return ToolResult(
+        data=None,
+        success=False,
+        error=f"Tool '{name}' not registered",
+    )
+
+
+def _blocked_result(name: str, phase: str | None) -> Any:
+    """白名单拦截时的失败结果 (不执行工具)."""
+    from huginn.core_types import ToolResult
+
+    return ToolResult(
+        data=None,
+        success=False,
+        error=f"Tool '{name}' not allowed in phase '{phase}' (tool_whitelist)",
+    )
+
+
+async def _apply_action_fusion(
+    result: Any, name: str, args: dict[str, Any], ctx: ToolContext
+) -> None:
+    """变更工具成功后把跟随验证折叠进 result.metadata."""
     # SoL-Pi Action Fusion 接线(①, opt-in): 变更工具成功后、总开关开且存在契约时,
     # 在**同一调用**里执行跟随验证, 折叠到 result.metadata["_verification"]。
     # 失败/无契约 → 不改变原结果 (fused_verify 返回 None 或只标 verified=False)。
@@ -137,9 +159,9 @@ async def dispatch_tool(
                 if fused is not None and hasattr(result, "metadata"):
                     result.metadata["_verification"] = fused
         except Exception:  # noqa: BLE001 — 融合是 opt-in, 失败不拖垮原工具结果
-            logger.debug("action_fusion post-dispatch failed (non-fatal)", exc_info=True)
-
-    return result
+            logger.debug(
+                "action_fusion post-dispatch failed (non-fatal)", exc_info=True
+            )
 
 
 def _selfcheck() -> None:
@@ -147,74 +169,21 @@ def _selfcheck() -> None:
     import os
     import tempfile
 
-    from huginn.core_types import ToolContext, ToolResult
-
     tmp = tempfile.mkdtemp()
     os.environ["HUGINN_CACHE_DIR"] = tmp
     try:
         import huginn.tools as _tools
+
         _tools.register_core_tools()  # 注册核心工具, 供 dispatch_tool 分派
         import huginn.harness.phase_spec as ps
         import huginn.harness.tool_dispatch as td
-        from huginn.harness.phase_spec import PhaseRegistry
 
-        # 1. 无 phase → 无白名单 → 允许
-        assert td.is_tool_allowed("any_tool", None) is True
-        print("1. no phase → allowed OK")
-
-        # 2. phase 无白名单 (空列表) → 允许
-        assert td.is_tool_allowed("any_tool", "_report") is True
-        print("2. phase empty whitelist → allowed OK")
-
-        # 3. 白名单包含 → 允许
-        ps.PhaseRegistry._instance = None
-        reg = PhaseRegistry.get_instance()
-        reg.register_phase_override("_validate", {
-            "tool_whitelist": ["file_read_tool", "bash_tool"],
-        })
-        ps.PhaseRegistry._instance = None
-        assert td.is_tool_allowed("file_read_tool", "_validate") is True
-        assert td.is_tool_allowed("bash_tool", "_validate") is True
-        print("3. whitelisted tool → allowed OK")
-
-        # 4. 白名单不包含 → 拒绝
-        assert td.is_tool_allowed("vasp_tool", "_validate") is False
-        print("4. non-whitelisted tool → blocked OK")
-
-        # 5. dispatch_tool: 白名单拦截返回 blocked 结果, 不执行
-        #    用已注册的工具 (file_read_tool) 作为"不在白名单"对象 — 未注册
-        #    工具会先命中 not_found 分支, 无法观测白名单拦截.
-        ps.PhaseRegistry._instance = None
-        reg2 = PhaseRegistry.get_instance()
-        reg2.register_phase_override("_validate", {
-            "tool_whitelist": ["bash_tool"],
-        })
-        ps.PhaseRegistry._instance = None
-        ctx = ToolContext(session_id="selftest", workspace=tmp, config=None)
-        res = None
-        import asyncio
-        res = asyncio.run(td.dispatch_tool("file_read_tool", {}, ctx, phase="_validate"))
-        assert isinstance(res, ToolResult)
-        assert res.success is False
-        assert "not allowed" in res.error
-        print("5. dispatch blocked OK")
-
-        # 6. dispatch_tool: 工具不存在 → not_found 结果
-        reg2_ctx = ToolContext(session_id="selftest", workspace=tmp, config=None)
-        res2 = asyncio.run(td.dispatch_tool("nonexistent_tool", {}, reg2_ctx))
-        assert isinstance(res2, ToolResult)
-        assert res2.success is False
-        assert "not registered" in res2.error
-        print("6. dispatch not found OK")
-
-        # 7. dispatch_tool: 无 phase → 正常放行到工具 (工具不存在与否由工具层决定)
-        #    这里用 None phase, 工具不存在直接返回 not_found (不涉及白名单)
-        res3 = asyncio.run(td.dispatch_tool("nonexistent_tool", {}, reg2_ctx))
-        assert "not registered" in res3.error
-        print("7. dispatch no phase OK")
+        _selfcheck_whitelist(td, ps)
+        _selfcheck_dispatch(td, ps, tmp)
 
     finally:
         import shutil
+
         shutil.rmtree(tmp, ignore_errors=True)
         del os.environ["HUGINN_CACHE_DIR"]
         # restore singleton
@@ -222,6 +191,79 @@ def _selfcheck() -> None:
             ps.PhaseRegistry._instance = None
 
     print("H5-b tool_dispatch selfcheck OK")
+
+
+def _selfcheck_whitelist(td: Any, ps: Any) -> None:
+    """selfcheck 1-4: 无 phase / 空白名单 / 白名单命中 / 未命中."""
+    from huginn.harness.phase_spec import PhaseRegistry
+
+    # 1. 无 phase → 无白名单 → 允许
+    assert td.is_tool_allowed("any_tool", None) is True
+    print("1. no phase → allowed OK")
+
+    # 2. phase 无白名单 (空列表) → 允许
+    assert td.is_tool_allowed("any_tool", "_report") is True
+    print("2. phase empty whitelist → allowed OK")
+
+    # 3. 白名单包含 → 允许
+    ps.PhaseRegistry._instance = None
+    reg = PhaseRegistry.get_instance()
+    reg.register_phase_override(
+        "_validate",
+        {
+            "tool_whitelist": ["file_read_tool", "bash_tool"],
+        },
+    )
+    ps.PhaseRegistry._instance = None
+    assert td.is_tool_allowed("file_read_tool", "_validate") is True
+    assert td.is_tool_allowed("bash_tool", "_validate") is True
+    print("3. whitelisted tool → allowed OK")
+
+    # 4. 白名单不包含 → 拒绝
+    assert td.is_tool_allowed("vasp_tool", "_validate") is False
+    print("4. non-whitelisted tool → blocked OK")
+
+
+def _selfcheck_dispatch(td: Any, ps: Any, tmp: str) -> None:
+    """selfcheck 5-7: dispatch 拦截 / 工具不存在 / 无 phase 放行."""
+    import asyncio
+
+    from huginn.core_types import ToolContext, ToolResult
+    from huginn.harness.phase_spec import PhaseRegistry
+
+    # 5. dispatch_tool: 白名单拦截返回 blocked 结果, 不执行
+    #    用已注册的工具 (file_read_tool) 作为"不在白名单"对象 — 未注册
+    #    工具会先命中 not_found 分支, 无法观测白名单拦截.
+    ps.PhaseRegistry._instance = None
+    reg2 = PhaseRegistry.get_instance()
+    reg2.register_phase_override(
+        "_validate",
+        {
+            "tool_whitelist": ["bash_tool"],
+        },
+    )
+    ps.PhaseRegistry._instance = None
+    ctx = ToolContext(session_id="selftest", workspace=tmp, config=None)
+    res = None
+    res = asyncio.run(td.dispatch_tool("file_read_tool", {}, ctx, phase="_validate"))
+    assert isinstance(res, ToolResult)
+    assert res.success is False
+    assert "not allowed" in res.error
+    print("5. dispatch blocked OK")
+
+    # 6. dispatch_tool: 工具不存在 → not_found 结果
+    reg2_ctx = ToolContext(session_id="selftest", workspace=tmp, config=None)
+    res2 = asyncio.run(td.dispatch_tool("nonexistent_tool", {}, reg2_ctx))
+    assert isinstance(res2, ToolResult)
+    assert res2.success is False
+    assert "not registered" in res2.error
+    print("6. dispatch not found OK")
+
+    # 7. dispatch_tool: 无 phase → 正常放行到工具 (工具不存在与否由工具层决定)
+    #    这里用 None phase, 工具不存在直接返回 not_found (不涉及白名单)
+    res3 = asyncio.run(td.dispatch_tool("nonexistent_tool", {}, reg2_ctx))
+    assert "not registered" in res3.error
+    print("7. dispatch no phase OK")
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+# governance-gate
 """契约文档漂移自检.
 
 对 config_audit 的每个契约模式, 重新构建并渲染, 断言与已提交的 docs/*-contract.md

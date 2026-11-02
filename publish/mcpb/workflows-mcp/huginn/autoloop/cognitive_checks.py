@@ -9,11 +9,15 @@ engine 状态、I/O 之外的共享副作用. 这些函数被 autoloop 各引擎
 - 只搬"给定参数 → 返回结果"的纯函数, 无 self / 无 engine 状态读写.
 - 文件 I/O / 记忆 / 指标等有副作用者留在 cognitive_loop (段 2+ 再处理).
 """
+
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # 避免 autoloop 包内循环导入 (annotations 已延迟求值)
+    from huginn.autoloop.types import CognitiveState
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +40,7 @@ def _extract_tests_passed(validation: Any) -> bool:
     return True
 
 
-def _derive_light_on_track(action: str, cog: dict) -> str:
+def _derive_light_on_track(action: str, cog: CognitiveState) -> str:
     """Loop: 每轮轻量 on_track 派生 — 不限 validate, 用机械信号.
 
     返回 "true" / "false" / "unsure", 供连续偏移累积检测. 不调 LLM
@@ -64,7 +68,7 @@ def _derive_light_on_track(action: str, cog: dict) -> str:
 
 
 def progress_invariant_action(
-    cog: dict, action_history: list[str], *, window: int = 4
+    cog: CognitiveState, action_history: list[str], *, window: int = 4
 ) -> str | None:
     """P3.2 在线进展不变量 — 连续 window 轮停在执行前阶段 ⇒ 强制推进流水线.
 
@@ -97,7 +101,7 @@ def progress_invariant_action(
     return "plan" if cog.get("hypothesis") else "hypothesize"
 
 
-def _snapshot_structure_desc(cog: dict, cmap: Any = None) -> list[float]:
+def _snapshot_structure_desc(cog: CognitiveState, cmap: Any = None) -> list[float]:
     """从活跃 StructureCognitiveMap / cog 提取结构描述符, 缺失填 16 维全 0.
 
     episodic 快照里带一份结构向量, 供后续按空间检索. cmap 来源优先级:
@@ -107,8 +111,13 @@ def _snapshot_structure_desc(cog: dict, cmap: Any = None) -> list[float]:
     """
     try:
         from huginn.metacog.structure_descriptor import StructureDescriptor
+
         if cmap is None:
-            cmap = cog.get("structure_cognitive_map") or cog.get("cmap") or cog.get("structure")
+            cmap = (
+                cog.get("structure_cognitive_map")
+                or cog.get("cmap")
+                or cog.get("structure")
+            )
         if cmap is None:
             return [0.0] * 16
         vec = StructureDescriptor().encode(cmap)
@@ -144,6 +153,64 @@ _VALIDATION_ERROR_KEYS: tuple[str, ...] = (
 )
 
 
+def _step_eval_attempted(validation: dict, execution_result: Any) -> str:
+    """拼 attempted: 从 execution_result 取描述, 附 visual_primitives 摘要."""
+    # attempted: validation 里没有 attempted, 从 execution_result 拼
+    # G6: PMK 的 K 查询看不到 visual_primitives → 加 visual 摘要让 KB 能召回视觉经验.
+    _attempted = ""
+    if isinstance(execution_result, dict):
+        _attempted = str(
+            execution_result.get("description")
+            or execution_result.get("summary")
+            or execution_result.get("result_type")
+            or ""
+        )[:200]
+    # G6: 附 visual_primitives 摘要 (前 150 字), 让 PMK 的 K 查询能看到视觉内容.
+    # ponytail: 直接拼字符串, 不上 schema. 升级路径: StepEvaluation 加 visual_context 字段.
+    _vis = validation.get("visual_primitives") if isinstance(validation, dict) else None
+    if _vis and isinstance(_vis, str):
+        _attempted = (f"{_attempted} | Visual: {_vis[:150]}").strip(" |")
+    return _attempted
+
+
+def _step_eval_found(validation: dict, tests_ok: bool) -> str:
+    """拼 found: tests_passed 状态 + benchmarks 关键指标."""
+    # found: tests_passed 状态 + benchmarks 关键指标
+    _found_parts: list[str] = []
+    if tests_ok:
+        _found_parts.append("tests_passed=True")
+    else:
+        _found_parts.append("tests_passed=False")
+    _benches = validation.get("benchmarks") or {}
+    if isinstance(_benches, dict):
+        for _bn, _bv in list(_benches.items())[:3]:
+            if isinstance(_bv, dict):
+                _metric = _bv.get("metric") or _bv.get("value") or ""
+                if _metric:
+                    _found_parts.append(f"{_bn}={_metric}")
+            else:
+                _found_parts.append(f"{_bn}={_bv}")
+    return "; ".join(_found_parts)[:200]
+
+
+def _step_eval_deviation(validation: dict, tests_ok: bool) -> tuple[str, str]:
+    """拼 deviation 与 evidence_quality."""
+    # deviation: 失败时收集错误信号
+    _dev_parts: list[str] = []
+    if not tests_ok:
+        for _k in _VALIDATION_ERROR_KEYS:
+            _v = validation.get(_k)
+            if _v:
+                _dev_parts.append(f"{_k}: {str(_v)[:100]}")
+    _deviation = "; ".join(_dev_parts)[:300]
+
+    # evidence_quality: tests_ok=high, 否则 low
+    _eq = "high" if tests_ok else "low"
+    if _dev_parts:
+        _eq = "low"
+    return _deviation, _eq
+
+
 def _validation_to_step_eval_fields(
     validation: dict,
     tests_ok: bool,
@@ -165,52 +232,9 @@ def _validation_to_step_eval_fields(
 
     ponytail: dict 字段映射, 不上 schema 库. 升级路径: pydantic model.
     """
-    # attempted: validation 里没有 attempted, 从 execution_result 拼
-    # G6: PMK 的 K 查询看不到 visual_primitives → 加 visual 摘要让 KB 能召回视觉经验.
-    _attempted = ""
-    if isinstance(execution_result, dict):
-        _attempted = str(
-            execution_result.get("description")
-            or execution_result.get("summary")
-            or execution_result.get("result_type")
-            or ""
-        )[:200]
-    # G6: 附 visual_primitives 摘要 (前 150 字), 让 PMK 的 K 查询能看到视觉内容.
-    # ponytail: 直接拼字符串, 不上 schema. 升级路径: StepEvaluation 加 visual_context 字段.
-    _vis = validation.get("visual_primitives") if isinstance(validation, dict) else None
-    if _vis and isinstance(_vis, str):
-        _attempted = (f"{_attempted} | Visual: {_vis[:150]}").strip(" |")
-
-    # found: tests_passed 状态 + benchmarks 关键指标
-    _found_parts: list[str] = []
-    if tests_ok:
-        _found_parts.append("tests_passed=True")
-    else:
-        _found_parts.append("tests_passed=False")
-    _benches = validation.get("benchmarks") or {}
-    if isinstance(_benches, dict):
-        for _bn, _bv in list(_benches.items())[:3]:
-            if isinstance(_bv, dict):
-                _metric = _bv.get("metric") or _bv.get("value") or ""
-                if _metric:
-                    _found_parts.append(f"{_bn}={_metric}")
-            else:
-                _found_parts.append(f"{_bn}={_bv}")
-    _found = "; ".join(_found_parts)[:200]
-
-    # deviation: 失败时收集错误信号
-    _dev_parts: list[str] = []
-    if not tests_ok:
-        for _k in _VALIDATION_ERROR_KEYS:
-            _v = validation.get(_k)
-            if _v:
-                _dev_parts.append(f"{_k}: {str(_v)[:100]}")
-    _deviation = "; ".join(_dev_parts)[:300]
-
-    # evidence_quality: tests_ok=high, 否则 low
-    _eq = "high" if tests_ok else "low"
-    if _dev_parts:
-        _eq = "low"
+    _attempted = _step_eval_attempted(validation, execution_result)
+    _found = _step_eval_found(validation, tests_ok)
+    _deviation, _eq = _step_eval_deviation(validation, tests_ok)
 
     return {
         "step_id": step_id,
@@ -248,21 +272,49 @@ def darwin_ratchet_check(
     failure trace, 升级时让 RCB 把 failure trace 传进来.
     """
     if stagnation_count < stagnation_limit:
-        return "continue", {
-            "stagnation_count": stagnation_count,
-            "darwin_score": darwin_score,
-            "supported_ratio": supported_ratio,
-            "speculator_hint": speculator_hint,
-        }
+        return "continue", _darwin_continue_state(
+            stagnation_count, darwin_score, supported_ratio, speculator_hint
+        )
 
     # stagnation 达 limit → 分类 stall (无 history, 用 snapshot 阈值)
-    if darwin_score < 2.0:
-        action = "stop"
-    elif supported_ratio < 0.3:
-        action = "counterexample"
-    else:
-        action = "pivot"
+    action = _darwin_stall_action(darwin_score, supported_ratio)
+    return action, _darwin_ratchet_state(
+        action, stagnation_count, darwin_score, supported_ratio, speculator_hint
+    )
 
+
+def _darwin_continue_state(
+    stagnation_count: int,
+    darwin_score: float,
+    supported_ratio: float,
+    speculator_hint: str | None,
+) -> dict:
+    """stagnation 未达 limit 时的状态快照."""
+    return {
+        "stagnation_count": stagnation_count,
+        "darwin_score": darwin_score,
+        "supported_ratio": supported_ratio,
+        "speculator_hint": speculator_hint,
+    }
+
+
+def _darwin_stall_action(darwin_score: float, supported_ratio: float) -> str:
+    """stagnation 达 limit 时按 snapshot 阈值粗分类 stall."""
+    if darwin_score < 2.0:
+        return "stop"
+    if supported_ratio < 0.3:
+        return "counterexample"
+    return "pivot"
+
+
+def _darwin_ratchet_state(
+    action: str,
+    stagnation_count: int,
+    darwin_score: float,
+    supported_ratio: float,
+    speculator_hint: str | None,
+) -> dict:
+    """按 action 更新 stagnation 计数与 counterexample hint."""
     new_stagnation = stagnation_count
     new_hint = speculator_hint
     if action == "pivot":
@@ -276,7 +328,7 @@ def darwin_ratchet_check(
             "scenario / 参数集让该 hypothesis 失败, 若找到则 refute 并 pivot."
         )
 
-    return action, {
+    return {
         "stagnation_count": new_stagnation,
         "darwin_score": darwin_score,
         "supported_ratio": supported_ratio,
@@ -356,73 +408,23 @@ def metacog_check_completion(
     """
     reasons: list[str] = []
 
-    # L1: derivation_chain_coverage — chain 中有多少 step 在 report 里被提到
-    if derivation_chain:
-        mentioned = sum(
-            1 for step in derivation_chain
-            if step and step[:50] in report_md
-        )
-        cov = mentioned / len(derivation_chain)
-    else:
-        # 没 chain 传进来, 退化为: report 里有没有 derivation / derive 字样
-        _low = report_md.lower()
-        cov = 1.0 if ("derivation" in _low or "derive" in _low) else 0.3
+    cov = _completion_derivation_coverage(report_md, derivation_chain)
     if cov < 0.5:
         reasons.append(f"derivation_chain_coverage={cov:.2f} < 0.5")
 
-    # L2: topology_health — hypothesis_graph 连通分量数 / 节点数
-    if hypothesis_graph is not None:
-        try:
-            n_nodes = len(hypothesis_graph.all_nodes())
-            n_comp = hypothesis_graph.component_count()
-            # 0 节点 → 0; 否则 [0,1] 标准化, 越多分量越健康
-            topo = (n_comp / n_nodes) if n_nodes > 0 else 0.0
-        except Exception:  # 防御: 拓扑分计算失败取折中
-            logger.debug("best-effort op failed", exc_info=True)
-            topo = 0.5  # 不阻断, advisory
-    else:
-        topo = 1.0  # 没 graph, 默认不阻断
+    topo = _completion_topology_health(hypothesis_graph)
     if topo < 0.5:
         reasons.append(f"topology_health={topo:.2f} < 0.5")
 
-    # L3: repro_evidence — outputs_dir 里有文件 (.png/.csv/.json/.txt/.parquet)
-    try:
-        out_path = Path(outputs_dir)
-        if out_path.exists() and out_path.is_dir():
-            files = list(out_path.rglob("*"))
-            evidence_files = [
-                f for f in files
-                if f.is_file() and f.suffix.lower() in
-                {".png", ".csv", ".json", ".txt", ".parquet", ".pdf", ".jpg"}
-            ]
-            # 5+ 文件 → 1.0; 线性插值
-            repro = min(1.0, len(evidence_files) / 5.0)
-        else:
-            repro = 0.0
-    except Exception:  # 防御: 复现分失败取折中
-        logger.debug("best-effort op failed", exc_info=True)
-        repro = 0.5
+    repro = _completion_repro_evidence(outputs_dir)
     if repro < 0.5:
         reasons.append(f"repro_evidence={repro:.2f} < 0.5")
 
-    # L4: evidence_strength — report 里引用 / ref / citation 数
-    try:
-        # ponytail: 字符串计数, 不上正则. ceiling: 真 citation parser.
-        _low = report_md.lower()
-        cite_hits = (
-            _low.count("[") + _low.count("ref:")
-            + _low.count("cite") + _low.count("see ")
-        )
-        # 10+ 引用 → 1.0
-        strength = min(1.0, cite_hits / 10.0)
-    except Exception:  # 防御: 强度分失败取折中
-        logger.debug("best-effort op failed", exc_info=True)
-        strength = 0.5
+    strength = _completion_evidence_strength(report_md)
     if strength < 0.5:
         reasons.append(f"evidence_strength={strength:.2f} < 0.5")
 
-    passed = (cov >= 0.5 and topo >= 0.5
-              and repro >= 0.5 and strength >= 0.5)
+    passed = cov >= 0.5 and topo >= 0.5 and repro >= 0.5 and strength >= 0.5
     return {
         "derivation_chain_coverage": cov,
         "topology_health": topo,
@@ -431,6 +433,77 @@ def metacog_check_completion(
         "passed": passed,
         "block_reasons": reasons,
     }
+
+
+def _completion_derivation_coverage(
+    report_md: str, derivation_chain: list[str] | None
+) -> float:
+    """L1: derivation_chain_coverage — chain 中有多少 step 在 report 里被提到."""
+    # L1: derivation_chain_coverage — chain 中有多少 step 在 report 里被提到
+    if derivation_chain:
+        mentioned = sum(
+            1 for step in derivation_chain if step and step[:50] in report_md
+        )
+        return mentioned / len(derivation_chain)
+    # 没 chain 传进来, 退化为: report 里有没有 derivation / derive 字样
+    _low = report_md.lower()
+    return 1.0 if ("derivation" in _low or "derive" in _low) else 0.3
+
+
+def _completion_topology_health(hypothesis_graph: Any) -> float:
+    """L2: topology_health — hypothesis_graph 连通分量数 / 节点数."""
+    # L2: topology_health — hypothesis_graph 连通分量数 / 节点数
+    if hypothesis_graph is None:
+        return 1.0  # 没 graph, 默认不阻断
+    try:
+        n_nodes = len(hypothesis_graph.all_nodes())
+        n_comp = hypothesis_graph.component_count()
+        # 0 节点 → 0; 否则 [0,1] 标准化, 越多分量越健康
+        return (n_comp / n_nodes) if n_nodes > 0 else 0.0
+    except Exception:  # 防御: 拓扑分计算失败取折中
+        logger.debug("best-effort op failed", exc_info=True)
+        return 0.5  # 不阻断, advisory
+
+
+def _completion_repro_evidence(outputs_dir: str | Path) -> float:
+    """L3: repro_evidence — outputs_dir 里的证据文件比例."""
+    # L3: repro_evidence — outputs_dir 里有文件 (.png/.csv/.json/.txt/.parquet)
+    try:
+        out_path = Path(outputs_dir)
+        if out_path.exists() and out_path.is_dir():
+            files = list(out_path.rglob("*"))
+            evidence_files = [
+                f
+                for f in files
+                if f.is_file()
+                and f.suffix.lower()
+                in {".png", ".csv", ".json", ".txt", ".parquet", ".pdf", ".jpg"}
+            ]
+            # 5+ 文件 → 1.0; 线性插值
+            return min(1.0, len(evidence_files) / 5.0)
+        return 0.0
+    except Exception:  # 防御: 复现分失败取折中
+        logger.debug("best-effort op failed", exc_info=True)
+        return 0.5
+
+
+def _completion_evidence_strength(report_md: str) -> float:
+    """L4: evidence_strength — report 里引用 / ref / citation 数."""
+    # L4: evidence_strength — report 里引用 / ref / citation 数
+    try:
+        # ponytail: 字符串计数, 不上正则. ceiling: 真 citation parser.
+        _low = report_md.lower()
+        cite_hits = (
+            _low.count("[")
+            + _low.count("ref:")
+            + _low.count("cite")
+            + _low.count("see ")
+        )
+        # 10+ 引用 → 1.0
+        return min(1.0, cite_hits / 10.0)
+    except Exception:  # 防御: 强度分失败取折中
+        logger.debug("best-effort op failed", exc_info=True)
+        return 0.5
 
 
 def metacog_check_topology_collapse(
@@ -451,56 +524,73 @@ def metacog_check_topology_collapse(
     """
     # 路径 1: hypothesis_graph 优先
     if hypothesis_graph is not None:
-        try:
-            n_nodes = len(hypothesis_graph.all_nodes())
-            n_comp = hypothesis_graph.component_count()
-            if n_nodes == 0:
-                return {"collapsed": True, "diversity_score": 0.0,
-                        "reason": "hypothesis_graph 为空 (无节点)"}
-            # ponytail: 用 component_count / n_nodes 当 diversity 代理.
-            # ceiling: 用 statement 语义嵌入算真 diversity.
-            diversity = n_comp / n_nodes
-            collapsed = hypothesis_graph.is_collapsed(min_components=2)
-            reason = None
-            if collapsed:
-                reason = (f"连通分量 {n_comp} < 2, 搜索空间坍缩 "
-                          f"(n_nodes={n_nodes})")
-            return {
-                "collapsed": collapsed,
-                "diversity_score": diversity,
-                "reason": reason,
-            }
-        except Exception as exc:
-            return {"collapsed": False, "diversity_score": 0.5,
-                    "reason": f"hypothesis_graph 检测异常: {exc}"}
+        return _topology_collapse_from_graph(hypothesis_graph)
 
     # 路径 2: hypothesis_list (List[Hypothesis] or List[dict])
     if hypothesis_list is not None:
-        statements = []
-        for h in hypothesis_list:
-            stmt = getattr(h, "statement", None)
-            if stmt is None and isinstance(h, dict):
-                stmt = h.get("statement", "")
-            if stmt:
-                statements.append(stmt)
-        if not statements:
-            return {"collapsed": True, "diversity_score": 0.0,
-                    "reason": "hypothesis_list 为空或无 statement"}
-        unique = len(set(statements))
-        diversity = unique / len(statements)
-        collapsed = diversity < 0.5
+        return _topology_collapse_from_list(hypothesis_list)
+
+    # 路径 3: 无 graph 无 list → 不坍缩 (兜底)
+    return {"collapsed": False, "diversity_score": 1.0, "reason": None}
+
+
+def _topology_collapse_from_graph(hypothesis_graph: Any) -> dict:
+    """路径 1: 用 hypothesis_graph 的连通分量判断拓扑坍缩."""
+    try:
+        n_nodes = len(hypothesis_graph.all_nodes())
+        n_comp = hypothesis_graph.component_count()
+        if n_nodes == 0:
+            return {
+                "collapsed": True,
+                "diversity_score": 0.0,
+                "reason": "hypothesis_graph 为空 (无节点)",
+            }
+        # ponytail: 用 component_count / n_nodes 当 diversity 代理.
+        # ceiling: 用 statement 语义嵌入算真 diversity.
+        diversity = n_comp / n_nodes
+        collapsed = hypothesis_graph.is_collapsed(min_components=2)
         reason = None
         if collapsed:
-            reason = (f"unique statements {unique}/{len(statements)} "
-                      f"< 0.5, 假设同质化")
+            reason = f"连通分量 {n_comp} < 2, 搜索空间坍缩 (n_nodes={n_nodes})"
         return {
             "collapsed": collapsed,
             "diversity_score": diversity,
             "reason": reason,
         }
+    except Exception as exc:
+        return {
+            "collapsed": False,
+            "diversity_score": 0.5,
+            "reason": f"hypothesis_graph 检测异常: {exc}",
+        }
 
-    # 路径 3: 无 graph 无 list → 不坍缩 (兜底)
-    return {"collapsed": False, "diversity_score": 1.0, "reason": None}
+
+def _topology_collapse_from_list(hypothesis_list: list) -> dict:
+    """路径 2: 用 hypothesis_list 的 statement 重复度判断拓扑坍缩."""
+    statements = []
+    for h in hypothesis_list:
+        stmt = getattr(h, "statement", None)
+        if stmt is None and isinstance(h, dict):
+            stmt = h.get("statement", "")
+        if stmt:
+            statements.append(stmt)
+    if not statements:
+        return {
+            "collapsed": True,
+            "diversity_score": 0.0,
+            "reason": "hypothesis_list 为空或无 statement",
+        }
+    unique = len(set(statements))
+    diversity = unique / len(statements)
+    collapsed = diversity < 0.5
+    reason = None
+    if collapsed:
+        reason = f"unique statements {unique}/{len(statements)} < 0.5, 假设同质化"
+    return {
+        "collapsed": collapsed,
+        "diversity_score": diversity,
+        "reason": reason,
+    }
 
 
 def metacog_check_selection_bias(
@@ -524,10 +614,16 @@ def metacog_check_selection_bias(
     hint 传入时 (调用方已持有独立 hint) 直接透出, 否则用 detect 给的内置 hint.
     """
     if not observations:
-        return {"biased": False, "bias_type": "", "n": 0,
-                "reason": None, "hint": hint or ""}
+        return {
+            "biased": False,
+            "bias_type": "",
+            "n": 0,
+            "reason": None,
+            "hint": hint or "",
+        }
     try:
         from huginn.metacog.selection_bias import detect_selection_bias
+
         v = detect_selection_bias(observations)
         return {
             "biased": v.biased,
@@ -537,5 +633,10 @@ def metacog_check_selection_bias(
             "hint": hint or v.hint,
         }
     except Exception as exc:
-        return {"biased": False, "bias_type": "", "n": 0,
-                "reason": f"selection bias 检测异常: {exc}", "hint": hint or ""}
+        return {
+            "biased": False,
+            "bias_type": "",
+            "n": 0,
+            "reason": f"selection bias 检测异常: {exc}",
+            "hint": hint or "",
+        }

@@ -193,22 +193,30 @@ class LeanInterface:
             )
 
         # 3. Unsound-marker guard: 编译通过 ≠ 已证.
+        unsound_failure = LeanInterface._unsound_failure(source, src_file)
+        if unsound_failure is not None:
+            return unsound_failure
+
+        return result
+
+    @staticmethod
+    def _unsound_failure(source: str, src_file: Path) -> LeanResult | None:
+        """Return a failure result if the source contains unsound tactics."""
         from huginn.lean.supply_chain import scan_unsound_tactics
 
         unsound = scan_unsound_tactics(source)
-        if unsound:
-            return LeanResult(
-                success=False,
-                stdout="",
-                stderr=(
-                    f"Unsound tactic(s) {unsound} in {src_file}: "
-                    "compiled but the theorem is not actually proven "
-                    "(sorry/admit/axiom bypass the proof obligation)."
-                ),
-                returncode=-1,
-            )
-
-        return result
+        if not unsound:
+            return None
+        return LeanResult(
+            success=False,
+            stdout="",
+            stderr=(
+                f"Unsound tactic(s) {unsound} in {src_file}: "
+                "compiled but the theorem is not actually proven "
+                "(sorry/admit/axiom bypass the proof obligation)."
+            ),
+            returncode=-1,
+        )
 
     def audit_supply_chain(self) -> dict:
         """审计本项目的 Lean 供应链完整性 (不健全标记 + 依赖固定).

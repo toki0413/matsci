@@ -26,18 +26,37 @@ _CONSTANTS: dict[str, float] = {
 
 # 白名单 math 函数 (只能经 Call 调用, 且不允许 keyword 参数)
 _FUNCS: dict[str, object] = {
-    "abs": abs, "min": min, "max": max, "round": round,
-    "sqrt": math.sqrt, "exp": math.exp, "log": math.log, "log10": math.log10,
-    "sin": math.sin, "cos": math.cos, "tan": math.tan,
-    "asin": math.asin, "acos": math.acos, "atan": math.atan, "atan2": math.atan2,
-    "sinh": math.sinh, "cosh": math.cosh, "tanh": math.tanh,
-    "floor": math.floor, "ceil": math.ceil, "fabs": math.fabs, "pow": math.pow,
+    "abs": abs,
+    "min": min,
+    "max": max,
+    "round": round,
+    "sqrt": math.sqrt,
+    "exp": math.exp,
+    "log": math.log,
+    "log10": math.log10,
+    "sin": math.sin,
+    "cos": math.cos,
+    "tan": math.tan,
+    "asin": math.asin,
+    "acos": math.acos,
+    "atan": math.atan,
+    "atan2": math.atan2,
+    "sinh": math.sinh,
+    "cosh": math.cosh,
+    "tanh": math.tanh,
+    "floor": math.floor,
+    "ceil": math.ceil,
+    "fabs": math.fabs,
+    "pow": math.pow,
 }
 
 _BIN_OPS: dict[type, object] = {
-    ast.Add: operator.add, ast.Sub: operator.sub,
-    ast.Mult: operator.mul, ast.Div: operator.truediv,
-    ast.FloorDiv: operator.floordiv, ast.Mod: operator.mod,
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
     ast.Pow: operator.pow,
 }
 _UNARY_OPS: dict[type, object] = {ast.UAdd: operator.pos, ast.USub: operator.neg}
@@ -105,21 +124,25 @@ def _walk(node: ast.AST, ctx: dict[str, float], depth: int) -> float:
         args = [_walk(a, ctx, depth + 1) for a in node.args]
         return float(_FUNCS[fn.id](*args))  # type: ignore[operator]
     if isinstance(node, ast.Compare):
-        left = _walk(node.left, ctx, depth + 1)
-        for opn, cmp_node in zip(node.ops, node.comparators):
-            right = _walk(cmp_node, ctx, depth + 1)
-            if type(opn) is ast.Lt and not (left < right):
-                return 0.0
-            if type(opn) is ast.LtE and not (left <= right):
-                return 0.0
-            if type(opn) is ast.Gt and not (left > right):
-                return 0.0
-            if type(opn) is ast.GtE and not (left >= right):
-                return 0.0
-            if type(opn) is ast.Eq and left != right:
-                return 0.0
-            if type(opn) is ast.NotEq and left == right:
-                return 0.0
-            left = right
-        return 1.0
+        return _walk_compare(node, ctx, depth)
     raise ValueError(f"expression node not allowed: {type(node).__name__}")
+
+
+def _walk_compare(node: ast.Compare, ctx: dict[str, float], depth: int) -> float:
+    left = _walk(node.left, ctx, depth + 1)
+    for opn, cmp_node in zip(node.ops, node.comparators):
+        right = _walk(cmp_node, ctx, depth + 1)
+        if type(opn) is ast.Lt and not (left < right):
+            return 0.0
+        if type(opn) is ast.LtE and not (left <= right):
+            return 0.0
+        if type(opn) is ast.Gt and not (left > right):
+            return 0.0
+        if type(opn) is ast.GtE and not (left >= right):
+            return 0.0
+        if type(opn) is ast.Eq and left != right:
+            return 0.0
+        if type(opn) is ast.NotEq and left == right:
+            return 0.0
+        left = right
+    return 1.0

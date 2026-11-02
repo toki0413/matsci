@@ -15,6 +15,24 @@ from scipy.linalg import eigh
 from huginn.core_types import ToolResult
 
 
+def _buckling_result(
+    crit_load_factors: list[float], mode_shapes: list[list[float]], n: int
+) -> ToolResult:
+    """组装屈曲分析成功结果."""
+    return ToolResult(
+        data={
+            "critical_load_factors": crit_load_factors,
+            "first_critical_factor": crit_load_factors[0]
+            if crit_load_factors
+            else None,
+            "mode_shapes": mode_shapes,
+            "n_modes_returned": len(crit_load_factors),
+            "matrix_dimension": n,
+        },
+        success=True,
+    )
+
+
 def eigenvalue_buckling(args: Any) -> ToolResult:
     """解 (K_G) φ = λ (K) φ, 返回前 N 阶临界载荷因子 λ_cr.
 
@@ -58,13 +76,4 @@ def eigenvalue_buckling(args: Any) -> ToolResult:
     crit_load_factors = eigvals[valid_mask].tolist()
     mode_shapes = eigvecs[:, valid_mask].tolist()
 
-    return ToolResult(
-        data={
-            "critical_load_factors": crit_load_factors,
-            "first_critical_factor": crit_load_factors[0] if crit_load_factors else None,
-            "mode_shapes": mode_shapes,
-            "n_modes_returned": len(crit_load_factors),
-            "matrix_dimension": n,
-        },
-        success=True,
-    )
+    return _buckling_result(crit_load_factors, mode_shapes, n)

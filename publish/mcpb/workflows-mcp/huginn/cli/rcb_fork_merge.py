@@ -5,6 +5,7 @@
 
 ponytail: 不引新依赖, 不改逻辑, 纯 import 抽取.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -25,12 +26,21 @@ logger = logging.getLogger(__name__)
 # 变成资源, 独立评审 (无对话历史) 施加选择压力. 治 "单一路径依赖":
 # 第一个想到的方案未必最优. 选择压力从 report 级 (太晚) 压到 plan 级 (执行前).
 _FCM_PERSPECTIVES = (
-    ("fast", "Optimize for speed: prefer simpler implementations, fewer ablations, "
-             "shortcuts that don't break [EXACT] components."),
-    ("robust", "Optimize for correctness: defensive choices, extra validation steps, "
-               "conservative hyperparameters, explicit failure checks."),
-    ("exact", "Optimize for fidelity: reproduce the paper as-specified, no deviations, "
-              "match every [EXACT] component literally, even if slow."),
+    (
+        "fast",
+        "Optimize for speed: prefer simpler implementations, fewer ablations, "
+        "shortcuts that don't break [EXACT] components.",
+    ),
+    (
+        "robust",
+        "Optimize for correctness: defensive choices, extra validation steps, "
+        "conservative hyperparameters, explicit failure checks.",
+    ),
+    (
+        "exact",
+        "Optimize for fidelity: reproduce the paper as-specified, no deviations, "
+        "match every [EXACT] component literally, even if slow.",
+    ),
 )
 
 
@@ -48,15 +58,42 @@ async def fork_critique_merge(
     """
     perspectives = _FCM_PERSPECTIVES[: max(1, min(k, len(_FCM_PERSPECTIVES)))]
 
+    plans = await asyncio.gather(
+        *(_gen_fcm_plan(n, h, checklist, scan_text, model) for n, h in perspectives)
+    )
+    candidates = [(n, p) for n, p in plans if p]
+    if not candidates:
+        return {
+            "winner_plan": "",
+            "winner_perspective": "",
+            "merge_insights": [],
+            "scores": [],
+        }
+    if len(candidates) == 1:
+        return {
+            "winner_plan": candidates[0][1],
+            "winner_perspective": candidates[0][0],
+            "merge_insights": [],
+            "scores": [],
+        }
+
+    return await _critique_fcm_plans(candidates, checklist, model)
+
+
+async def _gen_fcm_plan(
+    persp_name: str, persp_hint: str, checklist: str, scan_text: str, model: Any
+) -> tuple[str, str]:
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    async def _gen(persp_name: str, persp_hint: str) -> tuple[str, str]:
-        msgs = [
-            SystemMessage(content=(
+    msgs = [
+        SystemMessage(
+            content=(
                 f"You are an execution planner with a '{persp_name}' bias. {persp_hint}\n"
                 "Output ONLY the plan text, no preamble."
-            )),
-            HumanMessage(content=(
+            )
+        ),
+        HumanMessage(
+            content=(
                 "Propose an EXECUTION PLAN for the reproduction task below. "
                 "Concrete decisions only — numbers, not adjectives. Max 400 words.\n"
                 "Cover: 1) method architecture choices, 2) key hyperparameters, "
@@ -64,48 +101,39 @@ async def fork_critique_merge(
                 "5) top-2 failure modes + fallbacks.\n\n"
                 f"## Checklist\n{checklist[:4000]}\n\n"
                 f"## Structure scan\n{scan_text[:2000]}"
-            )),
-        ]
-        try:
-            resp = await asyncio.to_thread(model.invoke, msgs)
-            return persp_name, (resp.content if hasattr(resp, "content") else str(resp)).strip()
-        except Exception as e:
-            logger.warning("fcm fork(%s) failed: %s", persp_name, e)
-            return persp_name, ""
-
-    plans = await asyncio.gather(*(_gen(n, h) for n, h in perspectives))
-    candidates = [(n, p) for n, p in plans if p]
-    if not candidates:
-        return {"winner_plan": "", "winner_perspective": "", "merge_insights": [], "scores": []}
-    if len(candidates) == 1:
-        return {"winner_plan": candidates[0][1], "winner_perspective": candidates[0][0],
-                "merge_insights": [], "scores": []}
-
-    # critique — 独立评审, 新 system prompt, 无对话历史
-    numbered = "\n\n".join(f"### Plan {i+1} ({n})\n{p}" for i, (n, p) in enumerate(candidates))
-    c_msgs = [
-        SystemMessage(content=(
-            "You are a SKEPTICAL PLAN REVIEWER. Score plans, find flaws. "
-            "Output ONLY a valid JSON object. No markdown fences."
-        )),
-        HumanMessage(content=(
-            f"{numbered}\n\n"
-            f"## Checklist (ground truth)\n{checklist[:3000]}\n\n"
-            "Score each plan 0-10 on: fidelity to checklist, feasibility, risk coverage.\n"
-            "Output JSON: {\"scores\": [float], \"winner\": int (1-based), "
-            "\"merge_insights\": [string], \"fatal_flaws\": {\"plan_N\": string}}"
-        )),
+            )
+        ),
     ]
     try:
+        resp = await asyncio.to_thread(model.invoke, msgs)
+        return persp_name, (
+            resp.content if hasattr(resp, "content") else str(resp)
+        ).strip()
+    except Exception as e:
+        logger.warning("fcm fork(%s) failed: %s", persp_name, e)
+        return persp_name, ""
+
+
+async def _critique_fcm_plans(
+    candidates: list[tuple[str, str]], checklist: str, model: Any
+) -> dict[str, Any]:
+    c_msgs = _build_fcm_critique_messages(candidates, checklist)
+    try:
         resp = await asyncio.to_thread(model.invoke, c_msgs)
-        text = _strip_code_fences(resp.content if hasattr(resp, "content") else str(resp))
+        text = _strip_code_fences(
+            resp.content if hasattr(resp, "content") else str(resp)
+        )
         result = json.loads(text)
         winner_idx = int(result.get("winner", 1)) - 1
         if not (0 <= winner_idx < len(candidates)):
             winner_idx = 0
         scores = [float(s) for s in result.get("scores", [])]
-        logger.info("fcm: winner=plan%d(%s) scores=%s",
-                    winner_idx + 1, candidates[winner_idx][0], scores)
+        logger.info(
+            "fcm: winner=plan%d(%s) scores=%s",
+            winner_idx + 1,
+            candidates[winner_idx][0],
+            scores,
+        )
         return {
             "winner_plan": candidates[winner_idx][1],
             "winner_perspective": candidates[winner_idx][0],
@@ -115,8 +143,41 @@ async def fork_critique_merge(
         }
     except Exception as e:
         logger.warning("fcm critique failed (%s), fallback to first candidate", e)
-        return {"winner_plan": candidates[0][1], "winner_perspective": candidates[0][0],
-                "merge_insights": [], "scores": [], "error": str(e)}
+        return {
+            "winner_plan": candidates[0][1],
+            "winner_perspective": candidates[0][0],
+            "merge_insights": [],
+            "scores": [],
+            "error": str(e),
+        }
+
+
+def _build_fcm_critique_messages(
+    candidates: list[tuple[str, str]], checklist: str
+) -> list:
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    # critique — 独立评审, 新 system prompt, 无对话历史
+    numbered = "\n\n".join(
+        f"### Plan {i + 1} ({n})\n{p}" for i, (n, p) in enumerate(candidates)
+    )
+    return [
+        SystemMessage(
+            content=(
+                "You are a SKEPTICAL PLAN REVIEWER. Score plans, find flaws. "
+                "Output ONLY a valid JSON object. No markdown fences."
+            )
+        ),
+        HumanMessage(
+            content=(
+                f"{numbered}\n\n"
+                f"## Checklist (ground truth)\n{checklist[:3000]}\n\n"
+                "Score each plan 0-10 on: fidelity to checklist, feasibility, risk coverage.\n"
+                'Output JSON: {"scores": [float], "winner": int (1-based), '
+                '"merge_insights": [string], "fatal_flaws": {"plan_N": string}}'
+            )
+        ),
+    ]
 
 
 # === 认知原语: trajectory fork-merge (TFM) — verifier 下沉到轨迹决策点 ===
@@ -133,6 +194,7 @@ async def fork_critique_merge(
 #   天花板是无文件系统隔离 — 后跑的分叉能看见前序分叉留下的 artifacts
 #   (报告名不同, 但 data/outputs 可能已被改写). 升级路径: per-fork workspace
 #   copy 或容器隔离 (security/docker_sandbox 已有基建).
+
 
 def anneal_fork_count(t_hot: float, k_max: int = 3) -> int:
     """认知退火: 探索温度 T_hot 映射到轨迹分叉数.
@@ -172,11 +234,38 @@ def _extract_sci_numbers(text: str, min_exp: int = 3) -> list[float]:
         try:
             e = int(exp.translate(_SUP_TRANS))
             if abs(e) >= min_exp:
-                out.append(float(coef) * 10.0 ** e)
+                out.append(float(coef) * 10.0**e)
         except OverflowError:
             logger.debug("best-effort op failed", exc_info=True)
             continue
     return out
+
+
+def _numbers_from_file(p: Path, np: Any, nums: list[float], cap: int) -> None:
+    """把一个产物文件里的数值追加进 nums (npy/npz/json/txt/csv)."""
+    if p.suffix == ".npy" and np is not None:
+        a = np.asarray(np.load(p, allow_pickle=False), dtype=float).ravel()
+        nums.extend(a[: cap - len(nums)].tolist())
+    elif p.suffix == ".npz" and np is not None:
+        with np.load(p, allow_pickle=False) as z:
+            for k in z.files:
+                a = np.asarray(z[k], dtype=float).ravel()
+                nums.extend(a[: cap - len(nums)].tolist())
+    elif p.suffix == ".json":
+        # JSON 里的数字大部分是普通浮点 (0.004, 0.951057), 不是
+        # sci-notation. 旧版只用 _SCI_E 正则抓, 漏掉 99% 的真实
+        # 计算结果 → artifacts 只有 2 个值 → claim 匹配概率 ~0.
+        # 用 json.loads 递归收集所有 int/float.
+        _walk_json_numbers(json.loads(p.read_text(errors="replace")), nums, cap)
+    elif p.suffix in (".txt", ".csv"):
+        # 文本类仍用正则 (无结构保证), 但抓普通数字也抓 sci-notation.
+        for m in _ANY_NUMBER.finditer(p.read_text(errors="replace")):
+            if len(nums) >= cap:
+                break
+            try:
+                nums.append(float(m.group(0)))
+            except (ValueError, OverflowError):
+                logger.debug("best-effort op failed", exc_info=True)
 
 
 def _collect_artifact_numbers(d: Path | None, cap: int = 200_000) -> list[float]:
@@ -193,32 +282,7 @@ def _collect_artifact_numbers(d: Path | None, cap: int = 200_000) -> list[float]
         if len(nums) >= cap or not p.is_file():
             continue
         try:
-            if p.suffix == ".npy" and np is not None:
-                a = np.asarray(np.load(p, allow_pickle=False), dtype=float).ravel()
-                nums.extend(a[: cap - len(nums)].tolist())
-            elif p.suffix == ".npz" and np is not None:
-                with np.load(p, allow_pickle=False) as z:
-                    for k in z.files:
-                        a = np.asarray(z[k], dtype=float).ravel()
-                        nums.extend(a[: cap - len(nums)].tolist())
-            elif p.suffix == ".json":
-                # JSON 里的数字大部分是普通浮点 (0.004, 0.951057), 不是
-                # sci-notation. 旧版只用 _SCI_E 正则抓, 漏掉 99% 的真实
-                # 计算结果 → artifacts 只有 2 个值 → claim 匹配概率 ~0.
-                # 用 json.loads 递归收集所有 int/float.
-                _walk_json_numbers(
-                    json.loads(p.read_text(errors="replace")), nums, cap,
-                )
-            elif p.suffix in (".txt", ".csv"):
-                # 文本类仍用正则 (无结构保证), 但抓普通数字也抓 sci-notation.
-                for m in _ANY_NUMBER.finditer(p.read_text(errors="replace")):
-                    if len(nums) >= cap:
-                        break
-                    try:
-                        nums.append(float(m.group(0)))
-                    except (ValueError, OverflowError):
-                        logger.debug("best-effort op failed", exc_info=True)
-                        continue
+            _numbers_from_file(p, np, nums, cap)
         except Exception:
             logger.debug("best-effort op failed", exc_info=True)
             continue
@@ -268,8 +332,7 @@ def _reproduction_gate(
     if not artifacts:
         return True, f"unverifiable (no artifacts, {len(claims)} claims)"
     matched = sum(
-        1 for c in claims
-        if any(abs(a - c) <= rel_tol * abs(c) for a in artifacts)
+        1 for c in claims if any(abs(a - c) <= rel_tol * abs(c) for a in artifacts)
     )
     if matched == 0:
         return False, f"FAIL 0/{len(claims)} claims reproduced"
@@ -295,6 +358,23 @@ async def judge_fork_reports(
         return {"winner": None, "scores": {}, "merge_notes": []}
 
     # 执行级复现门禁 (选择信号从观点换成执行)
+    candidates, gate_notes = _apply_reproduction_gate(candidates, artifact_dirs)
+
+    if len(candidates) == 1:
+        return {
+            "winner": next(iter(candidates)),
+            "scores": {},
+            "merge_notes": [],
+            "gate": gate_notes,
+        }
+
+    msgs = _build_judge_messages(candidates, checklist, gate_notes)
+    return await _invoke_judge(model, msgs, candidates, gate_notes)
+
+
+def _apply_reproduction_gate(
+    candidates: dict[str, str], artifact_dirs: dict[str, Path] | None
+) -> tuple[dict[str, str], dict[str, str]]:
     gate_notes: dict[str, str] = {}
     if artifact_dirs:
         survivors: dict[str, str] = {}
@@ -307,11 +387,12 @@ async def judge_fork_reports(
                 logger.info("tfm gate: fork %s eliminated (%s)", name, note)
         if survivors:
             candidates = survivors
+    return candidates, gate_notes
 
-    if len(candidates) == 1:
-        return {"winner": next(iter(candidates)), "scores": {}, "merge_notes": [],
-                "gate": gate_notes}
 
+def _build_judge_messages(
+    candidates: dict[str, str], checklist: str, gate_notes: dict[str, str]
+) -> list:
     from langchain_core.messages import HumanMessage, SystemMessage
 
     numbered = "\n\n".join(
@@ -321,25 +402,37 @@ async def judge_fork_reports(
     if gate_notes:
         gate_text = (
             "\n## Reproduction gate (execution-grounded, distrust FAILed forks)\n"
-            + "\n".join(f"- {n}: {t}" for n, t in gate_notes.items()) + "\n"
+            + "\n".join(f"- {n}: {t}" for n, t in gate_notes.items())
+            + "\n"
         )
-    msgs = [
-        SystemMessage(content=(
-            "You are a SKEPTICAL REPRODUCTION REVIEWER comparing parallel execution forks. "
-            "Output ONLY a valid JSON object. No markdown fences."
-        )),
-        HumanMessage(content=(
-            f"{numbered}\n{gate_text}\n"
-            f"## Checklist (ground truth)\n{checklist[:3000]}\n\n"
-            "Score each fork 0-10 on: checklist coverage, [EXACT] fidelity, "
-            "metric plausibility (penalize better-than-paper results), completeness.\n"
-            "Output JSON: {\"scores\": {\"<name>\": float}, \"winner\": \"<name>\", "
-            "\"merge_notes\": [string — salvageable ideas from losing forks]}"
-        )),
+    return [
+        SystemMessage(
+            content=(
+                "You are a SKEPTICAL REPRODUCTION REVIEWER comparing parallel execution forks. "
+                "Output ONLY a valid JSON object. No markdown fences."
+            )
+        ),
+        HumanMessage(
+            content=(
+                f"{numbered}\n{gate_text}\n"
+                f"## Checklist (ground truth)\n{checklist[:3000]}\n\n"
+                "Score each fork 0-10 on: checklist coverage, [EXACT] fidelity, "
+                "metric plausibility (penalize better-than-paper results), completeness.\n"
+                'Output JSON: {"scores": {"<name>": float}, "winner": "<name>", '
+                '"merge_notes": [string — salvageable ideas from losing forks]}'
+            )
+        ),
     ]
+
+
+async def _invoke_judge(
+    model: Any, msgs: list, candidates: dict[str, str], gate_notes: dict[str, str]
+) -> dict[str, Any]:
     try:
         resp = await asyncio.to_thread(model.invoke, msgs)
-        text = _strip_code_fences(resp.content if hasattr(resp, "content") else str(resp))
+        text = _strip_code_fences(
+            resp.content if hasattr(resp, "content") else str(resp)
+        )
         result = json.loads(text)
         winner = str(result.get("winner", ""))
         if winner not in candidates:
@@ -354,5 +447,10 @@ async def judge_fork_reports(
         }
     except Exception as e:
         logger.warning("tfm judge failed (%s), fallback to first non-empty", e)
-        return {"winner": next(iter(candidates)), "scores": {}, "merge_notes": [],
-                "gate": gate_notes, "error": str(e)}
+        return {
+            "winner": next(iter(candidates)),
+            "scores": {},
+            "merge_notes": [],
+            "gate": gate_notes,
+            "error": str(e),
+        }

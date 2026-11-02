@@ -24,8 +24,8 @@ _TORQUE_PLACEHOLDER_TOL = 1e-9  # position 全为占位 [0,0,0] 时视为无真�
 
 # 对账阈值 (可被 audit_material_conservation 参数覆盖).
 # 取值依据: 对完全平衡的构型, 净力应远小于任何单个原子力.
-_FORCE_BALANCE_WARN = 0.10   # 净力达到最强原子力的 10% → warn
-_FORCE_BALANCE_FAIL = 0.50   # 净力达到最强原子力的 50% → fail
+_FORCE_BALANCE_WARN = 0.10  # 净力达到最强原子力的 10% → warn
+_FORCE_BALANCE_FAIL = 0.50  # 净力达到最强原子力的 50% → fail
 _TORQUE_BALANCE_WARN = 0.10
 _TORQUE_BALANCE_FAIL = 0.50
 # 宣称已收敛 (relax 离子收敛) 但残余力仍很大 = 自相矛盾 (Ev/Å).
@@ -116,6 +116,207 @@ def _mean_scale(fmax: float, n: int) -> float:
     return fmax if fmax > 0 else 0.0
 
 
+def _empty_conservation_audit() -> dict[str, Any]:
+    return {
+        "invariants": [],
+        "n_atoms": 0,
+        "net_force_gap": 0.0,
+        "force_balance_ratio": 0.0,
+        "torque_gap": None,
+        "torque_ratio": None,
+        "max_force": 0.0,
+        "forces_relaxed": True,
+        "verdict": "skip",
+        "reasons": ["无可用受力数据, 守恒审计跳过"],
+    }
+
+
+def _torque_metrics(
+    usable: list[dict[str, Any]],
+    forces: list[dict[str, Any]],
+    fmax: float,
+    f_scale: float,
+) -> tuple[float | None, float | None]:
+    """旋转平衡指标; 无真实坐标时返回 (None, None)."""
+    torque_gap = net_torque(usable)
+    if torque_gap is None:
+        return None, None
+    # 参考尺度: (质心基准力臂) 近似用坐标一阶矩强度 * 最大力
+    lever = _max_position_scale(forces)
+    ref = (lever * fmax) if lever > 0 else f_scale
+    torque_ratio = (torque_gap / ref) if ref > 0 else 0.0
+    return torque_gap, torque_ratio
+
+
+def _translation_verdict(
+    force_ratio: float,
+    net_f: float,
+    force_balance_warn: float,
+    force_balance_fail: float,
+) -> tuple[str, list[str]]:
+    """平移平衡判定, 返回 (verdict, reasons)."""
+    if force_ratio > force_balance_fail:
+        return "fail", [
+            f"平移平衡破坏: 净力 |ΣF|={net_f:.4g} 达最强原子力 {force_ratio * 100:.0f}% "
+            "(>50%), 几何可能未收敛或约束错误"
+        ]
+    if force_ratio > force_balance_warn:
+        return "warn", [
+            f"平移平衡可疑: 净力 |ΣF|={net_f:.4g} 为最强原子力的 {force_ratio * 100:.0f}%"
+        ]
+    return "pass", []
+
+
+def _torque_verdict(
+    torque_gap: float | None,
+    torque_ratio: float | None,
+    torque_balance_warn: float,
+    torque_balance_fail: float,
+) -> tuple[str, list[str]]:
+    """旋转平衡判定, 返回 (verdict, reasons); 无真实坐标时视为通过."""
+    if torque_ratio is None:
+        return "pass", []
+    if torque_ratio > torque_balance_fail:
+        return "fail", [
+            f"旋转平衡破坏: 净扭矩 {torque_gap:.4g} 达参考量级 {torque_ratio * 100:.0f}% "
+            "(>50%)"
+        ]
+    if torque_ratio > torque_balance_warn:
+        return "warn", [f"旋转平衡可疑: 净扭矩为参考量级的 {torque_ratio * 100:.0f}%"]
+    return "pass", []
+
+
+def _conservation_verdict(
+    *,
+    force_ratio: float,
+    net_f: float,
+    fmax: float,
+    torque_gap: float | None,
+    torque_ratio: float | None,
+    converged: bool,
+    force_balance_warn: float,
+    force_balance_fail: float,
+    torque_balance_warn: float,
+    torque_balance_fail: float,
+    converged_force_max: float,
+) -> tuple[str, list[str], bool]:
+    """综合平移/旋转平衡与收敛标记, 返回 (verdict, reasons, forces_relaxed)."""
+    verdict, reasons = _translation_verdict(
+        force_ratio, net_f, force_balance_warn, force_balance_fail
+    )
+    t_verdict, t_reasons = _torque_verdict(
+        torque_gap, torque_ratio, torque_balance_warn, torque_balance_fail
+    )
+    reasons.extend(t_reasons)
+    if t_verdict == "fail":
+        verdict = "fail" if verdict != "fail" else verdict
+    elif t_verdict == "warn":
+        verdict = "warn" if verdict == "pass" else verdict
+
+    # 跨信号对账: 宣称离子收敛 (relax) 却残留大残余力 = 自相矛盾.
+    forces_relaxed = fmax <= converged_force_max
+    if converged and not forces_relaxed:
+        verdict = "warn" if verdict == "pass" else verdict
+        reasons.append(
+            f"收敛标记自相矛盾: 宣称 converged 但 max|F|={fmax:.4g} Ev/Å "
+            f"> {converged_force_max:g} (relax 离子收敛本应力极小)"
+        )
+
+    if not reasons:
+        reasons.append("平移/旋转平衡通过, 未见守恒破坏")
+    return verdict, reasons, forces_relaxed
+
+
+def _conservation_report(
+    invariants: list[str],
+    n: int,
+    net_f: float,
+    force_ratio: float,
+    torque_gap: float | None,
+    torque_ratio: float | None,
+    fmax: float,
+    forces_relaxed: bool,
+    verdict: str,
+    reasons: list[str],
+) -> dict[str, Any]:
+    """组装最终审计结果."""
+    return {
+        "invariants": invariants,
+        "n_atoms": n,
+        "net_force_gap": net_f,
+        "force_balance_ratio": round(force_ratio, 4),
+        "torque_gap": torque_gap,
+        "torque_ratio": round(torque_ratio, 4) if torque_ratio is not None else None,
+        "max_force": fmax,
+        "forces_relaxed": forces_relaxed,
+        "verdict": verdict,
+        "reasons": reasons,
+    }
+
+
+def _balance_metrics(
+    usable: list[dict[str, Any]],
+    forces: list[dict[str, Any]],
+    n: int,
+) -> tuple[list[str], float, float, float, float | None, float | None]:
+    """计算守恒审计所需的各项指标与不变量清单."""
+    invariants = ["translational_equilibrium"]
+    fmax = _max_force(usable)
+    f_scale = _mean_scale(fmax, n)
+
+    net_f = net_force(usable)
+    force_ratio = (net_f / f_scale) if f_scale > 0 else 0.0
+
+    # 旋转平衡: 仅当有真实坐标
+    torque_gap, torque_ratio = _torque_metrics(usable, forces, fmax, f_scale)
+    if torque_gap is not None:
+        invariants.append("rotational_equilibrium")
+    return invariants, fmax, net_f, force_ratio, torque_gap, torque_ratio
+
+
+def _audit_conservation(
+    usable: list[dict[str, Any]],
+    forces: list[dict[str, Any]],
+    n: int,
+    *,
+    converged: bool,
+    force_balance_warn: float,
+    force_balance_fail: float,
+    torque_balance_warn: float,
+    torque_balance_fail: float,
+    converged_force_max: float,
+) -> dict[str, Any]:
+    """在已有可用受力数据的前提下完成对账."""
+    invariants, fmax, net_f, force_ratio, torque_gap, torque_ratio = _balance_metrics(
+        usable, forces, n
+    )
+    verdict, reasons, forces_relaxed = _conservation_verdict(
+        force_ratio=force_ratio,
+        net_f=net_f,
+        fmax=fmax,
+        torque_gap=torque_gap,
+        torque_ratio=torque_ratio,
+        converged=converged,
+        force_balance_warn=force_balance_warn,
+        force_balance_fail=force_balance_fail,
+        torque_balance_warn=torque_balance_warn,
+        torque_balance_fail=torque_balance_fail,
+        converged_force_max=converged_force_max,
+    )
+    return _conservation_report(
+        invariants,
+        n,
+        net_f,
+        force_ratio,
+        torque_gap,
+        torque_ratio,
+        fmax,
+        forces_relaxed,
+        verdict,
+        reasons,
+    )
+
+
 def audit_material_conservation(
     result: dict[str, Any],
     *,
@@ -147,88 +348,19 @@ def audit_material_conservation(
     usable = _usable_forces(forces)
     n = len(usable)
     if n == 0:
-        return {
-            "invariants": [],
-            "n_atoms": 0,
-            "net_force_gap": 0.0,
-            "force_balance_ratio": 0.0,
-            "torque_gap": None,
-            "torque_ratio": None,
-            "max_force": 0.0,
-            "forces_relaxed": True,
-            "verdict": "skip",
-            "reasons": ["无可用受力数据, 守恒审计跳过"],
-        }
+        return _empty_conservation_audit()
 
-    invariants = ["translational_equilibrium"]
-    fmax = _max_force(usable)
-    f_scale = _mean_scale(fmax, n)
-
-    net_f = net_force(usable)
-    force_ratio = (net_f / f_scale) if f_scale > 0 else 0.0
-
-    # 旋转平衡: 仅当有真实坐标
-    torque_gap = net_torque(usable)
-    torque_ratio: float | None = None
-    if torque_gap is not None:
-        invariants.append("rotational_equilibrium")
-        # 参考尺度: (质心基准力臂) 近似用坐标一阶矩强度 * 最大力
-        lever = _max_position_scale(forces)
-        ref = (lever * fmax) if lever > 0 else f_scale
-        torque_ratio = (torque_gap / ref) if ref > 0 else 0.0
-
-    reasons: list[str] = []
-    verdict = "pass"
-
-    if force_ratio > force_balance_fail:
-        verdict = "fail"
-        reasons.append(
-            f"平移平衡破坏: 净力 |ΣF|={net_f:.4g} 达最强原子力 {force_ratio*100:.0f}% "
-            "(>50%), 几何可能未收敛或约束错误"
-        )
-    elif force_ratio > force_balance_warn:
-        verdict = "warn"
-        reasons.append(
-            f"平移平衡可疑: 净力 |ΣF|={net_f:.4g} 为最强原子力的 {force_ratio*100:.0f}%"
-        )
-
-    if torque_ratio is not None:
-        if torque_ratio > torque_balance_fail:
-            verdict = "fail" if verdict != "fail" else verdict
-            reasons.append(
-                f"旋转平衡破坏: 净扭矩 {torque_gap:.4g} 达参考量级 {torque_ratio*100:.0f}% "
-                "(>50%)"
-            )
-        elif torque_ratio > torque_balance_warn:
-            verdict = "warn" if verdict == "pass" else verdict
-            reasons.append(
-                f"旋转平衡可疑: 净扭矩为参考量级的 {torque_ratio*100:.0f}%"
-            )
-
-    # 跨信号对账: 宣称离子收敛 (relax) 却残留大残余力 = 自相矛盾.
-    forces_relaxed = fmax <= converged_force_max
-    if result.get("converged") and not forces_relaxed:
-        verdict = "warn" if verdict == "pass" else verdict
-        reasons.append(
-            f"收敛标记自相矛盾: 宣称 converged 但 max|F|={fmax:.4g} Ev/Å "
-            f"> {converged_force_max:g} (relax 离子收敛本应力极小)"
-        )
-
-    if not reasons:
-        reasons.append("平移/旋转平衡通过, 未见守恒破坏")
-
-    return {
-        "invariants": invariants,
-        "n_atoms": n,
-        "net_force_gap": net_f,
-        "force_balance_ratio": round(force_ratio, 4),
-        "torque_gap": torque_gap,
-        "torque_ratio": round(torque_ratio, 4) if torque_ratio is not None else None,
-        "max_force": fmax,
-        "forces_relaxed": forces_relaxed,
-        "verdict": verdict,
-        "reasons": reasons,
-    }
+    return _audit_conservation(
+        usable,
+        forces,
+        n,
+        converged=bool(result.get("converged")),
+        force_balance_warn=force_balance_warn,
+        force_balance_fail=force_balance_fail,
+        torque_balance_warn=torque_balance_warn,
+        torque_balance_fail=torque_balance_fail,
+        converged_force_max=converged_force_max,
+    )
 
 
 def _max_position_scale(forces: list[dict[str, Any]]) -> float:

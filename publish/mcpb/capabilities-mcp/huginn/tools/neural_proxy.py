@@ -44,13 +44,17 @@ class _LitePDEProxy(nn.Module if _TORCH_AVAILABLE else object):
     没有真正的 Transolver attention, 但至少是可训练的神经网络,
     不是随机数. 首次 predict 时自动初始化, 后续调用复用权重."""
 
-    def __init__(self, input_dim: int = 4, hidden: int = 64, output_dim: int = 1) -> None:
+    def __init__(
+        self, input_dim: int = 4, hidden: int = 64, output_dim: int = 1
+    ) -> None:
         if not _TORCH_AVAILABLE:
             return
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(input_dim, hidden), nn.SiLU(),
-            nn.Linear(hidden, hidden), nn.SiLU(),
+            nn.Linear(input_dim, hidden),
+            nn.SiLU(),
+            nn.Linear(hidden, hidden),
+            nn.SiLU(),
             nn.Linear(hidden, output_dim),
         )
 
@@ -58,6 +62,114 @@ class _LitePDEProxy(nn.Module if _TORCH_AVAILABLE else object):
         if not _TORCH_AVAILABLE:
             return None
         return self.net(x)
+
+
+def _resolve_nodes(mesh: dict) -> tuple[Any, int]:
+    """拿节点数组与节点数, 至少能给个形状对齐的零场."""
+    nodes = mesh.get("nodes") if isinstance(mesh, dict) else mesh
+    try:
+        return nodes, int(np.asarray(nodes).shape[0])
+    except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
+        return nodes, 0
+
+
+def _torch_unavailable_solution() -> ProxySolution:
+    return ProxySolution(
+        field=np.array([]),
+        available=False,
+        reason="torch not available",
+        backend="none",
+    )
+
+
+def _extract_bc_value(bc: dict) -> float:
+    """从 boundary_conditions 里提取平均 BC 值."""
+    bc_val = 0.0
+    if isinstance(bc, dict):
+        vals = bc.get("values")
+        if vals is not None:
+            try:
+                bc_val = float(np.mean(vals))
+            except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
+                bc_val = 0.0
+    return bc_val
+
+
+def _lite_features(nodes: Any, n_nodes: int, bc_val: float) -> np.ndarray:
+    """构造 lite MLP 的输入特征."""
+    nodes_arr = np.asarray(nodes, dtype=np.float32)
+    if nodes_arr.ndim == 1:
+        nodes_arr = nodes_arr.reshape(-1, 1)
+    n_feat = nodes_arr.shape[1]
+    # 输入: [x, y, z, bc_val] 或 [x, bc_val]
+    if n_feat >= 3:
+        return np.column_stack([nodes_arr[:, :3], np.full(n_nodes, bc_val)])
+    if n_feat >= 1:
+        return np.column_stack(
+            [
+                nodes_arr[:, :1],
+                np.full(n_nodes, bc_val),
+                np.zeros(n_nodes),
+                np.full(n_nodes, bc_val),
+            ]
+        )
+    return np.column_stack(
+        [
+            np.zeros(n_nodes),
+            np.full(n_nodes, bc_val),
+            np.zeros(n_nodes),
+            np.full(n_nodes, bc_val),
+        ]
+    )
+
+
+def _transolver_predict(
+    model: Any, nodes: Any, n_nodes: int, bc_val: float
+) -> ProxySolution | None:
+    """真正的 Transolver forward; 失败返回 None 让调用方回退."""
+    try:
+        nodes_t = torch.tensor(np.asarray(nodes), dtype=torch.float32)
+        bc_t = torch.tensor([[bc_val]], dtype=torch.float32)
+        with torch.no_grad():
+            out = model(nodes_t, bc_t)
+        field = out.cpu().numpy().flatten()
+        return ProxySolution(
+            field=field,
+            available=True,
+            backend="transolver",
+            meta={"n_nodes": n_nodes, "model": "transolver"},
+        )
+    except Exception:
+        logger.debug(
+            "best-effort op failed", exc_info=True
+        )  # forward 失败, 回退到 lite MLP
+        return None
+
+
+def _lite_predict(
+    proxy: Any, nodes: Any, n_nodes: int, bc_val: float
+) -> ProxySolution | None:
+    """Lite MLP forward: 把 (node_coords, bc_val) 喂给 MLP; 失败返回 None."""
+    try:
+        feats = _lite_features(nodes, n_nodes, bc_val)
+        with torch.no_grad():
+            out = proxy(torch.tensor(feats, dtype=torch.float32))
+        field = out.cpu().numpy().flatten()
+        return ProxySolution(
+            field=field,
+            available=True,
+            backend="lite_mlp",
+            meta={
+                "n_nodes": n_nodes,
+                "model": "lite_mlp_untrained",
+                "note": "untrained MLP, output is approximate",
+            },
+        )
+    except Exception:
+        logger.debug("lite mlp forward failed", exc_info=True)
+        return None
 
 
 @dataclass
@@ -131,15 +243,19 @@ class NeuralPDEProxy:
             if _TRANSOLVER_AVAILABLE:
                 # 真正的 Transolver: 构造网络 + 加载权重
                 # 具体构造参数取决于 transolver 包版本
-                self._model = torch.load(model_path, map_location=self._device, weights_only=False)
-                if hasattr(self._model, 'eval'):
+                self._model = torch.load(
+                    model_path, map_location=self._device, weights_only=False
+                )
+                if hasattr(self._model, "eval"):
                     self._model.eval()
                 self._loaded = True
             else:
                 # 没有 transolver 包, 尝试用 lite MLP 加载权重
                 self._lite_proxy = _LitePDEProxy()
                 try:
-                    state = torch.load(model_path, map_location=self._device, weights_only=True)
+                    state = torch.load(
+                        model_path, map_location=self._device, weights_only=True
+                    )
                     self._lite_proxy.load_state_dict(state)
                     self._lite_proxy.eval()
                     self._loaded = True
@@ -156,20 +272,10 @@ class NeuralPDEProxy:
         bc:    {'type': 'dirichlet', 'values': ...}
         """
         if not _TORCH_AVAILABLE:
-            return ProxySolution(
-                field=np.array([]),
-                available=False,
-                reason="torch not available",
-                backend="none",
-            )
+            return _torch_unavailable_solution()
 
         # 拿节点数, 至少能给个形状对齐的零场
-        nodes = mesh.get("nodes") if isinstance(mesh, dict) else mesh
-        try:
-            n_nodes = int(np.asarray(nodes).shape[0])
-        except Exception:
-            logger.debug("best-effort op failed", exc_info=True)
-            n_nodes = 0
+        nodes, n_nodes = _resolve_nodes(mesh)
 
         if not self._loaded or (self._model is None and self._lite_proxy is None):
             # 权重没加载. 如果 torch 可用, 用未训练的 lite MLP 给一个
@@ -187,62 +293,18 @@ class NeuralPDEProxy:
                 )
 
         # 提取 BC 值
-        bc_val = 0.0
-        if isinstance(bc, dict):
-            vals = bc.get("values")
-            if vals is not None:
-                try:
-                    bc_val = float(np.mean(vals))
-                except Exception:
-                    logger.debug("best-effort op failed", exc_info=True)
-                    bc_val = 0.0
+        bc_val = _extract_bc_value(bc)
 
         # 用已加载模型或 lite MLP 做 forward
         if self._model is not None and _TRANSOLVER_AVAILABLE:
-            # 真正的 Transolver forward
-            try:
-                nodes_t = torch.tensor(np.asarray(nodes), dtype=torch.float32)
-                bc_t = torch.tensor([[bc_val]], dtype=torch.float32)
-                with torch.no_grad():
-                    out = self._model(nodes_t, bc_t)
-                field = out.cpu().numpy().flatten()
-                return ProxySolution(
-                    field=field,
-                    available=True,
-                    backend="transolver",
-                    meta={"n_nodes": n_nodes, "model": "transolver"},
-                )
-            except Exception:
-                logger.debug("best-effort op failed", exc_info=True)  # forward 失败, 回退到 lite MLP
+            solution = _transolver_predict(self._model, nodes, n_nodes, bc_val)
+            if solution is not None:
+                return solution
 
-        # Lite MLP forward: 把 (node_coords, bc_val) 喂给 MLP
         if self._lite_proxy is not None and _TORCH_AVAILABLE:
-            try:
-                nodes_arr = np.asarray(nodes, dtype=np.float32)
-                if nodes_arr.ndim == 1:
-                    nodes_arr = nodes_arr.reshape(-1, 1)
-                n_feat = nodes_arr.shape[1]
-                # 输入: [x, y, z, bc_val] 或 [x, bc_val]
-                if n_feat >= 3:
-                    feats = np.column_stack([nodes_arr[:, :3], np.full(n_nodes, bc_val)])
-                elif n_feat >= 1:
-                    feats = np.column_stack([nodes_arr[:, :1], np.full(n_nodes, bc_val),
-                                             np.zeros(n_nodes), np.full(n_nodes, bc_val)])
-                else:
-                    feats = np.column_stack([np.zeros(n_nodes), np.full(n_nodes, bc_val),
-                                             np.zeros(n_nodes), np.full(n_nodes, bc_val)])
-                with torch.no_grad():
-                    out = self._lite_proxy(torch.tensor(feats, dtype=torch.float32))
-                field = out.cpu().numpy().flatten()
-                return ProxySolution(
-                    field=field,
-                    available=True,
-                    backend="lite_mlp",
-                    meta={"n_nodes": n_nodes, "model": "lite_mlp_untrained",
-                          "note": "untrained MLP, output is approximate"},
-                )
-            except Exception:
-                logger.debug("lite mlp forward failed", exc_info=True)
+            solution = _lite_predict(self._lite_proxy, nodes, n_nodes, bc_val)
+            if solution is not None:
+                return solution
 
         # 最终回退: 均匀场
         return ProxySolution(

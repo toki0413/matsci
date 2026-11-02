@@ -47,9 +47,7 @@ def _warn_missing_api_keys(ctx: CliContext) -> None:
     if not missing:
         return
 
-    ctx.console.print(
-        "[yellow]提示: 运行 huginn api-keys 配置 API key[/yellow]"
-    )
+    ctx.console.print("[yellow]提示: 运行 huginn api-keys 配置 API key[/yellow]")
     ctx.console.print(f"[dim]未配置: {', '.join(missing)}[/dim]")
 
 
@@ -103,9 +101,7 @@ def _ai_message_view(msg: Any) -> tuple[str, str, list[str]]:
     content = msg.content
     if isinstance(content, list):
         # 多模态 content: 拼出 text blocks, 非 text 的(图片等)直接丢掉
-        content = "".join(
-            b.get("text", "") for b in content if isinstance(b, dict)
-        )
+        content = "".join(b.get("text", "") for b in content if isinstance(b, dict))
     kind = "thought" if tcs else "answer"
     names = [tc.get("name", "unknown") for tc in tcs]
     return kind, content or "", names
@@ -117,6 +113,28 @@ def chat(ctx: CliContext) -> None:
     """Start interactive chat with the Agent."""
     ds = get_design_system()
     avatar = get_pet_avatar()
+    _show_welcome(ctx, ds, avatar)
+
+    agent = _init_chat_agent(ctx, ds)
+
+    # 启动时检测缺失的 API key, 提示用户跑 huginn api-keys 配置
+    _warn_missing_api_keys(ctx)
+
+    # Initialize MCP servers
+    _init_chat_mcp(ctx, ds, agent)
+
+    # --prompt headless 模式: 跑一次就退出, 不进交互循环
+    if ctx.prompt_text:
+        _run_one_turn(ctx, agent, ctx.prompt_text, ds)
+        with contextlib.suppress(Exception):
+            asyncio.run(shutdown_mcp())
+        return
+
+    # Chat loop
+    _chat_loop(ctx, agent, ds)
+
+
+def _show_welcome(ctx: CliContext, ds: Any, avatar: str) -> None:
     ds.dialog(
         title="Welcome",
         content=(
@@ -133,10 +151,10 @@ def chat(ctx: CliContext) -> None:
     if ctx.yolo:
         ctx.console.print("[yellow]YOLO mode: 所有操作自动执行[/yellow]")
     if ctx.resume_thread_id:
-        ctx.console.print(
-            f"[cyan]Resuming session: {ctx.resume_thread_id}[/cyan]"
-        )
+        ctx.console.print(f"[cyan]Resuming session: {ctx.resume_thread_id}[/cyan]")
 
+
+def _init_chat_agent(ctx: CliContext, ds: Any) -> Any:
     agent = build_agent_from_ctx(ctx, approval_callback=_make_approval_callback(ctx))
     if agent is None:
         ds.warning("No provider configured.")
@@ -154,11 +172,10 @@ def chat(ctx: CliContext) -> None:
     else:
         agent.register_tools_from_registry()
         ds.success(f"Agent initialized with {len(agent.langchain_tools)} tools")
+    return agent
 
-    # 启动时检测缺失的 API key, 提示用户跑 huginn api-keys 配置
-    _warn_missing_api_keys(ctx)
 
-    # Initialize MCP servers
+def _init_chat_mcp(ctx: CliContext, ds: Any, agent: Any) -> None:
     try:
         cfg = ctx.load_config()
         asyncio.run(init_mcp(cfg.abaqus_mcp_server))
@@ -168,14 +185,8 @@ def chat(ctx: CliContext) -> None:
     except Exception as e:
         ds.warning(f"MCP init skipped: {e}")
 
-    # --prompt headless 模式: 跑一次就退出, 不进交互循环
-    if ctx.prompt_text:
-        _run_one_turn(ctx, agent, ctx.prompt_text, ds)
-        with contextlib.suppress(Exception):
-            asyncio.run(shutdown_mcp())
-        return
 
-    # Chat loop
+def _chat_loop(ctx: CliContext, agent: Any, ds: Any) -> None:
     try:
         while True:
             try:
@@ -255,6 +266,72 @@ def _run_one_turn(
     _run_blocking_turn(ctx, agent, message, ds, thread_id)
 
 
+def _unwrap_control_state(state: Any) -> Any:
+    """单步 / 思考循环终止标记: 拆出真实 state 再继续."""
+    if isinstance(state, dict) and (
+        state.get("tool_break") or state.get("thought_loop_terminated")
+    ):
+        return state.get("state") or {}
+    return state
+
+
+def _render_thought(console: Any, text: str, tool_names: list[str]) -> None:
+    """推理 / 计划: dim 显示, 不进 Live."""
+    if text.strip():
+        console.print(f"[dim italic]{text}[/dim italic]")
+    for name in tool_names:
+        console.print(f"[dim]→ 调用 [bold]{name}[/bold][/dim]")
+
+
+def _render_tool_message(console: Any, msg: Any) -> None:
+    """工具消息: 一行 ✓/✗ + 工具名."""
+    name = getattr(msg, "name", None) or "tool"
+    ok = not (isinstance(msg.content, str) and msg.content.startswith("Error"))
+    mark = "[green]✓[/green]" if ok else "[red]✗[/red]"
+    console.print(f"{mark} {name}")
+
+
+def _render_message(
+    console: Any, msg: Any, assistant_parts: list[str], live: Any
+) -> None:
+    """渲染一条新增消息: AI 正文进 Live, 思考/工具消息走 console."""
+    if isinstance(msg, AIMessage):
+        kind, text, tool_names = _ai_message_view(msg)
+        if kind == "thought":
+            _render_thought(console, text, tool_names)
+        elif text:
+            assistant_parts.append(text)
+            live.update(Text(text, style="magenta"))
+    elif isinstance(msg, ToolMessage):
+        _render_tool_message(console, msg)
+
+
+async def _drive_streaming_turn(
+    console: Any, agent: Any, message: str, thread_id: str
+) -> tuple[str, list]:
+    """驱动一轮流式对话, 返回 (正文, 最终 messages)."""
+    shown = 0
+    assistant_parts: list[str] = []
+    final_messages: list = []
+    with Live(
+        Text("Thinking…", style="dim italic"),
+        console=console,
+        refresh_per_second=12,
+        transient=True,
+    ) as live:
+        async for state in agent.chat(message, thread_id=thread_id):
+            state = _unwrap_control_state(state)
+            if isinstance(state, dict):
+                final_messages = state.get("messages", [])
+
+            new_msgs = final_messages[shown:]
+            shown = len(final_messages)
+            for msg in new_msgs:
+                _render_message(console, msg, assistant_parts, live)
+
+    return "".join(assistant_parts), final_messages
+
+
 def _run_streaming_turn(
     ctx: CliContext,
     agent: Any,
@@ -271,54 +348,9 @@ def _run_streaming_turn(
     """
     console = ctx.console
 
-    async def _drive() -> tuple[str, list]:
-        shown = 0
-        assistant_parts: list[str] = []
-        final_messages: list = []
-        with Live(
-            Text("Thinking…", style="dim italic"),
-            console=console,
-            refresh_per_second=12,
-            transient=True,
-        ) as live:
-            async for state in agent.chat(message, thread_id=thread_id):
-                # 单步 / 思考循环终止标记: 拆出真实 state 再继续
-                if isinstance(state, dict) and (
-                    state.get("tool_break") or state.get("thought_loop_terminated")
-                ):
-                    state = state.get("state") or {}
-
-                if isinstance(state, dict):
-                    final_messages = state.get("messages", [])
-
-                new_msgs = final_messages[shown:]
-                shown = len(final_messages)
-                for msg in new_msgs:
-                    if isinstance(msg, AIMessage):
-                        kind, text, tool_names = _ai_message_view(msg)
-                        if kind == "thought":
-                            # 推理 / 计划: dim 显示, 不进 Live
-                            if text.strip():
-                                console.print(f"[dim italic]{text}[/dim italic]")
-                            for name in tool_names:
-                                console.print(
-                                    f"[dim]→ 调用 [bold]{name}[/bold][/dim]"
-                                )
-                        elif text:
-                            assistant_parts.append(text)
-                            live.update(Text(text, style="magenta"))
-                    elif isinstance(msg, ToolMessage):
-                        name = getattr(msg, "name", None) or "tool"
-                        ok = not (
-                            isinstance(msg.content, str)
-                            and msg.content.startswith("Error")
-                        )
-                        mark = "[green]✓[/green]" if ok else "[red]✗[/red]"
-                        console.print(f"{mark} {name}")
-
-        return "".join(assistant_parts), final_messages
-
-    final_text, final_messages = asyncio.run(_drive())
+    final_text, final_messages = asyncio.run(
+        _drive_streaming_turn(console, agent, message, thread_id)
+    )
 
     # 工具产生的文件改动以 diff 形式预览, 方便用户审阅
     diff_text = _extract_diff_from_messages(final_messages)

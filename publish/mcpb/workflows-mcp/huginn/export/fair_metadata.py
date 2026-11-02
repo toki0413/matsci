@@ -103,8 +103,26 @@ def generate_dataset_metadata(
     """
     now = now_iso()
 
-    # ── provenance → wasGeneratedBy ──
     prov = provenance or {}
+    # ── provenance → wasGeneratedBy ──
+    was_generated_by = _build_was_generated_by(run_id, objective, prov)
+    # ── distribution (where to find the output) ──
+    distribution = _build_distribution(prov)
+    metadata = _build_dataset_core(
+        run_id, objective, now, prov, results, was_generated_by
+    )
+    if distribution:
+        metadata["distribution"] = distribution
+
+    return metadata
+
+
+def _build_was_generated_by(
+    run_id: str,
+    objective: str,
+    prov: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the ``wasGeneratedBy`` (ResearchAction) descriptor."""
     was_generated_by: dict[str, Any] = {
         "@type": "ResearchAction",
         "name": f"HuginnAgent run {run_id}",
@@ -118,26 +136,44 @@ def generate_dataset_metadata(
         was_generated_by["startTime"] = prov["start_time"]
     if prov.get("end_time"):
         was_generated_by["endTime"] = prov["end_time"]
+    return was_generated_by
 
-    # ── distribution (where to find the output) ──
+
+def _build_distribution(prov: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build the ``distribution`` list pointing at output artifacts."""
     distribution: list[dict[str, Any]] = []
     report_path = prov.get("report_path")
     if report_path:
-        distribution.append({
-            "@type": "DataDownload",
-            "encodingFormat": "text/markdown",
-            "contentUrl": f"file://{report_path}",
-            "name": "Research Report",
-        })
+        distribution.append(
+            {
+                "@type": "DataDownload",
+                "encodingFormat": "text/markdown",
+                "contentUrl": f"file://{report_path}",
+                "name": "Research Report",
+            }
+        )
     if prov.get("trajectory_path"):
-        distribution.append({
-            "@type": "DataDownload",
-            "encodingFormat": "application/json",
-            "contentUrl": f"file://{prov['trajectory_path']}",
-            "name": "Execution Trajectory",
-        })
+        distribution.append(
+            {
+                "@type": "DataDownload",
+                "encodingFormat": "application/json",
+                "contentUrl": f"file://{prov['trajectory_path']}",
+                "name": "Execution Trajectory",
+            }
+        )
+    return distribution
 
-    metadata: dict[str, Any] = {
+
+def _build_dataset_core(
+    run_id: str,
+    objective: str,
+    now: str,
+    prov: dict[str, Any],
+    results: Any,
+    was_generated_by: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the schema.org Dataset dict (without distribution)."""
+    return {
         "@context": "https://schema.org/",
         "@type": "Dataset",
         "name": f"HuginnAgent Research Output: {run_id}",
@@ -157,10 +193,6 @@ def generate_dataset_metadata(
         ),
         "wasGeneratedBy": was_generated_by,
     }
-    if distribution:
-        metadata["distribution"] = distribution
-
-    return metadata
 
 
 def write_fair_jsonld(metadata: dict[str, Any], output_path: str | Path) -> Path:
@@ -189,9 +221,7 @@ def generate_citation(metadata: dict[str, Any]) -> str:
     # "HuginnAgent run loop_abc123" → "huginn_loop_abc123"
     parts = name_field.replace(":", "").split()
     if len(parts) >= 2:
-        cite_key = "_".join(
-            p.lower() for p in parts if p.lower() not in ("run",)
-        )
+        cite_key = "_".join(p.lower() for p in parts if p.lower() not in ("run",))
     else:
         cite_key = "huginn_dataset"
 
@@ -201,9 +231,7 @@ def generate_citation(metadata: dict[str, Any]) -> str:
         author = creator.get("name", _DEFAULT_CREATOR)
     else:
         author = str(creator)
-    year = (metadata.get("dateCreated", "")[:4]) or str(
-        datetime.now(UTC).year
-    )
+    year = (metadata.get("dateCreated", "")[:4]) or str(datetime.now(UTC).year)
     url = ""
     dist = metadata.get("distribution", [])
     if dist and isinstance(dist, list) and isinstance(dist[0], dict):

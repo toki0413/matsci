@@ -1,3 +1,5 @@
+<!-- generated: python -m huginn.cli.config_audit --permission --out docs/permission-contract.md -->
+
 # 权限契约 (Permission)
 
 自动生成: `python -m huginn.cli.config_audit --permission --out docs/permission-contract.md`.

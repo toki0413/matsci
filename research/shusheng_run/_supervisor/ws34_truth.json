@@ -1,0 +1,31 @@
+{
+  "mechanism": "contracting-sphere, interface-reaction control",
+  "F_of_t": "1-(1-v t/r)^3",
+  "t50_form": "C50 * r / (A*exp(-Ea/(R T)))",
+  "C50": 0.2062994740159002,
+  "A_m_per_s": 0.58,
+  "Ea_J_per_mol": 110000.0,
+  "rho_kg_m3": 1738.0,
+  "noise": "log-normal sigma=0.03",
+  "seed": 20261029,
+  "n_rows": 75,
+  "temperatures_K": [
+    500.0,
+    550.0,
+    600.0,
+    650.0,
+    700.0
+  ],
+  "radii_m": [
+    1e-07,
+    5e-07,
+    1e-06,
+    5e-06,
+    1e-05
+  ],
+  "expected": {
+    "r_exponent": 1.0,
+    "Ea_kJ_per_mol": 110.0,
+    "fick_r_exponent": 2.0
+  }
+}

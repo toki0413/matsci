@@ -146,15 +146,9 @@ def _maybe_agent_factory() -> Any:
 )
 @click.pass_obj
 def autoloop(
-    obj: CliContext,
-    objective: str,
-    iterations: int,
-    watch: bool,
-    interval: int,
-    no_progressive_budget: bool,
-    goal_id: str | None,
-    success_criteria: tuple[str, ...],
-    wall_clock_budget: int,
+    obj: CliContext, objective: str, iterations: int, watch: bool,
+    interval: int, no_progressive_budget: bool, goal_id: str | None,
+    success_criteria: tuple[str, ...], wall_clock_budget: int,
 ) -> None:
     """Run the autonomous closed-loop engine.
 
@@ -168,29 +162,52 @@ def autoloop(
         huginn autoloop --goal goal_abc12345
     """
     console = obj.console
-
     # 挂载 Star 插件 (prompt 段 / plugin tools), 与 serve 同一套.
     _load_star_plugins()
 
     if not objective and not watch:
-        console.print(
-            Panel(
-                "[bold yellow]Usage:[/bold yellow]\n"
-                "  huginn autoloop [OBJECTIVE]\n"
-                "  huginn autoloop --watch\n\n"
-                "[dim]Examples:[/dim]\n"
-                "  huginn autoloop 'Optimize C-S-H defect kinetics'\n"
-                "  huginn autoloop --watch --interval 60",
-                title="Autoloop Help",
-                border_style="blue",
-            )
-        )
+        _al_print_usage(console)
         return
 
-    # H3: 统一 resume 入口 — 有 checkpoint 就走 resume_engine_from_checkpoint,
-    # 让 audit 校验 + drift 检测 + engine_state + hypothesis_graph 一起跑.
-    # task_id 用 workspace.name (跟 rcb_runner 一致). 无 checkpoint / resume 失败
-    # → 退回 fresh engine, 不阻塞用户.
+    engine = _al_resolve_engine(obj, console)
+    resolved = _al_resolve_goal(console, engine, objective, goal_id,
+                                success_criteria, wall_clock_budget, iterations)
+    if resolved is None:
+        return
+    goal, objective = resolved
+
+    if watch:
+        _al_run_watch(engine, console, obj.workspace, interval,
+                      iterations, no_progressive_budget)
+    else:
+        _al_run_once(console, engine, obj.workspace, objective,
+                     iterations, no_progressive_budget, goal)
+
+
+def _al_print_usage(console: Console) -> None:
+    """Print the autoloop usage panel (no objective, no watch)."""
+    console.print(
+        Panel(
+            "[bold yellow]Usage:[/bold yellow]\n"
+            "  huginn autoloop [OBJECTIVE]\n"
+            "  huginn autoloop --watch\n\n"
+            "[dim]Examples:[/dim]\n"
+            "  huginn autoloop 'Optimize C-S-H defect kinetics'\n"
+            "  huginn autoloop --watch --interval 60",
+            title="Autoloop Help",
+            border_style="blue",
+        )
+    )
+
+
+def _al_resolve_engine(obj: CliContext, console: Console) -> Any:
+    """Resume from a checkpoint when available, else build a fresh engine.
+
+    H3: 统一 resume 入口 — 有 checkpoint 就走 resume_engine_from_checkpoint,
+    让 audit 校验 + drift 检测 + engine_state + hypothesis_graph 一起跑.
+    task_id 用 workspace.name (跟 rcb_runner 一致). 无 checkpoint / resume 失败
+    → 退回 fresh engine, 不阻塞用户.
+    """
     engine = None
     try:
         from huginn.runtime.checkpoint import (
@@ -216,9 +233,63 @@ def autoloop(
             workspace=obj.workspace,
             agent_factory=_maybe_agent_factory(),
         )
+    return engine
 
-    # Goal resolution: --goal resumes a persisted goal; --success-criteria
-    # creates a new one. Neither → no goal, run() behaves as before.
+
+def _al_create_goal(
+    console: Console,
+    scheduler: Any,
+    objective: str,
+    success_criteria: tuple[str, ...],
+    wall_clock_budget: int,
+    iterations: int,
+) -> Any:
+    """Create a goal; a positive wall-clock budget turns on long-horizon mode."""
+    goal = scheduler.create_goal(
+        objective=objective,
+        success_criteria=list(success_criteria),
+        max_iterations=iterations,
+    )
+    if wall_clock_budget > 0:
+        # 长程探索: 目标挂上挂钟预算并置 active, 同时打开持久目标模式.
+        # 这样 darwin/belief/surprise 这类启发式早停在预算未耗尽时不再终止
+        # 整个 run, 循环自主推进到目标达成或预算/迭代上限耗尽.
+        from huginn.utils.common import now_iso
+
+        scheduler.update_goal(
+            goal.id,
+            wall_clock_budget_seconds=float(wall_clock_budget),
+            started_at=now_iso(),
+            status="active",
+        )
+        os.environ["HUGINN_PERSISTENT_GOAL_MODE"] = "1"
+        console.print(
+            f"[blue]Long-horizon goal:[/blue] {goal.id}\n"
+            f"  wall-clock budget: {wall_clock_budget}s, "
+            f"iteration cap: {iterations}"
+        )
+    else:
+        console.print(
+            f"[blue]Created goal:[/blue] {goal.id}\n"
+            f"  criteria: {list(success_criteria)}"
+        )
+    return goal
+
+
+def _al_resolve_goal(
+    console: Console,
+    engine: Any,
+    objective: str,
+    goal_id: str | None,
+    success_criteria: tuple[str, ...],
+    wall_clock_budget: int,
+    iterations: int,
+) -> tuple[Any, str] | None:
+    """Resolve --goal / --success-criteria.
+
+    Returns ``None`` when the requested goal ID does not exist (caller returns),
+    otherwise ``(goal, objective)`` where ``goal`` may itself be ``None``.
+    """
     goal = None
     from huginn.autoloop.goal_scheduler import GoalScheduler
 
@@ -227,121 +298,129 @@ def autoloop(
         goal = scheduler.get_goal(goal_id)
         if goal is None:
             console.print(f"[red]Goal not found: {goal_id}[/red]")
-            return
+            return None
         if not objective:
             objective = goal.objective
         console.print(f"[blue]Resuming goal:[/blue] {goal.id} ({goal.objective})")
     elif objective and (success_criteria or wall_clock_budget > 0):
-        goal = scheduler.create_goal(
-            objective=objective,
-            success_criteria=list(success_criteria),
-            max_iterations=iterations,
+        goal = _al_create_goal(
+            console,
+            scheduler,
+            objective,
+            success_criteria,
+            wall_clock_budget,
+            iterations,
         )
-        if wall_clock_budget > 0:
-            # 长程探索: 目标挂上挂钟预算并置 active, 同时打开持久目标模式.
-            # 这样 darwin/belief/surprise 这类启发式早停在预算未耗尽时不再终止
-            # 整个 run, 循环自主推进到目标达成或预算/迭代上限耗尽.
-            from huginn.utils.common import now_iso
-
-            scheduler.update_goal(
-                goal.id,
-                wall_clock_budget_seconds=float(wall_clock_budget),
-                started_at=now_iso(),
-                status="active",
-            )
-            os.environ["HUGINN_PERSISTENT_GOAL_MODE"] = "1"
-            console.print(
-                f"[blue]Long-horizon goal:[/blue] {goal.id}\n"
-                f"  wall-clock budget: {wall_clock_budget}s, "
-                f"iteration cap: {iterations}"
-            )
-        else:
-            console.print(
-                f"[blue]Created goal:[/blue] {goal.id}\n"
-                f"  criteria: {list(success_criteria)}"
-            )
     engine._goal_scheduler = scheduler
+    return goal, objective
 
-    if watch:
-        console.print(
-            Panel(
-                f"[bold green]Autoloop Watch Mode[/bold green]\n"
-                f"Workspace: {obj.workspace}\n"
-                f"Check interval: {interval}s\n"
-                f"Press Ctrl+C to stop",
-                title="Watching",
-                border_style="green",
-            )
+
+def _al_run_watch(
+    engine: Any,
+    console: Console,
+    workspace: Any,
+    interval: int,
+    iterations: int,
+    no_progressive_budget: bool,
+) -> None:
+    """Run watch mode until Ctrl+C, then reap children on exit."""
+    console.print(
+        Panel(
+            f"[bold green]Autoloop Watch Mode[/bold green]\n"
+            f"Workspace: {workspace}\n"
+            f"Check interval: {interval}s\n"
+            f"Press Ctrl+C to stop",
+            title="Watching",
+            border_style="green",
         )
+    )
+    try:
+        asyncio.run(_watch_loop(
+            engine, console, interval, iterations,
+            progressive_budget=not no_progressive_budget,
+        ))
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Watch mode stopped.[/yellow]")
+    finally:
+        _reap_on_exit(engine)
+
+
+def _al_print_result(console: Console, result: Any, snap_path: Any) -> None:
+    """Print the final result panel."""
+    console.print(
+        Panel(
+            f"[bold green]Loop Complete[/bold green]\n"
+            f"Run ID: {result.run_id}\n"
+            f"Success: {'Yes' if result.success else 'No'}\n"
+            f"Total time: {result.total_time_seconds:.1f}s\n"
+            f"Report: {result.report_path or 'N/A'}\n"
+            f"Snapshot: {snap_path or 'N/A'}",
+            title="Result",
+            border_style="green" if result.success else "red",
+        )
+    )
+
+
+def _al_print_phases(console: Console, result: Any) -> None:
+    """Print the per-phase summary."""
+    console.print("\n[bold]Phase Summary:[/bold]")
+    for phase in result.phases:
+        status_color = "green" if phase.status == "completed" else "red" if phase.status == "failed" else "yellow"
+        duration = (phase.end_time or 0) - (phase.start_time or 0) if phase.start_time and phase.end_time else 0
+        console.print(
+            f"  [{status_color}]{phase.status:12}[/{status_color}] "
+            f"{phase.name:15} ({duration:.1f}s)"
+            f"{f' [red]{phase.error}[/red]' if phase.error else ''}"
+        )
+
+
+def _al_run_once(
+    console: Console,
+    engine: Any,
+    workspace: Any,
+    objective: str,
+    iterations: int,
+    no_progressive_budget: bool,
+    goal: Any,
+) -> None:
+    """Run one cognitive loop, print the result and reap children on exit."""
+    console.print(
+        Panel(
+            f"[bold green]Autoloop[/bold green]\n"
+            f"Objective: {objective}\n"
+            f"Max iterations: {iterations}",
+            title="Starting",
+            border_style="green",
+        )
+    )
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Running autonomous loop...", total=None)
         try:
-            asyncio.run(_watch_loop(
-                engine, console, interval, iterations,
+            result = asyncio.run(engine.run_cognitive(
+                objective=objective,
+                max_iterations=iterations,
                 progressive_budget=not no_progressive_budget,
+                goal=goal,
             ))
-        except KeyboardInterrupt:
-            console.print("\n[yellow]Watch mode stopped.[/yellow]")
+            progress.update(task, completed=True)
+
+            # Persist a reusable snapshot so DeliAutoResearch (or a re-run)
+            # can pick up the result without re-instantiating AutoloopEngine.
+            snap_path = save_autoloop_snapshot(result, workspace)
+            _al_print_result(console, result, snap_path)
+            _al_print_phases(console, result)
+
+        except Exception as e:
+            progress.update(task, completed=True)
+            console.print(f"[red]Autoloop failed: {e}[/red]")
         finally:
+            # 退出兜底: 回收在飞的沙箱子进程, 堵住 PPID→1 孤儿泄漏 (run87).
             _reap_on_exit(engine)
-    else:
-        console.print(
-            Panel(
-                f"[bold green]Autoloop[/bold green]\n"
-                f"Objective: {objective}\n"
-                f"Max iterations: {iterations}",
-                title="Starting",
-                border_style="green",
-            )
-        )
-
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            task = progress.add_task("Running autonomous loop...", total=None)
-            try:
-                result = asyncio.run(engine.run_cognitive(
-                    objective=objective,
-                    max_iterations=iterations,
-                    progressive_budget=not no_progressive_budget,
-                    goal=goal,
-                ))
-                progress.update(task, completed=True)
-
-                # Persist a reusable snapshot so DeliAutoResearch (or a re-run)
-                # can pick up the result without re-instantiating AutoloopEngine.
-                snap_path = save_autoloop_snapshot(result, obj.workspace)
-
-                console.print(
-                    Panel(
-                        f"[bold green]Loop Complete[/bold green]\n"
-                        f"Run ID: {result.run_id}\n"
-                        f"Success: {'Yes' if result.success else 'No'}\n"
-                        f"Total time: {result.total_time_seconds:.1f}s\n"
-                        f"Report: {result.report_path or 'N/A'}\n"
-                        f"Snapshot: {snap_path or 'N/A'}",
-                        title="Result",
-                        border_style="green" if result.success else "red",
-                    )
-                )
-
-                # Show phase summary
-                console.print("\n[bold]Phase Summary:[/bold]")
-                for phase in result.phases:
-                    status_color = "green" if phase.status == "completed" else "red" if phase.status == "failed" else "yellow"
-                    duration = (phase.end_time or 0) - (phase.start_time or 0) if phase.start_time and phase.end_time else 0
-                    console.print(
-                        f"  [{status_color}]{phase.status:12}[/{status_color}] "
-                        f"{phase.name:15} ({duration:.1f}s)"
-                        f"{f' [red]{phase.error}[/red]' if phase.error else ''}"
-                    )
-
-            except Exception as e:
-                progress.update(task, completed=True)
-                console.print(f"[red]Autoloop failed: {e}[/red]")
-            finally:
-                # 退出兜底: 回收在飞的沙箱子进程, 堵住 PPID→1 孤儿泄漏 (run87).
-                _reap_on_exit(engine)
 
 
 async def _watch_loop(

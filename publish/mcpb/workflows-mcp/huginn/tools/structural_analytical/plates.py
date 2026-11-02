@@ -23,193 +23,214 @@ def plate_static(args: Any) -> ToolResult:
     D = plate.D()
     nu = plate.poissons_ratio
     h = plate.thickness
-
     if args.plate_shape == "rectangular":
-        a = float(args.plate_dims["a"])
-        b = float(args.plate_dims.get("b", a))
-        load = args.plate_load
-        ltype = load.get("type", "uniform")
-
-        # 网格
-        nx, ny = 41, 41
-        xs = np.linspace(0.0, a, nx)
-        ys = np.linspace(0.0, b, ny)
-        X, Y = np.meshgrid(xs, ys, indexing="ij")
-        W = np.zeros_like(X)
-
-        # 只支持简支 (Navier), 其他 BC 给个保守估计或报错
-        if args.plate_bc != "simply_supported":
-            return ToolResult(
-                data=None,
-                success=False,
-                error=(
-                    f"plate_static rectangular: plate_bc={args.plate_bc} not supported. "
-                    "Only simply_supported (Navier) is implemented."
-                ),
-            )
-
-        # Navier 双正弦级数: w = ΣΣ q_mn sin(mπx/a) sin(nπy/b) / [D π⁴ ((m/a)² + (n/b)²)²]
-        n_terms = 15  # 收敛够快
-        if ltype == "uniform":
-            q = float(load.get("magnitude", 0.0))
-            for m in range(1, n_terms + 1, 2):  # 奇数项
-                for n in range(1, n_terms + 1, 2):
-                    q_mn = 16.0 * q / (math.pi**2 * m * n)
-                    denom = D * math.pi**4 * ((m / a) ** 2 + (n / b) ** 2) ** 2
-                    W += (
-                        q_mn
-                        / denom
-                        * np.sin(m * math.pi * X / a)
-                        * np.sin(n * math.pi * Y / b)
-                    )
-        elif ltype == "point":
-            P = float(load.get("magnitude", 0.0))
-            px = float(load.get("position", [a / 2, b / 2])[0])
-            py = float(load.get("position", [a / 2, b / 2])[1])
-            for m in range(1, n_terms + 1):
-                for n in range(1, n_terms + 1):
-                    q_mn = (
-                        4.0
-                        * P
-                        / (a * b)
-                        * math.sin(m * math.pi * px / a)
-                        * math.sin(n * math.pi * py / b)
-                    )
-                    denom = D * math.pi**4 * ((m / a) ** 2 + (n / b) ** 2) ** 2
-                    W += (
-                        q_mn
-                        / denom
-                        * np.sin(m * math.pi * X / a)
-                        * np.sin(n * math.pi * Y / b)
-                    )
-        else:
-            return ToolResult(
-                data=None, success=False,
-                error=f"plate_static: load type {ltype} not supported.",
-            )
-
-        # Mindlin 剪切修正: 简化加一个平均剪切挠度
-        # 中点最大: w_shear ≈ q·a²/(κ·G·h) (近似, 矩形 κ=5/6)
-        if args.theory == "mindlin":
-            G = plate.youngs_modulus / (2 * (1 + nu))
-            kappa = 5.0 / 6.0
-            if ltype == "uniform":
-                # 简化: 用 sin(πx/a)sin(πy/b) 形状包络
-                W_shear = (
-                    q
-                    * a
-                    * b
-                    / (kappa * G * h * math.pi**2)
-                    * np.sin(math.pi * X / a)
-                    * np.sin(math.pi * Y / b)
-                )
-                W += W_shear
-
-        max_idx = np.unravel_index(np.argmax(np.abs(W)), W.shape)
-        max_deflection = float(W[max_idx])
-
-        # 弯矩近似: Mx = -D (∂²w/∂x² + ν ∂²w/∂y²)
-        # 用有限差分
-        d2wdx2 = np.gradient(np.gradient(W, xs, axis=0), xs, axis=0)
-        d2wdy2 = np.gradient(np.gradient(W, ys, axis=1), ys, axis=1)
-        Mx = -D * (d2wdx2 + nu * d2wdy2)
-        My = -D * (d2wdy2 + nu * d2wdx2)
-        # Mxy = -D(1-ν) ∂²w/∂x∂y (简化取 0)
-        Mxy = np.zeros_like(W)
-        max_Mx = float(np.max(np.abs(Mx)))
-        max_My = float(np.max(np.abs(My)))
-        # 最大应力 σ = 6M/h²
-        max_stress = 6.0 * max(max_Mx, max_My) / h**2
-
-        return ToolResult(
-            data={
-                "max_deflection": max_deflection,
-                "deflection_field": {
-                    "x": xs.tolist(),
-                    "y": ys.tolist(),
-                    "w": W.tolist(),
-                },
-                "max_stress": {
-                    "sigma_xx": float(6 * max_Mx / h**2),
-                    "sigma_yy": float(6 * max_My / h**2),
-                    "sigma_vm": float(max_stress),
-                },
-                "bending_moments": {
-                    "Mx": max_Mx,
-                    "My": max_My,
-                    "Mxy": float(np.max(np.abs(Mxy))),
-                },
-                "theory": args.theory,
-                "plate_bc": args.plate_bc,
-                "plate_shape": "rectangular",
-                "plate_dims": {"a": a, "b": b},
-            },
-            success=True,
-        )
-
+        return _ps_rectangular(args, plate, D, nu, h)
     if args.plate_shape == "circular":
-        R = float(args.plate_dims["radius"])
-        load = args.plate_load
-        ltype = load.get("type", "uniform")
-        bc = args.plate_bc
-
-        # 圆形板轴对称解析 (Timoshenko Ch.3)
-        # 均布 q:
-        #   clamped: w(r) = q (R²-r²)² / (64 D),  w_max = q R⁴ / (64 D)
-        #   simply_supported: w_max = (5+ν) q R⁴ / (64 (1+ν) D)
-        nr = 51
-        rs = np.linspace(0.0, R, nr)
-        if ltype != "uniform":
-            return ToolResult(
-                data=None, success=False,
-                error=f"plate_static circular: load type {ltype} not supported (only uniform).",
-            )
-        q = float(load.get("magnitude", 0.0))
-        if bc == "clamped":
-            w = q * (R**2 - rs**2) ** 2 / (64 * D)
-            w_max = q * R**4 / (64 * D)
-        elif bc == "simply_supported":
-            # w(r) = (q (R²-r²) / (64 D)) · ((5+ν)/(1+ν) R² - r²)
-            w = q * (R**2 - rs**2) / (64 * D) * ((5 + nu) / (1 + nu) * R**2 - rs**2)
-            w_max = (5 + nu) * q * R**4 / (64 * (1 + nu) * D)
-        else:
-            return ToolResult(
-                data=None, success=False,
-                error=f"plate_static circular: bc={bc} not supported.",
-            )
-
-        # Mindlin 剪切修正 (圆形, 简化)
-        if args.theory == "mindlin":
-            G = plate.youngs_modulus / (2 * (1 + nu))
-            kappa = 5.0 / 6.0
-            # clamped: w_s_max = q R² / (8 κ G h); ss: q R² / (8 κ G h) * 系数
-            if bc == "clamped":
-                w_shear_max = q * R**2 / (8 * kappa * G * h)
-            else:
-                w_shear_max = q * R**2 / (8 * kappa * G * h) * (1 + 0.5)
-            # 沿 r 抛物线分布
-            w_shear = w_shear_max * (1 - (rs / R) ** 2)
-            w = w + w_shear
-            w_max = float(w.max())
-
-        return ToolResult(
-            data={
-                "max_deflection": float(w_max),
-                "deflection_field": {"r": rs.tolist(), "w": w.tolist()},
-                "max_stress": {
-                    "sigma_vm": float(6 * q * R**2 / h**2 / 8 * (1 + nu)),
-                },
-                "theory": args.theory,
-                "plate_bc": bc,
-                "plate_shape": "circular",
-                "plate_dims": {"radius": R},
-            },
-            success=True,
-        )
-
+        return _ps_circular(args, plate, D, nu, h)
     return ToolResult(
         data=None, success=False,
         error=f"plate_static: unknown plate_shape={args.plate_shape}",
+    )
+
+
+def _ps_navier_uniform(q: float, a: float, b: float, D: float, X: Any, Y: Any) -> Any:
+    """均布载荷 Navier 双正弦级数 (只取奇数项)."""
+    W = np.zeros_like(X)
+    n_terms = 15  # 收敛够快
+    for m in range(1, n_terms + 1, 2):  # 奇数项
+        for n in range(1, n_terms + 1, 2):
+            q_mn = 16.0 * q / (math.pi**2 * m * n)
+            denom = D * math.pi**4 * ((m / a) ** 2 + (n / b) ** 2) ** 2
+            W += (
+                q_mn
+                / denom
+                * np.sin(m * math.pi * X / a)
+                * np.sin(n * math.pi * Y / b)
+            )
+    return W
+
+
+def _ps_navier_point(
+    P: float, a: float, b: float, D: float, X: Any, Y: Any,
+    px: float, py: float,
+) -> Any:
+    """集中力 Navier 双正弦级数."""
+    W = np.zeros_like(X)
+    n_terms = 15  # 收敛够快
+    for m in range(1, n_terms + 1):
+        for n in range(1, n_terms + 1):
+            q_mn = (
+                4.0
+                * P
+                / (a * b)
+                * math.sin(m * math.pi * px / a)
+                * math.sin(n * math.pi * py / b)
+            )
+            denom = D * math.pi**4 * ((m / a) ** 2 + (n / b) ** 2) ** 2
+            W += (
+                q_mn
+                / denom
+                * np.sin(m * math.pi * X / a)
+                * np.sin(n * math.pi * Y / b)
+            )
+    return W
+
+
+def _ps_rect_result(
+    args: Any, W: Any, xs: Any, ys: Any, a: float, b: float,
+    D: float, nu: float, h: float,
+) -> ToolResult:
+    """矩形板结果: 最大挠度 + 弯矩/应力 (有限差分)."""
+    max_idx = np.unravel_index(np.argmax(np.abs(W)), W.shape)
+    max_deflection = float(W[max_idx])
+    # 弯矩近似: Mx = -D (∂²w/∂x² + ν ∂²w/∂y²)
+    d2wdx2 = np.gradient(np.gradient(W, xs, axis=0), xs, axis=0)
+    d2wdy2 = np.gradient(np.gradient(W, ys, axis=1), ys, axis=1)
+    Mx = -D * (d2wdx2 + nu * d2wdy2)
+    My = -D * (d2wdy2 + nu * d2wdx2)
+    # Mxy = -D(1-ν) ∂²w/∂x∂y (简化取 0)
+    Mxy = np.zeros_like(W)
+    max_Mx = float(np.max(np.abs(Mx)))
+    max_My = float(np.max(np.abs(My)))
+    # 最大应力 σ = 6M/h²
+    max_stress = 6.0 * max(max_Mx, max_My) / h**2
+    return ToolResult(
+        data={
+            "max_deflection": max_deflection,
+            "deflection_field": {"x": xs.tolist(), "y": ys.tolist(), "w": W.tolist()},
+            "max_stress": {
+                "sigma_xx": float(6 * max_Mx / h**2),
+                "sigma_yy": float(6 * max_My / h**2),
+                "sigma_vm": float(max_stress),
+            },
+            "bending_moments": {
+                "Mx": max_Mx,
+                "My": max_My,
+                "Mxy": float(np.max(np.abs(Mxy))),
+            },
+            "theory": args.theory,
+            "plate_bc": args.plate_bc,
+            "plate_shape": "rectangular",
+            "plate_dims": {"a": a, "b": b},
+        },
+        success=True,
+    )
+
+
+def _ps_rectangular(args: Any, plate: Any, D: float, nu: float, h: float) -> ToolResult:
+    """矩形板: 简支 Navier 级数 (+ Mindlin 剪切修正)."""
+    a = float(args.plate_dims["a"])
+    b = float(args.plate_dims.get("b", a))
+    load = args.plate_load
+    ltype = load.get("type", "uniform")
+    xs = np.linspace(0.0, a, 41)
+    ys = np.linspace(0.0, b, 41)
+    X, Y = np.meshgrid(xs, ys, indexing="ij")
+    W = np.zeros_like(X)
+    # 只支持简支 (Navier), 其他 BC 给个保守估计或报错
+    if args.plate_bc != "simply_supported":
+        return ToolResult(
+            data=None,
+            success=False,
+            error=(
+                f"plate_static rectangular: plate_bc={args.plate_bc} not supported. "
+                "Only simply_supported (Navier) is implemented."
+            ),
+        )
+    if ltype == "uniform":
+        q = float(load.get("magnitude", 0.0))
+        W += _ps_navier_uniform(q, a, b, D, X, Y)
+    elif ltype == "point":
+        P = float(load.get("magnitude", 0.0))
+        px = float(load.get("position", [a / 2, b / 2])[0])
+        py = float(load.get("position", [a / 2, b / 2])[1])
+        W += _ps_navier_point(P, a, b, D, X, Y, px, py)
+    else:
+        return ToolResult(
+            data=None, success=False,
+            error=f"plate_static: load type {ltype} not supported.",
+        )
+    # Mindlin 剪切修正: 简化加一个平均剪切挠度
+    # 中点最大: w_shear ≈ q·a²/(κ·G·h) (近似, 矩形 κ=5/6)
+    if args.theory == "mindlin" and ltype == "uniform":
+        G = plate.youngs_modulus / (2 * (1 + nu))
+        kappa = 5.0 / 6.0
+        # 简化: 用 sin(πx/a)sin(πy/b) 形状包络
+        W += (
+            q
+            * a
+            * b
+            / (kappa * G * h * math.pi**2)
+            * np.sin(math.pi * X / a)
+            * np.sin(math.pi * Y / b)
+        )
+    return _ps_rect_result(args, W, xs, ys, a, b, D, nu, h)
+
+
+def _ps_circular_deflection(
+    bc: str, q: float, R: float, rs: Any, D: float, nu: float,
+) -> tuple[Any, float] | tuple[None, None]:
+    """圆形板轴对称挠度 (Timoshenko Ch.3); 未知 BC 返回 (None, None)."""
+    # 均布 q:
+    #   clamped: w(r) = q (R²-r²)² / (64 D),  w_max = q R⁴ / (64 D)
+    #   simply_supported: w_max = (5+ν) q R⁴ / (64 (1+ν) D)
+    if bc == "clamped":
+        w = q * (R**2 - rs**2) ** 2 / (64 * D)
+        w_max = q * R**4 / (64 * D)
+    elif bc == "simply_supported":
+        # w(r) = (q (R²-r²) / (64 D)) · ((5+ν)/(1+ν) R² - r²)
+        w = q * (R**2 - rs**2) / (64 * D) * ((5 + nu) / (1 + nu) * R**2 - rs**2)
+        w_max = (5 + nu) * q * R**4 / (64 * (1 + nu) * D)
+    else:
+        return None, None
+    return w, w_max
+
+
+def _ps_circular(args: Any, plate: Any, D: float, nu: float, h: float) -> ToolResult:
+    """圆形板: 轴对称解析 (+ Mindlin 剪切修正)."""
+    R = float(args.plate_dims["radius"])
+    load = args.plate_load
+    ltype = load.get("type", "uniform")
+    bc = args.plate_bc
+    rs = np.linspace(0.0, R, 51)
+    if ltype != "uniform":
+        return ToolResult(
+            data=None, success=False,
+            error=f"plate_static circular: load type {ltype} not supported (only uniform).",
+        )
+    q = float(load.get("magnitude", 0.0))
+    w, w_max = _ps_circular_deflection(bc, q, R, rs, D, nu)
+    if w is None:
+        return ToolResult(
+            data=None, success=False,
+            error=f"plate_static circular: bc={bc} not supported.",
+        )
+    # Mindlin 剪切修正 (圆形, 简化)
+    if args.theory == "mindlin":
+        G = plate.youngs_modulus / (2 * (1 + nu))
+        kappa = 5.0 / 6.0
+        # clamped: w_s_max = q R² / (8 κ G h); ss: q R² / (8 κ G h) * 系数
+        w_shear_max = (
+            q * R**2 / (8 * kappa * G * h)
+            if bc == "clamped"
+            else q * R**2 / (8 * kappa * G * h) * (1 + 0.5)
+        )
+        # 沿 r 抛物线分布
+        w = w + w_shear_max * (1 - (rs / R) ** 2)
+        w_max = float(w.max())
+    return ToolResult(
+        data={
+            "max_deflection": float(w_max),
+            "deflection_field": {"r": rs.tolist(), "w": w.tolist()},
+            "max_stress": {
+                "sigma_vm": float(6 * q * R**2 / h**2 / 8 * (1 + nu)),
+            },
+            "theory": args.theory,
+            "plate_bc": bc,
+            "plate_shape": "circular",
+            "plate_dims": {"radius": R},
+        },
+        success=True,
     )
 
 

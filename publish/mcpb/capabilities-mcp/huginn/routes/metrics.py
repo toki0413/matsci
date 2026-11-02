@@ -40,14 +40,33 @@ except ImportError:  # pragma: no cover - only hit when prometheus_client is abs
 
     # Same buckets prometheus_client uses by default for request durations.
     _DEFAULT_BUCKETS = (
-        0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.25,
-        0.3, 0.5, 0.75, 1.0, 1.5, 2.0, 2.5, 5.0, 7.5, 10.0,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.075,
+        0.1,
+        0.15,
+        0.2,
+        0.25,
+        0.3,
+        0.5,
+        0.75,
+        1.0,
+        1.5,
+        2.0,
+        2.5,
+        5.0,
+        7.5,
+        10.0,
     )
 
     class _FallbackMetric:
         metric_type = "untyped"
 
-        def __init__(self, name: str, documentation: str, labelnames=(), **kwargs) -> None:
+        def __init__(
+            self, name: str, documentation: str, labelnames=(), **kwargs
+        ) -> None:
             self.name = name
             self.documentation = documentation
             self.labelnames = tuple(labelnames)
@@ -170,12 +189,7 @@ except ImportError:  # pragma: no cover - only hit when prometheus_client is abs
                 self._observe((), value)
 
     def _escape_label(value: Any) -> str:
-        return (
-            str(value)
-            .replace("\\", "\\\\")
-            .replace("\n", "\\n")
-            .replace('"', '\\"')
-        )
+        return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
     def _format_labels(labelnames: tuple[str, ...], values: tuple) -> str:
         if not labelnames:
@@ -408,6 +422,94 @@ def _lookup_cost(model: str) -> tuple[float, float]:
     return (0.0, 0.0)
 
 
+def _extract_usage_counts(stats: dict[str, Any]) -> tuple[int, int, int, int]:
+    """从 provider 各异的 stats 里抽 (input, output, cache_read, cache_creation)."""
+    input_tokens = int(
+        stats.get("input_tokens", 0)
+        or stats.get("usage_input_tokens", 0)
+        or stats.get("usage_prompt_tokens", 0)
+        or stats.get("prompt_tokens", 0)
+        or 0
+    )
+    output_tokens = int(
+        stats.get("output_tokens", 0)
+        or stats.get("usage_output_tokens", 0)
+        or stats.get("usage_completion_tokens", 0)
+        or stats.get("completion_tokens", 0)
+        or 0
+    )
+    # cache 字段 provider 各异:
+    #   Anthropic: cache_read_input_tokens / cache_creation_input_tokens
+    #   DeepSeek:  prompt_cache_hit_tokens / prompt_cache_miss_tokens
+    #   (langchain 把 usage.* 展平成 usage_prompt_cache_hit_tokens)
+    cache_read = int(
+        stats.get("cache_read_input_tokens", 0)
+        or stats.get("usage_prompt_cache_hit_tokens", 0)
+        or stats.get("prompt_cache_hit_tokens", 0)
+        or 0
+    )
+    cache_creation = int(
+        stats.get("cache_creation_input_tokens", 0)
+        or stats.get("usage_prompt_cache_miss_tokens", 0)
+        or stats.get("prompt_cache_miss_tokens", 0)
+        or 0
+    )
+    return input_tokens, output_tokens, cache_read, cache_creation
+
+
+def _compute_llm_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read: int,
+    cache_creation: int,
+    ds_cache: bool,
+) -> float:
+    cost_in, cost_out = _lookup_cost(model)
+    if not (cost_in or cost_out):
+        return 0.0
+    if ds_cache:
+        # DeepSeek miss 是正常 input 价 (不是 1.25x creation)
+        return (
+            cache_read / 1_000_000 * cost_in * 0.1
+            + cache_creation / 1_000_000 * cost_in
+            + output_tokens / 1_000_000 * cost_out
+        )
+    return (
+        input_tokens / 1_000_000 * cost_in
+        + cache_read / 1_000_000 * cost_in * 0.1
+        + cache_creation / 1_000_000 * cost_in * 1.25
+        + output_tokens / 1_000_000 * cost_out
+    )
+
+
+def _record_cache_metrics(
+    model: str,
+    total_input: int,
+    cache_read: int,
+    cache_creation: int,
+    cache_total: int,
+    input_tokens: int,
+) -> None:
+    # Track cache hit/miss
+    if cache_read > 0:
+        PROMPT_CACHE_HITS_TOTAL.inc()
+    if cache_creation > 0 or (
+        total_input > 0 and cache_read == 0 and cache_creation == 0
+    ):
+        PROMPT_CACHE_MISSES_TOTAL.inc()
+
+    # 打印 cache 命中率到 stdout, RCBench 跑分时能直接在 log 里看到
+    if total_input > 0 and (cache_read or cache_creation):
+        _hit_pct = cache_read / cache_total * 100 if cache_total > 0 else 0
+        PROMPT_CACHE_HIT_RATIO.labels(model=model).set(_hit_pct / 100.0)
+        print(
+            f"[cache] {model}: hit={cache_read} miss={cache_creation} "
+            f"fresh={input_tokens} ({_hit_pct:.0f}% hit)",
+            flush=True,
+        )
+
+
 def track_llm_usage(model: str, stats: dict[str, Any]) -> None:
     """Wire LLM token usage and cost to Prometheus metrics.
 
@@ -415,35 +517,8 @@ def track_llm_usage(model: str, stats: dict[str, Any]) -> None:
     Safe to call with partial/empty stats — no-ops on missing fields.
     """
     try:
-        input_tokens = int(
-            stats.get("input_tokens", 0)
-            or stats.get("usage_input_tokens", 0)
-            or stats.get("usage_prompt_tokens", 0)
-            or stats.get("prompt_tokens", 0)
-            or 0
-        )
-        output_tokens = int(
-            stats.get("output_tokens", 0)
-            or stats.get("usage_output_tokens", 0)
-            or stats.get("usage_completion_tokens", 0)
-            or stats.get("completion_tokens", 0)
-            or 0
-        )
-        # cache 字段 provider 各异:
-        #   Anthropic: cache_read_input_tokens / cache_creation_input_tokens
-        #   DeepSeek:  prompt_cache_hit_tokens / prompt_cache_miss_tokens
-        #   (langchain 把 usage.* 展平成 usage_prompt_cache_hit_tokens)
-        cache_read = int(
-            stats.get("cache_read_input_tokens", 0)
-            or stats.get("usage_prompt_cache_hit_tokens", 0)
-            or stats.get("prompt_cache_hit_tokens", 0)
-            or 0
-        )
-        cache_creation = int(
-            stats.get("cache_creation_input_tokens", 0)
-            or stats.get("usage_prompt_cache_miss_tokens", 0)
-            or stats.get("prompt_cache_miss_tokens", 0)
-            or 0
+        input_tokens, output_tokens, cache_read, cache_creation = _extract_usage_counts(
+            stats
         )
 
         # provider 语义不同, 必须分路径算:
@@ -469,42 +544,19 @@ def track_llm_usage(model: str, stats: dict[str, Any]) -> None:
         if output_tokens:
             LLM_TOKENS_TOTAL.labels(model=model, kind="completion").inc(output_tokens)
 
-        cost_in, cost_out = _lookup_cost(model)
-        if cost_in or cost_out:
-            if _ds_cache:
-                # DeepSeek miss 是正常 input 价 (不是 1.25x creation)
-                cost = (
-                    cache_read / 1_000_000 * cost_in * 0.1
-                    + cache_creation / 1_000_000 * cost_in
-                    + output_tokens / 1_000_000 * cost_out
-                )
-            else:
-                cost = (
-                    input_tokens / 1_000_000 * cost_in
-                    + cache_read / 1_000_000 * cost_in * 0.1
-                    + cache_creation / 1_000_000 * cost_in * 1.25
-                    + output_tokens / 1_000_000 * cost_out
-                )
-            if cost > 0:
-                LLM_COST_USD.labels(model=model).inc(cost)
+        cost = _compute_llm_cost(
+            model, input_tokens, output_tokens, cache_read, cache_creation, _ds_cache
+        )
+        if cost > 0:
+            LLM_COST_USD.labels(model=model).inc(cost)
 
-        # Track cache hit/miss
-        if cache_read > 0:
-            PROMPT_CACHE_HITS_TOTAL.inc()
-        if cache_creation > 0 or (total_input > 0 and cache_read == 0 and cache_creation == 0):
-            PROMPT_CACHE_MISSES_TOTAL.inc()
-
-        # 打印 cache 命中率到 stdout, RCBench 跑分时能直接在 log 里看到
-        if total_input > 0 and (cache_read or cache_creation):
-            _hit_pct = cache_read / _cache_total * 100 if _cache_total > 0 else 0
-            PROMPT_CACHE_HIT_RATIO.labels(model=model).set(_hit_pct / 100.0)
-            print(
-                f"[cache] {model}: hit={cache_read} miss={cache_creation} "
-                f"fresh={input_tokens} ({_hit_pct:.0f}% hit)",
-                flush=True,
-            )
+        _record_cache_metrics(
+            model, total_input, cache_read, cache_creation, _cache_total, input_tokens
+        )
     except Exception:
-        logger.debug("best-effort op failed", exc_info=True)  # metrics are best-effort, never break the agent
+        logger.debug(
+            "best-effort op failed", exc_info=True
+        )  # metrics are best-effort, never break the agent
 
 
 # ── UsageCallback ─────────────────────────────────────────────────────
@@ -515,6 +567,29 @@ def track_llm_usage(model: str, stats: dict[str, Any]) -> None:
 # ponytail: 只用 on_llm_end, 不用 on_llm_start (不需要 thread 关联, /metrics 看总量).
 # 升级路径: 加 on_llm_start 记 run_id, 在 on_llm_end 关联到 turn 做 per-session 查询.
 _USAGE_CALLBACK_SINGLETON: Any = None
+
+
+def _usage_stats_from_message(msg) -> tuple[str, dict[str, Any]] | None:
+    """从单条 message 抽 (model, stats); meta 不是 dict 时返回 None."""
+    meta = getattr(msg, "response_metadata", {}) or {}
+    if not isinstance(meta, dict):
+        return None
+    model = (
+        meta.get("model_name")
+        or meta.get("model")
+        or getattr(msg, "name", "")
+        or "unknown"
+    )
+    # response_metadata 形状随 provider 变:
+    #   OpenAI/DeepSeek: token_usage 嵌套 (含 prompt_cache_hit_tokens)
+    #   Anthropic: 平铺 cache_read_input_tokens
+    #   其他: usage 嵌套
+    stats: dict[str, Any] = dict(meta)
+    usage = meta.get("usage") or meta.get("token_usage")
+    if isinstance(usage, dict):
+        for k, v in usage.items():
+            stats[f"usage_{k}"] = v
+    return str(model), stats
 
 
 def get_usage_callback() -> Any:
@@ -546,24 +621,10 @@ def get_usage_callback() -> Any:
                         msg = getattr(g, "message", None)
                         if msg is None:
                             continue
-                        meta = getattr(msg, "response_metadata", {}) or {}
-                        if not isinstance(meta, dict):
+                        parsed = _usage_stats_from_message(msg)
+                        if parsed is None:
                             continue
-                        model = (
-                            meta.get("model_name")
-                            or meta.get("model")
-                            or getattr(msg, "name", "")
-                            or "unknown"
-                        )
-                        # response_metadata 形状随 provider 变:
-                        #   OpenAI/DeepSeek: token_usage 嵌套 (含 prompt_cache_hit_tokens)
-                        #   Anthropic: 平铺 cache_read_input_tokens
-                        #   其他: usage 嵌套
-                        stats: dict[str, Any] = dict(meta)
-                        usage = meta.get("usage") or meta.get("token_usage")
-                        if isinstance(usage, dict):
-                            for k, v in usage.items():
-                                stats[f"usage_{k}"] = v
+                        model, stats = parsed
                         # debug: 首次调用打印完整 stats keys, 确认 cache 字段是否到位
                         if not getattr(self, "_debug_printed", False):
                             self._debug_printed = True
@@ -571,9 +632,11 @@ def get_usage_callback() -> Any:
                                 f"[cache-debug] model={model} stats_keys={list(stats.keys())}",
                                 flush=True,
                             )
-                        track_llm_usage(str(model), stats)
+                        track_llm_usage(model, stats)
             except Exception:
-                logger.debug("best-effort op failed", exc_info=True)  # best-effort, 不阻塞 agent
+                logger.debug(
+                    "best-effort op failed", exc_info=True
+                )  # best-effort, 不阻塞 agent
 
     _USAGE_CALLBACK_SINGLETON = UsageCallback()
     return _USAGE_CALLBACK_SINGLETON

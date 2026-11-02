@@ -12,6 +12,7 @@ ponytail: elastic 用 eigvalsh (对称矩阵), 不做群论约化. bulk/shear �
 (上界), 不做 Reuss-Hill 平均 — 单界够用作 descriptor.
 ceiling: Voigt 上界偏高, 升级路径接 VRH 平均 (mechanics.ElasticTensor 已有 reuss_moduli).
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -118,6 +119,7 @@ class HapticDescriptor(LatentSpace):
 
 # ── self-check ─────────────────────────────────────────────────
 
+
 def _selfcheck() -> None:
     """assert demo: 空 layer 全 0, 全字段无 0, mask 一致, 距离单调."""
     from huginn.mechanics import ElasticTensor
@@ -157,10 +159,23 @@ def _selfcheck() -> None:
     assert abs(v_full[11] - 1.2e-5) < 1e-15
     assert hd.mask(full).all(), f"full mask all True: {hd.mask(full)}"
 
+    m_part = _check_partial(hd, empty, full)
+
+    print("✓ haptic_descriptor self-check passed")
+    print(f"  empty vec    = {v_empty}")
+    print(f"  full vec     = {np.round(v_full, 4).tolist()}")
+    print(f"  full mask    = {hd.mask(full).tolist()}")
+    print(f"  partial mask = {m_part.tolist()}")
+    print(f"  d(empty, full) = {hd.distance(empty, full):.4f}")
+
+
+def _check_partial(hd, empty, full):
+    from huginn.mechanics import ElasticTensor
+
     # 部分字段 — 只有 elastic
     partial = HapticPropertyLayer(elastic=ElasticTensor(C=np.eye(6) * 100.0))
     v_part = hd.encode(partial)
-    assert v_part[0:6].all()              # elastic 有
+    assert v_part[0:6].all()  # elastic 有
     assert v_part[6] > 0 and v_part[7] > 0  # bulk/shear 有
     assert v_part[8] == 0.0 and v_part[9] == 0.0  # phonon 无
     assert v_part[10] == 0.0 and v_part[11] == 0.0  # surface/thermal 无
@@ -170,13 +185,7 @@ def _selfcheck() -> None:
     # 距离单调
     assert hd.distance(empty, full) > 0.0
     assert hd.distance(full, full) < 1e-9
-
-    print("✓ haptic_descriptor self-check passed")
-    print(f"  empty vec    = {v_empty}")
-    print(f"  full vec     = {np.round(v_full, 4).tolist()}")
-    print(f"  full mask    = {hd.mask(full).tolist()}")
-    print(f"  partial mask = {m_part.tolist()}")
-    print(f"  d(empty, full) = {hd.distance(empty, full):.4f}")
+    return m_part
 
 
 if __name__ == "__main__":

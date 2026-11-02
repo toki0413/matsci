@@ -237,6 +237,18 @@ def reconcile_layers(
     """
     report = ReconcileReport()
 
+    _check_local_active(local_states, hpc_states, report)
+    _check_hpc_active(local_states, hpc_states, report)
+    _check_budget_charged(budget_charged, local_states, report)
+
+    return report
+
+
+def _check_local_active(
+    local_states: dict[str, str],
+    hpc_states: dict[str, str],
+    report: ReconcileReport,
+) -> None:
     for job_id, status in local_states.items():
         if status in LOCAL_ACTIVE:
             hpc_state = hpc_states.get(job_id)
@@ -262,6 +274,12 @@ def reconcile_layers(
                     )
                 )
 
+
+def _check_hpc_active(
+    local_states: dict[str, str],
+    hpc_states: dict[str, str],
+    report: ReconcileReport,
+) -> None:
     for job_id, hpc_state in hpc_states.items():
         if hpc_state in HPC_ACTIVE and local_states.get(job_id) not in LOCAL_ACTIVE:
             report.issues.append(
@@ -277,6 +295,12 @@ def reconcile_layers(
                 )
             )
 
+
+def _check_budget_charged(
+    budget_charged: set[str] | None,
+    local_states: dict[str, str],
+    report: ReconcileReport,
+) -> None:
     if budget_charged is not None:
         for job_id in budget_charged:
             if local_states.get(job_id) not in LOCAL_ACTIVE:
@@ -291,5 +315,3 @@ def reconcile_layers(
                         ),
                     )
                 )
-
-    return report
