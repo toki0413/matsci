@@ -16,8 +16,13 @@ import sys
 from huginn.autoloop.engine import AutoloopEngine
 from huginn.env_access import env_bool
 from huginn.memory.manager import MemoryManager
-from huginn.task_contract import CONTRACT_FILENAME, ContractError, TaskContract, load_contract
 from huginn.security.execution import unsafe_env_enabled
+from huginn.task_contract import (
+    CONTRACT_FILENAME,
+    ContractError,
+    TaskContract,
+    load_contract,
+)
 from huginn.trace import TraceSampler, default_census_path, trace_enabled
 
 

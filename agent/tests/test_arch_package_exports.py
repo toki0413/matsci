@@ -26,7 +26,7 @@ def _flatten_all(node: ast.AST) -> tuple[set[str], bool]:
 
     def walk(value: ast.AST) -> None:
         nonlocal dynamic
-        if isinstance(value, (ast.List, ast.Tuple)):
+        if isinstance(value, ast.List | ast.Tuple):
             for elt in value.elts:
                 walk(elt)
         elif isinstance(value, ast.Constant) and isinstance(value.value, str):
@@ -61,11 +61,11 @@ def analyze_package(path: Path) -> dict[str, object]:
             isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets
         ):
             all_node = node.value
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
             defined.add(node.name)
             if node.name == "__getattr__":
                 has_getattr = True
-        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+        elif isinstance(node, ast.Assign | ast.AnnAssign):
             if _is_logger_assign(node):
                 continue
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]

@@ -599,15 +599,11 @@ def _verdict_rename_oscillation(osc: dict) -> list[str]:
     """换名归约振荡判词."""
     out = []
     if osc.get("events"):
+        _closed = "**闭环振荡**" if osc.get("closed_loop") else ""
         out.append(
-            "换名归约%s: 记录 %d 次 (hunt=%d, escalate+reset=%d), streak 序列=%s"
-            % (
-                "**闭环振荡**" if osc.get("closed_loop") else "",
-                osc["events"],
-                osc["hunts"],
-                osc["escalations"],
-                osc["streak_seq"][:12],
-            )
+            f"换名归约{_closed}: 记录 {osc['events']} 次 "
+            f"(hunt={osc['hunts']}, escalate+reset={osc['escalations']}), "
+            f"streak 序列={osc['streak_seq'][:12]}"
         )
     if osc.get("closed_loop"):
         out.append(
@@ -622,20 +618,17 @@ def _verdict_rename_debt(dr: dict) -> list[str]:
     out = []
     if dr.get("terminates"):
         out.append(
-            "v11 换名债务重放 (A2 前**反事实**): 共 %d 次换名, 单调债务在 limit=%d 处越界 →"
-            " 若沿用 A2 前语义, 第 %d 次换名即触发 'conclude+stop' (旧码 3/5 阶梯自复位,"
-            " 可无限打转). **A2 已把该出口降级为 advisory**(只提示+trace, 不 should_stop),"
-            " 故线上**不终止** —— 本行不是'必然终止'的证明"
-            % (
-                dr["rename_occurrences"],
-                dr["limit"],
-                dr["terminal_at_rename_occurrence"],
-            )
+            f"v11 换名债务重放 (A2 前**反事实**): 共 {dr['rename_occurrences']} 次换名, "
+            f"单调债务在 limit={dr['limit']} 处越界 →"
+            f" 若沿用 A2 前语义, 第 {dr['terminal_at_rename_occurrence']} 次换名"
+            "即触发 'conclude+stop' (旧码 3/5 阶梯自复位,"
+            " 可无限打转). **A2 已把该出口降级为 advisory**(只提示+trace,"
+            " 不 should_stop), 故线上**不终止** —— 本行不是'必然终止'的证明"
         )
     elif dr.get("max_debt", 0) > 0:
         out.append(
-            "v11 换名债务重放 (A2 前反事实): 峰值 %d < limit=%d, 未形成持续换名闭环"
-            % (dr["max_debt"], dr["limit"])
+            f"v11 换名债务重放 (A2 前反事实): 峰值 {dr['max_debt']} "
+            f"< limit={dr['limit']}, 未形成持续换名闭环"
         )
     return out
 
@@ -645,9 +638,9 @@ def _verdict_graph_clusters(gc: dict) -> list[str]:
     out = []
     if gc.get("nodes"):
         out.append(
-            "假设图 %d 节点, 字面等价聚类 %d 簇 (字面冗余率 %.0f%%): 换名是**语义级**的,"
+            f"假设图 {gc['nodes']} 节点, 字面等价聚类 {gc['clusters']} 簇 "
+            f"(字面冗余率 {100 * gc['redundancy']:.0f}%): 换名是**语义级**的,"
             " 字面守卫抓不到 ⇒ 只有 recall+LLM 的等价审计能抓, 而它只重定向不终止"
-            % (gc["nodes"], gc["clusters"], 100 * gc["redundancy"])
         )
     return out
 
@@ -664,9 +657,10 @@ def _verdict_graph_based(ga: dict, osc: dict, dr: dict) -> list[str]:
             # 采样模式下不得拿"全量旧换名数"减"采样新 flag 数": 分母不一致, 差集无意义.
             _mode += f", 采样 {ga['nodes']}/{ga['nodes_total']} 节点"
             out.append(
-                "v12 判据验证 [%s]: 图基审计(对假设图判)标 %d 个换名 (%.0f%%); "
+                f"v12 判据验证 [{_mode}]: 图基审计(对假设图判)标 "
+                f"{ga['graph_based_rename_flags']} 个换名 "
+                f"({100 * ga['flag_rate']:.0f}%); "
                 "采样模式 ⇒ 不做与旧码全量换名数的差集对比 (避免把采样当全量)"
-                % (_mode, ga["graph_based_rename_flags"], 100 * ga["flag_rate"])
             )
         else:
             # 旧码"换名次数"有两种口径, 差别不小: (a) run.log **记录事件** = 实际打出的
@@ -677,21 +671,15 @@ def _verdict_graph_based(ga: dict, osc: dict, dr: dict) -> list[str]:
             _d_ev = max(0, _ev - ga["graph_based_rename_flags"])
             _d_dr = max(0, _dr - ga["graph_based_rename_flags"])
             out.append(
-                "v12 判据验证 [%s]: 图基审计(对假设图判)在 %d 个节点上标 %d 个换名 (%.0f%%). "
-                "旧码(对 objective 判)基线两口径: run.log **记录事件** %d 次 → 差集 %d; "
-                "离线反推**换名发生** %d 次 → 差集 %d. 差集即被误判的机制不同假设"
-                "(代数秩/流形维数/Rademacher 等); 给区间而非单值, 是因为'旧码真正记为换名几次'"
-                "本身取决于口径"
-                % (
-                    _mode,
-                    ga["nodes"],
-                    ga["graph_based_rename_flags"],
-                    100 * ga["flag_rate"],
-                    _ev,
-                    _d_ev,
-                    _dr,
-                    _d_dr,
-                )
+                f"v12 判据验证 [{_mode}]: 图基审计(对假设图判)在 {ga['nodes']} 个节点上标 "
+                f"{ga['graph_based_rename_flags']} 个换名 "
+                f"({100 * ga['flag_rate']:.0f}%). "
+                f"旧码(对 objective 判)基线两口径: run.log **记录事件** {_ev} 次 "
+                f"→ 差集 {_d_ev}; "
+                f"离线反推**换名发生** {_dr} 次 → 差集 {_d_dr}. "
+                "差集即被误判的机制不同假设"
+                "(代数秩/流形维数/Rademacher 等); 给区间而非单值, "
+                "是因为'旧码真正记为换名几次'本身取决于口径"
             )
     return out
 
@@ -710,9 +698,10 @@ def _verdict_exits(ex: dict, z: int) -> list[str]:
         )
         if ex["soft"] > 0:
             out.append(
-                "出口体检 (A2 语义): 软动作 %d 次, 可终止出口 0 次 —— A2 后终止出口只保留"
-                "**挂钟预算/目标达成**, 收敛·换名债务·结题类均已降级为 advisory, 故此**不是**"
-                "不变量违规; 改判「无进展是否**可观测**」" % ex["soft"]
+                f"出口体检 (A2 语义): 软动作 {ex['soft']} 次, 可终止出口 0 次 —— "
+                "A2 后终止出口只保留"
+                "**挂钟预算/目标达成**, 收敛·换名债务·结题类均已降级为 advisory, "
+                "故此**不是**不变量违规; 改判「无进展是否**可观测**」"
             )
         if _tr_s:
             out.append("  ⇒ 落盘 control_trace: " + _tr_s)
@@ -760,9 +749,9 @@ def _verdict(a: dict) -> list[str]:
     out.extend(_verdict_rename_debt(dr))
     if rn["violations"]:
         out.append(
-            "离线重放(仅最近 %d 轮)也见换名闭环: hunt=%d, escalate+reset=%d; "
-            "实质守卫拒绝=%s"
-            % (n, rn["hunts"], rn["escalate_resets"], rn["rejected"] or "{}")
+            f"离线重放(仅最近 {n} 轮)也见换名闭环: hunt={rn['hunts']}, "
+            f"escalate+reset={rn['escalate_resets']}; "
+            f"实质守卫拒绝={rn['rejected'] or '{}'}"
         )
     out.extend(_verdict_graph_clusters(gc))
     out.extend(_verdict_graph_based(a.get("graph_based_audit") or {}, osc, dr))

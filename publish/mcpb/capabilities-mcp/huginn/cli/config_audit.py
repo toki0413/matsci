@@ -773,6 +773,11 @@ def build_errors_contract(root: Path | None = None) -> dict:
 
 def render_errors_markdown(contract: dict) -> str:
     lines: list[str] = []
+    lines.append(
+        "<!-- generated: python -m huginn.cli.config_audit --errors "
+        "--out docs/errors-contract.md -->"
+    )
+    lines.append("")
     lines.append("# 错误语义契约 (ErrorKind)")
     lines.append("")
     lines.append(
@@ -890,6 +895,11 @@ def build_modes_contract(root: Path | None = None) -> dict:
 
 def render_modes_markdown(contract: dict) -> str:
     lines: list[str] = []
+    lines.append(
+        "<!-- generated: python -m huginn.cli.config_audit --modes "
+        "--out docs/modes-contract.md -->"
+    )
+    lines.append("")
     lines.append("# Mode/Phase 契约 (prompt 面)")
     lines.append("")
     lines.append(
@@ -1034,6 +1044,11 @@ def _yn(v: bool) -> str:
 
 def render_model_tier_markdown(contract: dict) -> str:
     lines: list[str] = []
+    lines.append(
+        "<!-- generated: python -m huginn.cli.config_audit --model-tier "
+        "--out docs/model-tier-contract.md -->"
+    )
+    lines.append("")
     lines.append("# 模型档位契约 (ModelTier)")
     lines.append("")
     lines.append(
@@ -1146,6 +1161,11 @@ def _permission_risk_rows(risk_level: type) -> list[dict]:
 
 def render_permission_markdown(contract: dict) -> str:
     lines: list[str] = []
+    lines.append(
+        "<!-- generated: python -m huginn.cli.config_audit --permission "
+        "--out docs/permission-contract.md -->"
+    )
+    lines.append("")
     lines.append("# 权限契约 (Permission)")
     lines.append("")
     lines.append(

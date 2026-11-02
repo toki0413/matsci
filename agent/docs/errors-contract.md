@@ -1,4 +1,4 @@
-<!-- manual: true -->
+<!-- generated: python -m huginn.cli.config_audit --errors --out docs/errors-contract.md -->
 
 # 错误语义契约 (ErrorKind)
 

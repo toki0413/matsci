@@ -37,7 +37,8 @@ def test_json_string_array_is_repaired_to_list():
 
 def test_unparseable_command_returns_self_repair_receipt():
     tool = BashTool()
-    data, error, _ = _validate_tool_args(tool, {"command": "echo hi there"})
+    # 带未引号 shell 元字符 = 脚本语义, argv 切分不猜语义, 必须回自修回执.
+    data, error, _ = _validate_tool_args(tool, {"command": "echo hi | wc -l"})
 
     assert data is None
     assert error is not None

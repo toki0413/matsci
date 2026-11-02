@@ -1409,7 +1409,7 @@ def _read_prompt_applies_to(agent_root: Path) -> dict[str, tuple[str, ...]]:
             return {}
         out: dict[str, tuple[str, ...]] = {}
         for key, spec in data.items():
-            if not isinstance(spec, (tuple, list)) or len(spec) < 2:
+            if not isinstance(spec, tuple | list) or len(spec) < 2:
                 return {}
             out[str(key)] = tuple(spec[1])
         return out
@@ -1691,13 +1691,18 @@ BUDGET_SPECS: tuple[dict, ...] = (
     # destination_eggdir 之外, Linux/macOS 安装路径不经过该分支; 且被 fairchem-core
     # (含最新 2.24.0) 硬约束 setuptools<81.0.0 锁死在 80.10.2, 无法升级. 与已豁免的
     # GHSA-h35f-9h28-mq5c 同一根因、同一可选组, 故同口径放行而非放宽其它门.
+    #
+    # 显式决策 (2026-11-02, PR #59): 25 → 26. pytest PYSEC-2026-1845 的修复只在
+    # 9.0.3, 而 pyproject 锁 pytest<9 (pytest-benchmark 5.x 仍读 Function._nodeid).
+    # 该漏洞仅影响 UNIX /tmp/pytest-of-{user} 的本地多用户 DoS/提权; CI ephemeral
+    # 单租户 runner 与单用户开发机均不受影响. 解除 pytest pin 后删此豁免并回调.
     {
         "id": "pip_audit_ignore",
         "name": "pip-audit 漏洞豁免数",
         "path": ".github/workflows/ci.yml",
         "root": "repo",
         "source": "ceiling",
-        "value": 25,
+        "value": 26,
         "probe": "regex_match_count",
         # 只数真正的 `--ignore-vuln <ID>` 标志 (ID 首字符为大写/数字), 排除注释里的同名字样.
         "pattern": r"--ignore-vuln\s+[A-Z]",

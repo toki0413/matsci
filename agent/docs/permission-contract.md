@@ -1,4 +1,4 @@
-<!-- manual: true -->
+<!-- generated: python -m huginn.cli.config_audit --permission --out docs/permission-contract.md -->
 
 # 权限契约 (Permission)
 

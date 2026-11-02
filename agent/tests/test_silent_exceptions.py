@@ -58,7 +58,7 @@ def _is_simple(stmt: ast.stmt) -> bool:
         v = stmt.value
         if v is None or isinstance(v, ast.Constant):
             return True
-        return isinstance(v, (ast.List, ast.Tuple, ast.Dict, ast.Set)) and not getattr(
+        return isinstance(v, ast.List | ast.Tuple | ast.Dict | ast.Set) and not getattr(
             v, "elts", getattr(v, "keys", [])
         )
     if isinstance(stmt, ast.Assign):

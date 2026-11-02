@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 __all__ = [
     "CONTRACT_FILENAME",
@@ -236,7 +237,7 @@ def _require_list(value: Any, field_name: str) -> list:
 
 
 _CHECKERS: dict[str, Any] = {
-    "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+    "number": lambda v: isinstance(v, int | float) and not isinstance(v, bool),
     "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
     "string": lambda v: isinstance(v, str),
     "boolean": lambda v: isinstance(v, bool),

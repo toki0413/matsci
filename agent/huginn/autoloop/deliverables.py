@@ -387,7 +387,7 @@ def _json_has_substance(payload: Any) -> bool:
     """
     if isinstance(payload, dict):
         return any(_json_has_substance(v) for v in payload.values())
-    if isinstance(payload, (list, tuple)):
+    if isinstance(payload, list | tuple):
         return any(_json_has_substance(v) for v in payload)
     if isinstance(payload, str):
         return bool(payload.strip())
@@ -635,7 +635,7 @@ def render_contract_hint(manifest: list[Deliverable], contract: Contract | None)
 def check_manifest(
     workspace: Any,
     manifest: list[Deliverable],
-    contract: "Contract | None" = None,
+    contract: Contract | None = None,
 ) -> dict[str, Any]:
     """三关验收: 存在 / 非空 / 结构化文件可解析 (确定性, 不由 LLM 判定).
 
@@ -667,7 +667,7 @@ def check_manifest(
                 # 读失败或 JSONDecodeError(⊂ValueError) → 声明交付物不可验收.
                 invalid.append(d.path)
                 continue
-            if not isinstance(payload, (dict, list)) or not _json_has_substance(payload):
+            if not isinstance(payload, dict | list) or not _json_has_substance(payload):
                 empty.append(d.path)
                 continue
         if size < d.min_bytes:

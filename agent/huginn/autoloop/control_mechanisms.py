@@ -143,6 +143,15 @@ MECHANISMS: dict[str, Mechanism] = {
         "报告面自演探针 (EnIGMA 式): 声称执行却查无成功回执 → trace + 条件标注; "
         "不改写结论、不终止",
     ),
+    "stop_gate": Mechanism(
+        "C", "block",
+        "交付物硬门: 未过确定性验收则拒绝 stop, 改判继续 "
+        "(action=force_*/advisory_continue), 不终止",
+    ),
+    "monitor_hold_blocked": Mechanism(
+        "C", "block",
+        "Monitor-hold 减负被交付物硬门拦下: 验收未过不许 silent hold (action=no_hold)",
+    ),
     # ---- D 观测类 -----------------------------------------------------
     "collab_blind_reconstruct": Mechanism(
         "D", "observation", "协作·盲重建 (受控独立观察者, 差分传感器)",
@@ -195,7 +204,13 @@ MECHANISMS: dict[str, Mechanism] = {
 # 默认关)。逐一过 §3 两问: 观测/提示类不替科学判断; frontier_empty_stop 打开时虽
 # 可 stop, 但那是"探索是否穷尽"的科学判据, 明确不入 STOP_ALLOWLIST (故登记 effect
 # 为 advisory, 需转正先过 §3)。此亦为债偿还, 棘轮自此继续 only-shrink。
-CONTROL_MECHANISM_BUDGET = 32
+#
+# 32 → 34 (2026-11-02, 一次性补登记, 非新机制): 同型上界债——交付物硬门的两处
+# 发射点 (stop_gate / monitor_hold_blocked) 已落代码并发射但漏登记。两者都是
+# **证据门** (C 族, effect=block): 验收未过时拦 stop / 拦 silent hold, 不终止,
+# 分别以 action=force_*+advisory_continue / no_hold 显式记录。过 §3 两问: 不替
+# 科学判断、有退出 (补齐交付物后门即放行)。债偿还后棘轮继续 only-shrink。
+CONTROL_MECHANISM_BUDGET = 34
 
 
 # 发射点的四种形态 (与 _control_trace / _emit_control_trace / engine_observe

@@ -302,10 +302,13 @@ def test_check_manifest_contract_rejects_self_invented_keys(tmp_path):
 
     存在性+空壳门都判绿 → 交付物语义完全不对却算完成. 契约门必须判红.
     """
-    from huginn.autoloop.deliverables import (
-        Contract, Deliverable, check_manifest,
-    )
     import json
+
+    from huginn.autoloop.deliverables import (
+        Contract,
+        Deliverable,
+        check_manifest,
+    )
 
     (tmp_path / "results.json").write_text(
         json.dumps({"h1": {"p_value": 0.03}, "h2": {"rmse": 12.0}, "notes": "self-defined"}),
@@ -322,10 +325,14 @@ def test_check_manifest_contract_rejects_self_invented_keys(tmp_path):
 
 def test_check_manifest_contract_rejects_short_or_malformed_loop_log(tmp_path):
     """loop_log.jsonl 少于声明行数 / 每行缺字段 → 红 (不许"几行凑数")."""
-    from huginn.autoloop.deliverables import (
-        Contract, Deliverable, LineSpec, check_manifest,
-    )
     import json
+
+    from huginn.autoloop.deliverables import (
+        Contract,
+        Deliverable,
+        LineSpec,
+        check_manifest,
+    )
 
     rows = [json.dumps({"loop_id": i, "status": "ok", "delta_ea": 1.0}) for i in range(1, 11)]
     (tmp_path / "loop_log.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
@@ -340,10 +347,14 @@ def test_check_manifest_contract_rejects_short_or_malformed_loop_log(tmp_path):
 
 def test_check_manifest_contract_passes_on_conforming_deliverables(tmp_path):
     """契约满足时放行 (门不能只会判红)."""
-    from huginn.autoloop.deliverables import (
-        Contract, Deliverable, LineSpec, check_manifest,
-    )
     import json
+
+    from huginn.autoloop.deliverables import (
+        Contract,
+        Deliverable,
+        LineSpec,
+        check_manifest,
+    )
 
     (tmp_path / "results.json").write_text(
         json.dumps({"q1_delta_ea": 51.59, "hypotheses": {"P1": "supported"}}), encoding="utf-8"
@@ -1342,25 +1353,25 @@ def test_results_must_bind_contract_sha256(tmp_path):
 def test_classify_hard_llm_failure_recognizes_quota_and_auth():
     from huginn.llm_retry import classify_hard_llm_failure
 
-    class _Quota(Exception):
+    class _QuotaError(Exception):
         pass
 
-    quota = _Quota(
+    quota = _QuotaError(
         "Error code: 400 - {'error': {'type': 'invalid_request_error', "
         "'code': '-20080', 'message': '您已超过输入 tokens 配额'}}"
     )
     assert classify_hard_llm_failure(quota) == "llm_quota"
 
-    class _Auth(Exception):
+    class _AuthError(Exception):
         status_code = 401
 
-    assert classify_hard_llm_failure(_Auth("bad token")) == "llm_auth"
+    assert classify_hard_llm_failure(_AuthError("bad token")) == "llm_auth"
 
-    class _Rate(Exception):
+    class _RateError(Exception):
         status_code = 429
 
     # 限流是可重试的瞬时错误, 不是硬失败 (否则一次抖动就把整个 run 杀掉).
-    assert classify_hard_llm_failure(_Rate("rate limited")) is None
+    assert classify_hard_llm_failure(_RateError("rate limited")) is None
     assert classify_hard_llm_failure(ValueError("unparseable decider output")) is None
 
 
@@ -1369,14 +1380,14 @@ def test_decide_llm_raises_on_provider_quota():
     from huginn.autoloop.cognitive_loop import CognitiveRunner, LoopState
     from huginn.llm_retry import LLMUnavailableError
 
-    class _Quota(Exception):
+    class _QuotaError(Exception):
         pass
 
     class _Engine:
         _use_llm_decider = True
 
         async def _llm_chat(self, *_a, **_k):
-            raise _Quota("Error code: 400 - {'code': '-20080', 'message': '您已超过输入 tokens 配额'}")
+            raise _QuotaError("Error code: 400 - {'code': '-20080', 'message': '您已超过输入 tokens 配额'}")
 
     runner = CognitiveRunner(_Engine())
     runner._build_decider_prompt = lambda *_a, **_k: "p"
@@ -1395,14 +1406,14 @@ def test_dec_llm_does_not_swallow_provider_hard_failure():
     from huginn.autoloop.cognitive_loop import CognitiveRunner, LoopState
     from huginn.llm_retry import LLMUnavailableError
 
-    class _Quota(Exception):
+    class _QuotaError(Exception):
         pass
 
     class _Engine:
         _use_llm_decider = True
 
         async def _llm_chat(self, *_a, **_k):
-            raise _Quota("Error code: 400 - {'code': '-20080', 'message': '配额耗尽'}")
+            raise _QuotaError("Error code: 400 - {'code': '-20080', 'message': '配额耗尽'}")
 
     runner = CognitiveRunner(_Engine())
     runner._build_decider_prompt = lambda *_a, **_k: "p"
@@ -1418,7 +1429,6 @@ def test_dec_llm_does_not_swallow_provider_hard_failure():
 
 def test_decide_hard_failure_terminates_run_with_reason():
     """硬失败要进 LoopState.failures 并置 should_stop: 终止原因可审计."""
-    from huginn.autoloop.cognitive_loop import LoopState
     from huginn.llm_retry import LLMUnavailableError
 
     async def boom(state, obs):
@@ -1439,19 +1449,23 @@ def test_with_retry_latches_provider_hard_failure():
     (None, None), 循环仍空转 20 轮才停. 闩锁在**唯一重试出口**置位后, 无论哪个
     阶段吞掉异常, 控制流都在同一判据下停机.
     """
-    from huginn.llm_retry import clear_hard_llm_failure, get_hard_llm_failure, with_retry
+    from huginn.llm_retry import (
+        clear_hard_llm_failure,
+        get_hard_llm_failure,
+        with_retry,
+    )
 
-    class _Quota(Exception):
+    class _QuotaError(Exception):
         status_code = 402
 
     async def boom():
-        raise _Quota("insufficient_quota")
+        raise _QuotaError("insufficient_quota")
 
     clear_hard_llm_failure()
     raised = False
     try:
         asyncio.run(with_retry(boom, source="test", max_attempts=1))
-    except _Quota:
+    except _QuotaError:
         raised = True
     finally:
         latch = get_hard_llm_failure()

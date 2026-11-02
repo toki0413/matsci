@@ -355,7 +355,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install pip-audit
           # Blocking gate 1: 扫当前环境已安装的包 (agent[dev] 主依赖).
-          pip-audit --desc
+          #   - pytest PYSEC-2026-1845 (fix 9.0.3): 仅影响 UNIX 上
+          #     /tmp/pytest-of-{user} 目录的本地用户 DoS/权限提升; CI 是单租户
+          #     ephemeral runner, 不受影响. 开发机为单用户环境, 风险接受.
+          #     上游修复仅在 pytest 9, 但 pyproject 锁 pytest<9 (pytest-benchmark
+          #     5.x 仍读 Function._nodeid, 升 9 会让 benchmark fixtures 全挂).
+          #     等 pytest-benchmark 适配后解除 pin, 再删本条 ignore.
+          pip-audit --desc --ignore-vuln PYSEC-2026-1845
           # Blocking gate 2: 基于 requirements.lock 严格审计, 覆盖可选依赖组
           # (chromadb/paramiko/pymatgen/fairchem 等) 的传递依赖. 这些不在
           # agent[dev] 里, --desc 扫不到, 是 Dependabot 告警的主要来源.

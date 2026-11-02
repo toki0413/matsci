@@ -387,7 +387,7 @@ class HypothesisGraphError(Exception):
 
 # v11: 假设维度关键词表 — 中英文命中, 非语义. P1#1: 已迁到 hypothesis_semantic.py,
 # 由 LLM 语义判定 (默认关) 覆盖, _extract_dimension 仅作向后兼容薄封装.
-from huginn.autoloop._facade import EngineFacade
+from huginn.autoloop._facade import EngineFacade  # noqa: E402
 from huginn.autoloop.hypothesis_semantic import (  # noqa: E402
     classify_dimension as _classify_dimension,
 )

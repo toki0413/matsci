@@ -981,7 +981,7 @@ class PlanCheck(EngineFacade):
         """
         lines = response.split("\n")
         idx = next(
-            (i for i, l in enumerate(lines) if l.startswith("DESCRIPTION:")), None
+            (i for i, line in enumerate(lines) if line.startswith("DESCRIPTION:")), None
         )
         if idx is None:
             return ""

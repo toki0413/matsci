@@ -1,4 +1,4 @@
-<!-- manual: true -->
+<!-- generated: python -m huginn.cli.config_audit --model-tier --out docs/model-tier-contract.md -->
 
 # 模型档位契约 (ModelTier)
 

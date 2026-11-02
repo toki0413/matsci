@@ -141,7 +141,7 @@ def _ledger_exit_class(entry: Any) -> str:
 
 def exit_class_counts(ledger: Any) -> dict[str, int]:
     """统计台账里各 exit_class 的条数 (只读, 供 run.log 触发率口径)."""
-    counts = {c: 0 for c in EXIT_CLASSES}
+    counts = dict.fromkeys(EXIT_CLASSES, 0)
     for e in ledger or []:
         counts[_ledger_exit_class(e)] += 1
     return counts

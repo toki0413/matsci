@@ -27,7 +27,7 @@ _HUGINN = _REPO / "huginn"
 
 # dsh 的裁决是**封闭集合**: 出现第六种就说明有人在绕过分类而不是做决策.
 _VERDICT_KINDS = ("KEEP", "MOVE", "SUSPECT", "DELETE", "ENTRY")
-_VERDICT_RE = re.compile(r"^(%s)\(([^)]+)\)$" % "|".join(_VERDICT_KINDS))
+_VERDICT_RE = re.compile(rf"^({'|'.join(_VERDICT_KINDS)})\(([^)]+)\)$")
 
 
 def _tree_modules() -> set[str]:
