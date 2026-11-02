@@ -433,3 +433,54 @@ agent/huginn/**/_*demo*.py
 # Chroma 向量缓存 (research_outputs 白名单之上再拒绝该子目录回流)
 research_outputs/**/chroma/
 research_outputs/**/chroma/*
+
+# v21 清洗: 安装/构建验证产物 (可重新跑脚本重建, 不入 git)
+/verify_install*/
+/desktop/verify_build/
+/.verify-*/
+/tmp/
+/tmpSobko/
+/tmpDistilly/
+/tmp_analysis/
+/ci_logs/
+/.tmp-ci-log2/
+/agent/.tmp-ci-log2/
+
+# 本地工具/运行时状态 (机器相关, 跨机器同步无意义)
+/.brooks-lint-history.json
+/agent/workspaces/
+/agent/large_tool_results/
+/agent/tmo_vacancy_pipeline/
+/agent/.chk.lock
+/desktop/src-tauri/.huginn_kb/
+/desktop/e2e_tmp_auth/
+/desktop/e2e_local_result.txt
+/desktop/net_browser.txt
+
+# 第三方 benchmark 本地副本 (causalgame 自带独立 .git, 不能当子目录提交)
+/causalgame/
+/符号回归/
+
+# 一次性调试脚手架
+/.auth-e2e/
+/.cbtest/
+/_accept_home/
+/root/
+/.ci_probe.py
+/.crash.py
+/.heartbeat.py
+/.probe-openapi.py
+/_his_scan.py
+/_watch_ci.py
+/_paths_to_remove.txt
+/deps_job.txt
+/deps_log.txt
+/agent/probe.txt
+/agent/docs/feature-flags-contract_generated.md
+/run_all_benchmarks.py
+/ghlogin.txt
+/.git_secret_replace*
+/desktop/_probe_*.mjs
+/desktop/capture_browser.mjs
+/desktop/cdp_net.mjs
+/desktop/cdp.config.ts
