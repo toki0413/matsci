@@ -33,6 +33,7 @@ from huginn.security import (
 )
 from huginn.security.restricted_python import RestrictedPythonError, validate_code
 from huginn.tools.base import HuginnTool
+from huginn.tools.path_guard import resolve_work_dir
 
 logger = logging.getLogger(__name__)
 
@@ -113,10 +114,12 @@ class CodeTool(HuginnTool):
         self, args: dict[str, Any], context: ToolContext | None = None
     ) -> ToolResult:
         input_data = CodeToolInput(**args)
-        work_dir = (
-            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
-        )
-        work_dir.mkdir(parents=True, exist_ok=True)
+        if input_data.action == "generate":
+            return self._generate(input_data)
+
+        work_dir, work_dir_error = resolve_work_dir(input_data.working_dir)
+        if work_dir_error is not None:
+            return ToolResult(data=None, success=False, error=work_dir_error)
 
         # v14 Task 9: 重活识别 + 自动 dispatch 给 Support subagent
         # ponytail: 失败时降级到原行为 (直接执行), 不阻塞主流程.
@@ -140,8 +143,6 @@ class CodeTool(HuginnTool):
                         return dispatched
 
         try:
-            if input_data.action == "generate":
-                return self._generate(input_data)
             if input_data.action == "analyze":
                 return self._execute(
                     input_data, work_dir, analyze=True, context=context

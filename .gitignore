@@ -484,3 +484,7 @@ research_outputs/**/chroma/*
 /desktop/capture_browser.mjs
 /desktop/cdp_net.mjs
 /desktop/cdp.config.ts
+
+# publish/mcpb 镜像里的依赖锁由源仓库 (agent/huginn/plugins) 维护, 不再入库:
+# 同字节副本会让 Dependabot 对同一 advisory 重复计数 (实测 4 份 = 198 条冗余告警)
+/publish/mcpb/*/huginn/plugins/**/uv.lock

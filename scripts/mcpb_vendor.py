@@ -30,8 +30,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC = REPO_ROOT / "agent" / "huginn"
 BUNDLES = ("capabilities-mcp", "workflows-mcp")
-_SKIP_DIRS = {"__pycache__"}
+# .venv/.git 是本地工作树产物: 不跳过的话, 本地装过 skill 依赖后 drift 门禁会
+# 把上万个 site-packages 文件当成"镜像缺失" (CI 干净 checkout 反而不复现).
+_SKIP_DIRS = {"__pycache__", ".venv", ".git"}
 _SKIP_SUFFIX = {".pyc", ".pyo"}
+# 依赖锁只由源仓库 (agent/huginn/plugins) 维护, 不进镜像: 镜像里的同字节副本会
+# 让 Dependabot 对同一 advisory 重复计数 (实测 4 份副本 = 198 条冗余告警).
+_SKIP_NAMES = {"uv.lock"}
 
 
 def _hash_tree(root: Path) -> dict[str, str]:
@@ -42,7 +47,7 @@ def _hash_tree(root: Path) -> dict[str, str]:
             continue
         if any(part in _SKIP_DIRS for part in p.parts):
             continue
-        if p.suffix in _SKIP_SUFFIX:
+        if p.suffix in _SKIP_SUFFIX or p.name in _SKIP_NAMES:
             continue
         out[p.relative_to(root).as_posix()] = hashlib.md5(p.read_bytes()).hexdigest()
     return out

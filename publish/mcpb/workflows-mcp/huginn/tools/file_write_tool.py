@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool
+from huginn.tools.path_guard import resolve_work_dir
 
 # C7: 大产物分块写入阈值 — 超过此值用分块 write 避免 OOM.
 # ponytail: 1MB 够大覆盖 99% 源码, 够小避免一次性 write 撑爆内存.
@@ -59,9 +60,9 @@ class FileWriteTool(HuginnTool):
         self, args: dict[str, Any], context: ToolContext | None = None
     ) -> ToolResult:
         input_data = FileWriteToolInput(**args)
-        work_dir = (
-            Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
-        )
+        work_dir, work_dir_error = resolve_work_dir(input_data.working_dir)
+        if work_dir_error is not None:
+            return ToolResult(data=None, success=False, error=work_dir_error)
         # C7: Windows 路径修复 — normpath 归一化反斜杠/盘符/..
         # 原 bug: agent 传 "submission\model.py" 在 Windows 上被当单文件名,
         #   或传 "C:\workspace\file.py" 导致 work_dir / file_path 拼出错误路径.
