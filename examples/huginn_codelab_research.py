@@ -29,7 +29,13 @@ _AGENT = Path(__file__).resolve().parents[1] / "agent"
 if str(_AGENT) not in sys.path:
     sys.path.insert(0, str(_AGENT))
 
-_OUT = Path(__file__).resolve().parents[1] / "research_outputs" / "shusheng_huginn_native"
+_EXAMPLES = Path(__file__).resolve().parent
+if str(_EXAMPLES) not in sys.path:
+    sys.path.insert(0, str(_EXAMPLES))
+from _output_paths import output_dir  # noqa: E402
+
+# 新目录 ai4s_*; 历史 shusheng_* 由迁移层兼容读取.
+_OUT = output_dir("huginn_native")
 
 
 def _llm_compat_kwargs(client) -> dict:

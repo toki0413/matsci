@@ -48,10 +48,14 @@ _AGENT = Path(__file__).resolve().parents[1] / "agent"
 if str(_AGENT) not in sys.path:
     sys.path.insert(0, str(_AGENT))
 
+_EXAMPLES = Path(__file__).resolve().parent
+if str(_EXAMPLES) not in sys.path:
+    sys.path.insert(0, str(_EXAMPLES))
+from _output_paths import output_dir, read_entry  # noqa: E402
+
 # 产物持久化: 不写 examples/out(运行时目录, 环境重置即丢), 写项目根 research_outputs/
-# (git 白名单跟踪, 支持报表长期保留与跨环境恢复).
-_OUT = Path(__file__).resolve().parents[1] / "research_outputs" / "shusheng_huginn_workflow"
-_OUT.mkdir(parents=True, exist_ok=True)
+# (git 白名单跟踪, 支持报表长期保留与跨环境恢复). 新目录 ai4s_*; 旧 shusheng_* 兼容读.
+_OUT = output_dir("huginn_workflow")
 
 GOAL = (
     "深入 X7 开放问题: 约束钳制解族维数的机制与边界。上一轮 X7 报告'多项式系统 u''=-(1-t^2) "
@@ -1668,9 +1672,13 @@ def main() -> int:
 
     last_report = ""
     if args.start_cycle >= 2:
-        prev = _report_for(max(1, args.start_cycle - 1))   # 续跑时喂上一轮报告给模型观察
+        # 续跑时喂上一轮报告给模型观察; 迁移层负责回落到旧目录.
+        prev = read_entry(
+            "huginn_workflow",
+            _report_for(max(1, args.start_cycle - 1)).name,
+        )
         if not prev.exists():
-            prev = _report_for(1)
+            prev = read_entry("huginn_workflow", _report_for(1).name)
         if prev.exists():
             last_report = prev.read_text(encoding="utf-8")
 

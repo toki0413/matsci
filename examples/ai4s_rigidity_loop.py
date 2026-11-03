@@ -13,7 +13,7 @@
     export INTERNLM_API_KEY=<模型 token>
     python examples/ai4s_rigidity_loop.py --rounds 6 --budget-s 7200 --session s2
 
-产物 (research_outputs/shusheng_nn_rigidity_probe/):
+产物 (research_outputs/ai4s_nn_rigidity_probe/; 旧 shusheng_* 目录兼容读取):
     loop_transcript<sfx>.md   逐轮: 模型判断 + 它选的配置 + 该轮实测表 + 模型的理由
     loop_verdict<sfx>.md      模型最终裁决 (原文)
     loop_state<sfx>.json      机器可读的全过程状态
@@ -35,9 +35,13 @@ except Exception:  # noqa: BLE001
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "examples"
+if str(EXAMPLES) not in sys.path:
+    sys.path.insert(0, str(EXAMPLES))
+from _output_paths import output_dir, read_entry  # noqa: E402
+
 EXP = EXAMPLES / "nn_rigidity_decoupling.py"
 OUTDIR = EXAMPLES / "out" / "nn_rigidity_decoupling"
-REPORT_DIR = ROOT / "research_outputs" / "shusheng_nn_rigidity_probe"
+REPORT_DIR = output_dir("nn_rigidity_probe")
 
 # ── 预算: 软限制 + 撞顶自动续投 (对齐 Huginn 的 HUGINN_BUDGET_APPROVAL=auto 语义) ──
 # 模型在框内自由选; 请求一旦冲破当前上限, 自动续投 ×RENEW_FACTOR, 最多 MAX_RENEWALS 次;
@@ -462,8 +466,8 @@ def main() -> int:
     recs = load_evidence()
     sigs = {_evidence_sig(r) for r in recs}
 
-    state_path = REPORT_DIR / f"loop_state{sfx}.json"
-    trans_path = REPORT_DIR / f"loop_transcript{sfx}.md"
+    state_path = read_entry("nn_rigidity_probe", f"loop_state{sfx}.json")
+    trans_path = read_entry("nn_rigidity_probe", f"loop_transcript{sfx}.md")
     resume_state = None
     if state_path.exists() and not args.fresh:
         try:

@@ -108,7 +108,11 @@ milestone: 无 (单批治理加固, 不跨里程碑)
 - invariant: 扫描面任一行或任一交付文件名命中即红；历史运行证据（`research_outputs/`、`research/<run>/`、
   `examples/out/`）**不在扫描面**，保留原始档案不动。provider 标识（如 `internlm`）
   与厂商名（InternLM）属可选接入，不算人格名。
-- test: `tests/test_arch_no_vendor_persona.py`（登记为 full-suite-only）。
+- migration: 产物目录 `research_outputs/ai4s_<name>/` 是写入目标；读取优先新目录，
+  旧目录 `research_outputs/shusheng_<name>/` 兼容回落 —— 文件一次性复制迁移（旧件
+  保留），目录型条目（如 `taste_kb`）只回落读取、不复制。
+- test: `tests/test_arch_no_vendor_persona.py`（登记为 full-suite-only）+
+  `tests/test_output_dir_migration.py`。
 
 ## 验收
 

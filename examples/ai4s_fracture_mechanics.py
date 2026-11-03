@@ -54,9 +54,14 @@ _AGENT = Path(__file__).resolve().parents[1] / "agent"
 if str(_AGENT) not in sys.path:
     sys.path.insert(0, str(_AGENT))
 
+_EXAMPLES = Path(__file__).resolve().parent
+if str(_EXAMPLES) not in sys.path:
+    sys.path.insert(0, str(_EXAMPLES))
+from _output_paths import output_dir, read_entry  # noqa: E402
+
 # 产物持久化: 项目根 research_outputs/(git 白名单跟踪, 跨环境保留报表).
-_OUT = Path(__file__).resolve().parents[1] / "research_outputs" / "shusheng_fracture_mechanics"
-_OUT.mkdir(parents=True, exist_ok=True)
+# 新目录 ai4s_*; 历史 shusheng_* 由迁移层兼容读取.
+_OUT = output_dir("fracture_mechanics")
 
 GOAL = (
     "面向 IJF 2026 综述《Outstanding issues and emerging frontiers in fracture mechanics》"
@@ -1168,7 +1173,7 @@ def _get_taste_kb():
     global _TASTE_KB
     if _TASTE_KB is None:
         import chromadb
-        root = _OUT / "taste_kb"
+        root = read_entry("fracture_mechanics", "taste_kb")
         root.mkdir(parents=True, exist_ok=True)
         client = chromadb.PersistentClient(path=str(root / "chroma"))
         col = client.get_or_create_collection("taste_kb")
@@ -1487,7 +1492,10 @@ def main() -> int:
               "dbt_span", "kce_gain", "kic_span")}
     last_report = ""
     if args.start_cycle >= 2:
-        prev = _report_for(max(1, args.start_cycle - 1))
+        prev = read_entry(
+            "fracture_mechanics",
+            _report_for(max(1, args.start_cycle - 1)).name,
+        )
         if prev.exists():
             last_report = prev.read_text(encoding="utf-8")
 

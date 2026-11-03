@@ -68,3 +68,9 @@ execution: inline
   files: huginn/**, examples/**, docs/**, tests/test_arch_no_vendor_persona.py
   acceptance: `python -m pytest tests/test_arch_no_vendor_persona.py -q -o addopts=""`
   spec: `#d10-去厂商人格绑定`
+
+- [x] T12: 产物目录迁移层
+  goal: 新目录 ai4s_* 写入，旧目录 shusheng_* 兼容读取（文件复制迁移、目录只回落不复制）。
+  files: examples/_output_paths.py, examples/ai4s_*.py, tests/test_output_dir_migration.py
+  acceptance: `python -m pytest tests/test_output_dir_migration.py -q -o addopts=""`
+  spec: `#d10-去厂商人格绑定`

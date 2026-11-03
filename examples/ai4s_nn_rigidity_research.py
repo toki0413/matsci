@@ -5,7 +5,8 @@
   2. 红队复核: 对抗性审稿, 攻击等价性假设并给最小决定性实验.
 
 输入: 用户原始问题 + 本地已有实测 (B 轮三项发现).
-输出: research_outputs/shusheng_nn_rigidity_probe/research_report.md
+输出: research_outputs/ai4s_nn_rigidity_probe/research_report.md
+      (旧 shusheng_nn_rigidity_probe/ 由迁移层兼容读取)
 
 用法:
     export INTERNLM_API_KEY=<模型 token>
@@ -23,11 +24,12 @@ try:
 except Exception:  # noqa: BLE001
     sys.exit("需要 pip install openai")
 
-_OUT = (
-    Path(__file__).resolve().parents[1]
-    / "research_outputs"
-    / "shusheng_nn_rigidity_probe"
-)
+_EXAMPLES = Path(__file__).resolve().parent
+if str(_EXAMPLES) not in sys.path:
+    sys.path.insert(0, str(_EXAMPLES))
+from _output_paths import output_dir  # noqa: E402
+
+_OUT = output_dir("nn_rigidity_probe")
 _OUT_MD = _OUT / "research_report.md"
 
 _QUESTION = """

@@ -23,8 +23,13 @@ from pathlib import Path
 
 import numpy as np
 
-_OUT = Path(__file__).resolve().parents[1] / "research_outputs" / "shusheng_quantum_critical"
-_OUT.mkdir(parents=True, exist_ok=True)
+_EXAMPLES = Path(__file__).resolve().parent
+if str(_EXAMPLES) not in sys.path:
+    sys.path.insert(0, str(_EXAMPLES))
+from _output_paths import output_dir  # noqa: E402
+
+# 新目录 ai4s_*; 历史 shusheng_* 由迁移层兼容读取.
+_OUT = output_dir("quantum_critical")
 
 # ═══════════════════ 真实物理内核 ═══════════════════
 
