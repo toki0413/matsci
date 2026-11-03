@@ -1,9 +1,9 @@
-"""书生 Intern-S2 + Huginn 完整深研管线(非旁路, 全走 run_research_program).
+"""模型 Intern-S2 + Huginn 完整深研管线(非旁路, 全走 run_research_program).
 
 上一版(`shusheng_agent_nn_rigidity`)是**旁路的裸工具循环**: 只借了
 `grounding_verifier`, 选题->实验->成文全部由模型自己在一个循环里对各独立工具做
 tool-call, 没有进入 Huginn 的**科研工作流**本身。本文件纠正这一点:
-书生作为 LLM 引擎**驱动 `huginn.research.run_research_program`**, 完整走
+模型作为 LLM 引擎**驱动 `huginn.research.run_research_program`**, 完整走
 Huginn 既定工作流:
 
   1. 真实证据实验 (X1 eps判据 / X2 优化器财政 / X3 约束维数) 注册为 `Experiment`,
@@ -16,7 +16,7 @@ Huginn 既定工作流:
         保住多证据方向). 本 demo 刻意不开变异(mutation): 三条实验是独立子结论,
         不是连续参数搜索空间, 变异只会制造与真实轨迹对不上的假说噪声;
         需参数寻优的研究者在上层 open 即可恢复 evolution 闭环;
-  4. 书生拿到存活假说真实证据, **自主调用域诊断工具**(diagnostic_tools 里的
+  4. 模型拿到存活假说真实证据, **自主调用域诊断工具**(diagnostic_tools 里的
      probe_* )采集补充证据, 批判综合成报告;
   5. 声明门禁(claim_grounding) 核对报告每个数值都落在工具轨迹里, 未落地则要求重写;
   6. 真机交不出可落地报告 → 确定性兜底组装(数值全来自真实执行, 必过门禁).
@@ -28,7 +28,7 @@ Huginn 既定工作流:
   - `--dry` 走 client=None 确定性综合路径, 无 API key 也能验证整条管线能跑通。
 
 用法:
-  INTERNLM_API_KEY=... python examples/shusheng_huginn_workflow.py          # 书生全流程
+  INTERNLM_API_KEY=... python examples/shusheng_huginn_workflow.py          # 模型全流程
   python examples/shusheng_huginn_workflow.py --dry                         # 确定性验证管线
 """
 from __future__ import annotations
@@ -79,7 +79,7 @@ GOAL_CYCLE2 = (
 KERNEL_OBJ = ["k1_direction_purity", "locality_law_fit", "direction_universality"]
 _OBJECTIVES_CYCLE2 = {k: "maximize" for k in KERNEL_OBJ}
 
-# 长程驱动: 通用方向扫描能力白名单(书生在第 3+ 轮据此提议新实验配置).
+# 长程驱动: 通用方向扫描能力白名单(模型在第 3+ 轮据此提议新实验配置).
 # 每个配置都映射到真实执行(任意阶 ODE 的约束钳制 → 核方向分解), 无任何编造.
 # order=2 → 核 span{1,t}(2维); order=3 → 核 span{1,t,t²}(3维, 高次核).
 # ctype=point → 值约束 u(t_i); ctype=derivative → 导数约束 u'(t_i).
@@ -87,9 +87,9 @@ SCAN_OPS = {
     "system": [0, 1, 2],                    # 0=cos, 1=sin2t, 2=多项式
     "k": [1, 2],                            # 约束数
     "positions": [0.0, 0.1, 0.2, 0.33, 0.4, 0.5, 0.66, 0.8, 0.97, 1.5, 2.0, -0.1, -0.2, -0.33, -0.4, -0.5, -0.66, -0.8, -0.97],
-    # 1.5/2.0: 第225-226轮书生请求 t_i>1 外推验证未遂, 扩展供其验证位置定律外推
-    "basis": [4, 8, 12, 16, 20, 24, 32],   # 第53轮书生请求4/20未遂, 扩展供其basis收敛检验
-    "seeds": [4, 8, 12, 16, 24, 32, 50],   # 第37轮书生请求50未遂(白名单外), 扩展供其自主统计验证
+    # 1.5/2.0: 第225-226轮模型请求 t_i>1 外推验证未遂, 扩展供其验证位置定律外推
+    "basis": [4, 8, 12, 16, 20, 24, 32],   # 第53轮模型请求4/20未遂, 扩展供其basis收敛检验
+    "seeds": [4, 8, 12, 16, 24, 32, 50],   # 第37轮模型请求50未遂(白名单外), 扩展供其自主统计验证
     "order": [2, 3],                        # ODE 阶数(2=低次核, 3=高次核)
     "ctype": ["point", "derivative"],       # 约束类型(值/导数)
 }
@@ -667,7 +667,7 @@ def exp_direction_universal(seeds: int = 8, basis: int = 12) -> dict:
 
 
 def _sanitize_scan(cfg: dict | None) -> dict:
-    """把书生提议的扫描配置校验/落入白名单(越界回落到默认, 绝不执行编造的实验)."""
+    """把模型提议的扫描配置校验/落入白名单(越界回落到默认, 绝不执行编造的实验)."""
     out = dict(_SCAN_DEFAULTS)
     try:
         cfg = cfg or {}
@@ -695,7 +695,7 @@ def _sanitize_scan(cfg: dict | None) -> dict:
 
 
 def exp_dir_scan(cfg: dict, name: str) -> dict:
-    """X12+ · 通用方向扫描: 书生在第 3+ 轮提议的 (order, ctype, system, k, positions, basis, seeds).
+    """X12+ · 通用方向扫描: 模型在第 3+ 轮提议的 (order, ctype, system, k, positions, basis, seeds).
 
     每个位置真实求解(任意阶 ODE)+核方向分解; 双目标(独立维度):
       scan_fit   : 1/(1+mse vs 该配置类型的解析预言) —— 机制签名是否成立;
@@ -763,7 +763,7 @@ def exp_monotonicity_basis(system: int = 0, order: int = 2, ctype: str = "point"
                            k: int = 1, seeds: int = 8,
                            bases=(8, 12, 16),
                            positions=(-0.97, -0.66, -0.33, 0.0, 0.33, 0.66, 0.97)) -> dict:
-    """X13 · 位置单调性 × basis 敏感性对照(第 29 轮书生开放问题的专项执行).
+    """X13 · 位置单调性 × basis 敏感性对照(第 29 轮模型开放问题的专项执行).
 
     对每个 basis: 扫全部 7 个约束位置, 测 σH_full 与 lin_frac 曲线.
       - 方向单调性: lin_frac 随 |t_i| 的理论行为 = 1/(1+t_i²) 单调下降
@@ -810,7 +810,7 @@ def exp_monotonicity_plan() -> list:
     return [
         Experiment("X13_mono_basis_s0",
                    "位置单调性×basis敏感性 基准(system0): lin_frac 随 |t_i| 应单调下降(τ≈-1) "
-                   "且跨 basis 稳定 —— 执行第29轮书生开放问题1/2/3的对照计划",
+                   "且跨 basis 稳定 —— 执行第29轮模型开放问题1/2/3的对照计划",
                    run=lambda: exp_monotonicity_basis(system=0)),
         Experiment("X13_mono_basis_s1",
                    "挑战(system1): σH(t_i) 是否真的非单调(第3轮测到中心σH>边界), "
@@ -819,7 +819,7 @@ def exp_monotonicity_plan() -> list:
     ]
 
 
-# 第 31 轮密集采样: 19 点连续位置 × 5 档 basis(审稿副体与书生均点名要的补证据).
+# 第 31 轮密集采样: 19 点连续位置 × 5 档 basis(审稿副体与模型均点名要的补证据).
 _DENSE_POSITIONS = tuple(round(float(x), 2) for x in np.linspace(-0.95, 0.95, 19))
 _DENSE_BASES = (4, 8, 12, 16, 20)
 
@@ -958,7 +958,7 @@ def _make_experiments(cycle: int = 1):
 
     cycle=1: X1..X8(判据/预算/约束曲线/普适四方向);
     cycle=2: X9(核方向分解) + X10(位置-方向定律) + X11(方向定律跨系统普适);
-    cycle>=3: 由书生提议配置(X12+ 通用方向扫描, 见 _make_scan_experiments).
+    cycle>=3: 由模型提议配置(X12+ 通用方向扫描, 见 _make_scan_experiments).
     """
     from huginn.research import Experiment
 
@@ -1015,7 +1015,7 @@ def _make_experiments(cycle: int = 1):
 
 
 def _make_scan_experiments(configs: list[dict]) -> list:
-    """第 3+ 轮: 书生提议的扫描配置 → 真实 Experiment 分支(白名单校验).
+    """第 3+ 轮: 模型提议的扫描配置 → 真实 Experiment 分支(白名单校验).
 
     每个配置一个独立分支, 双目标(scan_fit 定律拟合 / scan_extent 方向倾向),
     互相独立不支配 → 全部存活, 保住多配置证据面.
@@ -1030,7 +1030,7 @@ def _make_scan_experiments(configs: list[dict]) -> list:
             hypothesis=(f"方向扫描 config #{i + 1}: system={c['system']} k={c['k']} "
                         f"positions={c['positions']} basis={c['basis']} seeds={c['seeds']} "
                         f"order={c['order']} ctype={c['ctype']} "
-                        f"→ 检验核方向机制签名 {_scan_pred_hint(c)} (书生本轮提议)."),
+                        f"→ 检验核方向机制签名 {_scan_pred_hint(c)} (模型本轮提议)."),
             run=lambda cc=c, nn=name: exp_dir_scan(cc, nn)))
     return exps
 
@@ -1042,7 +1042,7 @@ def _build_plan(goal: str, run_by_name: dict, cycle: int = 1):
            层2: X7/多系统 + X8/k1位置依赖 + X2/X3 (确认组).
     cycle=2 层0: X10/位置-方向定律 (基准曲线);
            层1: X9/核方向分解 + X11/方向律普适 (依赖曲线, 并行).
-    cycle>=3: 扫描分支无层间依赖 → 单层全并行(书生提议的配置彼此独立).
+    cycle>=3: 扫描分支无层间依赖 → 单层全并行(模型提议的配置彼此独立).
     """
     from huginn.research.planning import build_research_plan, SubResearch
     if cycle == 1:
@@ -1111,13 +1111,13 @@ def _build_plan(goal: str, run_by_name: dict, cycle: int = 1):
         ], parallel_cap=2)
     names = list(run_by_name.keys())
     return build_research_plan(goal, [
-        SubResearch(n, f"书生提议扫描分支 {n}", run=run_by_name[n], depends_on=[])
+        SubResearch(n, f"模型提议扫描分支 {n}", run=run_by_name[n], depends_on=[])
         for n in names
     ], parallel_cap=3)
 
 
 def _diagnostic_tools():
-    """书生在成文阶段可自主调用的域诊断工具 (返回真实数值, 进 trace 供门禁核对)."""
+    """模型在成文阶段可自主调用的域诊断工具 (返回真实数值, 进 trace 供门禁核对)."""
     def h_probe_cstar(a):
         target = a.get("target", "rigid")
         N = int(a.get("N", 4096))
@@ -1351,7 +1351,7 @@ def _extract_next_open(report_text: str) -> str:
 
 
 def _llm_compat_kwargs(client) -> dict:
-    """端点感知的调用增量参数: 仅 Intern/书生端点(intern-ai.org.cn 或路径含 intern)才带
+    """端点感知的调用增量参数: 仅 Intern/模型端点(intern-ai.org.cn 或路径含 intern)才带
     extra_body={'thinking_mode': False}(InternLM OpenAPI 关思考流的专属字段), 标准 OpenAI
     兼容端点(GPT/DeepSeek 等)不接受该字段, 自动省略避免 400. 让同一段调用语义跨端点兼容,
     换模型只换 client/base_url, 调用面不动 —— agent 不为单一模型定制."""
@@ -1365,7 +1365,7 @@ def _llm_compat_kwargs(client) -> dict:
 
 
 def _ask_json(client, model: str, system: str, user: str, max_tokens: int = 900) -> dict:
-    """让书生输出 JSON(解析失败/空返回 {}, 绝不阻塞主线)."""
+    """让模型输出 JSON(解析失败/空返回 {}, 绝不阻塞主线)."""
     try:
         r = client.chat.completions.create(
             model=model, max_tokens=max_tokens, temperature=0.2,
@@ -1386,7 +1386,7 @@ def _ask_json(client, model: str, system: str, user: str, max_tokens: int = 900)
 
 
 def _propose_next_open(client, model: str, report_text: str) -> list[str]:
-    """书生[观察]: 读上一轮报告, 提出下一轮最重要的开放问题(3 条以内).
+    """模型[观察]: 读上一轮报告, 提出下一轮最重要的开放问题(3 条以内).
 
     把上一轮 CriticAgent 审稿副体的意见(报告尾部「对立审稿」段)一并输入 ——
     多智能体闭环: 副体指出的"未做对照却说主导"等批评必须成为下一轮规划输入,
@@ -1414,7 +1414,7 @@ def _propose_next_open(client, model: str, report_text: str) -> list[str]:
 
 def _propose_scan_configs(client, model: str, next_open: str,
                           done_cfgs: list[dict] | None = None) -> list[dict]:
-    """书生[行动规划]: 基于下一轮开放问题, 在白名单内提议 ≤3 个扫描配置.
+    """模型[行动规划]: 基于下一轮开放问题, 在白名单内提议 ≤3 个扫描配置.
 
     已执行过的配置指纹(done_cfgs)进 prompt —— 强制避开重复, 把预算投向
     开放问题指出的未检维度(如 k=2 双约束、ti=±1.0、不同 system/basis 组合).
@@ -1503,7 +1503,7 @@ def _pad_scan_configs(cfgs: list[dict], open_text: str) -> list[dict]:
     return out[:3]
 
 
-# ── Code Lab: 书生亲手写实验代码(受限代码面, 沙箱真实执行) ────────────────
+# ── Code Lab: 模型亲手写实验代码(受限代码面, 沙箱真实执行) ────────────────
 _AUTHOR_CFG = {"order": 2, "ctype": "point", "system": 0, "k": 1,
                "positions": [0.0, 0.33, 0.97], "basis": 12, "seeds": 8}
 _AUTHOR_TEMPLATE = (
@@ -1522,7 +1522,7 @@ _AUTHOR_TEMPLATE = (
 
 
 def _try_author_code(client, model: str, next_open: str, cycle: int):
-    """书生亲手写本轮实验代码 → Code Lab 沙箱试跑校验.
+    """模型亲手写本轮实验代码 → Code Lab 沙箱试跑校验.
 
     返回值: (experiment|None, probe_specs|list, objectives_keys|list, err|str):
       - 成功: Experiment 分支(每次执行走沙箱真实重跑) + 注册的探针面 + 试跑 objectives 键;
@@ -1561,11 +1561,11 @@ def _try_author_code(client, model: str, next_open: str, cycle: int):
     try:
         code = _ask_code()
     except Exception:  # noqa: BLE001 — 写码调用失败即回退白名单
-        return None, [], [], "书生写码调用失败"
+        return None, [], [], "模型写码调用失败"
     if not code.strip():
-        return None, [], [], "书生未输出可解析的 <code> 块"
+        return None, [], [], "模型未输出可解析的 <code> 块"
     res, reason = sandbox_run(code, dict(_AUTHOR_CFG))
-    # 语法/运行修复回路: 把沙箱错误反馈给书生, 最多修 2 次(修复后仍须凭真实执行通过).
+    # 语法/运行修复回路: 把沙箱错误反馈给模型, 最多修 2 次(修复后仍须凭真实执行通过).
     for _attempt in range(2):
         if reason is None:
             break
@@ -1584,20 +1584,20 @@ def _try_author_code(client, model: str, next_open: str, cycle: int):
     name = f"author_c{cycle}"
     exp = Experiment(
         name=name,
-        hypothesis=(f"书生亲手编写的实验代码(Code Lab): 基于开放问题 '{next_open[:60]}' "
+        hypothesis=(f"模型亲手编写的实验代码(Code Lab): 基于开放问题 '{next_open[:60]}' "
                     f"自研数值实验, 沙箱真实执行, 数值进 trace 过门禁."),
         run=lambda cc=code, cg=dict(_AUTHOR_CFG): sandbox_run(cc, cg)[0] or {
             "success": False, "summary": {"error": "author run failed"}, "objectives": {}},
     )
     probes = author_probe_specs(code)
     obj_keys = sorted(res["objectives"])
-    print(f"  [书生成码] 分支 {name} 校验通过, 探针 ×{len(probes)}, "
+    print(f"  [模型生成码] 分支 {name} 校验通过, 探针 ×{len(probes)}, "
           f"objectives_keys={obj_keys}")
     return exp, probes, obj_keys, ""
 
 
 def _llm_critic(client, model: str, report_text: str, survivors_text: str) -> list[dict]:
-    """书生饰演 CriticAgent(对立审稿副体): 挑主报告的过度断言.
+    """模型饰演 CriticAgent(对立审稿副体): 挑主报告的过度断言.
 
     多智能体协同: 主研究员(成文)与审稿副体(反对立场)双角色冷却, 意见只作
     文本追加进报告 —— 不参与 grounding 门禁(Pareto/verify 仍是确定性代码).
@@ -1626,7 +1626,7 @@ def main() -> int:
     ap.add_argument("--strictness", type=int, default=0, choices=[0, 1, 2],
                     help="判断层·分级护栏 0/1/2(默认0=纯真伪硬门禁, 信任模型)")
     ap.add_argument("--cycles", type=int, default=2,
-                    help="长程轮数: 每轮=报告→书生提开放问题→新实验→新报告, 不停顿")
+                    help="长程轮数: 每轮=报告→模型提开放问题→新实验→新报告, 不停顿")
     ap.add_argument("--start-cycle", type=int, default=2,
                     help="起始轮次(默认2=复用已有 cycle1 报告继续; 1=重跑探测轮)")
     args = ap.parse_args()
@@ -1647,7 +1647,7 @@ def main() -> int:
         return 3                                         # 缺依赖即拒, 不进入主链路
     print("== 冷启动守卫(rigidity) ==")
     print("  依赖预检: %s" % _guards["deps_check"])
-    print("  书生成码重试预算: %d" % _guards["code_retry_budget"])
+    print("  模型生成码重试预算: %d" % _guards["code_retry_budget"])
     print("  成文探针: %s" % (", ".join(_guards["probes"]) or "(无)"))
 
     client = None
@@ -1664,11 +1664,11 @@ def main() -> int:
     def _report_for(cycle: int) -> Path:
         return _OUT / _REPORT_BY_CYCLE.get(cycle, f"cycle{cycle}_report.md")
 
-    print("== 书生 + Huginn 长程深研管线 ==")
+    print("== 模型 + Huginn 长程深研管线 ==")
 
     last_report = ""
     if args.start_cycle >= 2:
-        prev = _report_for(max(1, args.start_cycle - 1))   # 续跑时喂上一轮报告给书生观察
+        prev = _report_for(max(1, args.start_cycle - 1))   # 续跑时喂上一轮报告给模型观察
         if not prev.exists():
             prev = _report_for(1)
         if prev.exists():
@@ -1678,7 +1678,7 @@ def main() -> int:
 
     for cycle in range(max(1, args.start_cycle), args.start_cycle + args.cycles):
         print(f"\n===== 第 {cycle} 轮(长程自主) =====")
-        # ── 书生[推理·规划]: 本轮 goal 与实验集 ─────────────────────────
+        # ── 模型[推理·规划]: 本轮 goal 与实验集 ─────────────────────────
         if cycle == 1:
             goal = GOAL
             exps = _make_experiments(1)
@@ -1688,7 +1688,7 @@ def main() -> int:
             exps = _make_experiments(2)
             objectives = dict(_OBJECTIVES_CYCLE2)
         elif cycle == 30:
-            goal = (f"执行位置单调性×basis敏感性对照计划(第29轮书生开放问题): "
+            goal = (f"执行位置单调性×basis敏感性对照计划(第29轮模型开放问题): "
                     f"对 k=1 值约束, 扫全部7位置 × basis∈{{8,12,16}}, 检验 "
                     f"① lin_frac 随 |t_i| 单调律(τ≈-1, 理论 1/(1+t_i²))在 system0/1 是否成立; "
                     f"② σH(t_i) 是否 system1 非单调(第3轮疑似中心σH>边界) —— 真实判读, 不做预设.")
@@ -1696,7 +1696,7 @@ def main() -> int:
             objectives = {k: "maximize" for k in
                           ("mono_lin_0", "basis_stab_0", "mono_lin_1", "basis_stab_1")}
         elif cycle == 31:
-            goal = (f"执行第31轮高密度对照(审稿副体与书生共同点名): 19 点连续位置"
+            goal = (f"执行第31轮高密度对照(审稿副体与模型共同点名): 19 点连续位置"
                     f"× basis∈{{4,8,12,16,20}}, 钉死两个问题: ① lin_frac 逐点连续单调律"
                     f"(无 tie)在 system0/1 是否严格成立且 basis 无关; ② σH 反向单调与"
                     f"τ_σH 的 basis 漂移在第30轮高密度采样下是否再现/收敛.")
@@ -1719,8 +1719,8 @@ def main() -> int:
                 qs = _propose_next_open(client, args.model, last_report)
                 next_open = " ".join(x for x in (next_open, " ".join(qs)) if x)
                 if qs:
-                    print(f"  [书生·观察] 下一轮开放问题: {qs}")
-            # Code Lab: 书生亲手写本轮实验代码(每轮自动尝试, 失败回退白名单).
+                    print(f"  [模型·观察] 下一轮开放问题: {qs}")
+            # Code Lab: 模型亲手写本轮实验代码(每轮自动尝试, 失败回退白名单).
             author_exp: Any = None
             author_probes: list = []
             author_obj_keys: list = []
@@ -1728,7 +1728,7 @@ def main() -> int:
                 author_exp, author_probes, author_obj_keys, author_err = \
                     _try_author_code(client, args.model, next_open, cycle)
                 if author_exp is None:
-                    print(f"  [书生成码] 未通过, 回退白名单扫描: {author_err}")
+                    print(f"  [模型生成码] 未通过, 回退白名单扫描: {author_err}")
             if client is not None:
                 cand = _propose_scan_configs(client, args.model, next_open, done_cfgs)
             else:
@@ -1762,8 +1762,8 @@ def main() -> int:
                     objectives[_k] = "maximize"
             if cycle == 33:
                 objectives["seed_stab"] = "maximize"
-            print(f"  [书生·行动] 本轮扫描配置: {cfgs}")
-            goal = (f"检验书生本轮提出的开放问题(数值证据由方向扫描+书生成码分支提供): "
+            print(f"  [模型·行动] 本轮扫描配置: {cfgs}")
+            goal = (f"检验模型本轮提出的开放问题(数值证据由方向扫描+模型生成码分支提供): "
                     f"{next_open}")
             diagnostics = _diagnostic_tools() + author_probes
 
@@ -1776,7 +1776,7 @@ def main() -> int:
               f"topo: {plan.topo_order}")
         print(f"objectives: {objectives}\n")
 
-        # ── 书生[行动]: 全程驱动 run_research_program(观察→推理→行动闭环) ──
+        # ── 模型[行动]: 全程驱动 run_research_program(观察→推理→行动闭环) ──
         out = run_research_program(
             goal=goal,
             experiments=exps,
@@ -1788,7 +1788,7 @@ def main() -> int:
             layer_epochs=True,                # P-A: 分层流式结算
             replan_gate=True,                 # P-B: 层间重规划门
             early_stop_gate=True,             # P-C: 证据驱动提前终止门
-            diagnostic_tools=diagnostics,     # 含书生成码注册的自定义探针(有则给)
+            diagnostic_tools=diagnostics,     # 含模型生成码注册的自定义探针(有则给)
             max_iterations=args.max_iters,
             min_iterations=min(args.min_iters, max(1, len(exps) - 1)),
             max_parallel=2,
@@ -1808,14 +1808,14 @@ def main() -> int:
         print(f"[护栏] strictness={args.strictness} 判断层软提示: "
               f"{_gj.get('outcome', 'unobserved')} ({_gj.get('detail', '')[:80]})")
 
-        # ── 多智能体协同: 书生饰演 CriticAgent 对立审稿(只追加文本, 不碰门禁) ──
+        # ── 多智能体协同: 模型饰演 CriticAgent 对立审稿(只追加文本, 不碰门禁) ──
         if client is not None and out.report:
             _sv = "\n".join(
                 f"- {b['name']}: {json.dumps(out.cache.get(b['name'], {}).get('summary', {}), ensure_ascii=False)[:400]}"
                 for b in out.pareto_front) or "(无存活)"
             _finds = _llm_critic(client, args.model, out.report, _sv)
             if _finds:
-                _blk = ["", "## 对立审稿(CriticAgent)", "> 书生双角色协同: 主研究员成文, 审稿副体持反对立场复核。"
+                _blk = ["", "## 对立审稿(CriticAgent)", "> 模型双角色协同: 主研究员成文, 审稿副体持反对立场复核。"
                         "意见不参与 grounding 门禁(Pareto/verify 仍为确定性代码)。"]
                 for f in _finds:
                     _blk.append(f"- 断言: {f.get('claim', '')}\n"

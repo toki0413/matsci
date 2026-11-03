@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Huginn × 书生 — 热木星 backend 演示『产品级自主深研统一管线』.
+"""Huginn × 模型 — 热木星 backend 演示『产品级自主深研统一管线』.
 
 这是对产品能力 (huginn.research.run_research_program) 的一次域插件调用, 不是孤岛 demo:
   - 热木星(非线性/线性/缩放 × WASP/HD) 只是其中一个 Experiment backend;
@@ -7,7 +7,7 @@
   - 产品能力域无关: 换成材质/化学/系外 backend 即可复用同一管线.
 
 用法: python examples/ai4s_arena_demo.py --dry     (确定性, 不调模型)
-      python examples/ai4s_arena_demo.py           (真机: 存活假说证据交由书生成文 + 门禁)
+      python examples/ai4s_arena_demo.py           (真机: 存活假说证据交由模型成文 + 门禁)
 """
 from __future__ import annotations
 

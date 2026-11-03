@@ -110,7 +110,7 @@ class TestDarwinRatchet:
     def test_stagnation_advisory_hint_not_stop(self, monkeypatch, caplog):
         """连续 2 轮 Δ<0.5 + iteration>2 → 只发 advisory hint, 不再 hard stop.
 
-        控制面审计 A3: "该不该收结"是科学判断, 下沉给书生; 长程有挂钟出口,
+        控制面审计 A3: "该不该收结"是科学判断, 下沉给模型; 长程有挂钟出口,
         短程有步数上限兜底, 该硬出口只贡献误杀风险 → 降级为提示 + control_trace.
         本测验证降级后确无硬终止, 且提示与可观测 trace 均在.
         """

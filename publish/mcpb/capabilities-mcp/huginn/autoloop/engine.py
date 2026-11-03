@@ -656,7 +656,7 @@ class AutoloopEngine:
         # 上一轮执行结果, 给 _build_plan_prompt 的 pipeline suggest_next 用
         self._last_execution_result: dict | None = None
         # 本轮所有真实执行结果的紧凑台账 (每次 execute 追加一条). 报告生成只用
-        # _last_execution_result (仅最后一轮) 时, 书生会把中间轮的真实数值丢掉、
+        # _last_execution_result (仅最后一轮) 时, 模型会把中间轮的真实数值丢掉、
         # 凭印象编表 (run56: 末轮 execute 全超时零证据, 报告却写出干净的 N_c(w) 表).
         # 台账给报告面一个"数值必须溯源到本轮真实执行"的citation门 (C 族诚实门).
         self._execution_ledger: list[dict[str, Any]] = []

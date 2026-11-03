@@ -134,10 +134,10 @@ def test_no_leftover_tracked_children(tmp_path: Path):
 
 
 # ── B: 证据链自修复 — 报错必须带回出错行号 (run88) ──────────────────────────
-# 背景: run88 书生代码在沙箱报 ``TypeError: int() argument must be ... not list``,
+# 背景: run88 模型代码在沙箱报 ``TypeError: int() argument must be ... not list``,
 # 但旧实现只回 "类型: 消息", 无行号 → 4 轮自修复全落空 → 整轮零证据 → 回落 DFT
-# workflow 造成报告域漂移. 修法: ``_format_exec_error`` 从 traceback 取书生代码
-# (<code_act>) 帧, 附上出错行号与附近源码, 让书生能对症定位.
+# workflow 造成报告域漂移. 修法: ``_format_exec_error`` 从 traceback 取模型代码
+# (<code_act>) 帧, 附上出错行号与附近源码, 让模型能对症定位.
 
 
 def test_exec_error_reports_line_and_source():

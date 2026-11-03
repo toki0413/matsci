@@ -782,7 +782,7 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
         context_window=8192,
         long_context_cost_mode="quadratic",
     ),
-    # ── 书生 InternLM (上海AI实验室) ──────────────────────────
+    # ── InternLM (上海AI实验室) ──────────────────────────
     # Intern-S2-Preview (35B-A3B 科学多模态推理模型, 256K 上下文): 深度思考 +
     # 工具调用. 注意: ChatAPI 的 thinking_mode 会把思维链写进 content 字段
     # (无独立 reasoning_content), 拖后最终答案; 强推理任务建议走 harness 的
@@ -815,7 +815,7 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
         streaming=True,
         context_window=131_072,
     ),
-    # intern-latest: 书生 ChatAPI 通用最新模型, 支持 tool calling
+    # intern-latest: InternLM ChatAPI 通用最新模型, 支持 tool calling
     "intern-latest": ModelCaps(
         vision=False,
         tools=True,
@@ -1026,7 +1026,7 @@ _DOMESTIC_OPENAI_COMPATIBLE: dict[str, dict[str, str | None]] = {
     },
     "internlm": {
         "env": "INTERNLM_API_KEY",
-        # 书生 · 端砚 ChatAPI 的 OpenAI 兼容端点; 模型含 intern-s2-preview
+        # 模型 · 端砚 ChatAPI 的 OpenAI 兼容端点; 模型含 intern-s2-preview
         # / intern-s1-pro / internvl-latest 等. 智能体任务推荐 intern-s2-preview
         # (thinking_mode 默认开启).
         "base_url": "https://chat.intern-ai.org.cn/api/v1",
@@ -1191,7 +1191,7 @@ def _message_text(m: Any) -> str:
 def _merge_system_messages(messages: list[Any]) -> list[Any]:
     """把全部 SystemMessage 收敛成一条置于队首的 SystemMessage.
 
-    某些 OpenAI 兼容端点 (书生 intern-s2-preview 等) 只接受「最多一条、且必须
+    某些 OpenAI 兼容端点 (模型 intern-s2-preview 等) 只接受「最多一条、且必须
     在首条」的 system 消息: 多条 system、或 system 落在 human 之后, 服务端都会
     直接回 "in prompt processing error", 整轮对话失效. huginn 会在会话中间注入
     多条 system (风格指令 / 工具预算 / context hints), 图框架又把顶层
@@ -1282,7 +1282,7 @@ def _create_openai_compatible(
         kwargs["max_tokens"] = max_tokens
     _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
     if provider == "internlm":
-        # 书生 ChatAPI 的 thinking_mode 把思维链直接写进 content 字段(无独立
+        # InternLM ChatAPI 的 thinking_mode 把思维链直接写进 content 字段(无独立
         # reasoning_content). 通用 agent/autoloop 路径按 content 解析答复, 思考流会
         # 先吃满 max_tokens 再耗尽预算 → 正文为空("agent produced no answer").
         # 与 research/program.py 的门禁路径保持一致: 默认关思考流, 只有显式
@@ -1753,7 +1753,7 @@ def _domestic_provider_entries() -> list[dict[str, Any]]:
             "hunyuan": "腾讯混元",
             "minimax": "MiniMax (稀宇)",
             "spark": "讯飞星火 (Spark)",
-            "internlm": "书生 InternLM (上海AI实验室)",
+            "internlm": "InternLM (上海AI实验室)",
         }
         entries.append(
             {

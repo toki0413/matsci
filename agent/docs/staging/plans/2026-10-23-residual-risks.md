@@ -2,7 +2,7 @@
 
 workflow-exempt: legacy plan, 对应 spec 未归档到 `docs/staging/specs/`; 新任务仍须走 spec → plan → 开工.
 
-来源：书生实战 10 轮（`research/shusheng_run/ws*`）暴露的 6 条残余风险。
+来源：长程实战 10 轮（`research/shusheng_run/ws*`）暴露的 6 条残余风险。
 纪律：每条先写失败测试（RED），最小实现（GREEN），再重构与同步文档。
 
 ## Tasks
@@ -22,7 +22,7 @@ pytest tests/test_residual_risks.py tests/test_structural_defect_fixes.py \
        tests/test_security.py -o addopts="" -q
 ```
 
-## 实战验收 (ws11, `loop_2aade16e`, 书生原样重跑)
+## 实战验收 (ws11, `loop_2aade16e`, 模型原样重跑)
 
 | 编号 | 现场证据 | 结论 |
 |---|---|---|

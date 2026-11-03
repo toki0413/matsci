@@ -82,7 +82,7 @@ def _non_finite_objective_keys(execution_result: Any) -> list[str]:
 
     命题无关的数值卫生: 非有限数不是"测量到的数值", 不能充当真实执行证据 —— 许多
     命题口径明确要求"所有报告数值必须是有限数 (禁止 inf/nan/None)"(如 run44/46/53),
-    而 code_lab schema 只校验"值是数值", float('inf') 照收. 于是书生拿 ∞ 当"未达标"
+    而 code_lab schema 只校验"值是数值", float('inf') 照收. 于是模型拿 ∞ 当"未达标"
     哨兵, validate 又据 objectives 非空判 solved → ∞ 直接进最终报告 (run53 实测).
     达不到阈值的行应如实报**有限的**回退数值, 用布尔/计数目标表达"未达标".
     """
@@ -1439,7 +1439,7 @@ class EngineReflect:
             "executed_numeric_snippet" if cf_solved else "code_lab_objectives"
         )
         # RSI 入口: _learn 的奖励回流(evolve_from_rewards)必需 r_phys 非 None.
-        # code_lab(书生亲写完整实验) 给 1.0; 闭式 probe(平凡数值片段) 略低 0.75.
+        # code_lab(模型亲写完整实验) 给 1.0; 闭式 probe(平凡数值片段) 略低 0.75.
         if results.get("r_phys") is None:
             results["r_phys"] = 1.0 if lab_solved else 0.75
         logger.info(
@@ -2415,7 +2415,7 @@ class EngineReflect:
         现象: 沙箱对每次 code_lab 都用固定 seed (sandbox_run 传 {"seed": 0}), 且
         作者提示里 goal 恒定 —— 僵持时 LLM 极易反复产出同一段 family 代码, 输出
         逐轮一致; 而 _is_code_lab_solved 只要求 objectives 非空且全有限, 每轮照样
-        判"已解决", 循环拿不到"没进展"的反馈 → 空转 (书生自觉在推进, 实际原地重跑).
+        判"已解决", 循环拿不到"没进展"的反馈 → 空转 (模型自觉在推进, 实际原地重跑).
 
         三件事都只看本轮执行指纹 (口径见 _exec_fingerprint):
           ① 与上轮指纹相同 → 记 repeat streak + 注入软纠偏提示 (_speculator_hint);
@@ -2483,7 +2483,7 @@ class EngineReflect:
         """维护最近指纹窗口, 判定 `_exec_converged` / `_exec_cycling`.
 
         收敛判定: 窗口填满且只剩 <=2 种不同结果 → 循环在有限几种结果间打转.
-        为何用"窗口去重后 <=2"而非"连续相同 streak": 实测书生常在两种等价
+        为何用"窗口去重后 <=2"而非"连续相同 streak": 实测模型常在两种等价
         family 间来回换 (A,B,A,B...), 连续相同 streak 反复被重置, 永远到不了
         阈值; 但去重后只有 2 种结果, 同样是打转. 窗口取 6/阈值 5+2 兼顾
         "够快触发"与"不误伤正常探索".
@@ -2529,7 +2529,7 @@ class EngineReflect:
             )
 
     def _is_code_lab_solved(self, execution_result: Any) -> bool:
-        """方案2·接 Code Lab → validate: 书生亲写实验是否已在沙箱真跑通并产出数值目标.
+        """方案2·接 Code Lab → validate: 模型亲写实验是否已在沙箱真跑通并产出数值目标.
 
         判定 = execution_result 来自 code_lab 且 success=True 且 objectives 非空
         且**全为有限数**. 与闭式 probe 同源: 都是"可执行→已执行→产出数值"的真实
@@ -5856,7 +5856,7 @@ class EngineReflect:
             phases_blob = json.dumps(report_data["phases"], ensure_ascii=False)[:800]
         except Exception:  # 防御: 序列化失败回落字符串
             phases_blob = str(report_data.get("phases", ""))[:800]
-        # 本轮**每次** execute 的紧凑台账. 报告面若只看末轮 Execution Data, 书生会
+        # 本轮**每次** execute 的紧凑台账. 报告面若只看末轮 Execution Data, 模型会
         # 把中间轮真实数值丢掉、凭印象编一张干净的表 (run56). 有台账时给硬性口径:
         # Results 数值只能取自台账, 无出处的必须显式声明"无证据", 不许编.
         ledger_section = (
@@ -5893,7 +5893,7 @@ class EngineReflect:
         # 跨协议/判据纪律: 台账各 [ev#] 可能来自**不同实验协议**(族/扫描网格/判据不同),
         # 早期报告把不同轮的数值并成"同一实验的一条可比序列", 并自行断言阈值通过/不通过,
         # 产出"报 N_c=8 而留出误差 1.7e-3 > 1e-3"这类自相矛盾结论 (run66 实测). 这是
-        # 报告综合期的问题: 只加纪律, 不替书生计算、不改写其结论.
+        # 报告综合期的问题: 只加纪律, 不替模型计算、不改写其结论.
         protocol_rule = (
             "\nPROVENANCE RULE (hard): the ledger entries above may come from DIFFERENT "
             "experimental protocols (different families / scan grids / criteria). Never "
@@ -5914,7 +5914,7 @@ class EngineReflect:
     def _srp_logic_rules(evidence_ledger: str) -> tuple[str, str]:
         """判别性 + 决定性两条硬纪律 (仅在有台账时给)."""
         # 判别性/决定性纪律: 与 citation/provenance 同一"硬纪律"风格 (只加规则,
-        # 不替书生计算、不改写其结论). run79: rigid==fat 却当结论; 硬口径只给
+        # 不替模型计算、不改写其结论). run79: rigid==fat 却当结论; 硬口径只给
         # "partial support". 让报告作者显式处理这两件事.
         discrimination_rule = (
             "\nDISCRIMINATION RULE (hard): if the experiment has a control/comparison "

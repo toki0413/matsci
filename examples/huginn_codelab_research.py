@@ -3,7 +3,7 @@
 与 `shusheng_huginn_workflow.py`(逐轮硬编码的 X7 研究日志)不同, 本文件把**研究
 目标**当作外部输入(`--objective`), 不绑定任何具体命题:
 
-  书生(Intern)读目标 → 提开放问题 → 在 Code Lab 里**亲手写** numpy 实验代码 →
+  模型(Intern)读目标 → 提开放问题 → 在 Code Lab 里**亲手写** numpy 实验代码 →
   `huginn.research.code_lab` 安全沙箱真实执行 → 数值进 `run_research_program`
   的分层流式结算(P-A)+ 层间重规划(P-B)+ 提前终止(P-C)+ claim_grounding 门禁 →
   成文报告 → 下一轮读报告里的开放问题继续. 目标换一行参数即可复用整条管线.
@@ -33,7 +33,7 @@ _OUT = Path(__file__).resolve().parents[1] / "research_outputs" / "shusheng_hugi
 
 
 def _llm_compat_kwargs(client) -> dict:
-    """仅 Intern/书生端点注入 extra_body={'thinking_mode': False}(关思考流).
+    """仅 Intern/模型端点注入 extra_body={'thinking_mode': False}(关思考流).
 
     Intern ChatAPI 的 thinking_mode 把思维链写进 content 字段, 会吃满预算拖空正文;
     标准 OpenAI 兼容端点不接受该字段 → 自动省略, 跨端点调用面不变.
@@ -59,7 +59,7 @@ def _extract_next_open(report_text: str) -> str:
 
 def _author_code(client, model: str, goal: str, guards: dict, cycle: int,
                  scaffold=None):
-    """书生在 Code Lab 亲手写本轮实验代码 → 沙箱试跑校验.
+    """模型在 Code Lab 亲手写本轮实验代码 → 沙箱试跑校验.
 
     返回 (Experiment|None, probe_specs, objectives_keys, err).
     失败即回退(不伪造): (None, [], [], 原因).
@@ -89,9 +89,9 @@ def _author_code(client, model: str, goal: str, guards: dict, cycle: int,
     try:
         code = _ask()
     except Exception as e:  # noqa: BLE001
-        return None, [], [], f"书生写码调用失败: {e}"
+        return None, [], [], f"模型写码调用失败: {e}"
     if not code.strip():
-        return None, [], [], "书生未输出可解析的 <code> 块"
+        return None, [], [], "模型未输出可解析的 <code> 块"
     res, reason = sandbox_run(code, dict(cfg), imports_whitelist_extra=extra,
                               cfg_aliases=aliases, scaffold=scaffold)
     budget = max(0, int(guards.get("code_retry_budget") or 0))
@@ -113,7 +113,7 @@ def _author_code(client, model: str, goal: str, guards: dict, cycle: int,
     name = f"author_c{cycle}"
     exp = Experiment(
         name=name,
-        hypothesis=(f"书生亲手编写的实验代码(Code Lab): 针对目标 '{goal[:60]}' "
+        hypothesis=(f"模型亲手编写的实验代码(Code Lab): 针对目标 '{goal[:60]}' "
                     f"自研数值实验, 沙箱真实执行, 数值进 trace 过门禁."),
         run=lambda cc=code, cg=dict(cfg), ex=extra, al=aliases, sc=scaffold:
             sandbox_run(cc, cg, imports_whitelist_extra=ex, cfg_aliases=al,
@@ -121,7 +121,7 @@ def _author_code(client, model: str, goal: str, guards: dict, cycle: int,
             or {"success": False, "summary": {"error": "author run failed"}, "objectives": {}},
     )
     probes = author_probe_specs(code, scaffold=scaffold)
-    print(f"  [书生成码] 分支 {name} 校验通过, 探针 ×{len(probes)}, "
+    print(f"  [模型生成码] 分支 {name} 校验通过, 探针 ×{len(probes)}, "
           f"objectives_keys={sorted(res['objectives'])}")
     return exp, probes, sorted(res["objectives"]), ""
 
@@ -169,7 +169,7 @@ def main() -> int:
     sfx = f"_{args.session}" if args.session else ""
     transcript = [f"# Huginn 原生 Code Lab 自主循环 · {args.session}", "",
                   f"> 目标(外部传入, 命题无关): {args.objective}", "",
-                  f"> 模型: 书生 `{args.model}` @ `{args.base_url}`; 域: {args.domain or '(无)'}", ""]
+                  f"> 模型: 模型 `{args.model}` @ `{args.base_url}`; 域: {args.domain or '(无)'}", ""]
     last_report = ""
     for cycle in range(1, args.cycles + 1):
         t0 = time.time()
@@ -181,9 +181,9 @@ def main() -> int:
                 goal = (f"{args.objective}\n\n【上一轮报告的开放问题/局限(优先推进)】\n{nxt[:1200]}")
         exp, probes, obj_keys, err = _author_code(client, args.model, goal, guards, cycle,
                                                   scaffold=scaffold)
-        transcript += [f"## 第 {cycle} 轮 · 书生成码", ""]
+        transcript += [f"## 第 {cycle} 轮 · 模型生成码", ""]
         if exp is None:
-            note = f"书生成码未通过, 本轮无真实证据, 停止(不伪造): {err}"
+            note = f"模型生成码未通过, 本轮无真实证据, 停止(不伪造): {err}"
             print(f"  !! {note}", file=sys.stderr)
             transcript += [f"**{note}**", ""]
             break

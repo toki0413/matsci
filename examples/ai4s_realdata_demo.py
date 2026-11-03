@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Huginn × 书生 — 面向「真正的科学开放问题」的自然科学开放研究 demo.
+"""Huginn × 模型 — 面向「真正的科学开放问题」的自然科学开放研究 demo.
 
 与杜撰数据不同：数据来自**真实公开库**（经一次真实抓取后缓存，可复现）：
   - exoplanet  : NASA 系外行星档案（真实周期/质量/半径）
@@ -12,7 +12,7 @@
 工具执行轨迹（= 真实API值 + 真实拟合 + 真实对账）中，否则 needs_grounding 打回。
 
 用法:
-    export INTERNLM_API_KEY=<书生 token>
+    export INTERNLM_API_KEY=<模型 token>
     python examples/ai4s_realdata_demo.py --problem exoplanet
     python examples/ai4s_realdata_demo.py --problem chembl
 依赖: pip install requests openai
@@ -440,7 +440,7 @@ def main() -> int:
         messages.append({"role": "assistant", "content": final})
 
     rep = OUT / f"ai4s_real_open_{args.problem}_report.md"
-    header = (f"# 开放自然科学问题研究 — 书生 Intern-S2 × Huginn · 真实数据\n\n"
+    header = (f"# 开放自然科学问题研究 — 模型 Intern-S2 × Huginn · 真实数据\n\n"
               f"> 问题: {prob['title']}\n> 数据来源: 真实公开库(一次抓取缓存在 out/, 可复现)\n"
               f"> **结论证伪门禁: {verdict}**（未落地主张: {ungrounded or '无'}）\n\n"
               f"## 一、工具执行轨迹（门禁证据，含真实值）\n\n")

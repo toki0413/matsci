@@ -1,4 +1,4 @@
-"""书生 × Huginn · NN 泛化行为作为 bootstrap 解空间刚性探针的可行性研究.
+"""Huginn · NN 泛化行为作为 bootstrap 解空间刚性探针的可行性研究.
 
 两轮:
   1. 主研究: 把"唯一性是否成立"转译为"容量-零违规"可测量量的严格性评估;
@@ -8,7 +8,7 @@
 输出: research_outputs/shusheng_nn_rigidity_probe/research_report.md
 
 用法:
-    export INTERNLM_API_KEY=<书生 token>
+    export INTERNLM_API_KEY=<模型 token>
     python examples/shusheng_nn_rigidity_research.py
 可用 INTERNLM_MODEL / INTERNLM_BASE_URL 覆盖模型与端点 (默认 intern-s2).
 """
@@ -119,7 +119,7 @@ def _stage2_prompt(stage1: str) -> str:
 
 
 def _compat_kwargs(client: OpenAI) -> dict:
-    """端点感知: 仅 Intern/书生端点注入 thinking_mode 字段, 通用端点省略以免 400."""
+    """端点感知: 仅 Intern/模型端点注入 thinking_mode 字段, 通用端点省略以免 400."""
     base = str(getattr(client, "base_url", None) or "")
     if "intern-ai.org.cn" in base or "/intern" in base:
         return {"extra_body": {"thinking_mode": False}}
@@ -147,7 +147,7 @@ def main() -> int:
     base = os.environ.get("INTERNLM_BASE_URL", "https://chat.intern-ai.org.cn/api/v1")
     client = OpenAI(api_key=key, base_url=base)
 
-    print(f"== 书生 {model} @ {base} ==")
+    print(f"== 模型 {model} @ {base} ==")
     print("[1/2] 主研究分析 ...")
     stage1 = _ask(client, model, _STAGE1, max_tokens=6000)
     print(f"      -> {len(stage1)} 字")
@@ -164,7 +164,7 @@ def main() -> int:
     _OUT.mkdir(parents=True, exist_ok=True)
     _OUT_MD.write_text(
         "# NN 泛化行为作为 bootstrap 解空间刚性探针的可行性研究\n\n"
-        f"> 生成: 书生 `{model}` × Huginn (两轮: 主分析 + 红队复核)\n"
+        f"> 生成: 模型 `{model}` × Huginn (两轮: 主分析 + 红队复核)\n"
         f"> 问题: 唯一性是否可转译为「多大容量模型能在留出集上零违规」\n\n"
         "---\n\n"
         "## 第一轮 · 主研究分析\n\n"

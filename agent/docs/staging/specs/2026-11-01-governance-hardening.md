@@ -100,11 +100,21 @@ milestone: 无 (单批治理加固, 不跨里程碑)
 - test: `tests/test_arch_gate_ownership.py` 扩展（evidence/TTL/强度优先级 + 自检原语）；
   台账渲染出「门强度与豁免」小节。
 
+## D10. 去厂商/人格绑定
+
+- contract: 交付面（`agent/` 源码、技能、文档、`examples/`、仓库 `docs/`、顶层配置）
+  不得出现某个模型的实验人格名；报告标题、工具描述、错误文案、技能描述一律中性。
+- invariant: 扫描面任一行命中即红；历史运行证据（`research_outputs/`、`research/<run>/`、
+  `examples/out/`）**不在扫描面**，保留原始档案不动。provider 标识（如 `internlm`）
+  与厂商名（InternLM）属可选接入，不算人格名。
+- test: `tests/test_arch_no_vendor_persona.py`（登记为 full-suite-only）。
+
 ## 验收
 
 六个门全绿 + 既有门不回归 + ruff 全绿 + `docs/governance-state.md` 重生成一致。
 追加后: D7/D8 两个门绿 + 既有门不回归 + 镜像零漂移。
-第三轮: D9 门绿（含自检原语）+ 18 条豁免全部带证据与未到期复核期 + 台账重生成一致。
+第三轮: D9 门绿（含自检原语）+ 豁免全部带证据与未到期复核期 + 台账重生成一致。
+第四轮: D10 门绿 + 交付面零人格名 + 历史运行证据保持原样。
 
 ## Working notes
 

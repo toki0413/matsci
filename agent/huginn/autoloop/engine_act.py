@@ -124,7 +124,7 @@ class EngineAct(EngineFacade):
 
     #: plan / validate 阶段允许挂载的**只读**工具白名单.
     #: 只收 read_only=True 且无副作用的工具 —— 这两个阶段此前完全没有工具面,
-    #: 书生只能凭记忆"编"计划与批评, 无法查文献/翻记忆/看自己的执行 trace.
+    #: 模型只能凭记忆"编"计划与批评, 无法查文献/翻记忆/看自己的执行 trace.
     _READONLY_PHASE_TOOLS: tuple[str, ...] = (
         "literature_tool",
         "recall",
@@ -140,7 +140,7 @@ class EngineAct(EngineFacade):
         if tool is None or not getattr(tool, "read_only", False):
             return False
         if name == "recall_observation" and not self._has_archived_observations():
-            # 前置状态工具: 没有 offload 句柄时它 100% 失败 (ws7 实测书生
+            # 前置状态工具: 没有 offload 句柄时它 100% 失败 (ws7 实测模型
             # 只能瞎传 '@obs:' → malformed handle). 按需裁剪, 不给"必然失败"
             # 的选项, 免得浪费一轮工具调用并污染成功率.
             return False
@@ -514,7 +514,7 @@ class EngineAct(EngineFacade):
         return code
 
     # 计算实验意图词 (命题无关): 目标是"要真跑一段数值实验/仿真/训练/扫描"的,
-    # 就让书生在 Code Lab 亲手写并真跑, 而不是只产出一段抄来的闭式或空转.
+    # 就让模型在 Code Lab 亲手写并真跑, 而不是只产出一段抄来的闭式或空转.
     _CODE_EXPERIMENT_HINTS = (
         "实验",
         "仿真",
@@ -542,7 +542,7 @@ class EngineAct(EngineFacade):
     )
 
     def _is_code_experiment(self, text: str) -> bool:
-        """启发式: 该项是否为"需书生亲手写代码真跑的计算实验"目标 (命题无关).
+        """启发式: 该项是否为"需模型亲手写代码真跑的计算实验"目标 (命题无关).
 
         与 ``_is_deterministic_numeric``(平凡闭式) 互补: 这里指开放的计算实验 ——
         多步数值流程(训练/扫描/网格/统计), 该进 Code Lab 沙箱真跑, 而不是抄一段
@@ -556,7 +556,7 @@ class EngineAct(EngineFacade):
     # 「必须外部取证」信号: Code Lab 沙箱移除 ``open()``、import 白名单不含
     # urllib/requests/socket、``bash_tool``/``code_tool`` 在 _BLOCKED_TOOLS ——
     # 它**物理上**无法下载也无法落盘. 目标一旦要求真实数据获取, 让 code_lab
-    # 接管 execute 就只能交出一段"合成 stand-in"(ws13 实测: 书生自述
+    # 接管 execute 就只能交出一段"合成 stand-in"(ws13 实测: 模型自述
     # "real data fetch is handled by the outer orchestrator"), 而报告仍把它
     # 当执行证据抄出去. 这类目标改道 coder: 唯一带 bash_tool/写文件能力的
     # 真实执行路径.
@@ -630,12 +630,12 @@ class EngineAct(EngineFacade):
         prev_code: str = "",
         focus: str = "",
     ) -> str:
-        """平衡点·内建执行: 让书生亲手写一段 Code Lab ``run(cfg)`` 实验代码.
+        """平衡点·内建执行: 让模型亲手写一段 Code Lab ``run(cfg)`` 实验代码.
 
         命题无关: 提示词来自 ``code_lab.build_author_prompt`` 的单一契约. 这里只取
         代码, 不评科学可信度(那是 validate/裁决层的事). 失败返回空串 → 回落原分派.
         ``repair_hint`` 非空时把沙箱真实报错回灌, 并附上 ``prev_code``(上一版失败
-        代码), 让书生在此基础上做**最小改动**修 bug, 而不是凭空重写再犯同一个错.
+        代码), 让模型在此基础上做**最小改动**修 bug, 而不是凭空重写再犯同一个错.
         ``focus`` 是本轮可变的聚焦文本(见 ``_build_codelab_focus``), 防止作者提示
         因只喂恒定 goal 而逐字节冻结.
         """
@@ -665,8 +665,8 @@ class EngineAct(EngineFacade):
         guards: dict[str, Any] | None = None,
         timeout_s: float | None = None,
     ) -> tuple[dict[str, Any] | None, str]:
-        """在 Code Lab 安全沙箱真跑书生的实验代码; 无证据返回 (None, 原因).
-        返回原因让上层能把真实报错回灌书生重写 (自修复), 不伪造.
+        """在 Code Lab 安全沙箱真跑模型的实验代码; 无证据返回 (None, 原因).
+        返回原因让上层能把真实报错回灌模型重写 (自修复), 不伪造.
 
         ``timeout_s`` 非空时覆盖 env 默认超时 —— D6① 用它把单片沙箱超时封顶到
         剩余挂钟预算, 使单次尝试不可能烧穿预算 (None = 用 `HUGINN_CODELAB_TIMEOUT_S`).
@@ -722,7 +722,7 @@ class EngineAct(EngineFacade):
         # (无效重跑) 并累计 _repeat_exec_streak. 该软提示原本只进假设生成提示, 到不了
         # **真正写实验**的作者提示 → 指纹照旧、循环撞收敛提前离场 (run50 实测 streak
         # 1-4 指纹恒同). 这里**按 streak 现算**强制变异令并注入作者提示, 附上一轮真实
-        # 结果(_prev_exec_fp_src), 逼书生改实验族/参数而非原样重跑. 无独立标志状态机.
+        # 结果(_prev_exec_fp_src), 逼模型改实验族/参数而非原样重跑. 无独立标志状态机.
         _streak = int(getattr(self, "_repeat_exec_streak", 0) or 0)
         _cycling = bool(getattr(self, "_exec_cycling", False))
         if _streak >= _REPEAT_HARD_STREAK or _cycling:
@@ -754,7 +754,7 @@ class EngineAct(EngineFacade):
         return "\n".join(parts)
 
     async def _codelab_start(self, description: str) -> tuple[str, str, str]:
-        """确定 goal / focus 并让书生产出首版实验代码; code 为空表示失败."""
+        """确定 goal / focus 并让模型产出首版实验代码; code 为空表示失败."""
         # 优先用研究目标(全文本, 命题无关的真问题), plan 步骤只作兜底 —— plan 描述
         # 常带 "FILES:/SKILL:" 之类执行噪声, 不适合喂给"实验作者"提示.
         goal = str(getattr(self, "_objective", "") or "") or description
@@ -865,7 +865,7 @@ class EngineAct(EngineFacade):
         last_err: str,
         prev_cost: float,
     ) -> tuple[str | None, float]:
-        """把沙箱报错回灌书生重写; 返回 (新代码, 更新后的片成本)."""
+        """把沙箱报错回灌模型重写; 返回 (新代码, 更新后的片成本)."""
         # D6 自校准: 修复重写的作者 LLM 调用也是下一个 slice 的成本, 计入
         # 实测 —— 否则低估下一片 (run79 超支主要来自作者调用, 非沙箱).
         _t_auth = time.monotonic()
@@ -927,11 +927,11 @@ class EngineAct(EngineFacade):
     async def _execute_code_lab(
         self, description: str, context: dict[str, Any]
     ) -> dict[str, Any]:
-        """mode=code_lab: 书生亲写一段计算实验 → Code Lab 沙箱真跑 → 证据.
+        """mode=code_lab: 模型亲写一段计算实验 → Code Lab 沙箱真跑 → 证据.
 
         与闭式 probe 分层: 闭式只认平凡数值片段; 这里认"实验意图"并允许更长时/
         更多依赖(仍受沙箱白名单约束). 失败返回 success=False, 由 validate 层裁决.
-        沙箱真报错时把报错回灌书生重写 (命题无关·通用修 bug), 最多 N 轮自修复.
+        沙箱真报错时把报错回灌模型重写 (命题无关·通用修 bug), 最多 N 轮自修复.
         """
         code, goal, focus = await self._codelab_start(description)
         if not code:
@@ -939,7 +939,7 @@ class EngineAct(EngineFacade):
                 "mode": "code_lab",
                 "status": "failed",
                 "success": False,
-                "error": "书生未产出可解析的实验代码",
+                "error": "模型未产出可解析的实验代码",
             }
         import os as _os
 
@@ -954,9 +954,9 @@ class EngineAct(EngineFacade):
             max_repairs + 1,
             last_err,
         )
-        # 诊断: 把最后一版(仍失败的)书生代码落日志, 便于对症改 harness/提示, 不伪造证据.
+        # 诊断: 把最后一版(仍失败的)模型代码落日志, 便于对症改 harness/提示, 不伪造证据.
         # 用 warning 级: 默认 root logger 无 handler, info 级看不到失败代码.
-        logger.warning("code_lab 最后一版书生代码:\n%s", code[:2000])
+        logger.warning("code_lab 最后一版模型代码:\n%s", code[:2000])
         return {
             "mode": "code_lab",
             "status": "failed",
@@ -1057,7 +1057,7 @@ class EngineAct(EngineFacade):
     async def _act_code_lab_fast_path(
         self, plan: dict[str, Any], description: Any, context: dict[str, Any]
     ) -> Any | None:
-        """目标是计算实验类 → 书生亲写 run(cfg), Code Lab 沙箱真跑."""
+        """目标是计算实验类 → 模型亲写 run(cfg), Code Lab 沙箱真跑."""
         # 顺序: 实验意图优先于平凡 probe, 二者级联(if 而非 elif): 失败仍可退到 probe.
         if not (
             self._is_code_experiment(description)
@@ -1085,7 +1085,7 @@ class EngineAct(EngineFacade):
             "result": _lab,
         }
         logger.info(
-            "execute code_lab fast-path: 书生亲写实验 → Code Lab 沙箱真跑 → evidence"
+            "execute code_lab fast-path: 模型亲写实验 → Code Lab 沙箱真跑 → evidence"
         )
         return _lab
 
@@ -1266,7 +1266,7 @@ class EngineAct(EngineFacade):
                 result = await self._execute_coder(description, context)
                 mode = "coder"
             return result, mode
-        # 书生亲写一段计算实验 → Code Lab 安全沙箱真跑 → 结构化证据.
+        # 模型亲写一段计算实验 → Code Lab 安全沙箱真跑 → 结构化证据.
         return await self._execute_code_lab(description, context), mode
 
     def _act_explore_is_idle(self, result: Any, description: Any) -> bool:

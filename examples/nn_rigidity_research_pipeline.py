@@ -1,6 +1,6 @@
 """端到端真实科研流程: NN 容量探针判据的可靠性(完整闭环).
 
-流程: 开放问题 -> 3 条真实实验(本地确定性数值) -> 书生 Intern-S2 综合 ->
+流程: 开放问题 -> 3 条真实实验(本地确定性数值) -> 模型 Intern-S2 综合 ->
       声明门禁(claim_grounding) -> 正式研究报告.
 
 研究问题: **NN 容量探针测 bootstrap 解空间刚性时, "饱和判据"应依赖哪个自变量?
@@ -11,7 +11,7 @@
   X2 (优化器财政)   : torch PINN w=32, 训练预算递增 -> 刚性端 Vtr/Vho 是否收敛.
   X3 (约束维数)     : 点值约束数 k=0/1/2 -> 解族维数 => 同解重算的留出散布 sigmaH.
 
-随后书生综合 X1-X3 的轨迹成文, 经声明门禁核对每个数值是否落在轨迹里。
+随后模型综合 X1-X3 的轨迹成文, 经声明门禁核对每个数值是否落在轨迹里。
 """
 from __future__ import annotations
 
@@ -154,7 +154,7 @@ def exp_constraint_dimension(N: int = 256):
     return sigs
 
 
-# ── 书生成文 + 门禁 ----------------------------------------------------------
+# ── 模型成文 + 门禁 ----------------------------------------------------------
 def finalize(x1, x2, x3):
     try:
         from openai import OpenAI
@@ -178,7 +178,7 @@ def finalize(x1, x2, x3):
 输出 markdown。标注哪两个实验支持"判据应看 eps 而非 N"这一结论。
 """
     def _compat_kwargs(cil):
-        """端点感知: 仅 Intern/书生端点才带 thinking_mode 字段, 通用端点自动省略(避免 400)."""
+        """端点感知: 仅 Intern/模型端点才带 thinking_mode 字段, 通用端点自动省略(避免 400)."""
         try:
             base = str(getattr(cil, "base_url", None) or "")
         except Exception:  # noqa: BLE001
@@ -215,7 +215,7 @@ def finalize(x1, x2, x3):
         report = rr.choices[0].message.content or ""
 
     (OUT / "research_report.md").write_text(
-        f"# 研究: NN 容量探针的饱和判据可靠性\n\n> 书生 Intern-S2 综合 · 门禁 {g['verdict']}\n\n"
+        f"# 研究: NN 容量探针的饱和判据可靠性\n\n> 模型 Intern-S2 综合 · 门禁 {g['verdict']}\n\n"
         + "## 实验轨迹(证据)\n" + trace_txt + "\n\n---\n\n" + report.strip() + "\n",
         encoding="utf-8")
     print("== 报告已写入 =="); print((OUT / "research_report.md").resolve())
@@ -223,7 +223,7 @@ def finalize(x1, x2, x3):
 
 
 def main():
-    print("== 完整真实科研流程: 问题->实验->书生综合->声明门禁 ==")
+    print("== 完整真实科研流程: 问题->实验->模型综合->声明门禁 ==")
     x1 = exp_eps_criterion()
     print("X1 eps判据: rigid", x1["cstar_rigid"], "| fat", x1["cstar_fat"])
     x2 = exp_optimizer_finance()

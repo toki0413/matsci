@@ -185,7 +185,7 @@ def _loose_transform_obj(text: str) -> dict | None:
     """宽松兜底: 无完整 JSON 时, 用 text_to_json 的宽松 k:v 抓取重建对象.
 
     兼容"思考+结果混排 / JSON 被截断 / 半 JSON"的输出 —— 对任意模型通用,
-    不依赖具体模型遵循 STRICT JSON(书生 s1 等遵循差时仍可救回).
+    不依赖具体模型遵循 STRICT JSON(Intern-S1 等遵循差时仍可救回).
     只取到预测数字即视为可用; 完全没有预测 -> None.
     """
     try:

@@ -1671,7 +1671,7 @@ class CognitiveRunner(EngineFacade):
             self._trigger_counterexample_hunt()
             return
         # 控制面审计 A3: 原为 early stop, 现降为提示 + trace —— "该不该收结"
-        # 是科学判断, 一律下沉给书生; 硬终止只保留挂钟耗尽与目标达成.
+        # 是科学判断, 一律下沉给模型; 硬终止只保留挂钟耗尽与目标达成.
         logger.warning(
             "darwin ratchet: stagnation %d rounds (Δ<0.5), best=%.2f "
             "→ advisory only (hint, no stop)",
@@ -3242,7 +3242,7 @@ Physical time series collected this run:
         verifier. 这里两道:
 
         (1) **证据门**: 完成声明必须有本轮真实执行证据 (台账里有有限数值). 无证据
-            的"达成"不可终止 —— 只判"这条证据算不算数", 不替书生下科学判断.
+            的"达成"不可终止 —— 只判"这条证据算不算数", 不替模型下科学判断.
         (2) **SKEPTIC**: 独立 LLM 对抗审查, 拿证据尝试证伪声明; 不通过则把反例
             作为 hint 回灌, 不终止. 无模型时 fail-open (退化为只看证据门).
         """
@@ -4249,7 +4249,7 @@ Physical time series collected this run:
             )
             if exec_res.get("objectives"):
                 evidence["objectives"] = exec_res["objectives"]
-            # 带上真实执行物: 书生亲写的实验脚本 + 沙箱返回的 summary,
+            # 带上真实执行物: 模型亲写的实验脚本 + 沙箱返回的 summary,
             # 让 reviewer 能看到"断言/逻辑/产出"而非只有 tests_passed 裸布尔.
             if exec_res.get("script"):
                 evidence["executed_script"] = str(exec_res["script"])[:3000]

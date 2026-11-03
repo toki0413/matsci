@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Huginn × 书生 — 计算数学「新型有限元/等几何分析」开放研究范例（带智能兜底）.
+"""Huginn × 模型 — 计算数学「新型有限元/等几何分析」开放研究范例（带智能兜底）.
 
 真实数值方法科研：求解 -u''=π²sin(πx), u(0)=u(1)=0，用
   - fem_linear ：线性拉格朗日有限元（理论 H1≈O(h), L2≈O(h²)）
@@ -451,10 +451,10 @@ def main() -> int:
                 fallback_notes.append("提前提交的模型报告未落地, 报告由系统按真实轨迹确定性组装")
 
     rep = OUT / "ai4s_numerics_fem_iga_report.md"
-    topic_line = f"\n> 书生自主选题: **{topic}** ({_TOPICS[topic]['label']}) — {_TOPICS[topic]['question']}"
+    topic_line = f"\n> 模型自主选题: **{topic}** ({_TOPICS[topic]['label']}) — {_TOPICS[topic]['question']}"
     fallback_line = ("\n> **智能兜底: " + "; ".join(fallback_notes) + "**") if fallback_notes else ""
     degrade_line = "\n> 报告来源: 系统确定性组装" if degraded_assembly else "\n> 报告来源: 模型自主成文"
-    header = (f"# 计算数学开放研究 — 书生 Intern-S2 × Huginn · 新型有限元/等几何\n\n"
+    header = (f"# 计算数学开放研究 — 模型 Intern-S2 × Huginn · 新型有限元/等几何\n\n"
               f"> **结论证伪门禁: {verdict}**（未落地主张: {ungrounded or '无'}）"
               f"{topic_line}\n"
               f"> 数值核心: examples/numerics.py（纯 Python 真实装配/求解，可复现）"

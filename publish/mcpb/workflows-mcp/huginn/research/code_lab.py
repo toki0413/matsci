@@ -1,11 +1,11 @@
-"""Code Lab — 书生(LLM)写实验代码、框架受限执行的真实科研桥.
+"""Code Lab — 模型(LLM)写实验代码、框架受限执行的真实科研桥.
 
 让主研究员模型不只"在白名单里选配置", 还能**亲手编写**新的实验函数,
 在 Huginn 自带的安全沙箱 (code_act_sandbox) 里真实执行, 数值照旧进
 trace 供 claim_grounding 门禁核对. 诚实红线不变: 执行异常/超时/结果
 schema 不过 → 分支弃用 (不产生证据, 不伪造).
 
-契约 (书生代码必须遵守):
+契约 (模型代码必须遵守):
   def run(cfg: dict) -> dict:
       # cfg 含 order/ctype/system/k/positions/basis/seeds 等数值配置
       # 纯 numpy/纯数值计算; 禁止 IO/网络/改宿主
@@ -132,13 +132,13 @@ def build_author_prompt(
     prev_code: str = "",
     focus: str = "",
 ) -> str:
-    """构造"让书生在 Code Lab 亲手写一轮实验"的作者提示 (命题无关).
+    """构造"让模型在 Code Lab 亲手写一轮实验"的作者提示 (命题无关).
 
     单一出处: autoloop 的 execute 内建动作与 examples 自主循环都调本函数, 通用
     契约(纯 numpy、返回 objectives、不 assert)只维护一份. ``goal`` 由外部传入 ——
     只给方向, 不绑定任何具体命题. 领域相关的模板/提示由 ``scaffold``(任务资产)
     注入; 不给 scaffold 时就是一份无领域耦合的默认骨架.
-    ``repair_hint`` 非空时把上一轮沙箱真实报错回灌, 让书生自己改对 (通用修 bug).
+    ``repair_hint`` 非空时把上一轮沙箱真实报错回灌, 让模型自己改对 (通用修 bug).
     ``focus`` 是**本轮可变**的聚焦文本(当前假设 + 本轮实验步骤). ``goal`` 常是恒定
     的研究目标, 若只喂 goal, 提示每轮逐字节相同 → 同一问题反复问、执行输出恒同、
     零新证据 (run47 实测 prompt_len 恒 5379). 带上 focus 后提示随迭代演进.
@@ -157,7 +157,7 @@ def build_author_prompt(
 
 def _build_repair_block(repair_hint: str, prev_code: str, builtin_ref: str) -> str:
     # 超时是跟"代码写错"完全不同的一类失败: 报错里没有语法/形状线索, 只有"执行超时".
-    # 若仍套用 NameError/形状 那套对症提示, 书生会继续产出同样重的扫描 → 反复超时
+    # 若仍套用 NameError/形状 那套对症提示, 模型会继续产出同样重的扫描 → 反复超时
     # (run59/60 实测: 三组都被 900s 超时饿死, 无一产生执行证据). 故单独给一条
     # **可执行的降算力**指令 (命题无关, 只谈算力预算, 不碰科学判断).
     _timeout_like = ("超时" in repair_hint) or ("timeout" in repair_hint.lower())
@@ -280,7 +280,7 @@ def _to_py(v: Any) -> Any:
 
 
 def strip_abort_statements(code: str) -> str:
-    """删掉书生代码里的 assert 语句 (确定性去断言, 命题无关).
+    """删掉模型代码里的 assert 语句 (确定性去断言, 命题无关).
 
     契约要求"把真实数值(含不理想的结果)return 出来由上层裁决, 不许 assert/raise
     中断"; 但模型常无视 (反复出现 ``AssertionError: Anchor failed: ...`` 把整轮
@@ -314,9 +314,9 @@ def strip_abort_statements(code: str) -> str:
 def strip_primitive_redefinitions(
     code: str, primitive_names: tuple[str, ...] = ()
 ) -> str:
-    """剥掉书生对沙箱注入原语(脚手架 PRIMITIVE_NAMES)的顶层重定义.
+    """剥掉模型对沙箱注入原语(脚手架 PRIMITIVE_NAMES)的顶层重定义.
 
-    书生若顶层重定义同名函数会**覆盖**注入的正确实现 (反复出现: 它想自己拿参数
+    模型若顶层重定义同名函数会**覆盖**注入的正确实现 (反复出现: 它想自己拿参数
     就重写一版, 且切片/形状写错 → 整轮跑不通). 这些原语的定义即契约, 重定义只
     可能引入 bug、不可能带来科学自由度, 故确定性剥除顶层重定义, 保留注入版本.
     只在**顶层**定义时剥除(嵌套闭包同名不影响模块级绑定); 不改变任何数值语义.
@@ -372,17 +372,17 @@ def _call_with_timeout(fn, arg: dict, timeout: float = SAFE_TIMEOUT_S):
 def _format_exec_error(e: BaseException, code: str) -> str:
     """把沙箱执行异常格式化成"带出错行号 + 源码行"的可修复提示.
 
-    诚实红线不变: 只增强诊断信息, 不改任何数值/判据. 书生自修复**必须**知道出错
+    诚实红线不变: 只增强诊断信息, 不改任何数值/判据. 模型自修复**必须**知道出错
     行, 旧实现只回 "类型: 消息" —— run88 实测: 报 'TypeError: int() argument must
     be ... not list' 却无行号, 4 轮自修复全落空, 整轮实验零证据后回落 DFT workflow
-    (域漂移). 这里从 traceback 取**最深**一条落在书生代码(<code_act>)的帧, 附上其
-    附近源码, 让书生能直接定位并对症改.
+    (域漂移). 这里从 traceback 取**最深**一条落在模型代码(<code_act>)的帧, 附上其
+    附近源码, 让模型能直接定位并对症改.
     """
     lines = code.splitlines()
     frame_lineno: int | None = None
     tb = e.__traceback__
     while tb is not None:
-        # 书生代码由 exec(compile(code, "<code_act>", "exec")) 执行 → 帧文件名固定.
+        # 模型代码由 exec(compile(code, "<code_act>", "exec")) 执行 → 帧文件名固定.
         if tb.tb_frame.f_code.co_filename == "<code_act>":
             frame_lineno = tb.tb_lineno
         tb = tb.tb_next
@@ -399,14 +399,14 @@ def _format_exec_error(e: BaseException, code: str) -> str:
 
 
 def _prepare_code(code: str, scaffold: Scaffold | None) -> str:
-    """把书生代码规整成**真正会被 exec 的源码** (确定性去断言 + 剥原语重定义).
+    """把模型代码规整成**真正会被 exec 的源码** (确定性去断言 + 剥原语重定义).
 
     单一出处: ``_load_namespace`` 执行它、``_sandbox_run_inproc`` 报错定位也用它 ——
     两处必须看到同一份源码, 否则 traceback 行号会与原始代码错位 (AST 往返会挪行).
     """
     code = strip_abort_statements(code)  # 强制"不 assert 中断"契约 (命题无关)
     if scaffold and scaffold.primitive_names:
-        # 剥除对脚手架原语的顶层重定义(用注入版), 避免书生重写引入 bug.
+        # 剥除对脚手架原语的顶层重定义(用注入版), 避免模型重写引入 bug.
         code = strip_primitive_redefinitions(code, scaffold.primitive_names)
     return code
 
@@ -461,9 +461,9 @@ def _load_namespace(
 
 
 def _coerce_author_result(res: Any) -> tuple[Any, str | None]:
-    """把书生 run() 的裸返回宽容成标准结构, 但不伪造数值 (方案 A).
+    """把模型 run() 的裸返回宽容成标准结构, 但不伪造数值 (方案 A).
 
-    书生常直接 `return {"gain": 1.4142, "peak": 3.2}` 而非严格装进
+    模型常直接 `return {"gain": 1.4142, "peak": 3.2}` 而非严格装进
     {"success", "summary", "objectives"}。这些值是**真实计算数值**, 只因少了
     包装而被拒、整体回退白名单 —— 造成自主数值被浪费。这里做"收尾宽容":
       - 若返回顶层是 dict 且含**纯数值标量键**, 视为 objectives, sum组件为这些键的
@@ -523,7 +523,7 @@ def _check_run_schema(res: Any) -> str | None:
 
 
 def _alias_cfg(cfg: dict, extra_aliases: dict | None = None) -> dict:
-    """给书生代码一个宽容的 cfg 视图: 常用别名键补齐(值是同一份真实配置的引用).
+    """给模型代码一个宽容的 cfg 视图: 常用别名键补齐(值是同一份真实配置的引用).
 
     只保留**域无关**的别名(约束位置 positions→ti/t_i/t、seeds→n_seeds、
     basis→basis_size —— 它们是 huginn 自带配置域的通用键位, 与具体物理解耦).
@@ -602,7 +602,7 @@ _WORKER_SNIPPET = "from huginn.research.code_lab import _worker_main; _worker_ma
 def _worker_main() -> None:
     """隔离执行子进程入口: 从 stdin 读 JSON 任务, 跑沙箱, 结果写回文件.
 
-    结果走**独立文件**而非 stdout/stderr —— 书生代码的 print 不会污染结果通道,
+    结果走**独立文件**而非 stdout/stderr —— 模型代码的 print 不会污染结果通道,
     也不会撑爆管道. 跑完(无论成败)对本进程组自杀式 SIGKILL: 结果文件已 flush/close,
     用户代码 spawn 的孙进程(如 torch DataLoader worker)随之被一并带走, 不留孤儿.
     """
@@ -766,7 +766,7 @@ def sandbox_run(
     cfg_aliases: dict | None = None,
     scaffold: Scaffold | None = None,
 ) -> tuple[dict | None, str | None]:
-    """执行书生写的实验代码: 返回 (结果 dict 或 None, 错误原因或 None).
+    """执行模型写的实验代码: 返回 (结果 dict 或 None, 错误原因或 None).
 
     ``imports_whitelist_extra``: 冷启动守卫的域级 import 白名单增量, 仅该次调用生效.
     ``cfg_aliases``: 冷启动守卫的域级 cfg 键别名(compile_domain_guards 的 cfg_aliases),
@@ -803,7 +803,7 @@ def sandbox_run(
 
 
 def author_probe_specs(code: str, scaffold: Scaffold | None = None) -> list[dict]:
-    """把书生代码里的 probe_<name>(cfg) 自动注册为诊断工具 (全权探针面).
+    """把模型代码里的 probe_<name>(cfg) 自动注册为诊断工具 (全权探针面).
 
     返回 [{tool: {function: {name, description, parameters}}, handle}].
     单条注册失败不影响整体 —— 成文期由工具面统一兜底. ``scaffold`` 用于在注册
@@ -823,7 +823,7 @@ def author_probe_specs(code: str, scaffold: Scaffold | None = None) -> list[dict
                 "tool": {
                     "function": {
                         "name": name,
-                        "description": f"[书生代码实验室] {doc}",
+                        "description": f"[代码实验室] {doc}",
                         "parameters": {
                             "type": "object",
                             "properties": {"config": {"type": "object"}},

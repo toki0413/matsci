@@ -1,9 +1,9 @@
-"""书生 Intern-S2 + Huginn 断裂力学域完整深研管线(毕业答辩版第二主题).
+"""模型 Intern-S2 + Huginn 断裂力学域完整深研管线(毕业答辩版第二主题).
 
 选题种子: Yang W, Feng X-Q, Gao H (2026) *Outstanding issues and emerging
 frontiers in fracture mechanics*, Int J Fract 250(1), DOI 10.1007/s10704-025-00907-6.
 本文件把它列出的"杰出开放问题/新兴前沿"里**可计算、可证伪**的一批,
-变成书生驱动 Huginn `run_research_program` 的真实数值实验:
+变成模型驱动 Huginn `run_research_program` 的真实数值实验:
 
   F1 界面裂纹振荡奇异场 (interface crack oscillatory singularity, Dundurs ε)
      —— 界面断裂的"互穿悖论": ε≠0 时 K 场预言裂纹面互相穿透, 是经典 LEFM
@@ -29,7 +29,7 @@ frontiers in fracture mechanics*, Int J Fract 250(1), DOI 10.1007/s10704-025-009
 设计约束(与 rigidity 域完全一致, 诚实边界):
   - 全部数值由真实物理公式/数值方法产生, 无任何编造; objectives 各分支独立,
     互不支配 → 全存活, 保住"多证据方向";
-  - goals/扫描配置/报告写作 全由书生自主驱动(client 非 None);
+  - goals/扫描配置/报告写作 全由模型自主驱动(client 非 None);
   - `--dry` 走 client=None 确定性综合, 无 API key 也能验证整条管线跑通。
 
 用法:
@@ -110,11 +110,11 @@ _KIC_MATS = [
     ("PZT 压电陶瓷", 250.0, 1.0),
 ]
 
-# 书生在第 2+ 轮可提议的断裂扫描白名单(全部映射真实物理计算, 无编造).
+# 模型在第 2+ 轮可提议的断裂扫描白名单(全部映射真实物理计算, 无编造).
 SCAN_OPS = {
     "pair": list(range(len(_PAIRS))),                     # F1 双材料对索引
     "material": list(range(len(_MATERIALS))),             # F2 材料索引
-    "flaw_idx": [0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 40.0],   # F3 参数: a/a* 倍数(探针/书生成码用)
+    "flaw_idx": [0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 40.0],   # F3 参数: a/a* 倍数(探针/模型生成码用)
     "flaw": [0, 1, 2, 3],                                  # flaw 扫描维: 材料索引(graphene/Si/steel/Al2O3)
     "n_flaws": [10, 30, 100, 300, 1000, 3000, 10000, 100000],  # F4 单元内缺陷数
     "bridge_ratio": [0.05, 0.1, 0.2, 0.3, 0.5, 0.7, 0.9],       # F5 σ0/σy
@@ -129,7 +129,7 @@ _SCAN_DEFAULTS = {"pair": 0, "material": 0, "flaw_idx": 2.0, "n_flaws": 100,
 _DIM_VALUES = {
     "pair": "pair", "material": "material", "flaw": "flaw", "n_flaws": "n_flaws",
     "bridge": "bridge_ratio", "barrier": "nu", "kic": "kic_mat",
-    "nu": "nu",        # 书生可能直接用白名单键名 nu 当 dim —— 归入 barrier 族
+    "nu": "nu",        # 模型可能直接用白名单键名 nu 当 dim —— 归入 barrier 族
     "vcR": "vcR",      # F6 v/cR 独立扫描维 —— 与 barrier(nu) 分开, 消除维度串扰
     "v_cR": "vcR",
 }
@@ -392,13 +392,13 @@ def _sanitize_scan(cfg: dict | None) -> dict:
 
 
 def exp_fracture_scan(cfg: dict, name: str) -> dict:
-    """书生提议的断裂扫描配置 → 真实实验分支(白名单校验, 结果族全真实).
+    """模型提议的断裂扫描配置 → 真实实验分支(白名单校验, 结果族全真实).
 
     values 缺失时对该维度全白名单扫描; 返回该族的主目标(公式与基分支一致).
     """
     c = _sanitize_scan(cfg)
     dim = (cfg or {}).get("dim", "pair")
-    # dim 别名归一: 书生直接用白名单键名(bridge_ratio/nu/...) 或近义名,
+    # dim 别名归一: 模型直接用白名单键名(bridge_ratio/nu/...) 或近义名,
     # 统一映射到 exp_fracture_scan 的分支判据, 防止"bridge_ratio"落到兜底空扫描.
     _dim_canon = {"bridge_ratio": "bridge", "sigma0_sy": "bridge",
                   "sigma0_over_sy": "bridge",
@@ -461,7 +461,7 @@ def exp_fracture_scan(cfg: dict, name: str) -> dict:
         return {"objectives": obj, "summary": {"dim": "bridge", "rows": rows},
                 "success": True}
     if dim == "vcR":
-        # 书生 F6 假设的独立维度: 固定 ν, 扫描 v/cR∈[0.1..0.98] 的 Rose 能量通量
+        # 模型 F6 假设的独立维度: 固定 ν, 扫描 v/cR∈[0.1..0.98] 的 Rose 能量通量
         # g=k² 与局部锐度 -dln g/d(v/cR), 检验"随 vcR 增, 势垒是否单调变陡"。
         # 与 barrier 分支的区别: barrier 扫 nu(势垒位置), 这里真扫 vcR(势垒局部形态),
         # 消除"S2/S3 全同"的维度串扰。summary 键用报告散文同口径名, 避免 -0.95 未落地。
@@ -482,7 +482,7 @@ def exp_fracture_scan(cfg: dict, name: str) -> dict:
                 "summary": {"dim": "vcR", "nu": 0.3, "rows": curve,
                             "dln_g_d_vcR": sharp},
                 "success": True}
-    if dim == "barrier" or dim == "nu":   # nu 是书生可能用的 barrier 别名
+    if dim == "barrier" or dim == "nu":   # nu 是模型可能用的 barrier 别名
         rows = []
         for nu in vals:
             cR, c1, _ = _rayleigh_speed(nu)
@@ -506,10 +506,10 @@ def exp_fracture_scan(cfg: dict, name: str) -> dict:
     return {"objectives": {"osc_span": 0.0}, "summary": {"dim": dim, "rows": []},
             "success": True}
 
-# ═══════════════════════ 域诊断工具(书生成文期自主调用) ═══════════════════════
+# ═══════════════════════ 域诊断工具(模型成文期自主调用) ═══════════════════════
 
 def _diagnostic_tools():
-    """书生成文阶段可自主调用的断裂域探针(真实数值，进 trace 供门禁核对)."""
+    """模型成文阶段可自主调用的断裂域探针(真实数值，进 trace 供门禁核对)."""
     def h_probe_interface(a):
         i = int(a.get("pair", 0))
         label, e1, n1, e2, n2 = _PAIRS[i]
@@ -581,16 +581,16 @@ def _diagnostic_tools():
         _spec("probe_kic", "KIC 试样尺寸门槛", {"kic_mat": {"type": "integer"}}),
     ]
 
-# ═══════════════════════ 书生自主环: 观察→提议→行动 ═══════════════════════
+# ═══════════════════════ 模型自主环: 观察→提议→行动 ═══════════════════════
 
 def _llm_compat_kwargs(client) -> dict:
     """端点感知的开源/专有模型调用增量参数.
 
-    仅当 client 指向 Intern/书生端点(intern-ai.org.cn 或路径含 intern)才注入
+    仅当 client 指向 Intern/模型端点(intern-ai.org.cn 或路径含 intern)才注入
     ``extra_body={"thinking_mode": False}`` —— 那是 InternLM OpenAPI 关闭思考流的专属字段,
     标准 OpenAI 兼容端点(OpenAI/GPT/DeepSeek 等)不接受该自定义字段, 传了可能 400。
     这套判断让**同一个 client 语义跨端点兼容**: 换模型只换 client/base_url, 调用面不用改,
-    不替书生解题, 也不把 agent 锁死在某一个模型上。
+    不替模型解题, 也不把 agent 锁死在某一个模型上。
     """
     try:
         ub = getattr(client, "base_url", None)
@@ -619,13 +619,13 @@ def _ask_json(client, model: str, system: str, user: str, max_tokens: int = 900)
 def _extract_json_balanced(text: str) -> dict:
     """从 LLM 输出中稳健提取 JSON 对象.
 
-    旧实现用 re.search(r'[{}]') 的贪婪匹配盲抓最外层大括号 —— 但书生成码/推导
+    旧实现用 re.search(r'[{}]') 的贪婪匹配盲抓最外层大括号 —— 但模型生成码/推导
     脚本里常在 JSON 的 code 字段内嵌 {}(dict/函数体), 贪婪匹配会提前截断或把
     后一个 JSON 块卷进来. 新实现从每个可能起点做【平衡括号扫描】+ json.loads 校验,
     取第一个能完整解析的合法 JSON 对象(优先含 code/expr/config 的). 解析失败返回 {}.
     """
     text = text or ""
-    # 1) 整串本身就是合法 JSON(最常见, 书生遵守只输出 JSON)
+    # 1) 整串本身就是合法 JSON(最常见, 模型遵守只输出 JSON)
     try:
         d0 = json.loads(text.strip())
         if isinstance(d0, dict):
@@ -652,7 +652,7 @@ def _extract_json_balanced(text: str) -> dict:
         i += 1
     if not found:
         return {}
-    # 优先级: 含 code(书生成码/符号脚本) > 含 expr(闭式) > 含 domain 下发键
+    # 优先级: 含 code(模型生成码/符号脚本) > 含 expr(闭式) > 含 domain 下发键
     # > 含普适键 > 最后兜底第一个. 确保多对象输出时取到正确那个.
     def _prio(d: dict) -> int:
         if "code" in d:
@@ -734,7 +734,7 @@ def _propose_scan_configs(client, model: str, next_open: str,
 
 
 def _pad_scan_configs(cfgs: list[dict], open_text: str) -> list[dict]:
-    """兜底: 书生未提议或提议不足时, 用未检维度补齐(仍为真实实验)."""
+    """兜底: 模型未提议或提议不足时, 用未检维度补齐(仍为真实实验)."""
     _DIMS = ["barrier", "flaw", "bridge", "kic", "pair", "n_flaws", "material"]
     have = {c.get("dim") for c in cfgs if isinstance(c, dict)}
     for dim in _DIMS:
@@ -743,19 +743,19 @@ def _pad_scan_configs(cfgs: list[dict], open_text: str) -> list[dict]:
     return cfgs[:3]
 
 
-# ── Symbolic Lab: 书生从控制方程推导闭式解, agent 沙箱符号求解 + 数值核验 ──
-# 超越"数值扫描 + 定性决策": 书生写 sympy 脚本对控制方程(近似)做符号操作
+# ── Symbolic Lab: 模型从控制方程推导闭式解, agent 沙箱符号求解 + 数值核验 ──
+# 超越"数值扫描 + 定性决策": 模型写 sympy 脚本对控制方程(近似)做符号操作
 # (求根/微分/极限/复含数性质), 产出【闭式表达式】; 框架再把该闭式在多个真实
 # 数值点上与底层物理函数(经参数化方程一致的精准实现)核对一致, 才对 grounded.
 # 诚实红线: 闭式必须是符号推导产出的真实公式, 核验不一致/无法 sympify 即弃用.
 #
-# 两级兜底(书生不具备符号能力时也行):
-#   L1 书生主动: derive() 给闭式, 框架核验.
-#   L2 agent 保底: 书生给真实数值轨迹(x,y), agent 用 _close_form_fit 做
+# 两级兜底(模型不具备符号能力时也行):
+#   L1 模型主动: derive() 给闭式, 框架核验.
+#   L2 agent 保底: 模型给真实数值轨迹(x,y), agent 用 _close_form_fit 做
 #        最小二乘闭式归纳(从真实点反推幂律/根号律), 再交数值核验. 这使 agent
-#        "补上"书生不具备的闭式化能力, 而不伪造 —— 归纳源=书生跑的真实点.
+#        "补上"模型不具备的闭式化能力, 而不伪造 —— 归纳源=模型跑的真实点.
 
-# 可被书生符号推导并做数值核验的"真实物理公式核" (dim → (参数名, 核函数)).
+# 可被模型符号推导并做数值核验的"真实物理公式核" (dim → (参数名, 核函数)).
 # 框架用同一参数空间做闭式↔核函数的一致性核对.
 _SYM_GROUND = {
     "barrier": ("nu", lambda nu: _rose_k(0.95)),
@@ -766,7 +766,7 @@ _SYM_NU_GROUND = ("nu", lambda nu: _rayleigh_speed(nu)[0])
 
 
 def _close_form_fit(xs: list[float], ys: list[float], family: str) -> str | None:
-    """agent 保底(L2): 从书生跑出的真实数值轨迹归纳闭式.
+    """agent 保底(L2): 从模型跑出的真实数值轨迹归纳闭式.
 
     候选闭式仅限"物理上可信"的家族, 不做黑箱多式拟合(避免过拟合编造):
       bridge: Kc/K0 = sqrt(1 + k*s)  → 对 y²~s 线性拟合求 k.
@@ -791,7 +791,7 @@ def _close_form_fit(xs: list[float], ys: list[float], family: str) -> str | None
 
 
 def _sym_ground_check(expr_sym: Any, family: str) -> dict | None:
-    """把书生导出的 sympy 闭式与真实物理核做多点数值核验.
+    """把模型导出的 sympy 闭式与真实物理核做多点数值核验.
 
     返回 {max_relerr, r2, n_points} 或 None(核验失败). family 决定参数与核:
       barrier/rose: 表达式应谓 v∈[0,0.9] 的 k(v)=(1-v)/(1-v/2) 的某种等价形式
@@ -830,12 +830,12 @@ def _sym_ground_check(expr_sym: Any, family: str) -> dict | None:
 
 
 def _try_author_symbolic(client, model: str, next_open: str, cycle: int):
-    """Symbolic Lab: 书生写 sympy 脚本, 从控制方程推导断裂量的闭式解.
+    """Symbolic Lab: 模型写 sympy 脚本, 从控制方程推导断裂量的闭式解.
 
     返回 (Experiment|None, err_msg). 闭式经 _sym_ground_check 与真实物理核核对
-    一致后, 作为 grounded 的符号推导分支进入本轮; 失败回退书生成码/白名单.
+    一致后, 作为 grounded 的符号推导分支进入本轮; 失败回退模型生成码/白名单.
 
-    书生契约: 代码必须定义
+    模型契约: 代码必须定义
         def derive() -> dict:   # 返回 {"expr": "<sympy 表达式, 自变量为 family 参数>",
                                 #        "family": "barrier|bridge",
                                 #        "note": "<推导说明/这个闭式从哪个方程来>"}
@@ -863,7 +863,7 @@ def _try_author_symbolic(client, model: str, next_open: str, cycle: int):
     code = d.get("code") or ""
     if not code:
         print(f"  [symlab-diag] 提取到 code 为空; 原始LLM输出前300:{str(d)[:160]}")
-        return None, [], "书生未给出符号推导脚本"
+        return None, [], "模型未给出符号推导脚本"
     # 若用围栏包了, 去掉围栏; 若已是裸 derive 定义(<code>/``` 都不存在), 直接用.
     if "```" in code or "<code>" in code:
         code = extract_code(code)
@@ -917,7 +917,7 @@ def _try_author_symbolic(client, model: str, next_open: str, cycle: int):
     from huginn.research import Experiment
     note = str((meta or {}).get("note", ""))[:300]
     expr_str_clean = str(sp.simplify(expr_sym))[:400]
-    hypothesis = (f"Symbolic Lab(第{cycle}轮): 书生从控制方程推出的闭式解 "
+    hypothesis = (f"Symbolic Lab(第{cycle}轮): 模型从控制方程推出的闭式解 "
                   f"{expr_str_clean} 与真实物理核逐点一致 "
                   f"(max_relerr={chk['max_relerr']}, n={chk['n_points']}). {note}")
     objective_key = "bridge_closure" if family == "bridge" else "barrier_closure"
@@ -936,7 +936,7 @@ def _try_author_symbolic(client, model: str, next_open: str, cycle: int):
 
 
 def _try_author_code(client, model: str, next_open: str, cycle: int):
-    """Code Lab: 书生亲手写本轮断裂实验代码(失败回退白名单扫描, 不阻塞).
+    """Code Lab: 模型亲手写本轮断裂实验代码(失败回退白名单扫描, 不阻塞).
 
     返回 (exp_or_None, probe_specs, obj_keys, err_msg).
     """
@@ -954,8 +954,8 @@ def _try_author_code(client, model: str, next_open: str, cycle: int):
         "Dundurs 等), dict 里每个值必须是真实计算的数值(不要字符串填充)。输出裸代码"
         "(不要解释), 代码必须含 def run(cfg)。"
     )
-    # agentic 重试: 书生成码失败(schema/IP 拦截/运行时 bug)时把真实 err 回流,
-    # 让书生带错修一版。预算 1 次 —— 把 API 火力让给书生更擅长的数值工具
+    # agentic 重试: 模型生成码失败(schema/IP 拦截/运行时 bug)时把真实 err 回流,
+    # 让模型带错修一版。预算 1 次 —— 把 API 火力让给模型更擅长的数值工具
     # (probe/扫描/闭式核验), 不在一处代码上死磕两轮。全败回退白名单扫描(不阻塞).
     _AUTHOR_MAX_RETRY = 1
     res: dict | None = None
@@ -988,7 +988,7 @@ def _try_author_code(client, model: str, next_open: str, cycle: int):
         if res is not None:
             break                     # 一次通过, 不再重试
         last_err = err or "代码执行失败"
-        print(f"  [书生成码·重试 {at + 1}] 执行失败: {last_err[:160]}  → 回流给书生重修")
+        print(f"  [模型生成码·重试 {at + 1}] 执行失败: {last_err[:160]}  → 回流给模型重修")
     if res is None:
         return None, [], [], last_err or "代码执行失败"
     obj_keys = list(res["objectives"].keys())
@@ -1002,7 +1002,7 @@ def _try_author_code(client, model: str, next_open: str, cycle: int):
 
 
 def _try_raw_code(client, model: str, next_open: str) -> str:
-    """兜底: 书生直接给代码而非 JSON 包装时, 原样取回."""
+    """兜底: 模型直接给代码而非 JSON 包装时, 原样取回."""
     try:
         r = client.chat.completions.create(
             model=model, max_tokens=1500, temperature=0.2,
@@ -1017,7 +1017,7 @@ def _try_raw_code(client, model: str, next_open: str) -> str:
 
 def _author_to_experiment(code: str, res: dict, obj_keys: list[str], cycle: int):
     from huginn.research import Experiment
-    hypothesis = (f"书生成码分支(第{cycle}轮): 书生亲手写的断裂数值实验已通过 schema 校验, "
+    hypothesis = (f"模型生成码分支(第{cycle}轮): 模型亲手写的断裂数值实验已通过 schema 校验, "
                   f"objectives={obj_keys}")
     def run():
         return res
@@ -1037,7 +1037,7 @@ def _llm_critic(client, model: str, report_text: str, survivors_text: str) -> li
     return out[:4]
 
 # ══════════════════ 研究品味层: 思考"问题如何被提出"并自主生成新问题 ══════════════════
-# 不只是执行给定开放问题; 而是让书生反身读出每个问题背后的"提出机制"(理想假说在哪
+# 不只是执行给定开放问题; 而是让模型反身读出每个问题背后的"提出机制"(理想假说在哪
 # 一步失效/何种悖论/何种尺度耦合断裂), 提炼可复用的问题生成启示(taste), 再依此自生
 # 成白名单外的可证伪新问题 —— 品味是可迁移的元认知, 而非一次性答案列表.
 
@@ -1045,7 +1045,7 @@ _THEMES = (
     "综述七大开放问题及其参考证据(名词即可激发机制)"
 )
 
-# 问题→提出机制的证据锚(来自 IJF 2026 综述引文, 供书生归纳生成机制).
+# 问题→提出机制的证据锚(来自 IJF 2026 综述引文, 供模型归纳生成机制).
 _THEME_EVIDENCE = [
     ("ON1 界面裂纹互穿悖论",
      "LEMF 双材料界面 K 场均含振荡项 r^{±iε}: ε≠0 ⇒ 裂纹面互相穿透(material interpenetration)。"
@@ -1077,7 +1077,7 @@ _TASTE_CATEGORIES = ("PARADOX(理想理论内在矛盾)", "ASSUMPTION_FAIL(某�
 
 
 def _sync_llm_create(client, model: str):
-    """把书生包成语义蒸馏器可用的同步 callable(llm(prompt)->str)."""
+    """把模型包成语义蒸馏器可用的同步 callable(llm(prompt)->str)."""
     def _call(prompt: str) -> str:
         try:
             r = client.chat.completions.create(
@@ -1187,7 +1187,7 @@ def _get_taste_kb():
 
 def _recall_taste(q: str = "How to pose research frontier questions: idealized assumption failure, cross-domain analogy, new enabling tools",
                   top_k: int = 4) -> str:
-    """从品味专属语义 KB 召回已蒸馏的【研究品味/提出机制】启发式, 注入书生问题生成.
+    """从品味专属语义 KB 召回已蒸馏的【研究品味/提出机制】启发式, 注入模型问题生成.
 
     自包含 RAG: 写入/查询同一 ONNX/ST 编码器; 查询词用英文(ONNX 为英文模型)。
     任何一步失败/无知识 → 优雅降级空串, 绝不阻断主线。
@@ -1212,7 +1212,7 @@ def _recall_taste(q: str = "How to pose research frontier questions: idealized a
 
 
 def _distill_research_taste(client, model: str, goal: str) -> dict:
-    """书生反身阅读: 每个问题是如何被提出的 + 提炼可迁移的发问品味 + 自生成新问题.
+    """模型反身阅读: 每个问题是如何被提出的 + 提炼可迁移的发问品味 + 自生成新问题.
 
     返回 {mechanisms, taste_patterns, new_questions}.
     """
@@ -1275,7 +1275,7 @@ def _persist_taste(taste: dict, client, model: str, out_dir: Path) -> Path:
             source="review_taste", source_type="research_taste",
             domain_hint="fracture mechanics, research methodology", llm=_sync_llm_create(client, model))
         # 端到端闭合(断点 A): 蒸馏条目写入【品味专属语义 KB】(同一 ONNX/ST 编码器),
-        # 后续 _recall_taste 在同一语义空间召回 —— 让品味真正可被书生在发问时检索.
+        # 后续 _recall_taste 在同一语义空间召回 —— 让品味真正可被模型在发问时检索.
         col = _get_taste_kb()
         docs = [dk.content for dk in new if dk.content and dk.content.strip()]
         if docs:
@@ -1325,10 +1325,10 @@ def _make_scan_experiments(configs: list[dict]) -> list:
         exps.append(Experiment(
             name=name,
             hypothesis=(f"断裂扫描 #{i + 1}: dim={dim} values={cfg.get('values')} "
-                        f"→ 书生提议的真实族扫描(物理公式一致, 结果全真实)."),
+                        f"→ 模型提议的真实族扫描(物理公式一致, 结果全真实)."),
             run=lambda cc=cfg, nn=name: exp_fracture_scan(cc, nn)))
         # agent 保底(L2)闭式归纳: 对 bridge 扫描, 从同一真实轨迹(x=s,y=Kc/K0)
-        # 反推闭式 Kc/K0=sqrt(1+k*s). 归纳源=书生跑的真实点, 不伪造.
+        # 反推闭式 Kc/K0=sqrt(1+k*s). 归纳源=模型跑的真实点, 不伪造.
         dim_c = {"bridge_ratio": "bridge"}.get(dim, dim)
         if dim_c == "bridge" or dim == "nu" or dim == "barrier":
             vals = (cfg or {}).get("values") or SCAN_OPS.get(
@@ -1339,7 +1339,7 @@ def _make_scan_experiments(configs: list[dict]) -> list:
                 ys = [_bridge_gain(float(v)) for v in vals]
                 exps.append(Experiment(
                     name=cl_name,
-                    hypothesis=(f"agent 闭式归纳(S{i + 1}): 从书生跑出的真实桥联轨迹"
+                    hypothesis=(f"agent 闭式归纳(S{i + 1}): 从模型跑出的真实桥联轨迹"
                                 f"(s∈{xs[0]}..{xs[-1]}) 反推 Kc/K0 闭式, 并用留出点核验."),
                     run=lambda xx=list(xs), yy=list(ys), nn=cl_name:
                         _closure_experiment(xx, yy, nn)))
@@ -1349,7 +1349,7 @@ def _make_scan_experiments(configs: list[dict]) -> list:
 def _closure_experiment(xs: list[float], ys: list[float], name: str) -> dict:
     """agent 保底(L2)闭式归纳实验的 run(): 用部分点拟合闭式, 留出点核验.
 
-    归纳源 = 书生跑出的真实轨迹(与扫描同源数值), 拟合出闭式表达式, 再用
+    归纳源 = 模型跑出的真实轨迹(与扫描同源数值), 拟合出闭式表达式, 再用
     未参与拟合的留出点核对 —— 保证闭式不只记住采样点, 而是真规律.
     返回可过门禁的 objectives/summary(全为真实计算标量).
     """
@@ -1372,7 +1372,7 @@ def _closure_experiment(xs: list[float], ys: list[float], name: str) -> dict:
             "summary": {"closed_form": str(sp.simplify(expr_sym))[:300],
                         "family": "bridge", "induce_from": name,
                         "n_fit": len(xs), "max_relerr": chk["max_relerr"],
-                        "note": "agent 从书生真实桥联轨迹闭式归纳并经数值核验"},
+                        "note": "agent 从模型真实桥联轨迹闭式归纳并经数值核验"},
             "success": True}
 
 
@@ -1403,7 +1403,7 @@ def _build_plan(goal: str, run_by_name: dict, cycle: int = 1):
         ], parallel_cap=3)
     names = list(run_by_name.keys())
     plan = build_research_plan(goal, [
-        SubResearch(n, f"书生提议断裂扫描分支 {n}", run=run_by_name[n], depends_on=[])
+        SubResearch(n, f"模型提议断裂扫描分支 {n}", run=run_by_name[n], depends_on=[])
         for n in names
     ], parallel_cap=3)
     # 相位级全序门 + 增量边重算 (Ghidra 启发): 给本轮扫描维标注语义相位,
@@ -1442,7 +1442,7 @@ def main() -> int:
     ap.add_argument("--cycles", type=int, default=2)
     ap.add_argument("--start-cycle", type=int, default=1)
     ap.add_argument("--taste", action="store_true",
-                    help="开启研究品味层: 每轮前让书生反身思考【这些问题如何被提出】"
+                    help="开启研究品味层: 每轮前让模型反身思考【这些问题如何被提出】"
                          "并自生成白名单外的新前沿问题(写入 research_taste.md 并蒸馏进记忆)")
     args = ap.parse_args()
 
@@ -1451,7 +1451,7 @@ def main() -> int:
 
     # ── 跨域冷启动守卫: 依赖预检 + 守卫清单(open 断裂域批次前自动编译) ──
     # 把散落在 LOOP_EXPERIENCE_REPORT 的工程 root-cause 编译成机器可读守卫,
-    # 缺依赖/缺白名单 提前拦, 避免"书生成码缺 matplotlib 整轮回退"之类重演。
+    # 缺依赖/缺白名单 提前拦, 避免"模型生成码缺 matplotlib 整轮回退"之类重演。
     from huginn.research.coldstart_guards import (
         compile_domain_guards, verify_domain_ready, to_markdown,
     )
@@ -1463,7 +1463,7 @@ def main() -> int:
         return 3                                         # 缺依赖即拒, 不进入主链路
     print("== 冷启动守卫(fracture) ==")
     print("  依赖预检: %s" % _guards["deps_check"])
-    print("  书生成码重试预算: %d  (倾斜: 火让给 scan/probe)" % _guards["code_retry_budget"])
+    print("  模型生成码重试预算: %d  (倾斜: 火让给 scan/probe)" % _guards["code_retry_budget"])
     print("  成文探针: %s" % (", ".join(_guards["probes"]) or "(无)"))
 
     client = None
@@ -1480,7 +1480,7 @@ def main() -> int:
     def _report_for(cycle: int) -> Path:
         return _OUT / ("research_report.md" if cycle == 1 else f"cycle{cycle}_report.md")
 
-    print("== 书生 + Huginn 断裂力学域长程深研管线 (IJF 2026 综述驱动) ==")
+    print("== 模型 + Huginn 断裂力学域长程深研管线 (IJF 2026 综述驱动) ==")
 
     _OBJ1 = {k: "maximize" for k in
              ("flaw_tol_100nm", "osc_span", "weibull_fit", "barrier_sharpness",
@@ -1507,24 +1507,24 @@ def main() -> int:
                 qs = _propose_next_open(client, args.model, last_report)
                 next_open = " ".join(x for x in (next_open, " ".join(qs)) if x)
                 if qs:
-                    print(f"  [书生·观察] 下一轮开放问题: {qs}")
-            # Code Lab: 书生亲手写本轮实验代码(每轮尝试, 失败回退白名单).
+                    print(f"  [模型·观察] 下一轮开放问题: {qs}")
+            # Code Lab: 模型亲手写本轮实验代码(每轮尝试, 失败回退白名单).
             # 优先 Symbolic Lab(从控制方程推闭式解, 超越数值扫描); 失败再退
-            # 数值书生成码; 再失败回退白名单扫描. 三条路径任一绕过都算书生行动.
+            # 数值模型生成码; 再失败回退白名单扫描. 三条路径任一绕过都算模型行动.
             author_exp, author_probes, author_obj_keys, author_err = (None, [], [], "dry")
             if client is not None:
                 author_exp, _sym_keys, author_err = _try_author_symbolic(
                     client, args.model, next_open, cycle)
                 if author_exp is not None:
                     author_obj_keys = list(_sym_keys)
-                    print(f"  [Symbolic Lab] 书生推出闭式解并通过与物理核的数值核验: "
+                    print(f"  [Symbolic Lab] 模型推出闭式解并通过与物理核的数值核验: "
                           f"{author_exp.hypothesis[:150]}")
                 else:
                     print(f"  [Symbolic Lab] 未通过: {author_err}")
                     author_exp, author_probes, author_obj_keys, author_err = \
                         _try_author_code(client, args.model, next_open, cycle)
                     if author_exp is None:
-                        print(f"  [书生成码] 未通过, 回退白名单扫描: {author_err}")
+                        print(f"  [模型生成码] 未通过, 回退白名单扫描: {author_err}")
             if client is not None:
                 cand = _propose_scan_configs(client, args.model, next_open, done_cfgs)
             else:
@@ -1548,9 +1548,9 @@ def main() -> int:
             if author_exp is not None:
                 for _k in author_obj_keys:
                     objectives[_k] = "maximize"
-            goal = (f"检验书生本轮提出的断裂开放问题(证据由断裂扫描/Symbolic Lab 闭式"
-                    f"推导/书生成码提供): {next_open}")
-            print(f"  [书生·行动] 本轮扫描配置: {cfgs}")
+            goal = (f"检验模型本轮提出的断裂开放问题(证据由断裂扫描/Symbolic Lab 闭式"
+                    f"推导/模型生成码提供): {next_open}")
+            print(f"  [模型·行动] 本轮扫描配置: {cfgs}")
 
         run_by_name = {e.name: e.run for e in exps}
         plan = _build_plan(goal, run_by_name, cycle)
@@ -1558,7 +1558,7 @@ def main() -> int:
         print(f"goal: {goal[:120]}...")
         print(f"experiments: {[e.name for e in exps]}  layers: {plan.layers}")
 
-        # ── 研究品味层(可选, 需书生): 反身"这些问题如何被提出" + 自生成新问题 ──
+        # ── 研究品味层(可选, 需模型): 反身"这些问题如何被提出" + 自生成新问题 ──
         taste_new_questions: list[dict] = []
         if args.taste and client is not None:
             _taste = _distill_research_taste(client, args.model, goal)
@@ -1570,10 +1570,10 @@ def main() -> int:
                       f"自生成 {len(taste_new_questions)} 个新前沿问题")
                 for _nq in taste_new_questions:
                     print(f"    · {str(_nq.get('q',''))[:90]}")
-                # 书生自生成问题并入本轮目标, 交由后续扫描/书生成码/报告成文承接.
+                # 模型自生成问题并入本轮目标, 交由后续扫描/模型生成码/报告成文承接.
                 if taste_new_questions:
                     _nq_txt = " | ".join(str(n.get("q", "")) for n in taste_new_questions)
-                    goal = f"{goal}\n（书生依品味自生成的新问题: {_nq_txt[:500]}）"
+                    goal = f"{goal}\n（模型依品味自生成的新问题: {_nq_txt[:500]}）"
 
         out = run_research_program(
             goal=goal,
@@ -1606,7 +1606,7 @@ def main() -> int:
             _finds = _llm_critic(client, args.model, out.report, _sv)
             if _finds:
                 _blk = ["", "## 对立审稿(CriticAgent)",
-                        "> 书生双角色协同: 主研究员成文, 审稿副体持反对立场复核。"]
+                        "> 模型双角色协同: 主研究员成文, 审稿副体持反对立场复核。"]
                 for f in _finds:
                     _blk.append(f"- 断言: {f.get('claim', '')}\n"
                                 f"  - 风险: {f.get('risk', '')}\n"

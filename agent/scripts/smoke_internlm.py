@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""书生 InternLM 接入冒烟 — 验证『Intern-S2-Preview → 工具调用 → 执行 → 归报』AI4S 闭环.
+"""InternLM 接入冒烟 — 验证『Intern-S2-Preview → 工具调用 → 执行 → 归报』AI4S 闭环.
 
-背景: Huginn 的 model registry 已把书生 ChatAPI 注册为原生 ``internlm`` provider
+背景: Huginn 的 model registry 已把 InternLM ChatAPI 注册为原生 ``internlm`` provider
 (见 huginn/models/registry.py 的 ``_DOMESTIC_OPENAI_COMPATIBLE`` 与能力表). 本脚本不依赖
-Huginn 运行时, 仅用 openai SDK 直连书生端点, 复现一条最小 AI4S 认知链:
+Huginn 运行时, 仅用 openai SDK 直连模型端点, 复现一条最小 AI4S 认知链:
 
     「搜」(search_literature) → 「算」(run_symbolic_regression) → 「写」(结论报告)
 
@@ -12,7 +12,7 @@ Huginn 运行时, 仅用 openai SDK 直连书生端点, 复现一条最小 AI4S 
 编排这两步工具调用并给出归因结论.
 
 用法:
-    export INTERNLM_API_KEY=<你的书生 token>          # 必填
+    export INTERNLM_API_KEY=<你的 InternLM token>          # 必填
     python scripts/smoke_internlm.py                  # 模型默认 intern-s2-preview
     python scripts/smoke_internlm.py --model intern-s1-pro
 
@@ -157,13 +157,13 @@ def _run_loop(client_args: dict, model: str, verbose: bool = True) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default=_DEFAULT_MODEL, help="书生模型名")
+    parser.add_argument("--model", default=_DEFAULT_MODEL, help="InternLM 模型名")
     parser.add_argument("--base-url", default=None, help="覆盖端点 (默认环境 INTERNLM_BASE_URL)")
     args = parser.parse_args()
 
     key = os.environ.get("INTERNLM_API_KEY")
     if not key:
-        print("error: 请设置环境变量 INTERNLM_API_KEY=你的书生 token", file=sys.stderr)
+        print("error: 请设置环境变量 INTERNLM_API_KEY=你的 InternLM token", file=sys.stderr)
         return 2
 
     code = _run_loop(

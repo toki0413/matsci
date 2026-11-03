@@ -677,7 +677,7 @@ class EngineControl(EngineFacade):
 
     # ── D6: code_lab 修复循环细粒度切片 (execute 侧补 D-slice) ────────
     # D1 的 `_budget_exhausted()` 是**硬 0 门**: 只在剩余 ≤0 时才拦. 但 code_lab
-    # 一次尝试 = 书生写码 (LLM) + 沙箱真跑 (最长 `HUGINN_CODELAB_TIMEOUT_S`), 若
+    # 一次尝试 = 模型写码 (LLM) + 沙箱真跑 (最长 `HUGINN_CODELAB_TIMEOUT_S`), 若
     # 剩余 30s 而单次尝试要 200s, 仍会启动并烧穿挂钟 (run79 实测 execute 857.5s,
     # 该轮 `HUGINN_CODELAB_TIMEOUT_S=60` → 超支主要来自作者 LLM 调用 × 修复轮数).
     # D-slice 同款思路, 但 execute 的"尝试"是**产出证据的唯一路径 (核心 slice)**,

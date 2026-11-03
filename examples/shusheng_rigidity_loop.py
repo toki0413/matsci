@@ -1,21 +1,21 @@
-"""书生 × Huginn · 解空间刚性探针的**自主循环**.
+"""Huginn · 解空间刚性探针的**自主循环**.
 
-定位: 本脚本不替书生下结论. 它只提供
+定位: 本脚本不替模型下结论. 它只提供
   (a) 一个受预算约束的实验执行器 (调用 nn_rigidity_decoupling.py);
   (b) 把已有/新产的证据压缩成可读表格;
-  (c) 每轮把"证据 + 预算 + 已跑过的配置"喂给书生, 让书生 **自己** 决定
+  (c) 每轮把"证据 + 预算 + 已跑过的配置"喂给模型, 让模型 **自己** 决定
       "再跑一组合什么实验" 还是 "可以结题了, 我的裁决是 ...".
 
-循环: 书生决策 -> 本地执行 -> 证据回流 -> 书生再决策 ... 直到书生 conclude
-或触发预算上限 (轮数/墙钟). 结束后把书生的最终裁决原样落盘.
+循环: 模型决策 -> 本地执行 -> 证据回流 -> 模型再决策 ... 直到模型 conclude
+或触发预算上限 (轮数/墙钟). 结束后把模型的最终裁决原样落盘.
 
 用法:
-    export INTERNLM_API_KEY=<书生 token>
+    export INTERNLM_API_KEY=<模型 token>
     python examples/shusheng_rigidity_loop.py --rounds 6 --budget-s 7200 --session s2
 
 产物 (research_outputs/shusheng_nn_rigidity_probe/):
-    loop_transcript<sfx>.md   逐轮: 书生判断 + 它选的配置 + 该轮实测表 + 书生的理由
-    loop_verdict<sfx>.md      书生最终裁决 (原文)
+    loop_transcript<sfx>.md   逐轮: 模型判断 + 它选的配置 + 该轮实测表 + 模型的理由
+    loop_verdict<sfx>.md      模型最终裁决 (原文)
     loop_state<sfx>.json      机器可读的全过程状态
 """
 from __future__ import annotations
@@ -40,7 +40,7 @@ OUTDIR = EXAMPLES / "out" / "nn_rigidity_decoupling"
 REPORT_DIR = ROOT / "research_outputs" / "shusheng_nn_rigidity_probe"
 
 # ── 预算: 软限制 + 撞顶自动续投 (对齐 Huginn 的 HUGINN_BUDGET_APPROVAL=auto 语义) ──
-# 书生在框内自由选; 请求一旦冲破当前上限, 自动续投 ×RENEW_FACTOR, 最多 MAX_RENEWALS 次;
+# 模型在框内自由选; 请求一旦冲破当前上限, 自动续投 ×RENEW_FACTOR, 最多 MAX_RENEWALS 次;
 # 续投额度用尽后仍是硬刹车 (不无头烧钱). 成本按宽度加权: w=8->1, 32->2, 64->4, 128->8, 256->16.
 ALLOWED_KINDS = ["poly", "osc", "hi", "hism", "fat"]
 ALLOWED_WIDTHS = [4, 8, 16, 32, 64, 128, 256]
@@ -59,7 +59,7 @@ MIN_WIDTHS = 2  # widths 不得被砍到 2 以下 (至少要能拟合一条斜�
 JOBS = 3
 
 #: 单轮实验的**真实墙钟上限** (秒). 环境会周期性重启并杀掉后台进程, 单轮跑太久会连
-#: 一轮都留不下; 超时即记为该轮失败 (不产出证据), 下一轮把这条反馈给书生。
+#: 一轮都留不下; 超时即记为该轮失败 (不产出证据), 下一轮把这条反馈给模型。
 #: 这不是成本代理, 是物理时间约束 —— 与上面的任务/成本软限制相互独立。
 ROUND_TIMEOUT_S = 1800.0
 
@@ -214,7 +214,7 @@ def render_budget(recs: list[dict], caps: dict, fails: list[dict] | None = None)
 {failed}''' if failed else ''}"""
 
 
-# ── 书生调用 ──────────────────────────────────────────────────────────────
+# ── 模型调用 ──────────────────────────────────────────────────────────────
 def _compat_kwargs(client: OpenAI) -> dict:
     base = str(getattr(client, "base_url", None) or "")
     if "intern-ai.org.cn" in base or "/intern" in base:
@@ -237,10 +237,10 @@ def _ask(client: OpenAI, model: str, prompt: str, max_tokens: int, retries: int 
             return (r.choices[0].message.content or "").strip()
         except Exception as exc:  # noqa: BLE001 — 网络/限流重试
             last = exc
-            print(f"      !! 书生调用失败({type(exc).__name__}): {exc}; 退避重试 {i + 1}/{retries}",
+            print(f"      !! 模型调用失败({type(exc).__name__}): {exc}; 退避重试 {i + 1}/{retries}",
                   file=sys.stderr)
             time.sleep(5 * (i + 1))
-    raise RuntimeError(f"书生 API 连续失败: {last}")
+    raise RuntimeError(f"模型 API 连续失败: {last}")
 
 
 def _extract_json(text: str) -> dict | None:
@@ -289,7 +289,7 @@ _VERDICT_FIELDS = ("verdict", "conclusion", "answer_to_question",
 def _extract_conclusion(dec: dict) -> dict:
     """取出裁决字段, 兼容两种写法.
 
-    书生有时把裁决**平铺**在顶层 (``{"verdict": ...}``), 有时按 schema 嵌进
+    模型有时把裁决**平铺**在顶层 (``{"verdict": ...}``), 有时按 schema 嵌进
     ``{"conclude": {...}}``; 之前只读嵌套写法, 导致结构化字段全 None. 这里两种都收.
     """
     nested = dec.get("conclude") if isinstance(dec, dict) else None
@@ -339,7 +339,7 @@ def _clamp_run(run: dict, caps: dict) -> tuple[dict | None, list[str]]:
         return len(ws_) * len(ns_) * sd_, sum(_cost(w, adam) for w in ws_) * len(ns_) * sd_
 
     # 撞顶自动续投 (软限制 -> 硬刹车之间, 对齐 Huginn auto 语义): 请求冲破当前上限就 ×3/2 续投,
-    # 最多 MAX_RENEWALS 次, 额度跨轮持久. 目的是**不替书生削网格**——它想跑就让它跑.
+    # 最多 MAX_RENEWALS 次, 额度跨轮持久. 目的是**不替模型削网格**——它想跑就让它跑.
     while True:
         t, c = _tot(ws, ns, seeds)
         if (t <= caps["tasks"] and c <= caps["cost"]) or caps["renewals_left"] <= 0:
@@ -355,7 +355,7 @@ def _clamp_run(run: dict, caps: dict) -> tuple[dict | None, list[str]]:
         return t > caps["tasks"] or c > caps["cost"]
 
     # 续投额度用尽后才回落: 依次削减 ns -> seeds -> widths, 保持科学有效性 (ns>=MIN_NS, widths>=MIN_WIDTHS);
-    # 若削到地板仍超预算, 直接拒绝并把预算反馈给书生, 让它自己重规划 (不替它改设计).
+    # 若削到地板仍超预算, 直接拒绝并把预算反馈给模型, 让它自己重规划 (不替它改设计).
     while _over(ws, ns, seeds) and len(ns) > MIN_NS:
         ns = ns[:-1]
         notes.append(f"续投额度用尽仍超上限, 砍 ns -> {ns}")
@@ -378,8 +378,8 @@ def _clamp_run(run: dict, caps: dict) -> tuple[dict | None, list[str]]:
 def run_experiment(cfg: dict, tag: str) -> tuple[dict | None, str]:
     """跑一组实验.
 
-    返回 ``(结果, 失败原因)``: 成功时第二个元素为 "", 失败时为**给书生看的**具体原因
-    (超时 / rc / 缺产物), 让书生下一轮能据此改网格, 而不是原样重试.
+    返回 ``(结果, 失败原因)``: 成功时第二个元素为 "", 失败时为**给模型看的**具体原因
+    (超时 / rc / 缺产物), 让模型下一轮能据此改网格, 而不是原样重试.
     """
     cmd = [sys.executable, str(EXP),
            "--kind", cfg["kind"],
@@ -437,10 +437,10 @@ def _rec_from_json(d: dict, tag: str, source: str) -> dict:
 def main() -> int:
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("--rounds", type=int, default=10, help="书生最多自主决策几轮")
+    ap.add_argument("--rounds", type=int, default=10, help="模型最多自主决策几轮")
     ap.add_argument("--budget-s", type=float, default=21600.0, help="循环墙钟预算(秒)")
     ap.add_argument("--round-timeout-s", type=float, default=1800.0,
-                    help="单轮实验墙钟上限(秒), 超时该轮作废并反馈给书生")
+                    help="单轮实验墙钟上限(秒), 超时该轮作废并反馈给模型")
     ap.add_argument("--session", default="", help="产物文件名后缀, 避免覆盖历次循环记录")
     ap.add_argument("--fresh", action="store_true",
                     help="忽略既有 state 从零重跑; 默认自动续跑 (环境重置后接着上次继续)")
@@ -477,7 +477,7 @@ def main() -> int:
         return (cfg["kind"], tuple(cfg["widths"]), tuple(cfg["ns"]), cfg["seeds"],
                 cfg["adam_steps"], cfg.get("res_scale") or "none")
 
-    fails: list[dict] = []      # 已失败的配置 (含原因), 回传给书生避免原样重试
+    fails: list[dict] = []      # 已失败的配置 (含原因), 回传给模型避免原样重试
     timeout_sigs: set = set()   # 因超时作废的配置签名; 原样重试必然再超时, 直接拦截
     verdict_text, conclusion = None, None
 
@@ -512,8 +512,8 @@ def main() -> int:
         print(f"[resume] 承接 session{sfx}: 已完成 {rd_start - 1} 轮, "
               f"caps={caps}, 续跑 from round {rd_start}", flush=True)
     else:
-        transcript = ["# 书生自主循环 · 逐轮记录", "",
-                      f"> 模型: 书生 `{args.model}` @ `{args.base}`",
+        transcript = ["# 模型自主循环 · 逐轮记录", "",
+                      f"> 模型: 模型 `{args.model}` @ `{args.base}`",
                       f"> 起跑时已有证据: {len(recs)} 份 JSON", ""]
         state = {"model": args.model, "rounds": [], "started": time.time()}
         caps = {"tasks": SOFT_TASKS, "cost": SOFT_COST, "renewals_left": MAX_RENEWALS}
@@ -527,7 +527,7 @@ def main() -> int:
         """把当前 transcript/state 立刻落盘.
 
         环境会周期性重置并杀进程; 若只在"轮成功/跑到结尾"才写盘, 一轮被半路杀掉就
-        全丢 (连书生的决策都不留). 这里在**每轮决策后、每次拒绝/失败后**都立刻落盘,
+        全丢 (连模型的决策都不留). 这里在**每轮决策后、每次拒绝/失败后**都立刻落盘,
         使重置最多只丢正在跑的那一轮的实验本身.
         """
         REPORT_DIR.mkdir(parents=True, exist_ok=True)
@@ -540,7 +540,7 @@ def main() -> int:
         if time.time() - t_start > args.budget_s:
             note = "墙钟预算耗尽"
             break
-        print(f"\n===== 第 {rd}/{args.rounds} 轮 · 请书生决策 =====", flush=True)
+        print(f"\n===== 第 {rd}/{args.rounds} 轮 · 请模型决策 =====", flush=True)
 
         prompt = f"""{_QUESTION}
 
@@ -580,7 +580,7 @@ def main() -> int:
         raw = _ask(client, args.model, prompt, max_tokens=1600)
         dec = _extract_json(raw)
         if dec is None:
-            note = "书生回复无法解析为 JSON, 本轮作废"
+            note = "模型回复无法解析为 JSON, 本轮作废"
             transcript += [f"## 第 {rd} 轮 · 解析失败", "", "```", raw[:2000], "```", ""]
             print(f"      !! {note}", file=sys.stderr)
             state["rounds"].append({"round": rd, "error": "json_parse", "raw": raw[:4000]})
@@ -588,9 +588,9 @@ def main() -> int:
             continue
 
         action = dec.get("action")
-        print(f"      书生判断: {dec.get('thought')}")
+        print(f"      模型判断: {dec.get('thought')}")
         print(f"      action={action} reason={dec.get('reason')}")
-        transcript += [f"## 第 {rd} 轮 · 书生决策", "",
+        transcript += [f"## 第 {rd} 轮 · 模型决策", "",
                        f"**判断**: {dec.get('thought')}", "",
                        f"**action**: `{action}`", "",
                        f"**理由**: {dec.get('reason')}", ""]
@@ -598,7 +598,7 @@ def main() -> int:
         if action == "conclude":
             conclusion = _extract_conclusion(dec)
             verdict_text = raw
-            transcript += ["**书生宣布结题**, 裁决如下:", "",
+            transcript += ["**模型宣布结题**, 裁决如下:", "",
                            f"- verdict: {conclusion.get('verdict')}",
                            f"- conclusion: {conclusion.get('conclusion')}",
                            f"- answer_to_question: {conclusion.get('answer_to_question')}",
@@ -669,7 +669,7 @@ def main() -> int:
 
     # 未结题 -> 强制要一次最终裁决
     if conclusion is None:
-        print("\n===== 预算结束 · 强制书生给出最终裁决 =====", flush=True)
+        print("\n===== 预算结束 · 强制模型给出最终裁决 =====", flush=True)
         prompt = f"""{_QUESTION}
 
 {_CRITERIA}
@@ -687,11 +687,11 @@ def main() -> int:
         raw = _ask(client, args.model, prompt, max_tokens=2200)
         verdict_text = raw
         conclusion = _extract_conclusion(_extract_json(raw) or {}) or {"conclusion": raw}
-        transcript += ["# 最终裁决 (预算结束, 书生被迫结题)", "", f"```json\n{raw}\n```", ""]
+        transcript += ["# 最终裁决 (预算结束, 模型被迫结题)", "", f"```json\n{raw}\n```", ""]
 
     (REPORT_DIR / f"loop_transcript{sfx}.md").write_text("\n".join(transcript), encoding="utf-8")
-    md = ["# 书生自主循环 · 最终裁决", "",
-          f"> 书生 `{args.model}` 在读入 {len(recs)} 份实验证据后作出, 未经本地改写.", "",
+    md = ["# 模型自主循环 · 最终裁决", "",
+          f"> 模型 `{args.model}` 在读入 {len(recs)} 份实验证据后作出, 未经本地改写.", "",
           "## 裁决 (原文)", "", "```", verdict_text or "(无)", "```", "",
           "## 结构化字段", "",
           f"- verdict: {conclusion.get('verdict')}",

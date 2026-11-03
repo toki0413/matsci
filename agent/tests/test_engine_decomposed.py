@@ -295,13 +295,13 @@ def test_build_author_prompt_timeout_hint_reduces_compute() -> None:
     """超时失败要回灌**降算力**指令, 不能套用 NameError/形状那套对症提示.
 
     run59/60 实测: 三组都被 900s 超时饿死, 报错里没有语法线索, 但提示仍讲
-    NameError → 书生继续产出同样重的扫描. 这里锁定"超时 → 削减计算量".
+    NameError → 模型继续产出同样重的扫描. 这里锁定"超时 → 削减计算量".
     """
     from huginn.research.code_lab import build_author_prompt
 
     p = build_author_prompt("恒定目标", repair_hint="code_lab 执行超时 (> 900.0s)")
     assert "削减计算量" in p
-    assert "NameError" not in p  # 不再误导书生去查语法
+    assert "NameError" not in p  # 不再误导模型去查语法
 
 
 def test_build_author_prompt_bug_hint_keeps_syntax_advice() -> None:
@@ -976,7 +976,7 @@ def test_repeat_chain_varied_script_resets_and_frees_directive() -> None:
 def test_repeat_chain_alternating_families_lights_directive() -> None:
     """回归 (控制面审计 §11.4 ②): A,B,A,B 来回换也须点亮 pivot 硬指令.
 
-    旧口径只看"连续两轮指纹相同", 而书生常在两种等价 family 间来回换 → streak
+    旧口径只看"连续两轮指纹相同", 而模型常在两种等价 family 间来回换 → streak
     反复被清零, 21 个已接线 run 里 `pivot_directive` 零命中. 新增 `_exec_cycling`
     (窗口去重<=2 **且**每种结果都反复出现, min 计数>=2) 作为第二判据; 它刻意不认
     A,A,A,A,B (刚做过一次改变) —— 那仍由连续 streak 负责, 且改后应放行 (上一测试).

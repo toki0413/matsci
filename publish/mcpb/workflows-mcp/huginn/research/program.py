@@ -2062,7 +2062,7 @@ def _report_header(
     if _con.get("gates_failed"):
         _con_line += f", gates_failed={_con['gates_failed']}"
     return (
-        f"# 自主深研(Huginn×书生)\n\n> **门禁: {verdict}** (未落地: {ungrounded or '无'})\n"
+        f"# 自主深研(Huginn)\n\n> **门禁: {verdict}** (未落地: {ungrounded or '无'})\n"
         f"> 聚合视图: {_con_line}"
         f"> real orchestration: explored={out.explored} pruned={out.pruned} "
         f"convergence={out.converred}\n> 报告来源: {out.report_source}"

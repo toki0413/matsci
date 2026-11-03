@@ -1,4 +1,4 @@
-"""书生 × Huginn 第三域冷启动 · 应变耦合量子相变 (depth: 多尺度耦合/相变临界/凝聚态序/材料谱系).
+"""Huginn 第三域冷启动 · 应变耦合量子相变 (depth: 多尺度耦合/相变临界/凝聚态序/材料谱系).
 
 目标(泛化验证): 证明同一套 Huginn agent 机制**零改动**即可驱动一个与固体力学**零族**
 的陌生物质科学域。本域不是"单变量查表"的浅例, 而是:
@@ -9,7 +9,7 @@
   - **材料谱系**: ABO₃ 钙钛矿一族候选材料的相图判别(储铁电/磁电耦合)。
 
 一致性红线: 所有"结果"都来自真实解析/数值计算(landau 最小二乘、自由能极点、
-临界指数拟合) —— 门禁必须能落地, 不假造任何数; 书生可提议扫描维度 / 提开放问题,
+临界指数拟合) —— 门禁必须能落地, 不假造任何数; 模型可提议扫描维度 / 提开放问题,
 但数值全真实。域注册见 huginn.research.coldstart_guards.DOMAIN_PROFILES["quantum_critical"].
 """
 from __future__ import annotations
@@ -40,13 +40,13 @@ PEROVSKITE = [
 ]
 
 
-# ═══════════════════ 书生成码: 自主建模型为主 (Code Lab 主角) ═══════════════════
+# ═══════════════════ 模型生成码: 自主建模型为主 (Code Lab 主角) ═══════════════════
 
 def _llm_compat_kwargs(client) -> dict:
-    """端点感知的调用增量参数: 仅 Intern/书生端点(intern-ai.org.cn 或路径含 intern)才注入
+    """端点感知的调用增量参数: 仅 Intern/模型端点(intern-ai.org.cn 或路径含 intern)才注入
     extra_body={'thinking_mode': False}(InternLM 关思考流的专属字段); 标准 OpenAI 兼容端点
     (GPT/DeepSeek 等)不接受该字段, 自动省略避免 400. 让同一段调用语义跨端点兼容 ——
-    换模型只换 client/base_url, 不替书生解题, 也不把 agent 锁死在某一个模型上."""
+    换模型只换 client/base_url, 不替模型解题, 也不把 agent 锁死在某一个模型上."""
     try:
         base = str(getattr(client, "base_url", None) or "")
     except Exception:  # noqa: BLE001 — 取不到 base_url 按通用端点处理
@@ -93,9 +93,9 @@ def _try_raw_code(client, model: str, prompt: str) -> str:
 
 
 def _try_author_code(client, model: str, next_open: str, cycle: int):
-    """Code Lab · 书生自主建模: 自己定表征/写 run(cfg) 检验开放问题.
+    """Code Lab · 模型自主建模: 自己定表征/写 run(cfg) 检验开放问题.
 
-    弃用预置领域内核: 不再替书生预设物理方程, 只提供 numpy/scipy 通用原语供其组装.
+    弃用预置领域内核: 不再替模型预设物理方程, 只提供 numpy/scipy 通用原语供其组装.
     失败带错回流修一版(预算1), 全败回退白名单扫描(不阻塞, 不伪造).
     返回 (exp_or_None, probe_specs, obj_keys, err_msg).
     """
@@ -137,7 +137,7 @@ def _try_author_code(client, model: str, next_open: str, cycle: int):
         if not code:
             break
         code = extract_code(code) if not code.strip().startswith("def run") else code
-        cfg = {"T": 300.0, "strain": 0.0, "imaterial": 0}   # 泛用 cfg, 书生自取所需键
+        cfg = {"T": 300.0, "strain": 0.0, "imaterial": 0}   # 泛用 cfg, 模型自取所需键
         # 冷启动守卫: 域级 import 白名单增量注入本次 code_lab 沙箱 (仅本次调用生效).
         try:
             from huginn.research.coldstart_guards import compile_domain_guards
@@ -149,7 +149,7 @@ def _try_author_code(client, model: str, next_open: str, cycle: int):
         if res is not None:
             break
         last_err = err or "代码执行失败"
-        print(f"  [书生成码·重试 {at + 1}] 执行失败: {last_err[:160]}  → 回流给书生重修")
+        print(f"  [模型生成码·重试 {at + 1}] 执行失败: {last_err[:160]}  → 回流给模型重修")
     if res is None:
         return None, [], [], last_err or "代码执行失败"
     obj_keys = list(res["objectives"].keys())
@@ -158,29 +158,29 @@ def _try_author_code(client, model: str, next_open: str, cycle: int):
     except Exception:  # noqa: BLE001
         probe_specs = []
     from huginn.research import Experiment
-    exp = Experiment(f"author_qc{cycle}", f"书生自主建模(S{cycle}): {next_open[:90]}",
+    exp = Experiment(f"author_qc{cycle}", f"模型自主建模(S{cycle}): {next_open[:90]}",
                      run=lambda: res)
     return exp, probe_specs, obj_keys, ""
 
 
 GOAL = (
-    "应变耦合的发生量子相变 —— 交给书生自主建模求解. Huginn 提供通用数值工具面"
-    "(numerical_tool: ODE/优化/求根/曲线拟合/积分/特征值)与 Code Lab 沙箱; 书生须自己"
+    "应变耦合的发生量子相变 —— 交给模型自主建模求解. Huginn 提供通用数值工具面"
+    "(numerical_tool: ODE/优化/求根/曲线拟合/积分/特征值)与 Code Lab 沙箱; 模型须自己"
     "决定: 用什么理论模型(Landau 序参量/Curie-Weiss/临界指数/相图体系)、算什么物理量、"
     "怎么求. 目标是产出可证伪的真实数值结论(应变对临界/序的调控、临界指数与普适类、相图"
-    "拓扑、钙钛矿谱系可调性). 所有数值必须来自通用工具或书生 Hand Code 的真实计算, "
+    "拓扑、钙钛矿谱系可调性). 所有数值必须来自通用工具或模型 Hand Code 的真实计算, "
     "门禁可落地, 不造任何数."
 )
 
 
 def _make_experiments(cycle: int, author_exp=None) -> list:
-    """实验集: 书生自主建模为标准实验(codelab 产物), 无预置内核."""
+    """实验集: 模型自主建模为标准实验(codelab 产物), 无预置内核."""
     from huginn.research import Experiment
     exps = []
     if author_exp is not None:
-        exps.append(author_exp)          # 书生亲手写的 run() —— 开山主角
+        exps.append(author_exp)          # 模型亲手写的 run() —— 开山主角
     else:
-        # 首轮无书生代码占位: 以通用工具自检(纯真实工具调用, 不预置物理)
+        # 首轮无模型代码占位: 以通用工具自检(纯真实工具调用, 不预置物理)
         exps.append(Experiment("qc_tools_selfcheck",
                                "通用数值工具面自检(无预置内核): 验证工具可真实求积分/求根",
                                run=_tools_selfcheck))
@@ -200,11 +200,11 @@ def _tools_selfcheck() -> dict:
 
 
 def _diagnostic_tools() -> list[dict]:
-    """通用工具面: 书生成文时可自主调用的**域无关科学仪器**(dict 逃生口).
+    """通用工具面: 模型成文时可自主调用的**域无关科学仪器**(dict 逃生口).
 
     关键: 这里只提供通用科学计算原语(积分/求根/极小化/曲线拟合/ODE), 由 scipy 真实计算,
-    不针对任何具体物理 —— **不发生成任何凝聚态内核**。书生自主决定用什么原语、算什么量,
-    再配 code_lab 沙箱(书生成码)与白名单自检, 共同产出可证伪数值。诚实红线不变:
+    不针对任何具体物理 —— **不发生成任何凝聚态内核**。模型自主决定用什么原语、算什么量,
+    再配 code_lab 沙箱(模型生成码)与白名单自检, 共同产出可证伪数值。诚实红线不变:
     每个 handler 都真算, 不伪造; 返回 JSON 字符串进 trace 供门禁核验。
     """
     from scipy.integrate import quad as _quad
@@ -322,7 +322,7 @@ def main() -> int:
         return 3
     print("== 冷启动守卫(quantum_critical) ==")
     print("  依赖预检: %s" % g["deps_check"])
-    print("  书生成码重试预算: %d" % g["code_retry_budget"])
+    print("  模型生成码重试预算: %d" % g["code_retry_budget"])
     print("  成文探针: %s" % (", ".join(g["probes"]) or "(无)"))
 
     client = None
@@ -335,12 +335,12 @@ def main() -> int:
         client = OpenAI(api_key=key, base_url=os.environ.get(
             "INTERNLM_BASE_URL", "https://chat.intern-ai.org.cn/api/v1"))
 
-    print("== 书生 + Huginn 量子临界域长程深研(第三域泛化验证) ==")
+    print("== 模型 + Huginn 量子临界域长程深研(第三域泛化验证) ==")
     last_report = ""
     for cycle in range(max(1, args.start_cycle), args.start_cycle + args.cycles):
         print(f"\n===== 量子临界 第 {cycle} 轮 =====")
         from huginn.research import run_research_program, Experiment  # noqa: F401
-        # Code Lab: 书生亲手写本轮实验代码(自主建模为主). 失败回退白名单自检, 不阻塞.
+        # Code Lab: 模型亲手写本轮实验代码(自主建模为主). 失败回退白名单自检, 不阻塞.
         author_exp = None
         author_err = "dry-run(无 client, 走确定性自检占位)"
         if client is not None:
@@ -348,16 +348,16 @@ def main() -> int:
             author_exp, _probes, _objk, author_err = _try_author_code(
                 client, args.model, next_open, cycle)
             if author_exp is not None:
-                print(f"  [书生成码·自主建模] 通过 schema: "
+                print(f"  [模型生成码·自主建模] 通过 schema: "
                       f"{author_exp.hypothesis[:120]}")
             else:
-                print(f"  [书生成码·自主建模] 未通过, 回退白名单自检: {author_err[:120]}")
+                print(f"  [模型生成码·自主建模] 未通过, 回退白名单自检: {author_err[:120]}")
         exps = _make_experiments(cycle, author_exp=author_exp)
         goal = GOAL + " | " + _next_open_report(last_report, cycle)
         print("  experiments:", [e.name for e in exps])
         _OBJ = {k: "maximize" for k in
                 ("strain_eta_spread", "beta", "phase_order_span", "tunability_span")}
-        # P-B 审计注入: last_report 非空则喂给书生观察
+        # P-B 审计注入: last_report 非空则喂给模型观察
         program_kwargs = dict(client=client, model=args.model,
                               diagnostic_tools=_diagnostic_tools(),
                               max_iterations=8, verify=None)

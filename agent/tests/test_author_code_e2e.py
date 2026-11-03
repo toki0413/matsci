@@ -1,11 +1,11 @@
-"""书生成码主路径端到端验证 (behavior-level, 不依赖真实 API key).
+"""模型生成码主路径端到端验证 (behavior-level, 不依赖真实 API key).
 
-背景: 之前 `--dry` 走 client=None 确定性自检, 只覆盖了白名单自检分支 —— 书生成码
+背景: 之前 `--dry` 走 client=None 确定性自检, 只覆盖了白名单自检分支 —— 模型生成码
 主导价自主建模`._try_author_code`是**主编码路径**并未被端到端跑到(仅编译级验证)。这里的
-fake client 回放一条书生写的真实 run(cfg) 代码, 把整条链 `_try_author_code → Experiment
+fake client 回放一条模型写的真实 run(cfg) 代码, 把整条链 `_try_author_code → Experiment
 → sandbox_run(真执行) → 门禁可落地` 从"编译级"补成"行为级"验证。
 
-诚实边界: fake client 只替书生返回"一段待执行的真实 numpy 代码"(假装书生写的), 不含任何
+诚实边界: fake client 只替模型返回"一段待执行的真实 numpy 代码"(假装模型写的), 不含任何
 预先算好的答案; 执行仍走 code_lab 真沙箱, 数值是真算出来的 —— 不伪造。
 """
 from __future__ import annotations
@@ -27,7 +27,7 @@ def _load(path: Path, modname: str):
 qc = _load(_EXDIR / "shusheng_quantum_critical.py", "qc_e2e")
 
 
-# ── 端到端用: OpenAI 兼容 fake client (只回放书生成码, 不预算答案) ──────────
+# ── 端到端用: OpenAI 兼容 fake client (只回放模型生成码, 不预算答案) ──────────
 _BOOK_AUTH_CODE = '''def run(cfg):
     import math
     T = float(cfg.get("T", 300.0))
@@ -66,7 +66,7 @@ class _ChoiceEncoder:
 
 
 class FakeBookClient:
-    """书生成码 fake client: `chat.completions.create` 首次返回书生代码, 带 base_url."""
+    """模型生成码 fake client: `chat.completions.create` 首次返回模型代码, 带 base_url."""
     def __init__(self, base_url="https://chat.intern-ai.org.cn/api/v1"):
         self.base_url = base_url
         self.calls = 0
@@ -74,7 +74,7 @@ class FakeBookClient:
 
     def _reply(self):
         self.calls += 1
-        # 真实书生对"写码"任务的交付: fenced python 代码块(不是 JSON 包裹 dict).
+        # 真实模型对"写码"任务的交付: fenced python 代码块(不是 JSON 包裹 dict).
         # _ask_json 先尝试裸 {…} JSON(用于结构化答复), 失败后回退到 fenced 代码块提取.
         # 若返回 json.dumps({"code": …}), 代码内容自身的 } 会被非贪婪 \{.*?\} 提前截断,
         # json.loads 失败后把整个 JSON 串当代码 → 残留 \n 字面量触发 SyntaxError.
@@ -86,13 +86,13 @@ class FakeBookClient:
 
 
 def test_author_code_path_end_to_end():
-    """主编码路径 `_try_author_code` 端到端跑通: 假书生回放代码 → 真沙箱执行 → 出 experiment."""
+    """主编码路径 `_try_author_code` 端到端跑通: 假模型回放代码 → 真沙箱执行 → 出 experiment."""
     client = FakeBookClient()
     exp, probes, obj_keys, err = qc._try_author_code(
         client, "intern-s2-preview", "检验应变对铁电临界/序参量的调控", 1)
-    assert exp is not None, f"书生成码端到端失败: {err}"
-    assert client.calls >= 1                    # 真的问了书生
-    res = exp.run()                             # 真执行书生代码
+    assert exp is not None, f"模型生成码端到端失败: {err}"
+    assert client.calls >= 1                    # 真的问了模型
+    res = exp.run()                             # 真执行模型代码
     assert res["success"] is True
     # 代码是真算的: ε=-0.05 → Tc=405 → η>0; 通用契约
     assert res["objectives"]["Tc"] > 0

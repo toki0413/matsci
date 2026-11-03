@@ -1,7 +1,7 @@
 """research_imagination_real —— 真实 LLM 想象末态盆地探测(最后一击).
 
 承接 research_imagination_basins.py(数值代理)与双路分形负结论. 这次用**真实 InternLM
-(书生)模型**跑 imagine, 回答互补的可证伪问题:
+模型**跑 imagine, 回答互补的可证伪问题:
 
   真实想象末态在数值/语义空间, 是否形成**多个自洽盆地(多吸引域机制)**?
   还是坍缩成单一稳定机制(单盆地)?
@@ -47,7 +47,7 @@ THINKING = os.environ.get("INTERN_THINKING", "1") == "1"
 def call_chat(system: str, user: str) -> str:
     """调 Intern chat.completions(OpenAI 兼容, 走代理 env, 可开 thinking_mode).
 
-    thinking_mode=true 时书生的推理进独立通道, content 留最终回答;
+    thinking_mode=true 时模型的推理进独立通道, content 留最终回答;
     因而 JSON 遵循率应显著提升(修掉此前 CoT 挤爆/截断问题)。
     返回 assistant content 全文(含可能的 thinking 前缀, 解析时容错).
     """
@@ -139,7 +139,7 @@ def main():
     records = []  # (transform, rep, predictions, description)
     transforms = ("algebraic", "topological", "order")
     REPS = int(os.environ.get("REPS", "3"))
-    # 加固 JSON 约束, 抑制书生模型的自由推理(否则 JSON 被 CoT 挤到截断)
+    # 加固 JSON 约束, 抑制模型的自由推理(否则 JSON 被 CoT 挤到截断)
     _HARD_JSON = (
         "\nHARD RULES: Output ONLY a single, well-formed JSON object and nothing else. "
         "Do NOT add thinking, reasoning, analysis, markdown fences, or any text "

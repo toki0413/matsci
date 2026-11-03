@@ -1,7 +1,7 @@
-# 书生大模型 + Huginn 科学智能体 — 参赛技术方案
+# InternLM + Huginn 科学智能体 — 参赛技术方案
 
 > 赛道：方向1 AI4S 科学智能体
-> 基座：上海人工智能实验室书生大模型（Intern-S2-Preview / Intern-S1-Pro / InternVL）
+> 基座：上海人工智能实验室 InternLM（Intern-S2-Preview / Intern-S1-Pro / InternVL）
 > 框架：Huginn（MIT，通用科研自动化智能体，`huginn-agent` v1.3.x）
 
 ---
@@ -28,9 +28,9 @@
 | **写** 报告 | `report_tool`（Markdown / LaTeX / HTML 一键生成）
 | **验证 / 迭代** | `conjecture_engine` + `completion_evidence` 门禁 + `evolution/knowledge_distiller` 带证自证成长
 
-## 3. 书生大模型接入
+## 3. InternLM 接入
 
-书生 ChatAPI 为 OpenAI 兼容端点，本方案为其新增**原生 `internlm` provider**：
+InternLM ChatAPI 为 OpenAI 兼容端点，本方案为其新增**原生 `internlm` provider**：
 
 | 项 | 值 |
 |---|---|
@@ -44,7 +44,7 @@
 `vision/tools/reasoning/streaming=True`，从而在 fail-closed 的能力路由中正确放行工具调用。
 
 ```bash
-export INTERNLM_API_KEY=<你的书生 token>
+export INTERNLM_API_KEY=<你的 InternLM token>
 huginn-agent chat --provider internlm --model intern-s2-preview
 ```
 
@@ -87,7 +87,7 @@ huginn-agent chat --provider internlm --model intern-s2-preview
 ```bash
 cd agent
 pip install -e ".[all]"
-export INTERNLM_API_KEY=<你的书生 token>
+export INTERNLM_API_KEY=<你的 InternLM token>
 python -m huginn.server                     # API 网关
-huginn-agent chat --provider internlm       # 接入书生
+huginn-agent chat --provider internlm       # 接入 InternLM
 ```

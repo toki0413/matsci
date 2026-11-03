@@ -153,6 +153,12 @@ EXEMPTIONS: dict[str, Exemption] = {
         "arch",
         "2027-06-30",
     ),
+    "tests/test_arch_no_vendor_persona.py": Exemption(
+        "交付面全仓扫描, 只适合全量套件",
+        "扫描 agent/ + examples/ + docs/ 文本; 运行证据不在扫描面",
+        "arch",
+        "2027-06-30",
+    ),
     "tests/test_arch_ruff_baseline.py": Exemption(
         "全仓 lint 属审计而非快速失败",
         "tests/ruff_baseline.json per-file only-shrink 棘轮",

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Huginn × 书生 — AI4S 方向1「开放问题研究」端到端演示.
+"""Huginn × 模型 — AI4S 方向1「开放问题研究」端到端演示.
 
 与"复现型" demo 不同：**不预设答案**。让 Intern-S2-Preview 作为主研究员对一个开放
 科学问题完成科研流程：选题 → 假设(候选规律) → 算(最小二乘 + AIC 模型选择)
@@ -21,7 +21,7 @@
 `design_experiment`(FIM 挑选新抽样点)、`cross_validate`(LOOCV)。仅依赖 `openai`。
 
 用法：
-    export INTERNLM_API_KEY=<书生 token>
+    export INTERNLM_API_KEY=<模型 token>
     python examples/ai4s_internlm_demo.py [--model intern-s2-preview] [--outdir examples/out]
 """
 from __future__ import annotations
@@ -250,7 +250,7 @@ def _write_report(path, final, transcript, title, trace, verdict, ungrounded):
         f"回溯到下方工具执行轨迹。）" if verdict == "pass" else
         f"**结论证伪门禁：{verdict}** ⚠ 以下数值不在工具轨迹中、未被采纳: {ungrounded}。")
     header = (
-        "# 开放问题研究 — 书生 Intern-S2 × Huginn 自主科研报告\n\n"
+        "# 开放问题研究 — 模型 Intern-S2 × Huginn 自主科研报告\n\n"
         f"> **研究性质：开放问题（无预设答案）** · {gate_note}\n\n"
         "## 一、研究问题\n\n" + title + "\n\n## 二、工具执行轨迹（门禁证据）\n\n"
     )

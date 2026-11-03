@@ -1,13 +1,13 @@
-"""书生 × Huginn 科学计算 MCP 码头 (stdio / HTTP-streamable).
+"""Huginn 科学计算 MCP 码头 (stdio / HTTP-streamable).
 
 把深研管线的域科学诊断工具 (probe_*: C* 容量 / 零空间方向分解 / PDE 约束
 求解 / PINN 优化器财政) 装箱成标准 MCP server —— 任意 MCP host (Claude
-Desktop / Cursor / Trae / 书生自己的 MCP 客户端) 用 ``tools/list`` +
+Desktop / Cursor / Trae / 模型自己的 MCP 客户端) 用 ``tools/list`` +
 ``tools/call`` 即可召唤**真实**科学计算, 不 import 我们的 Python 包.
 
 独立性红线:
   - 工具数值全部来自确定性科学内核 (最小二乘 / 零空间 SVD / ODE 算子),
-    **不经任何 LLM**; 书生只在这里取证据, 不参与数值产生;
+    **不经任何 LLM**; 模型只在这里取证据, 不参与数值产生;
   - MCP 层只做 schema 往返 (tools/list / tools/call), 与声明门禁同一证据
     轨迹 —— 远端拿到什么, 深研 trace 里就是什么;
   - 默认只暴露只读能力 (allow_write=False), 远端 host 无法动磁盘/跑命令.
@@ -58,7 +58,7 @@ async def _check() -> int:
     _ensure_registered()
     backend = mcp_export.CapabilityMCPBackend()
     tools = await mcp_export.list_tools_handler(backend)
-    print(f"== 书生 × Huginn 科学 MCP: tools/list 共 {len(tools)} 个工具 ==")
+    print(f"== Huginn 科学 MCP: tools/list 共 {len(tools)} 个工具 ==")
     for t in tools:
         print(f"  - {t.name}: {(t.description or '').splitlines()[0][:78]}")
     print(f"\n能力清单: {list(CapabilityRegistry.list_capabilities())[:12]} ...")

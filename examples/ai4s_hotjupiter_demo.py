@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Huginn × 书生 — 跨学科开放研究范例：热木星"潮汐锁定→昼夜环流"天体物理×流体.
+"""Huginn × 模型 — 跨学科开放研究范例：热木星"潮汐锁定→昼夜环流"天体物理×流体.
 
 物理内核 examples/hotjupiter_sw.py（纯 Python 零依赖）：
   - [第一性原理] 赤道 β-平面线性 Matsuno–Gill 旋转浅水，昼夜能量沉积由入射恒星光
@@ -566,7 +566,7 @@ def main() -> int:
             verdict, ungrounded = "pass", []
 
     rep = OUT / "ai4s_hotjupiter_report.md"
-    topic_line = f"\n> 书生自主选题: **{topic}** ({_TOPICS[topic]['label']}) — {_TOPICS[topic]['question']}"
+    topic_line = f"\n> 模型自主选题: **{topic}** ({_TOPICS[topic]['label']}) — {_TOPICS[topic]['question']}"
     fallback_line = ("\n> **智能兜底: " + "; ".join(fallback_notes) + "**") if fallback_notes else ""
     degrade_line = "\n> 报告来源: 系统确定性组装" if degraded else "\n> 报告来源: 模型自主成文"
     header = (f"# 跨学科开放研究 — 热木星昼夜环流（天体物理×流体）\n\n"

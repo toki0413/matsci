@@ -24,7 +24,7 @@ def test_timeout_marker_wins():
 
 
 def test_empty_code_is_tool_error_not_env():
-    out = {"mode": "code_lab", "success": False, "error": "书生未产出可解析的实验代码"}
+    out = {"mode": "code_lab", "success": False, "error": "模型未产出可解析的实验代码"}
     assert classify_exit_class(out) == "tool_error"
 
 

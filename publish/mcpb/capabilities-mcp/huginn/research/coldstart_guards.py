@@ -1,7 +1,7 @@
 """跨域冷启动守卫库 (Cross-domain Cold-start Guards).
 
 把散落在各域 Markdown 报告里的**工程 root-cause**（依赖缺失 / import 白名单 / 返回
-契约 schema / 书生成码质量低谷…）编译成**机器可读、域无关的结构化守卫**，让"沉淀经验"
+契约 schema / 模型生成码质量低谷…）编译成**机器可读、域无关的结构化守卫**，让"沉淀经验"
 与"复用经验"走同一条通道——开新域批次前自动聚合 → 编译该域启动清单 → 注入 harness。
 
 设计原则(huginn 一贯)：
@@ -28,7 +28,7 @@ from typing import Any
 # category -> (guard 说明, detect 检测, abstract_fix 修复)
 GUARD_LIBRARY: dict[str, dict[str, str]] = {
     "sandbox_whitelist": {
-        "guard": "书生成码前的 import 白名单需含该域数值计算依赖与纯类型标准库",
+        "guard": "模型生成码前的 import 白名单需含该域数值计算依赖与纯类型标准库",
         "detect": "代码依赖 import 被拦截(typing/dataclasses 等)或模块缺失",
         "abstract_fix": (
             "依赖白名单补纯标准库(typing/dataclasses/itertools/functools/collections/"
@@ -36,7 +36,7 @@ GUARD_LIBRARY: dict[str, dict[str, str]] = {
         ),
     },
     "schema_contract": {
-        "guard": "书生成码 run() 必须返回可序列化数值; 裸数值 dict 自动封装, 纯字符串/非 dict 拒绝",
+        "guard": "模型生成码 run() 必须返回可序列化数值; 裸数值 dict 自动封装, 纯字符串/非 dict 拒绝",
         "detect": "run() 返回非 dict / 无数值 / 内容不可序列化",
         "abstract_fix": (
             "对裸数值 dict 做收尾封装(objectives=纯数值标量键, summary=其余), "
@@ -44,7 +44,7 @@ GUARD_LIBRARY: dict[str, dict[str, str]] = {
         ),
     },
     "code_quality_retry": {
-        "guard": "书生成码失败时用真实 traceback 回流给模型修一版, 预算受限, 全败回退白名单",
+        "guard": "模型生成码失败时用真实 traceback 回流给模型修一版, 预算受限, 全败回退白名单",
         "detect": "运行时 bug(KeyError/SyntaxError/TypeError 等)",
         "abstract_fix": (
             "把真实 err 拼进下一轮 LLM user 让它带错修; 预算(_AUTHOR_MAX_RETRY)设小, "
@@ -83,8 +83,8 @@ DOMAIN_PROFILES: dict[str, dict[str, Any]] = {
     "fracture": {
         "deps": ["numpy", "scipy", "matplotlib"],
         "imports_extra": [],  # 纯标准库守卫由跨域 GUARD_LIBRARY 兜底
-        "code_retry_budget": 1,  # 倾斜: 书生成码一次失败即回退, 火让给 probe/scan
-        # 域级 cfg 键别名(书生近义名 → 白名单规范键, 全映射同一份真实数值):
+        "code_retry_budget": 1,  # 倾斜: 模型生成码一次失败即回退, 火让给 probe/scan
+        # 域级 cfg 键别名(模型近义名 → 白名单规范键, 全映射同一份真实数值):
         # 域专用物理别名显式待在域声明里, 不让通用 harness 累积例外(低熵红线).
         "cfg_aliases": {
             "sigma_0": "bridge_ratio",
@@ -118,13 +118,13 @@ DOMAIN_PROFILES: dict[str, dict[str, Any]] = {
             "probe_barrier",
             "probe_kic",
         ],
-        "note": "断裂力学: IJF2026 七开放问题, scan+probe 主导, 书生成码低频",
+        "note": "断裂力学: IJF2026 七开放问题, scan+probe 主导, 模型生成码低频",
     },
     "quantum_critical": {
         "deps": ["numpy", "scipy"],
         "imports_extra": [],
-        "code_retry_budget": 1,  # 倾斜: 解析+数值扫描主导, 书生成码低频(与 fracture 同理)
-        # 探针面 = 通用工具面(dict 逃生口 scipy 仪器 + 书生成码 probe_*), 不再预置物理别名;
+        "code_retry_budget": 1,  # 倾斜: 解析+数值扫描主导, 模型生成码低频(与 fracture 同理)
+        # 探针面 = 通用工具面(dict 逃生口 scipy 仪器 + 模型生成码 probe_*), 不再预置物理别名;
         # 成文时出具域无关通用仪器(qc_integrate/root/minimize/curvefit/ode), 不写物理探针.
         "probes": [],
         "note": (
@@ -211,7 +211,7 @@ def compile_domain_guards(domain: str) -> dict[str, Any]:
         "imports_whitelist_extra": [str],
         "schema_contract": {strict: bool, coerce_numeric_dict: bool},
         "code_retry_budget": int,
-        "cfg_aliases": {alias: target},   # 域级 cfg 键别名(书生成码沙箱注入依据)
+        "cfg_aliases": {alias: target},   # 域级 cfg 键别名(模型生成码沙箱注入依据)
         "scientific_contract": {quantities: {key: {unit, domain}}},  # 机器可读科学契约工件
         "dimensional": {quantities, derived, ok},  # 量纲/跨量恒等预检(新域加载即跑)
         "probes": [str],

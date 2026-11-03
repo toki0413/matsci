@@ -1,4 +1,4 @@
-"""A · 用书生 Intern-S2 把 NN 刚性探针协议评审写成正式文档.
+"""A · 用模型 Intern-S2 把 NN 刚性探针协议评审写成正式文档.
 
 输入: 协议(TraeWork 共享文档)要点 + B 轮三条实测发现。
 输出: examples/out/protocol_review/ nn-rigidity-probe-protocol-review.md
@@ -71,7 +71,7 @@ def main() -> int:
     client = OpenAI(api_key=key, base_url=base)
 
     def _compat_kwargs(cil):
-        """端点感知: 仅 Intern/书生端点才带 thinking_mode 字段, 通用端点自动省略(避免 400)."""
+        """端点感知: 仅 Intern/模型端点才带 thinking_mode 字段, 通用端点自动省略(避免 400)."""
         try:
             _base = str(getattr(cil, "base_url", None) or "")
         except Exception:  # noqa: BLE001
@@ -92,7 +92,7 @@ def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     _OUT_MD.write_text(
         f"# 协议评审: NN 容量探针测 bootstrap 解空间刚性\n\n"
-        f"> 生成: 书生 `{model}` × Huginn 本地实测(B 轮) · {_OUT_MD.stem}\n\n"
+        f"> 生成: 模型 `{model}` × Huginn 本地实测(B 轮) · {_OUT_MD.stem}\n\n"
         + text.strip() + "\n",
         encoding="utf-8",
     )

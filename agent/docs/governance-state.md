@@ -46,6 +46,7 @@
 | `tests/test_arch_mp_key_flow.py` | 是 | `fast-fail-guard` | MP API key flow guard |
 | `tests/test_arch_no_hardcoded_paths.py` | 是 | `fast-fail-guard` | No-hardcoded-machine-paths guard |
 | `tests/test_arch_no_import_cycles.py` | 是 | `full-suite-only` | — |
+| `tests/test_arch_no_vendor_persona.py` | 是 | `full-suite-only` | — |
 | `tests/test_arch_package_exports.py` | 是 | `full-suite-only` | — |
 | `tests/test_arch_plugin_governance.py` | 是 | `fast-fail-guard` | Plugin admission guard |
 | `tests/test_arch_rag_memory_seam.py` | 是 | `full-suite-only` | — |
@@ -177,7 +178,7 @@ prompt 段的**声明面** (`prompt_segments._SEGMENT_SPECS`: 段名 -> 必须�
 | 插件准入清单 | `tests/test_arch_plugin_governance.py` | 引用 | 2 项 | — | — | Plugin admission guard |
 | 硬编码路径白名单 | `tests/test_arch_no_hardcoded_paths.py` | 引用 | 7 项 | — | — | No-hardcoded-machine-paths guard |
 | MCP 接线白名单 | `tests/test_arch_mcp_governance.py` | 引用 | 7 项 | — | — | MCP single-gateway guard |
-| arch 门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 17 | 21 | 4 | Governance gate registry guard |
+| arch 门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 17 | 22 | 5 | Governance gate registry guard |
 | CLI 门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 2 | 2 | 0 | Governance gate registry guard |
 | 本地门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 5 | 5 | 0 | Governance gate registry guard |
 | 工程门数下限 | `tests/test_arch_gate_registry.py` | 权威 | 21 | 21 | 0 | Governance gate registry guard |
@@ -230,6 +231,7 @@ prompt 段的**声明面** (`prompt_segments._SEGMENT_SPECS`: 段名 -> 必须�
 | `tests/test_arch_cleanliness.py` | IGNORE | arch | 2027-06-30 | discover_governance_tests() 逐文件判在; 全量套件执行 |
 | `tests/test_arch_gate_ownership.py` | IGNORE | arch | 2027-06-30 | 标记集合 vs 登记集合双向闭合 + 归属校验 |
 | `tests/test_arch_no_import_cycles.py` | IGNORE | arch | 2027-06-30 | AST 依赖图扫描 huginn/**; 全量套件执行 |
+| `tests/test_arch_no_vendor_persona.py` | IGNORE | arch | 2027-06-30 | 扫描 agent/ + examples/ + docs/ 文本; 运行证据不在扫描面 |
 | `tests/test_arch_package_exports.py` | IGNORE | arch | 2027-06-30 | AST 扫描 huginn/**/__init__.py 的 __all__ 双向 |
 | `tests/test_arch_rag_memory_seam.py` | IGNORE | arch | 2027-06-30 | AST 扫描 RAG/memory 接缝; 全量套件执行 |
 | `tests/test_arch_ruff_baseline.py` | IGNORE | arch | 2027-06-30 | tests/ruff_baseline.json per-file only-shrink 棘轮 |
@@ -245,7 +247,7 @@ prompt 段的**声明面** (`prompt_segments._SEGMENT_SPECS`: 段名 -> 必须�
 | `tests/test_publish_mirror_drift.py` | IGNORE | governance | 2027-06-30 | scripts/mcpb_vendor.py --check 零漂移 + BUNDLE_MANIFEST |
 | `tests/test_silent_exceptions.py` | IGNORE | governance | 2027-06-30 | tests/silent_exceptions_baseline.json per-file only-shrink |
 
-共 18 条强度记录 (IGNORE 18 / OBSERVE 0).
+共 19 条强度记录 (IGNORE 19 / OBSERVE 0).
 
 ## 缺口 (gaps)
 

@@ -1,7 +1,7 @@
 """adaptive_call —— 模型无关的"遇错升级"LLM 调用适配器.
 
 搭配 text_to_json(鲁棒提取), 解决不同模型对结构化输出遵循差异极大的问题
-(书生 s1 ~10%, DeepSeek 100%). 关键设计: **不在代码里查模型名 / 不加 per-model
+(Intern-S1 ~10%, DeepSeek 100%). 关键设计: **不在代码里查模型名 / 不加 per-model
 白名单**, 而是用一套对任意端点都成立的**试探-降级**策略:
 
   plan[0]: 携带可选 reasoning 扩展(nextra, 如 {"thinking_mode":True}) + 放宽 max_tokens

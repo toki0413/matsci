@@ -1,6 +1,6 @@
 """批量真实 plan→actual 配对采集 (扩采 JEPA 语料).
 
-每个目标: 真实 InternLM (书生) 从 hypothesis 生成 plan+expected_prediction (真实预测),
+每个目标: 真实 InternLM (模型) 从 hypothesis 生成 plan+expected_prediction (真实预测),
            真实 python/numpy 计算得 actual (真实执行), 存入 {runtime_home}/corpus/jepa_pairs.jsonl.
 
 诚实边界: 这是数据采集脚本, 不训练不碰权重; 只追加真实配对.
