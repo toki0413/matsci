@@ -5,7 +5,7 @@
 读起来像 agent 是为那一个模型/那一次实验而开发. 本门把"不再绑定"变成可执行断言:
 
 - 扫描面 = 交付代码与文档 (agent/ 全部 + examples/ 去掉 out/ + 仓库 docs/ +
-  顶层配置与审计文档);
+  顶层配置与审计文档); 交付面**文件名**同样不得含该词 (examples/ 与 agent/);
 - 历史运行证据 (research_outputs/、research/<run>/、examples/out/) **不在扫描面** ——
   它们是不可篡改的实验档案, 不能为了措辞回溯改日志;
 - provider 标识 (如 ``internlm``) 与厂商名 (如 InternLM) 是**可选接入**, 不属人格名,
@@ -42,6 +42,12 @@ _SCAN_FILES = (
     REPO_ROOT / ".gitignore",
 )
 _SUFFIXES = {".py", ".md", ".toml", ".example", ".txt", ".yml", ".yaml", ".json"}
+
+#: 文件名同样去人格化: 扫交付目录的路径名 (历史证据目录除外).
+_PATH_SCAN_ROOTS = (AGENT_ROOT, REPO_ROOT / "examples")
+#: 罗马化人格名 (文件名用), 与上面的中文人格名同源.
+_PATH_TOKEN = "shusheng"
+_PATH_SKIP_DIRS = {"__pycache__", "out", "node_modules", ".git", ".venv"}
 
 
 def _iter_files(root: Path):
@@ -89,9 +95,51 @@ def offenders(root_override: list[Path] | None = None) -> list[str]:
     return _scan(paths)
 
 
+def _iter_paths(root: Path):
+    if root.is_file():
+        yield root
+        return
+    for path in sorted(root.rglob("*")):
+        if any(part in _PATH_SKIP_DIRS for part in path.parts):
+            continue
+        yield path
+
+
+def path_offenders(root_override: list[Path] | None = None) -> list[str]:
+    """交付目录里的路径名命中 (``root_override`` 仅供自检)."""
+    roots = _PATH_SCAN_ROOTS if root_override is None else root_override
+    out: list[str] = []
+    for root in roots:
+        for path in _iter_paths(root):
+            if _PATH_TOKEN not in path.name:
+                continue
+            try:
+                rel = path.relative_to(REPO_ROOT).as_posix()
+            except ValueError:
+                rel = path.as_posix()
+            out.append(rel)
+    return sorted(set(out))
+
+
 def test_no_vendor_persona_in_deliverable_surface():
     """交付面零命中: 报告/工具描述/错误文案/技能/文档不得出现实验人格名."""
     assert offenders() == []
+
+
+def test_no_persona_in_deliverable_filenames():
+    """交付目录的文件名不得含人格名 (历史证据目录不在扫描面)."""
+    assert path_offenders() == []
+
+
+def test_filename_scan_primitive(tmp_path: Path):
+    """自检: 文件名命中能被检出, 干净文件名不误报."""
+    bad = tmp_path / f"{_PATH_TOKEN}_x.py"
+    bad.write_text("", encoding="utf-8")
+    good = tmp_path / "ai4s_x.py"
+    good.write_text("", encoding="utf-8")
+    errors = path_offenders([tmp_path])
+    assert len(errors) == 1
+    assert errors[0].endswith(f"{_PATH_TOKEN}_x.py")
 
 
 def test_offender_scan_primitive(tmp_path: Path):

@@ -103,8 +103,9 @@ milestone: 无 (单批治理加固, 不跨里程碑)
 ## D10. 去厂商/人格绑定
 
 - contract: 交付面（`agent/` 源码、技能、文档、`examples/`、仓库 `docs/`、顶层配置）
-  不得出现某个模型的实验人格名；报告标题、工具描述、错误文案、技能描述一律中性。
-- invariant: 扫描面任一行命中即红；历史运行证据（`research_outputs/`、`research/<run>/`、
+  不得出现某个模型的实验人格名；报告标题、工具描述、错误文案、技能描述一律中性；
+  交付目录的文件名同样不得含该人格名。
+- invariant: 扫描面任一行或任一交付文件名命中即红；历史运行证据（`research_outputs/`、`research/<run>/`、
   `examples/out/`）**不在扫描面**，保留原始档案不动。provider 标识（如 `internlm`）
   与厂商名（InternLM）属可选接入，不算人格名。
 - test: `tests/test_arch_no_vendor_persona.py`（登记为 full-suite-only）。

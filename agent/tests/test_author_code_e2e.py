@@ -24,7 +24,7 @@ def _load(path: Path, modname: str):
     return mod
 
 
-qc = _load(_EXDIR / "shusheng_quantum_critical.py", "qc_e2e")
+qc = _load(_EXDIR / "ai4s_quantum_critical.py", "qc_e2e")
 
 
 # ── 端到端用: OpenAI 兼容 fake client (只回放模型生成码, 不预算答案) ──────────

@@ -29,7 +29,7 @@ def _science_tools() -> list[dict]:
     _EX = Path(__file__).resolve().parents[3] / "examples"
     if str(_EX) not in sys.path:
         sys.path.insert(0, str(_EX))
-    from shusheng_huginn_workflow import (
+    from ai4s_huginn_workflow import (
         _diagnostic_tools,  # type: ignore[import-not-found]
     )
     return _diagnostic_tools()

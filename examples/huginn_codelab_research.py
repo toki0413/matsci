@@ -1,6 +1,6 @@
 """命题无关的 Huginn 原生 Code Lab 自主研究循环.
 
-与 `shusheng_huginn_workflow.py`(逐轮硬编码的 X7 研究日志)不同, 本文件把**研究
+与 `ai4s_huginn_workflow.py`(逐轮硬编码的 X7 研究日志)不同, 本文件把**研究
 目标**当作外部输入(`--objective`), 不绑定任何具体命题:
 
   模型(Intern)读目标 → 提开放问题 → 在 Code Lab 里**亲手写** numpy 实验代码 →

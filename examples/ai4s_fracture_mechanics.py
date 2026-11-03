@@ -33,8 +33,8 @@ frontiers in fracture mechanics*, Int J Fract 250(1), DOI 10.1007/s10704-025-009
   - `--dry` 走 client=None 确定性综合, 无 API key 也能验证整条管线跑通。
 
 用法:
-  INTERNLM_API_KEY=... python examples/shusheng_fracture_mechanics.py --cycles 2
-  python examples/shusheng_fracture_mechanics.py --dry --cycles 2   # 确定性验证
+  INTERNLM_API_KEY=... python examples/ai4s_fracture_mechanics.py --cycles 2
+  python examples/ai4s_fracture_mechanics.py --dry --cycles 2   # 确定性验证
 """
 from __future__ import annotations
 

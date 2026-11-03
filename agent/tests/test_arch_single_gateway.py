@@ -130,7 +130,7 @@ ALLOWED_EXTERNAL_IMPORTS: dict[str, dict[str, str]] = {
         "reason": "证据链 demo(读 literature/evidence 模块, 展示证据落链)",
         "migrate_to": "huginn.tools API(无 HTTP 等价物); 需补 literature 证据端点",
     },
-    "examples/shusheng_huginn_workflow.py": {
+    "examples/ai4s_huginn_workflow.py": {
         "reason": "第一方深研(code_lab 沙箱 + planning + run_program 组合, 进程内)",
         "migrate_to": "需补 code_lab 沙箱端点, 保持登记",
     },
@@ -138,15 +138,15 @@ ALLOWED_EXTERNAL_IMPORTS: dict[str, dict[str, str]] = {
         "reason": "第一方深研(命题无关 code_lab 沙箱 + planning + run_program 组合, 进程内)",
         "migrate_to": "需补 code_lab 沙箱端点, 保持登记",
     },
-    "examples/shusheng_quantum_critical.py": {
+    "examples/ai4s_quantum_critical.py": {
         "reason": "第一方深研(code_lab/coldstart_guards/tool_surface, 进程内)",
         "migrate_to": "需补 code_lab 端点, 保持登记",
     },
-    "examples/shusheng_ecology_dynamics.py": {
+    "examples/ai4s_ecology_dynamics.py": {
         "reason": "第一方深研(半纯公式半 scipy 求解器)",
         "migrate_to": "equilibrium 纯公式可走 /v1/research/run_program; lotka 需 scipy 求解端点, 保持登记",
     },
-    "examples/shusheng_fracture_mechanics.py": {
+    "examples/ai4s_fracture_mechanics.py": {
         "reason": "第一方深研(code_lab/evolution/knowledge/planning + LLM 长程)",
         "migrate_to": "需补 code_lab+RAG+agent 会话端点, 保持登记",
     },

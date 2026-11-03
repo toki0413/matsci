@@ -9,7 +9,7 @@
 
 用法:
     export INTERNLM_API_KEY=<模型 token>
-    python examples/shusheng_nn_rigidity_research.py
+    python examples/ai4s_nn_rigidity_research.py
 可用 INTERNLM_MODEL / INTERNLM_BASE_URL 覆盖模型与端点 (默认 intern-s2).
 """
 from __future__ import annotations

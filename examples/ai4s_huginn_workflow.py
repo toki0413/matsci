@@ -1,6 +1,6 @@
 """模型 Intern-S2 + Huginn 完整深研管线(非旁路, 全走 run_research_program).
 
-上一版(`shusheng_agent_nn_rigidity`)是**旁路的裸工具循环**: 只借了
+上一版(`ai4s_agent_nn_rigidity`)是**旁路的裸工具循环**: 只借了
 `grounding_verifier`, 选题->实验->成文全部由模型自己在一个循环里对各独立工具做
 tool-call, 没有进入 Huginn 的**科研工作流**本身。本文件纠正这一点:
 模型作为 LLM 引擎**驱动 `huginn.research.run_research_program`**, 完整走
@@ -28,8 +28,8 @@ Huginn 既定工作流:
   - `--dry` 走 client=None 确定性综合路径, 无 API key 也能验证整条管线能跑通。
 
 用法:
-  INTERNLM_API_KEY=... python examples/shusheng_huginn_workflow.py          # 模型全流程
-  python examples/shusheng_huginn_workflow.py --dry                         # 确定性验证管线
+  INTERNLM_API_KEY=... python examples/ai4s_huginn_workflow.py          # 模型全流程
+  python examples/ai4s_huginn_workflow.py --dry                         # 确定性验证管线
 """
 from __future__ import annotations
 

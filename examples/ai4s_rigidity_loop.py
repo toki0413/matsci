@@ -11,7 +11,7 @@
 
 用法:
     export INTERNLM_API_KEY=<模型 token>
-    python examples/shusheng_rigidity_loop.py --rounds 6 --budget-s 7200 --session s2
+    python examples/ai4s_rigidity_loop.py --rounds 6 --budget-s 7200 --session s2
 
 产物 (research_outputs/shusheng_nn_rigidity_probe/):
     loop_transcript<sfx>.md   逐轮: 模型判断 + 它选的配置 + 该轮实测表 + 模型的理由

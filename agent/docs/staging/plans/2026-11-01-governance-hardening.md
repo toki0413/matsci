@@ -64,7 +64,7 @@ execution: inline
   spec: `#d9-门强度生命周期`
 
 - [x] T11: 去厂商/人格绑定
-  goal: 交付面清除实验人格名，报告/工具描述/错误文案/技能描述中性化；历史运行证据不动。
+  goal: 交付面清除实验人格名（含 examples 文件名），报告/工具描述/错误文案/技能描述中性化；历史运行证据不动。
   files: huginn/**, examples/**, docs/**, tests/test_arch_no_vendor_persona.py
   acceptance: `python -m pytest tests/test_arch_no_vendor_persona.py -q -o addopts=""`
   spec: `#d10-去厂商人格绑定`

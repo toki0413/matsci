@@ -67,9 +67,9 @@ def _install_torch_stub() -> list[str]:
 
 _STUBBED_MODULES = _install_torch_stub()
 rig = _load(_EXDIR / "nn_rigidity_research_pipeline.py", "rig")
-frac = _load(_EXDIR / "shusheng_fracture_mechanics.py", "frac")
-qc = _load(_EXDIR / "shusheng_quantum_critical.py", "qc")
-eco = _load(_EXDIR / "shusheng_ecology_dynamics.py", "eco")
+frac = _load(_EXDIR / "ai4s_fracture_mechanics.py", "frac")
+qc = _load(_EXDIR / "ai4s_quantum_critical.py", "qc")
+eco = _load(_EXDIR / "ai4s_ecology_dynamics.py", "eco")
 # 加载完毕即卸载 torch 桩, 恢复全局状态(仅移除本次注入的, 不碰真 torch).
 for _mod in _STUBBED_MODULES:
     sys.modules.pop(_mod, None)
